@@ -215,14 +215,15 @@ fn compile_boot_manifest_emits_krustboot_plan() {
         &output_arg,
     ]));
 
-    assert!(stdout.contains("format: KrustBootManifest v2"));
+    assert!(stdout.contains("format: KrustBootManifest v3"));
     assert!(stdout.contains("generation: gen:hello-0001"));
     assert!(stdout.contains("boot_modules: 9"));
     assert!(stdout.contains("processes: 9"));
     assert!(stdout.contains("endpoints: 3"));
-    assert!(stdout.contains("grants: 17"));
+    assert!(stdout.contains("grants: 18"));
     assert!(stdout.contains("store_objects: 1"));
     assert!(stdout.contains("state_volumes: 1"));
+    assert!(stdout.contains("network_ports: 1"));
 
     let bytes = fs::read(&output_path).expect("read krustboot output");
     assert!(bytes.starts_with(b"KRUSTBOOTV0\0\0\0\0\0"));
@@ -240,6 +241,7 @@ fn compile_boot_manifest_emits_krustboot_plan() {
     assert!(contains_bytes(&bytes, b"log-sink"));
     assert!(contains_bytes(&bytes, b"readiness"));
     assert!(contains_bytes(&bytes, b"store:hello-text"));
+    assert!(contains_bytes(&bytes, b"cap:net.tcp.8080"));
 }
 
 #[test]

@@ -8,10 +8,10 @@ use crate::{
 pub const BOOT_ENDPOINT_ID: u64 = 1;
 
 const MAX_MESSAGE_BYTES: usize = 128;
-const MAX_BOOT_READ_BYTES: usize = 4096;
+const MAX_BOOT_READ_BYTES: usize = 16 * 1024;
 const MAX_OBJECTS: usize = 32;
 const MAX_PROCESSES: usize = 16;
-const MAX_CAPS: usize = 16;
+const MAX_CAPS: usize = 32;
 const MAX_BOOT_GRANTS: usize = 64;
 const MAX_STATE_VALUE_BYTES: usize = 64;
 const INITIAL_USER_RFLAGS: u64 = 0x2;
@@ -20,6 +20,7 @@ pub const BOOT_OBJECT_ENDPOINT: u16 = 1;
 pub const BOOT_OBJECT_STORE: u16 = 2;
 pub const BOOT_OBJECT_STATE: u16 = 3;
 pub const BOOT_OBJECT_TIMER: u16 = 4;
+pub const BOOT_OBJECT_NETWORK_PORT: u16 = 5;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -115,6 +116,11 @@ pub struct BootStateVolumeConfig {
 }
 
 #[derive(Clone, Copy)]
+pub struct BootNetworkPortConfig {
+    pub id: &'static str,
+}
+
+#[derive(Clone, Copy)]
 pub struct BootGrantConfig {
     pub process_index: usize,
     pub cap_slot: u64,
@@ -123,6 +129,7 @@ pub struct BootGrantConfig {
     pub rights: u64,
 }
 
+#[derive(Clone, Copy)]
 pub struct BootRuntimeConfig {
     processes: [Option<BootProcessConfig>; MAX_PROCESSES],
     process_count: usize,
@@ -133,6 +140,8 @@ pub struct BootRuntimeConfig {
     store_object_count: usize,
     state_volumes: [Option<BootStateVolumeConfig>; MAX_OBJECTS],
     state_volume_count: usize,
+    network_ports: [Option<BootNetworkPortConfig>; MAX_OBJECTS],
+    network_port_count: usize,
     grants: [Option<BootGrantConfig>; MAX_BOOT_GRANTS],
     grant_count: usize,
 }
@@ -252,6 +261,12 @@ struct TimerObject {
 }
 
 #[derive(Clone, Copy)]
+struct NetworkPortObject {
+    id: KernelObjectId,
+    name: &'static str,
+}
+
+#[derive(Clone, Copy)]
 struct ProcessControlObject {
     id: KernelObjectId,
     name: &'static str,
@@ -264,6 +279,7 @@ enum KernelObject {
     StoreObject(StoreObject),
     StateVolume(StateVolumeObject),
     Timer(TimerObject),
+    NetworkPort(NetworkPortObject),
     ProcessControl(ProcessControlObject),
 }
 
@@ -285,11 +301,18 @@ struct RuntimeState {
     processes: ProcessTable,
 }
 
+#[derive(Clone, Copy)]
+struct FallbackRuntime {
+    generation_id: &'static str,
+    config: BootRuntimeConfig,
+}
+
 struct Global<T>(UnsafeCell<T>);
 
 unsafe impl<T> Sync for Global<T> {}
 
 static RUNTIME: Global<RuntimeState> = Global(UnsafeCell::new(RuntimeState::new()));
+static FALLBACK_RUNTIME: Global<Option<FallbackRuntime>> = Global(UnsafeCell::new(None));
 
 impl CapabilitySpace {
     const fn new() -> Self {
@@ -419,6 +442,12 @@ impl TimerObject {
     }
 }
 
+impl NetworkPortObject {
+    const fn new(id: KernelObjectId, name: &'static str) -> Self {
+        Self { id, name }
+    }
+}
+
 impl ProcessControlObject {
     const fn new(id: KernelObjectId, name: &'static str) -> Self {
         Self { id, name }
@@ -515,6 +544,18 @@ impl ObjectTable {
         let id = KernelObjectId(self.next_id);
         self.next_id += 1;
         self.objects[self.count] = Some(KernelObject::Timer(TimerObject::new(id, name)));
+        self.count += 1;
+        Ok(id)
+    }
+
+    fn add_network_port(&mut self, name: &'static str) -> Result<KernelObjectId, InitError> {
+        if self.count == self.objects.len() {
+            return Err(InitError::ObjectTableFull);
+        }
+
+        let id = KernelObjectId(self.next_id);
+        self.next_id += 1;
+        self.objects[self.count] = Some(KernelObject::NetworkPort(NetworkPortObject::new(id, name)));
         self.count += 1;
         Ok(id)
     }
@@ -798,6 +839,8 @@ impl BootRuntimeConfig {
             store_object_count: 0,
             state_volumes: [None; MAX_OBJECTS],
             state_volume_count: 0,
+            network_ports: [None; MAX_OBJECTS],
+            network_port_count: 0,
             grants: [None; MAX_BOOT_GRANTS],
             grant_count: 0,
         }
@@ -843,6 +886,15 @@ impl BootRuntimeConfig {
         Ok(())
     }
 
+    pub fn add_network_port(&mut self, port: BootNetworkPortConfig) -> Result<(), InitError> {
+        if self.network_port_count == self.network_ports.len() {
+            return Err(InitError::ObjectTableFull);
+        }
+        self.network_ports[self.network_port_count] = Some(port);
+        self.network_port_count += 1;
+        Ok(())
+    }
+
     pub fn add_grant(&mut self, grant: BootGrantConfig) -> Result<(), InitError> {
         if self.grant_count == self.grants.len() {
             return Err(InitError::CapabilityTableFull);
@@ -855,9 +907,12 @@ impl BootRuntimeConfig {
             BOOT_OBJECT_STORE if grant.object_index < self.store_object_count => {}
             BOOT_OBJECT_STATE if grant.object_index < self.state_volume_count => {}
             BOOT_OBJECT_TIMER if grant.object_index == 0 => {}
-            BOOT_OBJECT_ENDPOINT | BOOT_OBJECT_STORE | BOOT_OBJECT_STATE | BOOT_OBJECT_TIMER => {
-                return Err(InitError::InvalidBootManifest);
-            }
+            BOOT_OBJECT_NETWORK_PORT if grant.object_index < self.network_port_count => {}
+            BOOT_OBJECT_ENDPOINT
+            | BOOT_OBJECT_STORE
+            | BOOT_OBJECT_STATE
+            | BOOT_OBJECT_TIMER
+            | BOOT_OBJECT_NETWORK_PORT => return Err(InitError::InvalidBootManifest),
             _ => return Err(InitError::InvalidBootManifest),
         }
         self.grants[self.grant_count] = Some(grant);
@@ -866,7 +921,7 @@ impl BootRuntimeConfig {
     }
 }
 
-pub fn init_from_boot_config(config: BootRuntimeConfig) -> Result<(), InitError> {
+pub fn init_from_boot_config(config: &BootRuntimeConfig) -> Result<(), InitError> {
     let runtime = runtime();
     runtime.objects.reset();
     runtime.processes.reset();
@@ -899,6 +954,14 @@ pub fn init_from_boot_config(config: BootRuntimeConfig) -> Result<(), InitError>
         state_index += 1;
     }
 
+    let mut network_port_ids = [None; MAX_OBJECTS];
+    let mut network_index = 0;
+    while network_index < config.network_port_count {
+        let port = config.network_ports[network_index].ok_or(InitError::InvalidBootManifest)?;
+        network_port_ids[network_index] = Some(runtime.objects.add_network_port(port.id)?);
+        network_index += 1;
+    }
+
     let timer_id = runtime.objects.add_timer("monotonic-timer")?;
     let mut process_caps = [CapabilitySpace::new(); MAX_PROCESSES];
     let mut grant_index = 0;
@@ -915,6 +978,9 @@ pub fn init_from_boot_config(config: BootRuntimeConfig) -> Result<(), InitError>
                 state_volume_ids[grant.object_index].ok_or(InitError::InvalidBootManifest)?
             }
             BOOT_OBJECT_TIMER if grant.object_index == 0 => timer_id,
+            BOOT_OBJECT_NETWORK_PORT => {
+                network_port_ids[grant.object_index].ok_or(InitError::InvalidBootManifest)?
+            }
             _ => return Err(InitError::InvalidBootManifest),
         };
         process_caps[grant.process_index].grant(grant.cap_slot, object, grant.rights)?;
@@ -1185,7 +1251,10 @@ pub fn read_boot_module(
     let Ok(module_len) = usize::try_from(module.length) else {
         return Err(IpcError::MessageTooLarge);
     };
-    let copy_len = min(module_len, max_len);
+    if module_len > max_len {
+        return Err(IpcError::MessageTooLarge);
+    }
+    let copy_len = module_len;
 
     let bytes = unsafe { core::slice::from_raw_parts(module.base as *const u8, copy_len) };
     usercopy::copy_to_user(UserPtr::new(destination as u64), bytes)
@@ -1237,6 +1306,59 @@ pub fn activate_generation(
     serial::write_ascii_bytes(&generation_id[..len]);
     serial::write_str("\n");
     serial::write_str("Krust native generation activation ok\n");
+    Ok(())
+}
+
+pub fn set_fallback_boot_config(generation_id: &'static str, config: &BootRuntimeConfig) {
+    unsafe {
+        *FALLBACK_RUNTIME.0.get() = Some(FallbackRuntime {
+            generation_id,
+            config: *config,
+        });
+    }
+}
+
+pub fn rollback_generation(
+    cap_slot: u64,
+    generation: *const u8,
+    len: usize,
+    frame: &mut SyscallFrame,
+) -> Result<(), IpcError> {
+    if len > MAX_MESSAGE_BYTES {
+        return Err(IpcError::MessageTooLarge);
+    }
+    let _process_control = process_control_from_cap(cap_slot, capability::RIGHT_CONTROL)?;
+
+    let mut requested = [0u8; MAX_MESSAGE_BYTES];
+    usercopy::copy_from_user(&mut requested, UserPtr::new(generation as u64), len)
+        .map_err(|_| IpcError::InvalidUserBuffer)?;
+
+    let fallback = match unsafe { *FALLBACK_RUNTIME.0.get() } {
+        Some(fallback) => fallback,
+        None => {
+            serial::write_str("Krust rollback rejected: no fallback runtime\n");
+            return Err(IpcError::BadCapability);
+        }
+    };
+    if fallback.generation_id.as_bytes() != &requested[..len] {
+        serial::write_str("Krust rollback rejected: requested=");
+        serial::write_ascii_bytes(&requested[..len]);
+        serial::write_str(" available=");
+        serial::write_str(fallback.generation_id);
+        serial::write_str("\n");
+        return Err(IpcError::BadCapability);
+    }
+
+    serial::write_str("Krust rollback generation accepted: target=");
+    serial::write_str(fallback.generation_id);
+    serial::write_str("\n");
+
+    init_from_boot_config(&fallback.config).map_err(|_| IpcError::BadCapability)?;
+    let context = initial_process_context().ok_or(IpcError::BadCapability)?;
+    *frame = SyscallFrame::from_context(context);
+    unsafe {
+        gdt::switch_address_space(context.cr3);
+    }
     Ok(())
 }
 
@@ -1868,6 +1990,11 @@ fn print_capability_object(object: KernelObjectId) {
                     serial::write_str(timer.name);
                     return;
                 }
+                KernelObject::NetworkPort(port) if port.id == object => {
+                    serial::write_str("network-port=");
+                    serial::write_str(port.name);
+                    return;
+                }
                 KernelObject::ProcessControl(process_control) if process_control.id == object => {
                     serial::write_str("process-control=");
                     serial::write_str(process_control.name);
@@ -1904,6 +2031,8 @@ fn print_rights(rights: u64) {
     wrote = print_right(rights, capability::RIGHT_CONTROL, "control", wrote);
     wrote = print_right(rights, capability::RIGHT_SNAPSHOT, "snapshot", wrote);
     wrote = print_right(rights, capability::RIGHT_RESTORE, "restore", wrote);
+    wrote = print_right(rights, capability::RIGHT_BIND, "bind", wrote);
+    wrote = print_right(rights, capability::RIGHT_LISTEN, "listen", wrote);
 
     if !wrote {
         serial::write_str("none");

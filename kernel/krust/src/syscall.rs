@@ -10,7 +10,7 @@ const IA32_FMASK: u32 = 0xc000_0084;
 const EFER_SYSCALL_ENABLE: u64 = 1;
 const RFLAGS_INTERRUPT_ENABLE: u64 = 1 << 9;
 
-const SYSCALL_STACK_SIZE: usize = 16 * 1024;
+const SYSCALL_STACK_SIZE: usize = 64 * 1024;
 const SYS_WRITE_SERIAL: u64 = 1;
 const SYS_EXIT: u64 = 2;
 const SYS_IPC_SEND: u64 = 3;
@@ -28,6 +28,7 @@ const SYS_STATE_WRITE: u64 = 14;
 const SYS_STATE_READ: u64 = 15;
 const SYS_SLEEP_MS: u64 = 16;
 const SYS_PROCESS_STATUS: u64 = 17;
+const SYS_ROLLBACK_GENERATION: u64 = 18;
 
 const STATUS_OK: u64 = 0;
 const STATUS_BAD_CAPABILITY: u64 = u64::MAX - 1;
@@ -50,7 +51,7 @@ global_asm!(
     .global krust_syscall_entry
 krust_syscall_entry:
     mov r10, rsp
-    lea rsp, [rip + KRUST_SYSCALL_STACK + 16384]
+    lea rsp, [rip + KRUST_SYSCALL_STACK + {syscall_stack_size}]
     sub rsp, 64
     mov [rsp + 0], r10
     mov [rsp + 8], rcx
@@ -73,7 +74,8 @@ krust_syscall_entry:
     add rsp, 64
     mov rsp, r10
     sysretq
-"#
+"#,
+    syscall_stack_size = const SYSCALL_STACK_SIZE,
 );
 
 pub fn init() {
@@ -194,6 +196,15 @@ pub extern "C" fn krust_syscall_dispatch(
             Ok(status) => frame.rax = status,
             Err(error) => frame.rax = ipc_error_status("SYS_PROCESS_STATUS", error),
         },
+        SYS_ROLLBACK_GENERATION => match ipc::rollback_generation(
+            arg0,
+            arg1 as *const u8,
+            usize::try_from(arg2).unwrap_or(usize::MAX),
+            frame,
+        ) {
+            Ok(()) => frame.rax = STATUS_OK,
+            Err(error) => frame.rax = ipc_error_status("SYS_ROLLBACK_GENERATION", error),
+        },
         _ => {
             serial::write_str("Unknown userspace syscall: ");
             serial::write_u64_dec(number);
@@ -240,7 +251,8 @@ fn schedule_yield(frame: &mut ipc::SyscallFrame) {
 fn ipc_error_status(operation: &str, error: ipc::IpcError) -> u64 {
     match error {
         ipc::IpcError::BadCapability => {
-            serial::write_str("IPC syscall rejected: bad capability\n");
+            serial::write_str(operation);
+            serial::write_str(" rejected: bad capability\n");
             STATUS_BAD_CAPABILITY
         }
         ipc::IpcError::InvalidUserBuffer => {

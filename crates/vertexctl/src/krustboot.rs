@@ -1,8 +1,8 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use vertex_ir::{GenerationManifest, Service};
 
 const MAGIC: &[u8; 16] = b"KRUSTBOOTV0\0\0\0\0\0";
-const VERSION: u16 = 2;
+const VERSION: u16 = 3;
 const STRING_LEN: usize = 64;
 const MAX_BOOT_MODULES: usize = 16;
 const MAX_PROCESSES: usize = 16;
@@ -10,6 +10,7 @@ const MAX_ENDPOINTS: usize = 16;
 const MAX_GRANTS: usize = 64;
 const MAX_STORE_OBJECTS: usize = 4;
 const MAX_STATE_VOLUMES: usize = 4;
+const MAX_NETWORK_PORTS: usize = 4;
 const MAX_PROCESS_REFS: usize = 4;
 const RIGHT_SEND: u16 = 1 << 0;
 const RIGHT_RECEIVE: u16 = 1 << 1;
@@ -18,10 +19,13 @@ const RIGHT_WRITE: u16 = 1 << 3;
 const RIGHT_SNAPSHOT: u16 = 1 << 4;
 const RIGHT_RESTORE: u16 = 1 << 5;
 const RIGHT_CONTROL: u16 = 1 << 6;
+const RIGHT_BIND: u16 = 1 << 7;
+const RIGHT_LISTEN: u16 = 1 << 8;
 const OBJECT_ENDPOINT: u16 = 1;
 const OBJECT_STORE: u16 = 2;
 const OBJECT_STATE: u16 = 3;
 const OBJECT_TIMER: u16 = 4;
+const OBJECT_NETWORK_PORT: u16 = 5;
 const RESTART_NEVER: u16 = 0;
 const RESTART_ON_FAILURE: u16 = 1;
 const RESTART_ALWAYS: u16 = 2;
@@ -30,7 +34,9 @@ const SERIAL_CAP_SLOT: u16 = 1;
 const READINESS_CAP_SLOT: u16 = 2;
 const INIT_SERIAL_CAP_SLOT: u16 = 1;
 const INIT_READINESS_CAP_SLOT: u16 = 3;
-const INIT_ENDPOINT_AUTH_CAP_SLOT: u16 = 4;
+const INIT_ENDPOINT_AUTH_BASE_SLOT: u16 = 4;
+const SERIAL_RESERVED_CAP_SLOT: u16 = 1;
+const READINESS_RESERVED_CAP_SLOT: u16 = 2;
 
 pub fn compile(manifest: &GenerationManifest) -> Result<Vec<u8>, String> {
     let plan = derive_plan(manifest)?;
@@ -45,6 +51,7 @@ pub fn compile(manifest: &GenerationManifest) -> Result<Vec<u8>, String> {
     push_count(&mut bytes, plan.grants.len(), "grants")?;
     push_count(&mut bytes, plan.store_objects.len(), "store_objects")?;
     push_count(&mut bytes, plan.state_volumes.len(), "state_volumes")?;
+    push_count(&mut bytes, plan.network_ports.len(), "network_ports")?;
     push_fixed_str(&mut bytes, &manifest.generation.id)?;
     push_fixed_str(
         &mut bytes,
@@ -64,7 +71,7 @@ pub fn compile(manifest: &GenerationManifest) -> Result<Vec<u8>, String> {
         push_fixed_str(&mut bytes, &process.service_id)?;
         push_fixed_str(&mut bytes, &process.health_kind)?;
         push_process_ref_list(&mut bytes, &process.start_after, &plan)?;
-        push_endpoint_ref_list(&mut bytes, &process.requires_endpoints, &plan)?;
+        push_endpoint_requirement_list(&mut bytes, &process.requires_endpoints, &plan)?;
         push_endpoint_ref_list(&mut bytes, &process.provides_endpoints, &plan)?;
     }
 
@@ -92,6 +99,10 @@ pub fn compile(manifest: &GenerationManifest) -> Result<Vec<u8>, String> {
         push_fixed_str(&mut bytes, &state.id)?;
     }
 
+    for port in &plan.network_ports {
+        push_fixed_str(&mut bytes, &port.id)?;
+    }
+
     Ok(bytes)
 }
 
@@ -100,7 +111,7 @@ pub fn summary(manifest: &GenerationManifest, output_path: &str, byte_len: usize
 
     format!(
         "wrote {output_path}\n\
-         format: KrustBootManifest v2\n\
+         format: KrustBootManifest v3\n\
          generation: {}\n\
          parent_generation: {}\n\
          boot_modules: {}\n\
@@ -109,6 +120,7 @@ pub fn summary(manifest: &GenerationManifest, output_path: &str, byte_len: usize
          grants: {}\n\
          store_objects: {}\n\
          state_volumes: {}\n\
+         network_ports: {}\n\
          bytes: {byte_len}",
         manifest.generation.id,
         manifest.generation.parent.as_deref().unwrap_or("<none>"),
@@ -117,7 +129,8 @@ pub fn summary(manifest: &GenerationManifest, output_path: &str, byte_len: usize
         plan.endpoints.len(),
         plan.grants.len(),
         plan.store_objects.len(),
-        plan.state_volumes.len()
+        plan.state_volumes.len(),
+        plan.network_ports.len()
     )
 }
 
@@ -159,7 +172,7 @@ pub fn explain(manifest: &GenerationManifest) -> Result<String, String> {
             };
 
             out.push_str(&format!(
-                "{} receives send authority to endpoint {endpoint}\n\
+                "{} receives {rights} authority to endpoint {endpoint}\n\
                  because it requires {}/{}\n\
                  and {} provides {}\n",
                 service.id, requirement.capability, rights, provider.id, capability.id
@@ -185,6 +198,7 @@ struct BootPlan {
     grants: Vec<Grant>,
     store_objects: Vec<StoreObject>,
     state_volumes: Vec<StateVolume>,
+    network_ports: Vec<NetworkPort>,
 }
 
 #[derive(Debug, Clone)]
@@ -200,7 +214,7 @@ struct NativeProcess {
     initial: bool,
     service_id: String,
     start_after: Vec<String>,
-    requires_endpoints: Vec<String>,
+    requires_endpoints: Vec<EndpointRequirement>,
     provides_endpoints: Vec<String>,
     health_kind: String,
     restart: u16,
@@ -209,6 +223,12 @@ struct NativeProcess {
 #[derive(Debug, Clone)]
 struct Endpoint {
     name: String,
+}
+
+#[derive(Debug, Clone)]
+struct EndpointRequirement {
+    endpoint: String,
+    rights: u16,
 }
 
 #[derive(Debug, Clone)]
@@ -230,6 +250,11 @@ struct StoreObject {
 
 #[derive(Debug, Clone)]
 struct StateVolume {
+    id: String,
+}
+
+#[derive(Debug, Clone)]
+struct NetworkPort {
     id: String,
 }
 
@@ -390,7 +415,7 @@ fn derive_plan(manifest: &GenerationManifest) -> Result<BootPlan, String> {
             process: init_name.clone(),
             object_kind: OBJECT_ENDPOINT,
             object_name: endpoint.clone(),
-            cap_slot: INIT_ENDPOINT_AUTH_CAP_SLOT,
+            cap_slot: init_endpoint_auth_slot(&endpoints, &endpoint)?,
             rights: RIGHT_SEND | RIGHT_RECEIVE,
         });
 
@@ -398,19 +423,21 @@ fn derive_plan(manifest: &GenerationManifest) -> Result<BootPlan, String> {
             if service.id == root_service.id {
                 continue;
             }
-            if service
+            for requirement in service
                 .requires
                 .iter()
-                .any(|requirement| requirement.capability == capability.id)
+                .filter(|requirement| requirement.capability == capability.id)
             {
                 if native_process_for_service(&processes, &service.id).is_none() {
                     continue;
                 }
+                let consumer_rights =
+                    endpoint_rights_mask(&requirement.rights, &capability.rights, &capability.id)?;
                 add_process_endpoint_ref(
                     &mut processes,
                     &service.id,
                     endpoint.clone(),
-                    EndpointRefKind::Requires,
+                    EndpointRefKind::Requires(consumer_rights),
                 );
                 add_process_start_after(&mut processes, &service.id, &capability.provider)?;
             }
@@ -441,6 +468,8 @@ fn derive_plan(manifest: &GenerationManifest) -> Result<BootPlan, String> {
 
     let mut store_objects = Vec::new();
     let mut state_volumes = Vec::new();
+    let mut network_ports = Vec::new();
+    let mut next_object_slots = initial_object_cap_slots(&processes);
     for service in &manifest.services {
         let Some(process_name) = native_process_for_service(&processes, &service.id) else {
             continue;
@@ -468,7 +497,7 @@ fn derive_plan(manifest: &GenerationManifest) -> Result<BootPlan, String> {
                         process: process_name.clone(),
                         object_kind: OBJECT_STORE,
                         object_name: store.id.clone(),
-                        cap_slot: SERVICE_CAP_SLOT,
+                        cap_slot: next_object_cap_slot(&mut next_object_slots, &process_name)?,
                         rights: rights_mask(
                             &requirement.rights,
                             &capability.rights,
@@ -488,7 +517,7 @@ fn derive_plan(manifest: &GenerationManifest) -> Result<BootPlan, String> {
                         process: process_name.clone(),
                         object_kind: OBJECT_STATE,
                         object_name: state.id.clone(),
-                        cap_slot: SERVICE_CAP_SLOT,
+                        cap_slot: next_object_cap_slot(&mut next_object_slots, &process_name)?,
                         rights: rights_mask(
                             &requirement.rights,
                             &capability.rights,
@@ -501,7 +530,7 @@ fn derive_plan(manifest: &GenerationManifest) -> Result<BootPlan, String> {
                         process: process_name.clone(),
                         object_kind: OBJECT_TIMER,
                         object_name: "monotonic-timer".to_owned(),
-                        cap_slot: SERVICE_CAP_SLOT,
+                        cap_slot: next_object_cap_slot(&mut next_object_slots, &process_name)?,
                         rights: rights_mask(
                             &requirement.rights,
                             &capability.rights,
@@ -509,7 +538,27 @@ fn derive_plan(manifest: &GenerationManifest) -> Result<BootPlan, String> {
                         )?,
                     });
                 }
-                _ => {}
+                "network-port" => {
+                    push_unique_network_port(&mut network_ports, capability.id.clone());
+                    grants.push(Grant {
+                        process: process_name.clone(),
+                        object_kind: OBJECT_NETWORK_PORT,
+                        object_name: capability.id.clone(),
+                        cap_slot: next_object_cap_slot(&mut next_object_slots, &process_name)?,
+                        rights: rights_mask(
+                            &requirement.rights,
+                            &capability.rights,
+                            &capability.id,
+                        )?,
+                    });
+                }
+                "ipc-endpoint" | "clock" => {}
+                other => {
+                    return Err(format!(
+                        "native KrustBoot does not implement capability kind {other} required by {} via {}",
+                        service.id, capability.id
+                    ));
+                }
             }
         }
     }
@@ -534,6 +583,7 @@ fn derive_plan(manifest: &GenerationManifest) -> Result<BootPlan, String> {
         grants,
         store_objects,
         state_volumes,
+        network_ports,
     })
 }
 
@@ -615,6 +665,52 @@ fn push_unique_state_volume(states: &mut Vec<StateVolume>, state_id: String) {
     }
 }
 
+fn push_unique_network_port(ports: &mut Vec<NetworkPort>, port_id: String) {
+    if !ports.iter().any(|port| port.id == port_id) {
+        ports.push(NetworkPort { id: port_id });
+    }
+}
+
+fn initial_object_cap_slots(processes: &[NativeProcess]) -> BTreeMap<String, u16> {
+    let mut slots = BTreeMap::new();
+    for process in processes {
+        let mut next_slot =
+            if process.requires_endpoints.is_empty() && process.provides_endpoints.is_empty() {
+                SERVICE_CAP_SLOT
+            } else {
+                first_non_endpoint_service_slot(process.requires_endpoints.len())
+            };
+        if next_slot == SERIAL_RESERVED_CAP_SLOT || next_slot == READINESS_RESERVED_CAP_SLOT {
+            next_slot = READINESS_RESERVED_CAP_SLOT + 1;
+        }
+        slots.insert(process.name.clone(), next_slot);
+    }
+    slots
+}
+
+fn first_non_endpoint_service_slot(endpoint_count: usize) -> u16 {
+    let mut slot = if endpoint_count == 0 {
+        SERVICE_CAP_SLOT
+    } else {
+        endpoint_target_slot(endpoint_count - 1) + 1
+    };
+    if slot <= READINESS_RESERVED_CAP_SLOT {
+        slot = READINESS_RESERVED_CAP_SLOT + 1;
+    }
+    slot
+}
+
+fn next_object_cap_slot(slots: &mut BTreeMap<String, u16>, process: &str) -> Result<u16, String> {
+    let slot = slots
+        .get_mut(process)
+        .ok_or_else(|| format!("unknown process {process} for cap slot allocation"))?;
+    let out = *slot;
+    *slot = slot
+        .checked_add(1)
+        .ok_or_else(|| format!("cap slot overflow for process {process}"))?;
+    Ok(out)
+}
+
 fn validate_plan(plan: &BootPlan) -> Result<(), String> {
     if plan.boot_modules.is_empty() {
         return Err("native boot plan must contain boot modules".to_owned());
@@ -651,6 +747,11 @@ fn validate_plan(plan: &BootPlan) -> Result<(), String> {
     if plan.state_volumes.len() > MAX_STATE_VOLUMES {
         return Err(format!(
             "native boot plan exceeds {MAX_STATE_VOLUMES} state volumes"
+        ));
+    }
+    if plan.network_ports.len() > MAX_NETWORK_PORTS {
+        return Err(format!(
+            "native boot plan exceeds {MAX_NETWORK_PORTS} network ports"
         ));
     }
 
@@ -702,8 +803,14 @@ fn validate_plan(plan: &BootPlan) -> Result<(), String> {
         for dependency in &process.start_after {
             process_index(plan, dependency)?;
         }
-        for endpoint in &process.requires_endpoints {
-            endpoint_index(plan, endpoint)?;
+        for requirement in &process.requires_endpoints {
+            endpoint_index(plan, &requirement.endpoint)?;
+            if requirement.rights == 0 || requirement.rights & !(RIGHT_SEND | RIGHT_RECEIVE) != 0 {
+                return Err(format!(
+                    "process {} has invalid endpoint requirement rights",
+                    process.name
+                ));
+            }
         }
         for endpoint in &process.provides_endpoints {
             endpoint_index(plan, endpoint)?;
@@ -725,11 +832,22 @@ fn validate_plan(plan: &BootPlan) -> Result<(), String> {
         }
     }
 
+    let mut cap_slots = BTreeSet::new();
+    for grant in &plan.grants {
+        let key = (grant.process.as_str(), grant.cap_slot);
+        if !cap_slots.insert(key) {
+            return Err(format!(
+                "duplicate grant cap slot {} for process {}",
+                grant.cap_slot, grant.process
+            ));
+        }
+    }
+
     Ok(())
 }
 
 enum EndpointRefKind {
-    Requires,
+    Requires(u16),
     Provides,
 }
 
@@ -747,7 +865,18 @@ fn add_process_endpoint_ref(
     };
 
     let refs = match kind {
-        EndpointRefKind::Requires => &mut process.requires_endpoints,
+        EndpointRefKind::Requires(rights) => {
+            if !process
+                .requires_endpoints
+                .iter()
+                .any(|existing| existing.endpoint == endpoint)
+            {
+                process
+                    .requires_endpoints
+                    .push(EndpointRequirement { endpoint, rights });
+            }
+            return;
+        }
         EndpointRefKind::Provides => &mut process.provides_endpoints,
     };
     if !refs.iter().any(|existing| existing == &endpoint) {
@@ -821,6 +950,20 @@ fn restart_policy(policy: &str) -> Result<u16, String> {
     }
 }
 
+fn endpoint_rights_mask(
+    required: &[String],
+    capability: &[String],
+    context: &str,
+) -> Result<u16, String> {
+    let mask = rights_mask(required, capability, context)?;
+    if mask & !(RIGHT_SEND | RIGHT_RECEIVE) != 0 {
+        return Err(format!(
+            "ipc endpoint {context} requires non-endpoint native rights"
+        ));
+    }
+    Ok(mask)
+}
+
 fn rights_mask(required: &[String], capability: &[String], context: &str) -> Result<u16, String> {
     let rights = if required.is_empty() {
         capability
@@ -840,6 +983,8 @@ fn rights_mask(required: &[String], capability: &[String], context: &str) -> Res
             "snapshot" => mask |= RIGHT_SNAPSHOT,
             "restore" => mask |= RIGHT_RESTORE,
             "control" => mask |= RIGHT_CONTROL,
+            "bind" => mask |= RIGHT_BIND,
+            "listen" => mask |= RIGHT_LISTEN,
             other => return Err(format!("unsupported native right {other} for {context}")),
         }
     }
@@ -868,6 +1013,27 @@ fn endpoint_name(capability_id: &str) -> String {
             other => other,
         })
         .collect()
+}
+
+fn init_endpoint_auth_slot(endpoints: &[Endpoint], endpoint: &str) -> Result<u16, String> {
+    let index = endpoints
+        .iter()
+        .position(|existing| existing.name == endpoint)
+        .ok_or_else(|| format!("unknown endpoint {endpoint}"))?;
+    if index < 2 {
+        return Err(format!(
+            "endpoint {endpoint} is reserved and cannot receive delegated init authority"
+        ));
+    }
+    Ok(INIT_ENDPOINT_AUTH_BASE_SLOT + (index as u16 - 2))
+}
+
+fn endpoint_target_slot(requirement_index: usize) -> u16 {
+    if requirement_index == 0 {
+        SERVICE_CAP_SLOT
+    } else {
+        READINESS_RESERVED_CAP_SLOT + requirement_index as u16
+    }
 }
 
 fn module_basename(value: &str) -> String {
@@ -908,12 +1074,20 @@ fn state_index(plan: &BootPlan, id: &str) -> Result<usize, String> {
         .ok_or_else(|| format!("unknown state volume {id}"))
 }
 
+fn network_port_index(plan: &BootPlan, id: &str) -> Result<usize, String> {
+    plan.network_ports
+        .iter()
+        .position(|port| port.id == id)
+        .ok_or_else(|| format!("unknown network port {id}"))
+}
+
 fn object_index(plan: &BootPlan, grant: &Grant) -> Result<usize, String> {
     match grant.object_kind {
         OBJECT_ENDPOINT => endpoint_index(plan, &grant.object_name),
         OBJECT_STORE => store_index(plan, &grant.object_name),
         OBJECT_STATE => state_index(plan, &grant.object_name),
         OBJECT_TIMER if grant.object_name == "monotonic-timer" => Ok(0),
+        OBJECT_NETWORK_PORT => network_port_index(plan, &grant.object_name),
         other => Err(format!("unsupported native object kind {other}")),
     }
 }
@@ -955,6 +1129,29 @@ fn push_endpoint_ref_list(
     }
     while written < MAX_PROCESS_REFS {
         push_u16(bytes, u16::MAX);
+        written += 1;
+    }
+    Ok(())
+}
+
+fn push_endpoint_requirement_list(
+    bytes: &mut Vec<u8>,
+    values: &[EndpointRequirement],
+    plan: &BootPlan,
+) -> Result<(), String> {
+    if values.len() > MAX_PROCESS_REFS {
+        return Err("too many endpoint requirement refs".to_owned());
+    }
+    push_u16(bytes, values.len() as u16);
+    let mut written = 0;
+    for value in values {
+        push_u16(bytes, endpoint_index(plan, &value.endpoint)? as u16);
+        push_u16(bytes, value.rights);
+        written += 1;
+    }
+    while written < MAX_PROCESS_REFS {
+        push_u16(bytes, u16::MAX);
+        push_u16(bytes, 0);
         written += 1;
     }
     Ok(())

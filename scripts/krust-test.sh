@@ -9,6 +9,7 @@ SERIAL_LOG=${SERIAL_LOG:-"$BUILD_DIR/serial-test.log"}
 QEMU=${QEMU:-qemu-system-x86_64}
 QEMU_EXTRA=${QEMU_EXTRA:-}
 CASE=${1:-m14}
+FALLBACK_MANIFEST=
 
 case "$CASE" in
     m13|m14|valid-activation)
@@ -46,11 +47,14 @@ Native readiness activation ok
         ;;
     rollback)
         MANIFEST="$ROOT_DIR/examples/krust-rollback-bad-generation.vertex.json"
+        FALLBACK_MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
         required_lines='
 Boot generation: gen:bad-0002
 activation failed
 falling back to generation: gen:hello-0001
-rollback activation ok
+Krust rollback generation accepted: target=gen:hello-0001
+Boot generation: gen:hello-0001
+Native service activation ok
 '
         ;;
     store-state)
@@ -88,7 +92,7 @@ Native restart policy ok
         ;;
 esac
 
-(cd "$KRUST_DIR" && make iso VERTEX_MANIFEST="$MANIFEST")
+(cd "$KRUST_DIR" && make iso VERTEX_MANIFEST="$MANIFEST" FALLBACK_MANIFEST="$FALLBACK_MANIFEST")
 
 mkdir -p "$(dirname "$SERIAL_LOG")"
 rm -f "$SERIAL_LOG"

@@ -10,7 +10,7 @@ use crate::{
 
 const USER_CANONICAL_LIMIT: u64 = 0x0000_8000_0000_0000;
 const USER_STACK_TOP: u64 = 0x0000_7000_0000_0000;
-const USER_STACK_PAGES: usize = 4;
+const USER_STACK_PAGES: usize = 8;
 
 #[derive(Clone, Copy)]
 pub struct UserImage {

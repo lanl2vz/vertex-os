@@ -6,20 +6,24 @@ mod sys;
 use core::panic::PanicInfo;
 
 const KRUSTBOOT_MAGIC: &[u8; 16] = b"KRUSTBOOTV0\0\0\0\0\0";
-const MANIFEST_BUFFER_LEN: usize = 4096;
+const KRUSTBOOT_VERSION: u16 = 3;
+const MANIFEST_BUFFER_LEN: usize = 16 * 1024;
+const OFFSET_VERSION: usize = 16;
 const OFFSET_BOOT_MODULES: usize = 18;
 const OFFSET_PROCESSES: usize = 20;
 const OFFSET_ENDPOINTS: usize = 22;
 const OFFSET_GRANTS: usize = 24;
 const OFFSET_STORE_OBJECTS: usize = 26;
 const OFFSET_STATE_VOLUMES: usize = 28;
-const OFFSET_GENERATION_ID: usize = 30;
+const OFFSET_NETWORK_PORTS: usize = 30;
+const OFFSET_GENERATION_ID: usize = 32;
 const STRING_LEN: usize = 64;
 const OFFSET_PARENT_GENERATION_ID: usize = OFFSET_GENERATION_ID + STRING_LEN;
 const BOOT_MODULE_RECORD_LEN: usize = STRING_LEN * 2;
 const PROCESS_REF_COUNT: usize = 4;
 const REF_LIST_LEN: usize = 2 + PROCESS_REF_COUNT * 2;
-const PROCESS_RECORD_LEN: usize = STRING_LEN * 4 + 4 + REF_LIST_LEN * 3;
+const ENDPOINT_REQUIREMENT_LIST_LEN: usize = 2 + PROCESS_REF_COUNT * 4;
+const PROCESS_RECORD_LEN: usize = STRING_LEN * 4 + 4 + REF_LIST_LEN * 2 + ENDPOINT_REQUIREMENT_LIST_LEN;
 const PROTOCOL_HEALTH_V0: u16 = 2;
 const MESSAGE_READY: u16 = 1;
 const ENVELOPE_LEN: usize = 16;
@@ -34,7 +38,10 @@ pub extern "C" fn _start() -> ! {
 
     let mut manifest = [0u8; MANIFEST_BUFFER_LEN];
     let manifest_len = sys::read_manifest(&mut manifest);
-    if manifest_len == sys::STATUS_BAD_CAPABILITY || manifest_len == sys::STATUS_BAD_BUFFER {
+    if manifest_len == sys::STATUS_BAD_CAPABILITY
+        || manifest_len == sys::STATUS_BAD_BUFFER
+        || manifest_len == sys::STATUS_TOO_LARGE
+    {
         log(b"vertex-init manifest read failed");
         sys::exit(1);
     }
@@ -46,6 +53,7 @@ pub extern "C" fn _start() -> ! {
 
     if manifest_len < OFFSET_PARENT_GENERATION_ID + STRING_LEN
         || !valid_magic(&manifest[..manifest_len])
+        || read_u16(&manifest, OFFSET_VERSION) != KRUSTBOOT_VERSION
     {
         log(b"vertex-init manifest invalid");
         sys::exit(1);
@@ -70,6 +78,7 @@ pub extern "C" fn _start() -> ! {
     let grants = read_u16(&manifest, OFFSET_GRANTS);
     let store_objects = read_u16(&manifest, OFFSET_STORE_OBJECTS);
     let state_volumes = read_u16(&manifest, OFFSET_STATE_VOLUMES);
+    let network_ports = read_u16(&manifest, OFFSET_NETWORK_PORTS);
 
     log_count(b"vertex-init boot modules: ", boot_modules);
     log_count(b"vertex-init processes: ", processes);
@@ -77,6 +86,7 @@ pub extern "C" fn _start() -> ! {
     log_count(b"vertex-init grants: ", grants);
     log_count(b"vertex-init store objects: ", store_objects);
     log_count(b"vertex-init state volumes: ", state_volumes);
+    log_count(b"vertex-init network ports: ", network_ports);
 
     let mut order = [0u16; MAX_PROCESSES];
     let Some(order_len) = activation_plan(
@@ -102,19 +112,13 @@ pub extern "C" fn _start() -> ! {
         let process_index = order[index] as usize;
         let name = process_name(&manifest[..manifest_len], boot_modules, process_index);
         if process_requires_endpoint(&manifest[..manifest_len], boot_modules, process_index) {
-            log_derive(name);
-            if sys::cap_derive(sys::CAP_LOG_SINK_AUTH, sys::CAP_DERIVED, sys::RIGHT_SEND)
-                != sys::STATUS_OK
-            {
-                log(b"vertex-init cap derive failed");
-                activation_failed(parent_generation);
-            }
-            if sys::cap_transfer(process_index as u64, sys::CAP_DERIVED, 0, sys::RIGHT_SEND)
-                != sys::STATUS_OK
-            {
-                log(b"vertex-init cap transfer failed");
-                activation_failed(parent_generation);
-            }
+            transfer_endpoint_requirements(
+                &manifest[..manifest_len],
+                boot_modules,
+                process_index,
+                name,
+                parent_generation,
+            );
         }
 
         start_service(name, process_index as u64, parent_generation);
@@ -208,7 +212,7 @@ fn requires_offset(boot_modules: u16, process_index: usize) -> usize {
 }
 
 fn provides_offset(boot_modules: u16, process_index: usize) -> usize {
-    requires_offset(boot_modules, process_index) + REF_LIST_LEN
+    requires_offset(boot_modules, process_index) + ENDPOINT_REQUIREMENT_LIST_LEN
 }
 
 fn ref_count(manifest: &[u8], offset: usize) -> usize {
@@ -217,6 +221,14 @@ fn ref_count(manifest: &[u8], offset: usize) -> usize {
 
 fn ref_value(manifest: &[u8], offset: usize, index: usize) -> u16 {
     read_u16(manifest, offset + 2 + index * 2)
+}
+
+fn endpoint_requirement_value(manifest: &[u8], offset: usize, index: usize) -> u16 {
+    read_u16(manifest, offset + 2 + index * 4)
+}
+
+fn endpoint_requirement_rights(manifest: &[u8], offset: usize, index: usize) -> u16 {
+    read_u16(manifest, offset + 2 + index * 4 + 2)
 }
 
 fn process_requires_endpoint(manifest: &[u8], boot_modules: u16, process_index: usize) -> bool {
@@ -298,7 +310,7 @@ fn missing_provider(manifest: &[u8], boot_modules: u16, processes: u16) -> bool 
         let require_count = ref_count(manifest, requires);
         let mut requirement_index = 0;
         while requirement_index < require_count {
-            let endpoint = ref_value(manifest, requires, requirement_index);
+            let endpoint = endpoint_requirement_value(manifest, requires, requirement_index);
             if !endpoint_has_provider(manifest, boot_modules, processes, endpoint) {
                 return true;
             }
@@ -365,6 +377,69 @@ fn wait_ready(expected_name: &[u8], parent_generation: &[u8]) {
     }
 
     log_prefix(b"vertex-init observed ready: ", service_name);
+}
+
+fn transfer_endpoint_requirements(
+    manifest: &[u8],
+    boot_modules: u16,
+    process_index: usize,
+    name: &[u8],
+    parent_generation: &[u8],
+) {
+    let offset = requires_offset(boot_modules, process_index);
+    let count = ref_count(manifest, offset);
+    let mut requirement_index = 0;
+    while requirement_index < count {
+        let endpoint_index = endpoint_requirement_value(manifest, offset, requirement_index);
+        let manifest_rights = endpoint_requirement_rights(manifest, offset, requirement_index);
+        let Some(sys_rights) = endpoint_rights_to_sys(manifest_rights) else {
+            log(b"vertex-init endpoint rights invalid");
+            activation_failed(parent_generation);
+        };
+        let auth_slot = endpoint_auth_slot(endpoint_index);
+        let target_slot = endpoint_target_slot(requirement_index);
+        log_derive(name, endpoint_index, manifest_rights);
+        if sys::cap_derive(auth_slot, sys::CAP_DERIVED, sys_rights) != sys::STATUS_OK {
+            log(b"vertex-init cap derive failed");
+            activation_failed(parent_generation);
+        }
+        if sys::cap_transfer(process_index as u64, sys::CAP_DERIVED, target_slot, sys_rights)
+            != sys::STATUS_OK
+        {
+            log(b"vertex-init cap transfer failed");
+            activation_failed(parent_generation);
+        }
+        requirement_index += 1;
+    }
+}
+
+fn endpoint_auth_slot(endpoint_index: u16) -> u64 {
+    if endpoint_index < 2 {
+        return u64::MAX;
+    }
+    sys::CAP_ENDPOINT_AUTH_BASE + (endpoint_index as u64 - 2)
+}
+
+fn endpoint_target_slot(requirement_index: usize) -> u64 {
+    if requirement_index == 0 {
+        0
+    } else {
+        2 + requirement_index as u64
+    }
+}
+
+fn endpoint_rights_to_sys(rights: u16) -> Option<u64> {
+    let mut out = 0;
+    if rights & 1 != 0 {
+        out |= sys::RIGHT_SEND;
+    }
+    if rights & 2 != 0 {
+        out |= sys::RIGHT_RECEIVE;
+    }
+    if out == 0 || rights & !3 != 0 {
+        return None;
+    }
+    Some(out)
 }
 
 fn start_service(name: &[u8], process_index: u64, parent_generation: &[u8]) {
@@ -451,8 +526,13 @@ fn activation_failed(parent_generation: &[u8]) -> ! {
     log(b"activation failed");
     if !parent_generation.is_empty() {
         log_prefix(b"falling back to generation: ", parent_generation);
-        log(b"rollback activation ok");
-        sys::exit(0);
+        if sys::rollback_generation(parent_generation) != sys::STATUS_OK {
+            log(b"rollback activation failed");
+            sys::exit(1);
+        }
+        loop {
+            sys::pause();
+        }
     }
     sys::exit(1);
 }
@@ -487,12 +567,35 @@ fn log_plan_entry(index: usize, value: &[u8]) {
     log(&buffer[..len]);
 }
 
-fn log_derive(value: &[u8]) {
+fn log_derive(value: &[u8], endpoint_index: u16, rights: u16) {
     let mut buffer = [0u8; 128];
-    let len = append(&mut buffer, 0, b"vertex-init derives send-only cap for ");
+    let len = append(&mut buffer, 0, b"vertex-init derives endpoint cap for ");
     let len = append(&mut buffer, len, value);
-    let len = append(&mut buffer, len, b" from stronger endpoint authority");
+    let len = append(&mut buffer, len, b" from endpoint[");
+    let len = append_decimal(&mut buffer, len, endpoint_index as u64);
+    let len = append(&mut buffer, len, b"] rights=");
+    let len = append_manifest_endpoint_rights(&mut buffer, len, rights);
     log(&buffer[..len]);
+}
+
+fn append_manifest_endpoint_rights(buffer: &mut [u8], offset: usize, rights: u16) -> usize {
+    let mut out = offset;
+    let mut wrote = false;
+    if rights & 1 != 0 {
+        out = append(buffer, out, b"send");
+        wrote = true;
+    }
+    if rights & 2 != 0 {
+        if wrote {
+            out = append(buffer, out, b"|");
+        }
+        out = append(buffer, out, b"receive");
+        wrote = true;
+    }
+    if !wrote {
+        out = append(buffer, out, b"none");
+    }
+    out
 }
 
 fn log_count(prefix: &[u8], value: u16) {

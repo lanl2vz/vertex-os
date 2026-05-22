@@ -14,7 +14,7 @@ Krust prints every memory map entry to serial
 `vertexctl compile-boot-manifest` derives `hello-generation.krustboot` from the full Vertex IR graph
 Limine loads `hello-generation.krustboot` as a boot module
 Krust parses the fixed-format KrustBoot manifest and prints its generation ID
-Krust prints the KrustBoot boot modules, processes, endpoints, grants, store objects, and state volumes
+Krust prints the KrustBoot boot modules, processes, endpoints, grants, store objects, state volumes, and network ports
 Krust builds a physical frame allocator from usable memory map entries
 Krust allocates, frees, and reuses 4 KiB physical frames
 Krust walks the active x86_64 page tables through Limine's HHDM
@@ -28,7 +28,7 @@ Krust creates a runtime process table and endpoint table from the KrustBoot mani
 Krust allocates runtime process IDs and states from KrustBoot process records
 Krust grants vertex-init cap[0] read rights to the manifest module
 Krust grants vertex-init cap[1] send rights to the serial-log endpoint
-Krust grants vertex-init cap[2] process-control authority, cap[3] readiness receive authority, and cap[4] attenuable endpoint authority
+Krust grants vertex-init cap[2] process-control authority, cap[3] readiness receive authority, and per-endpoint attenuable endpoint authority starting at cap[4]
 Krust grants store/state/timer authority only to services that declare those capabilities
 Krust installs a minimal IDT for #UD, #GP, and #PF
 Krust enters ring 3 at the initial process entry point
@@ -119,7 +119,10 @@ make iso
 ```
 
 This runs `vertexctl compile-boot-manifest`, writes
-`build/hello-generation.krustboot`, and creates `build/krust.iso`.
+`build/hello-generation.krustboot` plus `build/fallback-generation.krustboot`,
+and creates `build/krust.iso`. By default the fallback manifest is the same
+generation; pass `FALLBACK_MANIFEST=/path/to/previous.vertex.json` to package a
+real fallback generation.
 
 ## Run
 
@@ -137,14 +140,17 @@ KrustBoot manifest generation: gen:hello-0001
 KrustBoot boot modules: 9
 KrustBoot processes: 9
 KrustBoot endpoints: 3
-KrustBoot grants: 17
+KrustBoot grants: 18
 KrustBoot store objects: 1
 KrustBoot state volumes: 1
+KrustBoot network ports: 1
   grant[0] process=vertex-init cap[1] endpoint=serial-log rights=send
   grant[11] process=logd cap[0] endpoint=log-sink rights=receive
-  grant[13] process=model-reader cap[0] store-object=store:hello-text rights=read
-  grant[15] process=reader-service cap[0] state-volume=state:counter rights=read|snapshot|restore
-  grant[16] process=timer-service cap[0] timer=monotonic-timer rights=control
+  grant[12] process=vertex-init cap[4] endpoint=log-sink rights=send|receive
+  grant[13] process=echo cap[3] network-port=cap:net.tcp.8080 rights=listen
+  grant[14] process=model-reader cap[0] store-object=store:hello-text rights=read
+  grant[16] process=reader-service cap[0] state-volume=state:counter rights=read|snapshot|restore
+  grant[17] process=timer-service cap[0] timer=monotonic-timer rights=control
 Physical allocator demo ok
 Virtual memory demo ok
 Capability table demo ok
@@ -165,7 +171,9 @@ process[8] id=9 name=flaky-service state=declared
 proc=vertex-init cap[0] boot-module=krustboot-manifest rights=read
 proc=vertex-init cap[1] endpoint=serial-log rights=send
 proc=vertex-init cap[2] process-control=process-control rights=control
+proc=vertex-init cap[3] endpoint=readiness rights=receive
 proc=vertex-init cap[4] endpoint=log-sink rights=send|receive
+proc=echo cap[3] network-port=cap:net.tcp.8080 rights=listen
 proc=logd cap[0] endpoint=log-sink rights=receive
 proc=model-reader cap[0] store-object=store:hello-text rights=read
 proc=reader-service cap[0] state-volume=state:counter rights=read|snapshot|restore
@@ -183,7 +191,8 @@ vertex-init manifest generation: gen:hello-0001
 vertex-init boot modules: 9
 vertex-init processes: 9
 vertex-init endpoints: 3
-vertex-init grants: 17
+vertex-init grants: 18
+vertex-init network ports: 1
 vertex-init activation plan:
   1. logd
   2. netstack
@@ -199,7 +208,8 @@ logd ready
 vertex-init observed ready: logd
 vertex-init starting service: netstack
 Krust process start accepted: proc=vertex-init target=netstack
-vertex-init derives send-only cap for echo from stronger endpoint authority
+vertex-init derives endpoint cap for echo from endpoint[2] rights=send
+Capability derive accepted: proc=vertex-init parent=4 new=31 rights=send
 Capability transfer accepted: proc=vertex-init target=echo slot=0 rights=send
 vertex-init starting service: echo
 Krust process start accepted: proc=vertex-init target=echo
@@ -211,12 +221,14 @@ vertex-init starting service: flaky-service
 echo sent message to logd
 logd received: hello from echo
 negative test: echo receive rejected: bad capability
+echo read rejected: bad capability
 echo send after drop rejected
 negative test: logd process-start rejected: bad capability
 Object read accepted: proc=model-reader object=store:hello-text bytes=22
 Native store-object read ok
 State write accepted: proc=counter-service state=state:counter
 State read accepted: proc=reader-service state=state:counter
+reader-service write rejected
 Native state-volume access ok
 Timer sleep accepted: proc=timer-service timer=monotonic-timer ms=10
 Native timer ok
@@ -256,12 +268,16 @@ KrustBoot manifest generation: gen:hello-0001
 KrustBoot boot modules: 9
 KrustBoot processes: 9
 KrustBoot endpoints: 3
-KrustBoot grants: 17
+KrustBoot grants: 18
+KrustBoot network ports: 1
 grant[0] process=vertex-init cap[1] endpoint=serial-log rights=send
 grant[11] process=logd cap[0] endpoint=log-sink rights=receive
-grant[13] process=model-reader cap[0] store-object=store:hello-text rights=read
-grant[15] process=reader-service cap[0] state-volume=state:counter rights=read|snapshot|restore
-grant[16] process=timer-service cap[0] timer=monotonic-timer rights=control
+grant[12] process=vertex-init cap[4] endpoint=log-sink rights=send|receive
+grant[13] process=echo cap[3] network-port=cap:net.tcp.8080 rights=listen
+grant[14] process=model-reader cap[0] store-object=store:hello-text rights=read
+grant[16] process=reader-service cap[0] state-volume=state:counter rights=read|snapshot|restore
+grant[17] process=timer-service cap[0] timer=monotonic-timer rights=control
+network_port[0] id=cap:net.tcp.8080
 Physical allocator demo ok
 Virtual memory demo ok
 Capability table demo ok
@@ -283,7 +299,9 @@ process[8] id=9 name=flaky-service state=declared
 proc=vertex-init cap[0] boot-module=krustboot-manifest rights=read
 proc=vertex-init cap[1] endpoint=serial-log rights=send
 proc=vertex-init cap[2] process-control=process-control rights=control
+proc=vertex-init cap[3] endpoint=readiness rights=receive
 proc=vertex-init cap[4] endpoint=log-sink rights=send|receive
+proc=echo cap[3] network-port=cap:net.tcp.8080 rights=listen
 proc=logd cap[0] endpoint=log-sink rights=receive
 proc=model-reader cap[0] store-object=store:hello-text rights=read
 proc=counter-service cap[0] state-volume=state:counter rights=write
@@ -292,6 +310,7 @@ proc=timer-service cap[0] timer=monotonic-timer rights=control
 vertex-init started
 Boot module read accepted: proc=vertex-init module=krustboot-manifest bytes=
 vertex-init manifest generation: gen:hello-0001
+vertex-init network ports: 1
 vertex-init activation plan:
   1. logd
   2. netstack
@@ -315,6 +334,7 @@ negative test: logd process-start rejected: bad capability
 Object read accepted: proc=model-reader object=store:hello-text bytes=22
 State write accepted: proc=counter-service state=state:counter
 State read accepted: proc=reader-service state=state:counter
+reader-service write rejected
 Timer sleep accepted: proc=timer-service timer=monotonic-timer ms=10
 flaky-service exits with status 1
 vertex-init restarts flaky-service once

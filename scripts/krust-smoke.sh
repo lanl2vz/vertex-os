@@ -49,9 +49,10 @@ KrustBoot manifest generation: gen:hello-0001
 KrustBoot boot modules: 9
 KrustBoot processes: 9
 KrustBoot endpoints: 3
-KrustBoot grants: 17
+KrustBoot grants: 18
 KrustBoot store objects: 1
 KrustBoot state volumes: 1
+KrustBoot network ports: 1
 boot_module[0] name=vertex-init string=vertex-init
 boot_module[1] name=logd string=logd
 boot_module[2] name=netstack string=netstack
@@ -77,12 +78,14 @@ grant[0] process=vertex-init cap[1] endpoint=serial-log rights=send
 grant[1] process=vertex-init cap[3] endpoint=readiness rights=receive
 grant[11] process=logd cap[0] endpoint=log-sink rights=receive
 grant[12] process=vertex-init cap[4] endpoint=log-sink rights=send|receive
-grant[13] process=model-reader cap[0] store-object=store:hello-text rights=read
-grant[14] process=counter-service cap[0] state-volume=state:counter rights=write
-grant[15] process=reader-service cap[0] state-volume=state:counter rights=read|snapshot|restore
-grant[16] process=timer-service cap[0] timer=monotonic-timer rights=control
+grant[13] process=echo cap[3] network-port=cap:net.tcp.8080 rights=listen
+grant[14] process=model-reader cap[0] store-object=store:hello-text rights=read
+grant[15] process=counter-service cap[0] state-volume=state:counter rights=write
+grant[16] process=reader-service cap[0] state-volume=state:counter rights=read|snapshot|restore
+grant[17] process=timer-service cap[0] timer=monotonic-timer rights=control
 store_object[0] id=store:hello-text module=store-hello-text
 state_volume[0] id=state:counter
+network_port[0] id=cap:net.tcp.8080
 Physical allocator demo ok
 Virtual memory demo ok
 Capability table demo ok
@@ -106,6 +109,7 @@ proc=vertex-init cap[1] endpoint=serial-log rights=send
 proc=vertex-init cap[2] process-control=process-control rights=control
 proc=vertex-init cap[3] endpoint=readiness rights=receive
 proc=vertex-init cap[4] endpoint=log-sink rights=send|receive
+proc=echo cap[3] network-port=cap:net.tcp.8080 rights=listen
 proc=logd cap[0] endpoint=log-sink rights=receive
 proc=netstack cap[1] endpoint=serial-log rights=send
 proc=echo cap[1] endpoint=serial-log rights=send
@@ -125,7 +129,8 @@ vertex-init manifest generation: gen:hello-0001
 vertex-init boot modules: 9
 vertex-init processes: 9
 vertex-init endpoints: 3
-vertex-init grants: 17
+vertex-init grants: 18
+vertex-init network ports: 1
 vertex-init store objects: 1
 vertex-init state volumes: 1
 vertex-init activation plan:
@@ -143,8 +148,8 @@ logd ready
 vertex-init observed ready: logd
 vertex-init starting service: netstack
 Krust process start accepted: proc=vertex-init target=netstack
-vertex-init derives send-only cap for echo from stronger endpoint authority
-Capability derive accepted: proc=vertex-init parent=4 new=9 rights=send
+vertex-init derives endpoint cap for echo from endpoint[2] rights=send
+Capability derive accepted: proc=vertex-init parent=4 new=31 rights=send
 Capability transfer accepted: proc=vertex-init target=echo slot=0 rights=send
 vertex-init starting service: echo
 Krust process start accepted: proc=vertex-init target=echo

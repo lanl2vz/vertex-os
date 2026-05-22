@@ -1,9 +1,10 @@
-use core::str;
+use core::{cell::UnsafeCell, str};
 
 pub const MODULE_STRING: &[u8] = b"krustboot-manifest";
+pub const FALLBACK_MODULE_STRING: &[u8] = b"krustboot-fallback-manifest";
 
 const MAGIC: &[u8; 16] = b"KRUSTBOOTV0\0\0\0\0\0";
-const VERSION: u16 = 2;
+const VERSION: u16 = 3;
 const STRING_LEN: usize = 64;
 const MAX_BOOT_MODULES: usize = 16;
 const MAX_PROCESSES: usize = 16;
@@ -11,6 +12,7 @@ const MAX_ENDPOINTS: usize = 16;
 const MAX_GRANTS: usize = 64;
 const MAX_STORE_OBJECTS: usize = 4;
 const MAX_STATE_VOLUMES: usize = 4;
+const MAX_NETWORK_PORTS: usize = 4;
 pub const MAX_PROCESS_REFS: usize = 4;
 
 pub const RIGHT_SEND: u16 = 1 << 0;
@@ -20,11 +22,14 @@ pub const RIGHT_WRITE: u16 = 1 << 3;
 pub const RIGHT_SNAPSHOT: u16 = 1 << 4;
 pub const RIGHT_RESTORE: u16 = 1 << 5;
 pub const RIGHT_CONTROL: u16 = 1 << 6;
+pub const RIGHT_BIND: u16 = 1 << 7;
+pub const RIGHT_LISTEN: u16 = 1 << 8;
 
 pub const OBJECT_ENDPOINT: u16 = 1;
 pub const OBJECT_STORE: u16 = 2;
 pub const OBJECT_STATE: u16 = 3;
 pub const OBJECT_TIMER: u16 = 4;
+pub const OBJECT_NETWORK_PORT: u16 = 5;
 
 #[derive(Clone, Copy)]
 pub struct BootModule<'a> {
@@ -43,6 +48,7 @@ pub struct Process<'a> {
     pub start_after: [u16; MAX_PROCESS_REFS],
     pub start_after_count: usize,
     pub requires_endpoint: [u16; MAX_PROCESS_REFS],
+    pub requires_endpoint_rights: [u16; MAX_PROCESS_REFS],
     pub requires_endpoint_count: usize,
     pub provides_endpoint: [u16; MAX_PROCESS_REFS],
     pub provides_endpoint_count: usize,
@@ -75,6 +81,11 @@ pub struct StateVolume<'a> {
     pub id: &'a str,
 }
 
+#[derive(Clone, Copy)]
+pub struct NetworkPort<'a> {
+    pub id: &'a str,
+}
+
 pub struct Manifest<'a> {
     generation_id: &'a str,
     parent_generation_id: &'a str,
@@ -90,7 +101,18 @@ pub struct Manifest<'a> {
     store_object_count: usize,
     state_volumes: [Option<StateVolume<'a>>; MAX_STATE_VOLUMES],
     state_volume_count: usize,
+    network_ports: [Option<NetworkPort<'a>>; MAX_NETWORK_PORTS],
+    network_port_count: usize,
 }
+
+struct Global<T>(UnsafeCell<T>);
+
+unsafe impl<T> Sync for Global<T> {}
+
+static SELECTED_MANIFEST: Global<Manifest<'static>> =
+    Global(UnsafeCell::new(Manifest::empty()));
+static FALLBACK_MANIFEST: Global<Manifest<'static>> =
+    Global(UnsafeCell::new(Manifest::empty()));
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ParseError {
@@ -103,6 +125,7 @@ pub enum ParseError {
     TooManyGrants,
     TooManyStoreObjects,
     TooManyStateVolumes,
+    TooManyNetworkPorts,
     InvalidString,
     InvalidReference,
     InvalidRights,
@@ -111,6 +134,27 @@ pub enum ParseError {
 }
 
 impl<'a> Manifest<'a> {
+    const fn empty() -> Self {
+        Self {
+            generation_id: "",
+            parent_generation_id: "",
+            boot_modules: [None; MAX_BOOT_MODULES],
+            boot_module_count: 0,
+            processes: [None; MAX_PROCESSES],
+            process_count: 0,
+            endpoints: [None; MAX_ENDPOINTS],
+            endpoint_count: 0,
+            grants: [None; MAX_GRANTS],
+            grant_count: 0,
+            store_objects: [None; MAX_STORE_OBJECTS],
+            store_object_count: 0,
+            state_volumes: [None; MAX_STATE_VOLUMES],
+            state_volume_count: 0,
+            network_ports: [None; MAX_NETWORK_PORTS],
+            network_port_count: 0,
+        }
+    }
+
     pub fn generation_id(&self) -> &'a str {
         self.generation_id
     }
@@ -143,32 +187,88 @@ impl<'a> Manifest<'a> {
         self.state_volume_count
     }
 
+    pub fn network_port_count(&self) -> usize {
+        self.network_port_count
+    }
+
     pub fn boot_module(&self, index: usize) -> Option<BootModule<'a>> {
-        self.boot_modules.get(index).copied().flatten()
+        if index < self.boot_module_count {
+            self.boot_modules[index]
+        } else {
+            None
+        }
     }
 
     pub fn process(&self, index: usize) -> Option<Process<'a>> {
-        self.processes.get(index).copied().flatten()
+        if index < self.process_count {
+            self.processes[index]
+        } else {
+            None
+        }
     }
 
     pub fn endpoint(&self, index: usize) -> Option<Endpoint<'a>> {
-        self.endpoints.get(index).copied().flatten()
+        if index < self.endpoint_count {
+            self.endpoints[index]
+        } else {
+            None
+        }
     }
 
     pub fn grant(&self, index: usize) -> Option<Grant> {
-        self.grants.get(index).copied().flatten()
+        if index < self.grant_count {
+            self.grants[index]
+        } else {
+            None
+        }
     }
 
     pub fn store_object(&self, index: usize) -> Option<StoreObject<'a>> {
-        self.store_objects.get(index).copied().flatten()
+        if index < self.store_object_count {
+            self.store_objects[index]
+        } else {
+            None
+        }
     }
 
     pub fn state_volume(&self, index: usize) -> Option<StateVolume<'a>> {
-        self.state_volumes.get(index).copied().flatten()
+        if index < self.state_volume_count {
+            self.state_volumes[index]
+        } else {
+            None
+        }
+    }
+
+    pub fn network_port(&self, index: usize) -> Option<NetworkPort<'a>> {
+        if index < self.network_port_count {
+            self.network_ports[index]
+        } else {
+            None
+        }
     }
 }
 
-pub fn parse(bytes: &'static [u8]) -> Result<Manifest<'static>, ParseError> {
+pub fn parse_selected(bytes: &'static [u8]) -> Result<&'static Manifest<'static>, ParseError> {
+    parse_static(bytes, &SELECTED_MANIFEST)
+}
+
+pub fn parse_fallback(bytes: &'static [u8]) -> Result<&'static Manifest<'static>, ParseError> {
+    parse_static(bytes, &FALLBACK_MANIFEST)
+}
+
+fn parse_static(
+    bytes: &'static [u8],
+    slot: &'static Global<Manifest<'static>>,
+) -> Result<&'static Manifest<'static>, ParseError> {
+    let manifest = unsafe { &mut *slot.0.get() };
+    parse_into(bytes, manifest)?;
+    Ok(unsafe { &*slot.0.get() })
+}
+
+fn parse_into(
+    bytes: &'static [u8],
+    manifest: &mut Manifest<'static>,
+) -> Result<(), ParseError> {
     let mut reader = Reader::new(bytes);
     if reader.read_exact(MAGIC.len())? != MAGIC {
         return Err(ParseError::BadMagic);
@@ -186,25 +286,21 @@ pub fn parse(bytes: &'static [u8]) -> Result<Manifest<'static>, ParseError> {
         reader.read_count(MAX_STORE_OBJECTS, ParseError::TooManyStoreObjects)?;
     let state_volume_count =
         reader.read_count(MAX_STATE_VOLUMES, ParseError::TooManyStateVolumes)?;
+    let network_port_count =
+        reader.read_count(MAX_NETWORK_PORTS, ParseError::TooManyNetworkPorts)?;
     let generation_id = reader.read_fixed_str()?;
     let parent_generation_id = reader.read_fixed_str_allow_empty()?;
 
-    let mut manifest = Manifest {
-        generation_id,
-        parent_generation_id,
-        boot_modules: [None; MAX_BOOT_MODULES],
-        boot_module_count,
-        processes: [None; MAX_PROCESSES],
-        process_count,
-        endpoints: [None; MAX_ENDPOINTS],
-        endpoint_count,
-        grants: [None; MAX_GRANTS],
-        grant_count,
-        store_objects: [None; MAX_STORE_OBJECTS],
-        store_object_count,
-        state_volumes: [None; MAX_STATE_VOLUMES],
-        state_volume_count,
-    };
+    *manifest = Manifest::empty();
+    manifest.generation_id = generation_id;
+    manifest.parent_generation_id = parent_generation_id;
+    manifest.boot_module_count = boot_module_count;
+    manifest.process_count = process_count;
+    manifest.endpoint_count = endpoint_count;
+    manifest.grant_count = grant_count;
+    manifest.store_object_count = store_object_count;
+    manifest.state_volume_count = state_volume_count;
+    manifest.network_port_count = network_port_count;
 
     let mut index = 0;
     while index < boot_module_count {
@@ -224,7 +320,8 @@ pub fn parse(bytes: &'static [u8]) -> Result<Manifest<'static>, ParseError> {
         let service_id = reader.read_fixed_str()?;
         let health_kind = reader.read_fixed_str_allow_empty()?;
         let (start_after, start_after_count) = reader.read_ref_list()?;
-        let (requires_endpoint, requires_endpoint_count) = reader.read_ref_list()?;
+        let (requires_endpoint, requires_endpoint_rights, requires_endpoint_count) =
+            reader.read_endpoint_requirement_list()?;
         let (provides_endpoint, provides_endpoint_count) = reader.read_ref_list()?;
         manifest.processes[index] = Some(Process {
             name,
@@ -236,6 +333,7 @@ pub fn parse(bytes: &'static [u8]) -> Result<Manifest<'static>, ParseError> {
             start_after,
             start_after_count,
             requires_endpoint,
+            requires_endpoint_rights,
             requires_endpoint_count,
             provides_endpoint,
             provides_endpoint_count,
@@ -288,13 +386,21 @@ pub fn parse(bytes: &'static [u8]) -> Result<Manifest<'static>, ParseError> {
         index += 1;
     }
 
-    validate_manifest(&manifest)?;
+    index = 0;
+    while index < network_port_count {
+        manifest.network_ports[index] = Some(NetworkPort {
+            id: reader.read_fixed_str()?,
+        });
+        index += 1;
+    }
+
+    validate_manifest(manifest)?;
 
     if !reader.finished() {
         return Err(ParseError::TrailingBytes);
     }
 
-    Ok(manifest)
+    Ok(())
 }
 
 fn validate_manifest(manifest: &Manifest<'_>) -> Result<(), ParseError> {
@@ -320,6 +426,10 @@ fn validate_manifest(manifest: &Manifest<'_>) -> Result<(), ParseError> {
             process.requires_endpoint_count,
             manifest.endpoint_count,
         )?;
+        validate_endpoint_rights(
+            process.requires_endpoint_rights,
+            process.requires_endpoint_count,
+        )?;
         validate_process_refs(
             process.provides_endpoint,
             process.provides_endpoint_count,
@@ -343,7 +453,8 @@ fn validate_manifest(manifest: &Manifest<'_>) -> Result<(), ParseError> {
             OBJECT_STORE if grant.object_index < manifest.store_object_count => {}
             OBJECT_STATE if grant.object_index < manifest.state_volume_count => {}
             OBJECT_TIMER if grant.object_index == 0 => {}
-            OBJECT_ENDPOINT | OBJECT_STORE | OBJECT_STATE | OBJECT_TIMER => {
+            OBJECT_NETWORK_PORT if grant.object_index < manifest.network_port_count => {}
+            OBJECT_ENDPOINT | OBJECT_STORE | OBJECT_STATE | OBJECT_TIMER | OBJECT_NETWORK_PORT => {
                 return Err(ParseError::InvalidReference);
             }
             _ => return Err(ParseError::InvalidObjectKind),
@@ -356,7 +467,9 @@ fn validate_manifest(manifest: &Manifest<'_>) -> Result<(), ParseError> {
                     | RIGHT_WRITE
                     | RIGHT_SNAPSHOT
                     | RIGHT_RESTORE
-                    | RIGHT_CONTROL)
+                    | RIGHT_CONTROL
+                    | RIGHT_BIND
+                    | RIGHT_LISTEN)
                 != 0
         {
             return Err(ParseError::InvalidRights);
@@ -364,6 +477,17 @@ fn validate_manifest(manifest: &Manifest<'_>) -> Result<(), ParseError> {
         index += 1;
     }
 
+    Ok(())
+}
+
+fn validate_endpoint_rights(rights: [u16; MAX_PROCESS_REFS], count: usize) -> Result<(), ParseError> {
+    let mut index = 0;
+    while index < count {
+        if rights[index] == 0 || rights[index] & !(RIGHT_SEND | RIGHT_RECEIVE) != 0 {
+            return Err(ParseError::InvalidRights);
+        }
+        index += 1;
+    }
     Ok(())
 }
 
@@ -460,6 +584,25 @@ impl<'a> Reader<'a> {
             index += 1;
         }
         Ok((refs, count))
+    }
+
+    fn read_endpoint_requirement_list(
+        &mut self,
+    ) -> Result<([u16; MAX_PROCESS_REFS], [u16; MAX_PROCESS_REFS], usize), ParseError> {
+        let count = self.read_u16()? as usize;
+        if count > MAX_PROCESS_REFS {
+            return Err(ParseError::InvalidReference);
+        }
+
+        let mut refs = [u16::MAX; MAX_PROCESS_REFS];
+        let mut rights = [0; MAX_PROCESS_REFS];
+        let mut index = 0;
+        while index < MAX_PROCESS_REFS {
+            refs[index] = self.read_u16()?;
+            rights[index] = self.read_u16()?;
+            index += 1;
+        }
+        Ok((refs, rights, count))
     }
 
     fn read_exact(&mut self, len: usize) -> Result<&'a [u8], ParseError> {

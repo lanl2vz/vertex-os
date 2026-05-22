@@ -4,6 +4,7 @@ BUILD_DIR := build
 ISO_ROOT := $(BUILD_DIR)/iso-root
 ISO_IMAGE := $(BUILD_DIR)/krust.iso
 BOOT_MANIFEST := $(BUILD_DIR)/hello-generation.krustboot
+FALLBACK_BOOT_MANIFEST := $(BUILD_DIR)/fallback-generation.krustboot
 KERNEL_ELF := target/$(KRUST_TARGET)/debug/krust
 INIT_TARGET_DIR := user/init/target/$(KRUST_TARGET)/debug
 LOGD_TARGET_DIR := user/logd/target/$(KRUST_TARGET)/debug
@@ -24,6 +25,7 @@ STATE_READER_ELF := $(STATE_READER_TARGET_DIR)/state-reader
 TIMER_ELF := $(TIMER_TARGET_DIR)/timer
 FLAKY_ELF := $(FLAKY_TARGET_DIR)/flaky
 VERTEX_MANIFEST ?= ../../examples/hello-generation.vertex.json
+FALLBACK_MANIFEST ?=
 
 QEMU ?= qemu-system-x86_64
 QEMU_EXTRA ?=
@@ -53,6 +55,11 @@ user:
 boot-manifest:
 	mkdir -p $(BUILD_DIR)
 	$(VERTEXCTL) compile-boot-manifest $(VERTEX_MANIFEST) $(BOOT_MANIFEST)
+	@if [ -n "$(FALLBACK_MANIFEST)" ]; then \
+		$(VERTEXCTL) compile-boot-manifest $(FALLBACK_MANIFEST) $(FALLBACK_BOOT_MANIFEST); \
+	else \
+		cp $(BOOT_MANIFEST) $(FALLBACK_BOOT_MANIFEST); \
+	fi
 
 iso: build boot-manifest check-tools check-limine-dir
 	rm -rf $(ISO_ROOT) $(ISO_IMAGE)
@@ -69,6 +76,7 @@ iso: build boot-manifest check-tools check-limine-dir
 	cp $(FLAKY_ELF) $(ISO_ROOT)/boot/flaky.elf
 	cp assets/hello-text.txt $(ISO_ROOT)/boot/hello-text.txt
 	cp $(BOOT_MANIFEST) $(ISO_ROOT)/boot/hello-generation.krustboot
+	cp $(FALLBACK_BOOT_MANIFEST) $(ISO_ROOT)/boot/fallback-generation.krustboot
 	cp limine.conf $(ISO_ROOT)/boot/limine.conf
 	cp $(LIMINE_DIR)/limine-bios.sys $(ISO_ROOT)/boot/limine-bios.sys
 	cp $(LIMINE_DIR)/limine-bios-cd.bin $(ISO_ROOT)/boot/limine-bios-cd.bin

@@ -57,6 +57,7 @@ entry into another userspace process. There is no timer preemption in ABI v0.
 | 15 | `SYS_STATE_READ` | `arg0 = cap_slot`, `arg1 = user_ptr`, `arg2 = max_len` | byte count or error status |
 | 16 | `SYS_SLEEP_MS` | `arg0 = timer_cap_slot`, `arg1 = milliseconds`, `arg2 = 0` | status |
 | 17 | `SYS_PROCESS_STATUS` | `arg0 = process_control_cap_slot`, `arg1 = process_index`, `arg2 = 0` | exit status, running marker, or error status |
+| 18 | `SYS_ROLLBACK_GENERATION` | `arg0 = process_control_cap_slot`, `arg1 = generation_ptr`, `arg2 = len` | switches to the prepared fallback generation or returns error |
 
 ## Return Status Values
 
@@ -103,6 +104,7 @@ vertex-init:
   cap[2] = process-control object, rights=control
   cap[3] = endpoint readiness, rights=receive
   cap[4] = endpoint log-sink, rights=send|receive
+  cap[5+] = additional delegated endpoint authorities, if the graph needs them
 
 logd:
   cap[0] = endpoint log-sink, rights=receive
@@ -111,6 +113,7 @@ logd:
 
 echo:
   cap[1] = endpoint serial-log, rights=send
+  cap[3] = network-port cap:net.tcp.8080, rights=listen
   cap[0] = endpoint log-sink, rights=send after vertex-init derives and transfers it
 
 model-reader:
@@ -146,6 +149,7 @@ SYS_LOG_WRITE requires cap[1] send rights to the serial-log endpoint.
 SYS_ACTIVATE_GENERATION requires cap[2] control rights to process-control.
 SYS_PROCESS_START requires cap[2] control rights to process-control.
 SYS_PROCESS_STATUS requires cap[2] control rights to process-control.
+SYS_ROLLBACK_GENERATION requires cap[2] control rights to process-control.
 SYS_CAP_TRANSFER requires a caller-supplied process-control cap slot and applies the packed rights mask.
 SYS_OBJECT_READ requires read rights on a store-object cap.
 SYS_STATE_WRITE requires write rights on a state-volume cap.
@@ -153,9 +157,13 @@ SYS_STATE_READ requires read rights on a state-volume cap.
 SYS_SLEEP_MS requires control rights on a timer cap.
 ```
 
+Native network-port objects currently grant bind/listen authority to declared
+services; the proof path records and enforces the capability object, but does
+not yet include a network driver syscall that consumes it.
+
 `SYS_ACTIVATE_GENERATION` remains the minimal M12 authority proof. The current
-native path uses `SYS_PROCESS_START` and `SYS_PROCESS_STATUS` for activation
-and supervision.
+native path uses `SYS_PROCESS_START`, `SYS_PROCESS_STATUS`, and
+`SYS_ROLLBACK_GENERATION` for activation, supervision, and fallback.
 
 ## Process Model
 
@@ -269,22 +277,26 @@ SYS_ACTIVATE_GENERATION(cap[2], generation_id, len)
 SYS_PROCESS_START(cap[2], process_index, 0)
   starts a declared process from the compact manifest
 
-SYS_CAP_DERIVE(cap[4], cap[9], send)
+SYS_CAP_DERIVE(cap[4], cap[31], send)
   derives attenuated endpoint authority for echo
 
-SYS_CAP_TRANSFER(cap[2], echo_process_index, packed(cap[9], target_cap[0], send))
+SYS_CAP_TRANSFER(cap[2], echo_process_index, packed(cap[31], target_cap[0], send))
   transfers the attenuated endpoint authority before echo starts
 
 SYS_PROCESS_STATUS(cap[2], process_index, 0)
   observes exits for supervision and restart policy
+
+SYS_ROLLBACK_GENERATION(cap[2], parent_generation_id, len)
+  reinitializes runtime tables from the prepared fallback manifest and enters
+  the fallback generation's initial process
 ```
 
 `vertex-init` reads the compact manifest, computes the activation order from
-manifest dependencies, waits for logd readiness, derives and transfers echo's
-send-only endpoint cap, starts the declared services, and observes their exit
-status. Negative capability tests prove echo cannot receive on its send-only
-cap, logd cannot start processes without process-control, and reader-service
-cannot write through a read-only state cap.
+manifest dependencies, waits for logd readiness, derives and transfers endpoint
+caps with the rights requested by each consumer, starts the declared services,
+and observes their exit status. Negative capability tests prove echo cannot
+receive on its send-only cap, logd cannot start processes without
+process-control, and reader-service cannot write through a read-only state cap.
 
 ## Boot ABI
 
@@ -293,6 +305,7 @@ Limine loads:
 ```text
 krust.elf
 hello-generation.krustboot
+fallback-generation.krustboot
 userspace ELF modules
 ```
 
@@ -311,6 +324,7 @@ endpoints
 grants
 store_objects
 state_volumes
+network_ports
 ```
 
 Krust also creates fixed boot caps for native `vertex-init`:
@@ -320,7 +334,8 @@ cap[0] manifest module read
 cap[1] serial-log send
 cap[2] process-control control
 cap[3] readiness receive
-cap[4] endpoint authority for graph-delegated endpoints
+cap[4+] endpoint authority for graph-delegated endpoints, one authority cap per
+declared endpoint beyond the fixed serial-log/readiness endpoints
 ```
 
 Endpoint, store-object, state-volume, and timer grants for declared services

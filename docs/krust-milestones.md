@@ -443,9 +443,11 @@ grant vertex-init cap[4] send|receive log-sink
 start_after echo <- logd
 ```
 
-`vertex-init` derives and transfers the echo send capability before starting
-echo, so consumers do not receive static boot grants for delegated endpoint
-authority.
+`vertex-init` derives and transfers the endpoint capability requested by each
+consumer before starting that consumer, so consumers do not receive static boot
+grants for delegated endpoint authority. The compact manifest records endpoint
+requirements with rights, and `vertex-init` uses the matching per-endpoint
+authority slot instead of assuming one hardcoded log-sink path.
 
 Acceptance evidence:
 
@@ -496,7 +498,7 @@ SYS_CAP_TRANSFER(control_slot, target_process, packed_source_target_and_rights)
 Acceptance evidence:
 
 ```text
-vertex-init derives send-only cap for echo from stronger endpoint authority
+vertex-init derives endpoint cap for echo from endpoint[2] rights=send
 echo can send
 echo cannot receive
 echo drops cap
@@ -625,7 +627,9 @@ Acceptance evidence:
 Boot generation: gen:bad-0002
 activation failed
 falling back to generation: gen:hello-0001
-rollback activation ok
+Krust rollback generation accepted: target=gen:hello-0001
+Boot generation: gen:hello-0001
+Native service activation ok
 ```
 
 This is where Vertex begins to become graph-native rollback rather than only a

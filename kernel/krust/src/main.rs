@@ -15,10 +15,24 @@ mod syscall;
 mod usercopy;
 mod userspace;
 
-use core::arch::asm;
+use core::{arch::asm, cell::UnsafeCell};
 use core::panic::PanicInfo;
 
 const MAX_BOOT_PROCESSES: usize = 16;
+
+struct Global<T>(UnsafeCell<T>);
+
+unsafe impl<T> Sync for Global<T> {}
+
+static SELECTED_BOOT_CONFIG: Global<ipc::BootRuntimeConfig> =
+    Global(UnsafeCell::new(ipc::BootRuntimeConfig::new()));
+static FALLBACK_BOOT_CONFIG: Global<ipc::BootRuntimeConfig> =
+    Global(UnsafeCell::new(ipc::BootRuntimeConfig::new()));
+
+struct BootManifests {
+    selected: &'static boot_manifest::Manifest<'static>,
+    fallback: Option<&'static boot_manifest::Manifest<'static>>,
+}
 
 #[unsafe(link_section = ".text._start")]
 #[unsafe(no_mangle)]
@@ -77,7 +91,7 @@ fn print_boot_info() {
         index += 1;
     }
 
-    let Some(boot_manifest) = print_boot_modules() else {
+    let Some(boot_manifests) = print_boot_modules() else {
         return;
     };
     let mut allocator = match init_physical_allocator(&memory_map) {
@@ -90,7 +104,7 @@ fn print_boot_info() {
         return;
     };
     run_capability_table_demo(&allocator, heap);
-    run_native_boot(&mut allocator, &boot_manifest);
+    run_native_boot(&mut allocator, &boot_manifests);
 }
 
 fn init_physical_allocator(memory_map: &limine::MemoryMap) -> Option<memory::FrameAllocator> {
@@ -372,40 +386,37 @@ fn run_capability_table_demo(allocator: &memory::FrameAllocator, heap: KernelHea
 
 fn run_native_boot(
     allocator: &mut memory::FrameAllocator,
-    boot_manifest: &boot_manifest::Manifest<'static>,
+    boot_manifests: &BootManifests,
 ) {
-    let Some(hhdm_offset) = limine::hhdm_offset() else {
-        serial::write_str("Native userspace load failed: HHDM unavailable\n");
+    let Some(config) = prepare_native_boot_config(
+        allocator,
+        boot_manifests.selected,
+        boot_manifest::MODULE_STRING,
+        "krustboot-manifest",
+        &SELECTED_BOOT_CONFIG,
+    ) else {
         return;
     };
 
-    let mut images = [None; MAX_BOOT_PROCESSES];
-    let mut index = 0;
-    while index < boot_manifest.process_count() {
-        let Some(process) = boot_manifest.process(index) else {
-            serial::write_str("KrustBoot IPC plan failed: process gap\n");
+    if let Some(fallback_manifest) = boot_manifests.fallback {
+        if fallback_manifest.generation_id() == boot_manifests.selected.generation_id() {
+            serial::write_str("KrustBoot fallback manifest matches selected generation; ignoring\n");
+        } else if let Some(fallback_config) = prepare_native_boot_config(
+            allocator,
+            fallback_manifest,
+            boot_manifest::FALLBACK_MODULE_STRING,
+            "krustboot-fallback-manifest",
+            &FALLBACK_BOOT_CONFIG,
+        ) {
+            ipc::set_fallback_boot_config(fallback_manifest.generation_id(), fallback_config);
+            serial::write_str("KrustBoot fallback generation ready: ");
+            serial::write_str(fallback_manifest.generation_id());
+            serial::write_str("\n");
+        } else {
+            serial::write_str("KrustBoot fallback runtime plan unavailable\n");
             return;
-        };
-        let Some(image) = load_boot_process_image(process, hhdm_offset, allocator) else {
-            return;
-        };
-        images[index] = Some(image);
-        index += 1;
+        }
     }
-
-    let Some(config) = build_boot_runtime_config(boot_manifest, &images) else {
-        return;
-    };
-    let Some(manifest_module) = find_boot_manifest_module() else {
-        serial::write_str("KrustBoot runtime init failed: manifest module missing\n");
-        return;
-    };
-    let mut config = config;
-    config.set_manifest_module(ipc::BootModuleConfig {
-        name: "krustboot-manifest",
-        base: manifest_module.address as u64,
-        length: manifest_module.size,
-    });
 
     if ipc::init_from_boot_config(config).is_err() {
         serial::write_str("Native runtime init failed from KrustBoot manifest\n");
@@ -418,6 +429,47 @@ fn run_native_boot(
     };
 
     userspace::enter_initial_process(ipc::initial_process_name(), initial);
+}
+
+fn prepare_native_boot_config(
+    allocator: &mut memory::FrameAllocator,
+    boot_manifest: &boot_manifest::Manifest<'static>,
+    manifest_module_string: &[u8],
+    manifest_module_name: &'static str,
+    config_slot: &'static Global<ipc::BootRuntimeConfig>,
+) -> Option<&'static ipc::BootRuntimeConfig> {
+    let Some(hhdm_offset) = limine::hhdm_offset() else {
+        serial::write_str("Native userspace load failed: HHDM unavailable\n");
+        return None;
+    };
+
+    let mut images = [None; MAX_BOOT_PROCESSES];
+    let mut index = 0;
+    while index < boot_manifest.process_count() {
+        let Some(process) = boot_manifest.process(index) else {
+            serial::write_str("KrustBoot IPC plan failed: process gap\n");
+            return None;
+        };
+        let Some(image) = load_boot_process_image(process, hhdm_offset, allocator) else {
+            return None;
+        };
+        images[index] = Some(image);
+        index += 1;
+    }
+
+    let config = unsafe { &mut *config_slot.0.get() };
+    *config = ipc::BootRuntimeConfig::new();
+    build_boot_runtime_config(boot_manifest, &images, config)?;
+    let Some(manifest_module) = find_module_by_string(manifest_module_string) else {
+        serial::write_str("KrustBoot runtime init failed: manifest module missing\n");
+        return None;
+    };
+    config.set_manifest_module(ipc::BootModuleConfig {
+        name: manifest_module_name,
+        base: manifest_module.address as u64,
+        length: manifest_module.size,
+    });
+    Some(unsafe { &*config_slot.0.get() })
 }
 
 fn load_boot_process_image(
@@ -468,9 +520,8 @@ fn load_boot_process_image(
 fn build_boot_runtime_config(
     boot_manifest: &boot_manifest::Manifest<'static>,
     images: &[Option<userspace::UserImage>; MAX_BOOT_PROCESSES],
-) -> Option<ipc::BootRuntimeConfig> {
-    let mut config = ipc::BootRuntimeConfig::new();
-
+    config: &mut ipc::BootRuntimeConfig,
+) -> Option<()> {
     let mut index = 0;
     while index < boot_manifest.endpoint_count() {
         let endpoint = boot_manifest.endpoint(index)?;
@@ -550,6 +601,19 @@ fn build_boot_runtime_config(
     }
 
     index = 0;
+    while index < boot_manifest.network_port_count() {
+        let port = boot_manifest.network_port(index)?;
+        if config
+            .add_network_port(ipc::BootNetworkPortConfig { id: port.id })
+            .is_err()
+        {
+            serial::write_str("KrustBoot runtime plan failed: network port table\n");
+            return None;
+        }
+        index += 1;
+    }
+
+    index = 0;
     while index < boot_manifest.grant_count() {
         let grant = boot_manifest.grant(index)?;
         let rights = capability_rights_from_boot(grant.rights);
@@ -573,7 +637,7 @@ fn build_boot_runtime_config(
         index += 1;
     }
 
-    Some(config)
+    Some(())
 }
 
 fn capability_rights_from_boot(rights: u16) -> u64 {
@@ -598,6 +662,12 @@ fn capability_rights_from_boot(rights: u16) -> u64 {
     }
     if rights & boot_manifest::RIGHT_CONTROL != 0 {
         out |= capability::RIGHT_CONTROL;
+    }
+    if rights & boot_manifest::RIGHT_BIND != 0 {
+        out |= capability::RIGHT_BIND;
+    }
+    if rights & boot_manifest::RIGHT_LISTEN != 0 {
+        out |= capability::RIGHT_LISTEN;
     }
     out
 }
@@ -630,7 +700,7 @@ fn print_allocator_stats(label: &str, allocator: &memory::FrameAllocator) {
     serial::write_str("\n");
 }
 
-fn print_boot_modules() -> Option<boot_manifest::Manifest<'static>> {
+fn print_boot_modules() -> Option<BootManifests> {
     let Some(modules) = limine::modules() else {
         serial::write_str("Limine modules unavailable\n");
         return None;
@@ -640,7 +710,8 @@ fn print_boot_modules() -> Option<boot_manifest::Manifest<'static>> {
     serial::write_u64_dec(modules.module_count());
     serial::write_str("\n");
 
-    let mut parsed_manifest = None;
+    let mut selected_manifest = None;
+    let mut fallback_manifest = None;
     let mut index = 0;
     while index < modules.module_count() {
         if let Some(module) = modules.module(index) {
@@ -655,18 +726,23 @@ fn print_boot_modules() -> Option<boot_manifest::Manifest<'static>> {
             serial::write_str("\n");
 
             if c_string_eq(module.string, boot_manifest::MODULE_STRING) {
-                parsed_manifest = parse_boot_manifest_module(module);
+                selected_manifest = parse_boot_manifest_module(module, false);
+            } else if c_string_eq(module.string, boot_manifest::FALLBACK_MODULE_STRING) {
+                fallback_manifest = parse_boot_manifest_module(module, true);
             }
         }
 
         index += 1;
     }
 
-    if parsed_manifest.is_none() {
+    if selected_manifest.is_none() {
         serial::write_str("KrustBoot manifest unavailable\n");
     }
 
-    parsed_manifest
+    selected_manifest.map(|selected| BootManifests {
+        selected,
+        fallback: fallback_manifest,
+    })
 }
 
 fn find_boot_manifest_module() -> Option<&'static limine::File> {
@@ -692,7 +768,8 @@ fn find_module_by_string(expected: &[u8]) -> Option<&'static limine::File> {
 
 fn parse_boot_manifest_module(
     module: &'static limine::File,
-) -> Option<boot_manifest::Manifest<'static>> {
+    fallback: bool,
+) -> Option<&'static boot_manifest::Manifest<'static>> {
     serial::write_str("KrustBoot manifest module: ");
     serial::write_c_string(module.path);
     serial::write_str(" bytes=");
@@ -700,9 +777,16 @@ fn parse_boot_manifest_module(
     serial::write_str("\n");
 
     let bytes = unsafe { core::slice::from_raw_parts(module.address, module.size as usize) };
-    match boot_manifest::parse(bytes) {
+    let parsed = if fallback {
+        boot_manifest::parse_fallback(bytes)
+    } else {
+        boot_manifest::parse_selected(bytes)
+    };
+    match parsed {
         Ok(manifest) => {
-            print_boot_manifest(&manifest);
+            if !fallback {
+                print_boot_manifest(manifest);
+            }
             Some(manifest)
         }
         Err(error) => {
@@ -858,6 +942,21 @@ fn print_boot_manifest(manifest: &boot_manifest::Manifest<'static>) {
         }
         index += 1;
     }
+
+    serial::write_str("KrustBoot network ports: ");
+    serial::write_u64_dec(manifest.network_port_count() as u64);
+    serial::write_str("\n");
+    index = 0;
+    while index < manifest.network_port_count() {
+        if let Some(port) = manifest.network_port(index) {
+            serial::write_str("  network_port[");
+            serial::write_u64_dec(index as u64);
+            serial::write_str("] id=");
+            serial::write_str(port.id);
+            serial::write_str("\n");
+        }
+        index += 1;
+    }
 }
 
 fn print_boot_grant_object(
@@ -895,6 +994,15 @@ fn print_boot_grant_object(
         }
         boot_manifest::OBJECT_TIMER => {
             serial::write_str("timer=monotonic-timer");
+        }
+        boot_manifest::OBJECT_NETWORK_PORT => {
+            serial::write_str("network-port=");
+            serial::write_str(
+                manifest
+                    .network_port(object_index)
+                    .map(|port| port.id)
+                    .unwrap_or("<bad>"),
+            );
         }
         _ => serial::write_str("object=<bad>"),
     }
@@ -948,6 +1056,20 @@ fn print_boot_grant_rights(rights: u16) {
         serial::write_str("control");
         wrote = true;
     }
+    if rights & boot_manifest::RIGHT_BIND != 0 {
+        if wrote {
+            serial::write_str("|");
+        }
+        serial::write_str("bind");
+        wrote = true;
+    }
+    if rights & boot_manifest::RIGHT_LISTEN != 0 {
+        if wrote {
+            serial::write_str("|");
+        }
+        serial::write_str("listen");
+        wrote = true;
+    }
     if !wrote {
         serial::write_str("none");
     }
@@ -967,6 +1089,9 @@ fn print_boot_manifest_error(error: boot_manifest::ParseError) {
         }
         boot_manifest::ParseError::TooManyStateVolumes => {
             serial::write_str("too many state volumes")
+        }
+        boot_manifest::ParseError::TooManyNetworkPorts => {
+            serial::write_str("too many network ports")
         }
         boot_manifest::ParseError::InvalidString => serial::write_str("invalid string"),
         boot_manifest::ParseError::InvalidReference => serial::write_str("invalid reference"),
