@@ -1,6 +1,6 @@
 # Krust Kernel
 
-Krust M8 is the first native process capability enforcement milestone.
+Krust M9 is the first native safe user-memory milestone.
 
 The target is intentionally small:
 
@@ -25,7 +25,10 @@ Krust loads each static user ELF into a fresh low-half address space
 Krust creates a runtime process table and endpoint table
 Krust gives ipc-sender cap[0] send rights to endpoint 1
 Krust gives ipc-receiver cap[0] receive rights to endpoint 1
+Krust installs a minimal IDT for #UD, #GP, and #PF
 Krust enters ring 3 at the sender ELF entry point
+Krust validates syscall user buffers by walking user page tables
+Bad `sys_write_serial`, `sys_ipc_send`, and `sys_ipc_recv` pointers return STATUS_BAD_BUFFER
 Sender calls `sys_ipc_recv` and is rejected for missing receive rights
 Sender calls `sys_ipc_send`
 Krust switches to the receiver after sender exit
@@ -35,10 +38,12 @@ Receiver calls `sys_ipc_send` and is rejected for missing send rights
 Krust halts after `IPC demo ok`
 ```
 
-No dynamic heap allocator, general scheduler, blocking IPC, user page-fault
-recovery, full manifest
+No dynamic heap allocator, general scheduler, blocking IPC, full interrupt
+handling, timer/APIC setup, preemption, user page-fault recovery, full manifest
 parsing, Vertex IR integration, filesystem, network, or device drivers are part
-of M8.
+of M9. The M9 syscall path rejects the expected bad-pointer tests before CPU
+faults; the IDT handlers provide a defined serial-log-and-halt path for
+unexpected `#UD`, `#GP`, and `#PF`.
 
 ## Prerequisites
 
@@ -124,12 +129,22 @@ Process table entries: 2
 Endpoint table entries: 1
 proc=ipc-sender cap[0] endpoint=1 rights=send
 proc=ipc-receiver cap[0] endpoint=1 rights=receive
+GDT initialized
+IDT initialized: #UD #GP #PF
+Syscall path initialized
 Entering IPC sender userspace
-IPC send accepted: endpoint=1 bytes=14
-IPC receive delivered: endpoint=1 bytes=14
+Userspace sys_write_serial: ipc sender started
+Bad pointer test: SYS_WRITE_SERIAL returned STATUS_BAD_BUFFER
 IPC negative test: sender receive rejected: bad capability
-IPC negative test: receiver send rejected: bad capability
+Bad pointer test: SYS_IPC_SEND returned STATUS_BAD_BUFFER
+IPC send accepted: endpoint=1 bytes=14
+Userspace sys_write_serial: ipc sender sent message
+Userspace sys_write_serial: ipc receiver started
+IPC receive delivered: endpoint=1 bytes=14
+Userspace sys_write_serial: ipc receiver received message
 Userspace sys_write_serial: Krust IPC ping
+Bad pointer test: SYS_IPC_RECV returned STATUS_BAD_BUFFER
+IPC negative test: receiver send rejected: bad capability
 IPC demo ok
 ```
 
@@ -152,10 +167,14 @@ Vertex manifest generation: gen:hello-0001
 Physical allocator demo ok
 Virtual memory demo ok
 Capability table demo ok
+IDT initialized: #UD #GP #PF
 Process table entries: 2
 Endpoint table entries: 1
 proc=ipc-sender cap[0] endpoint=1 rights=send
 proc=ipc-receiver cap[0] endpoint=1 rights=receive
+Bad pointer test: SYS_WRITE_SERIAL returned STATUS_BAD_BUFFER
+Bad pointer test: SYS_IPC_SEND returned STATUS_BAD_BUFFER
+Bad pointer test: SYS_IPC_RECV returned STATUS_BAD_BUFFER
 IPC send accepted: endpoint=1 bytes=14
 IPC receive delivered: endpoint=1 bytes=14
 IPC negative test: sender receive rejected: bad capability
@@ -167,11 +186,11 @@ IPC demo ok
 ## Machine Notes
 
 Linux x86_64 can add KVM later with QEMU flags such as `-enable-kvm -cpu host`.
-That is not enabled by default so the M8 command stays portable:
+That is not enabled by default so the M9 command stays portable:
 
 ```sh
 QEMU_EXTRA="-enable-kvm -cpu host" make smoke
 ```
 
 macOS Apple Silicon can run `qemu-system-x86_64` by emulation. It is slower than
-native AArch64 virtualization, but it is enough for the M8 serial milestone.
+native AArch64 virtualization, but it is enough for the M9 serial milestone.

@@ -3,6 +3,7 @@
 
 mod capability;
 mod elf;
+mod exceptions;
 mod gdt;
 mod ipc;
 mod limine;
@@ -10,6 +11,7 @@ mod memory;
 mod paging;
 mod serial;
 mod syscall;
+mod usercopy;
 mod userspace;
 
 use core::arch::asm;

@@ -6,7 +6,7 @@ Krust Kernel is the native Rust kernel prototype that will enforce that graph's
 runtime authority. The repository now has two active tracks: a hosted Linux
 prototype for Vertex IR, `vertexctl`, supervisor behavior, and capability
 semantics; and a bootable Krust kernel under `kernel/krust` that runs under
-QEMU/Limine and has reached the M8 process capability enforcement milestone.
+QEMU/Limine and has reached the M9 safe user-memory milestone.
 
 ## Repository Layout
 
@@ -25,24 +25,25 @@ vertex-os/
     netstack/            Demo hosted network capability provider
     echo-server/         Demo service consuming log and network capabilities
   kernel/
-    krust/               Bootable Krust kernel prototype, currently at M8 caps
+    krust/               Bootable Krust kernel prototype, currently at M9 user-copy safety
   lang/
     vertex-lang/         Planned typed system-definition language
   nix/                   Nix support modules and builders
   flake.nix              Planned root flake entrypoint
 ```
 
-## Krust M8
+## Krust M9
 
-The first native process capability enforcement milestone lives in
-`kernel/krust`. It is isolated from the hosted Cargo workspace and boots a
-Limine ISO under QEMU until Krust prints `Krust Kernel booted`, reads Limine's
-memory map, finds the packaged `hello-generation.vertex.json` boot module,
-exercises physical and virtual memory, creates boot kernel objects and compact
-capabilities, loads two static userspace ELF modules, creates a process table
-and endpoint table, grants process-local endpoint capabilities, accepts the
-authorized send/receive path, rejects unauthorized cross-operations, transfers
-`Krust IPC ping`, and halts after `IPC demo ok`.
+The current native safety milestone lives in `kernel/krust`. It is isolated
+from the hosted Cargo workspace and boots a Limine ISO under QEMU until Krust
+prints `Krust Kernel booted`, reads Limine's memory map, finds the packaged
+`hello-generation.vertex.json` boot module, exercises physical and virtual
+memory, creates boot kernel objects and compact capabilities, loads two static
+userspace ELF modules, creates process-local endpoint capability tables,
+installs a minimal IDT for `#UD`, `#GP`, and `#PF`, validates syscall buffers by
+walking user page tables, rejects bad user pointers with `STATUS_BAD_BUFFER`,
+accepts the authorized send/receive path, rejects unauthorized cross-operations,
+transfers `Krust IPC ping`, and halts after `IPC demo ok`.
 
 ```sh
 cd kernel/krust

@@ -1,6 +1,9 @@
-use core::{cell::UnsafeCell, ptr};
+use core::cell::UnsafeCell;
 
-use crate::{capability, serial};
+use crate::{
+    capability, paging, serial,
+    usercopy::{self, UserPtr},
+};
 
 pub const ENDPOINT_CAP_SLOT: u64 = 0;
 pub const BOOT_ENDPOINT_ID: u64 = 1;
@@ -9,7 +12,6 @@ const MAX_MESSAGE_BYTES: usize = 128;
 const MAX_OBJECTS: usize = 8;
 const MAX_PROCESSES: usize = 4;
 const MAX_CAPS: usize = 8;
-const USER_CANONICAL_LIMIT: u64 = 0x0000_8000_0000_0000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProcessId {
@@ -434,9 +436,6 @@ pub fn send(cap_slot: u64, source: *const u8, len: usize) -> Result<(), IpcError
     if len > MAX_MESSAGE_BYTES {
         return Err(IpcError::MessageTooLarge);
     }
-    if !valid_user_range(source as u64, len as u64) {
-        return Err(IpcError::InvalidUserBuffer);
-    }
 
     let endpoint_id = match endpoint_from_cap(cap_slot, capability::RIGHT_SEND) {
         Ok(endpoint_id) => endpoint_id,
@@ -446,14 +445,16 @@ pub fn send(cap_slot: u64, source: *const u8, len: usize) -> Result<(), IpcError
         }
     };
 
+    let mut message = [0u8; MAX_MESSAGE_BYTES];
+    usercopy::copy_from_user(&mut message, UserPtr::new(source as u64), len)
+        .map_err(|_| IpcError::InvalidUserBuffer)?;
+
     let endpoint = runtime()
         .objects
         .get_endpoint_mut(endpoint_id)
         .ok_or(IpcError::BadCapability)?;
 
-    unsafe {
-        ptr::copy_nonoverlapping(source, endpoint.message.as_mut_ptr(), len);
-    }
+    endpoint.message[..len].copy_from_slice(&message[..len]);
     endpoint.message_len = len;
     endpoint.message_ready = true;
 
@@ -467,10 +468,6 @@ pub fn send(cap_slot: u64, source: *const u8, len: usize) -> Result<(), IpcError
 }
 
 pub fn receive(cap_slot: u64, destination: *mut u8, max_len: usize) -> Result<usize, IpcError> {
-    if !valid_user_range(destination as u64, max_len as u64) {
-        return Err(IpcError::InvalidUserBuffer);
-    }
-
     let endpoint_id = match endpoint_from_cap(cap_slot, capability::RIGHT_RECEIVE) {
         Ok(endpoint_id) => endpoint_id,
         Err(error) => {
@@ -479,19 +476,36 @@ pub fn receive(cap_slot: u64, destination: *mut u8, max_len: usize) -> Result<us
         }
     };
 
+    usercopy::validate_user_buffer(
+        UserPtr::new(destination as u64),
+        max_len,
+        paging::UserAccess::Write,
+    )
+    .map_err(|_| IpcError::InvalidUserBuffer)?;
+
+    let mut message = [0u8; MAX_MESSAGE_BYTES];
+    let copy_len = {
+        let endpoint = runtime()
+            .objects
+            .get_endpoint_mut(endpoint_id)
+            .ok_or(IpcError::BadCapability)?;
+
+        if !endpoint.message_ready {
+            return Err(IpcError::Empty);
+        }
+
+        let copy_len = min(endpoint.message_len, max_len);
+        message[..copy_len].copy_from_slice(&endpoint.message[..copy_len]);
+        copy_len
+    };
+
+    usercopy::copy_to_user(UserPtr::new(destination as u64), &message[..copy_len])
+        .map_err(|_| IpcError::InvalidUserBuffer)?;
+
     let endpoint = runtime()
         .objects
         .get_endpoint_mut(endpoint_id)
         .ok_or(IpcError::BadCapability)?;
-
-    if !endpoint.message_ready {
-        return Err(IpcError::Empty);
-    }
-
-    let copy_len = min(endpoint.message_len, max_len);
-    unsafe {
-        ptr::copy_nonoverlapping(endpoint.message.as_ptr(), destination, copy_len);
-    }
     endpoint.message_ready = false;
 
     serial::write_str("IPC receive delivered: endpoint=");
@@ -598,14 +612,6 @@ fn current_process_short_name() -> &'static str {
         Some(ProcessId::Receiver) => "receiver",
         None => "<none>",
     }
-}
-
-fn valid_user_range(base: u64, len: u64) -> bool {
-    let Some(end) = base.checked_add(len) else {
-        return false;
-    };
-
-    base < USER_CANONICAL_LIMIT && end <= USER_CANONICAL_LIMIT
 }
 
 fn runtime() -> &'static mut RuntimeState {

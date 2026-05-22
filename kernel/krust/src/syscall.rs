@@ -1,6 +1,9 @@
 use core::arch::{asm, global_asm};
 
-use crate::{gdt, ipc, serial};
+use crate::{
+    gdt, ipc, serial,
+    usercopy::{self, UserPtr},
+};
 
 const IA32_EFER: u32 = 0xc000_0080;
 const IA32_STAR: u32 = 0xc000_0081;
@@ -21,6 +24,7 @@ const STATUS_BAD_CAPABILITY: u64 = u64::MAX - 1;
 const STATUS_BAD_BUFFER: u64 = u64::MAX - 2;
 const STATUS_TOO_LARGE: u64 = u64::MAX - 3;
 const STATUS_EMPTY: u64 = u64::MAX - 4;
+const WRITE_SERIAL_MAX: usize = 256;
 
 #[repr(C, align(16))]
 pub struct SyscallStack([u8; SYSCALL_STACK_SIZE]);
@@ -77,15 +81,27 @@ pub fn init() {
 #[unsafe(no_mangle)]
 pub extern "C" fn krust_syscall_dispatch(number: u64, arg0: u64, arg1: u64, arg2: u64) -> u64 {
     match number {
-        SYS_WRITE_SERIAL => match user_bytes(arg0, arg1) {
-            Some(bytes) => {
-                serial::write_str("Userspace sys_write_serial: ");
-                serial::write_ascii_bytes(bytes);
-                serial::write_str("\n");
-                STATUS_OK
+        SYS_WRITE_SERIAL => {
+            let mut buffer = [0u8; WRITE_SERIAL_MAX];
+            let Ok(len) = usize::try_from(arg1) else {
+                return STATUS_BAD_BUFFER;
+            };
+
+            match usercopy::copy_from_user(&mut buffer, UserPtr::new(arg0), len) {
+                Ok(()) => {
+                    serial::write_str("Userspace sys_write_serial: ");
+                    serial::write_ascii_bytes(&buffer[..len]);
+                    serial::write_str("\n");
+                    STATUS_OK
+                }
+                Err(_) => {
+                    serial::write_str(
+                        "Bad pointer test: SYS_WRITE_SERIAL returned STATUS_BAD_BUFFER\n",
+                    );
+                    STATUS_BAD_BUFFER
+                }
             }
-            None => STATUS_BAD_BUFFER,
-        },
+        }
         SYS_EXIT => exit_current_process(arg0),
         SYS_IPC_SEND => match ipc::send(
             arg0,
@@ -93,7 +109,7 @@ pub extern "C" fn krust_syscall_dispatch(number: u64, arg0: u64, arg1: u64, arg2
             usize::try_from(arg2).unwrap_or(usize::MAX),
         ) {
             Ok(()) => STATUS_OK,
-            Err(error) => ipc_error_status(error),
+            Err(error) => ipc_error_status("SYS_IPC_SEND", error),
         },
         SYS_IPC_RECV => {
             match ipc::receive(
@@ -102,7 +118,7 @@ pub extern "C" fn krust_syscall_dispatch(number: u64, arg0: u64, arg1: u64, arg2
                 usize::try_from(arg2).unwrap_or(usize::MAX),
             ) {
                 Ok(len) => len as u64,
-                Err(error) => ipc_error_status(error),
+                Err(error) => ipc_error_status("SYS_IPC_RECV", error),
             }
         }
         _ => {
@@ -141,25 +157,16 @@ fn exit_current_process(status: u64) -> ! {
     }
 }
 
-fn user_bytes(pointer: u64, len: u64) -> Option<&'static [u8]> {
-    const USER_CANONICAL_LIMIT: u64 = 0x0000_8000_0000_0000;
-
-    let end = pointer.checked_add(len)?;
-    if pointer >= USER_CANONICAL_LIMIT || end > USER_CANONICAL_LIMIT {
-        return None;
-    }
-
-    Some(unsafe { core::slice::from_raw_parts(pointer as *const u8, len as usize) })
-}
-
-fn ipc_error_status(error: ipc::IpcError) -> u64 {
+fn ipc_error_status(operation: &str, error: ipc::IpcError) -> u64 {
     match error {
         ipc::IpcError::BadCapability => {
             serial::write_str("IPC syscall rejected: bad capability\n");
             STATUS_BAD_CAPABILITY
         }
         ipc::IpcError::InvalidUserBuffer => {
-            serial::write_str("IPC syscall rejected: bad user buffer\n");
+            serial::write_str("Bad pointer test: ");
+            serial::write_str(operation);
+            serial::write_str(" returned STATUS_BAD_BUFFER\n");
             STATUS_BAD_BUFFER
         }
         ipc::IpcError::MessageTooLarge => {

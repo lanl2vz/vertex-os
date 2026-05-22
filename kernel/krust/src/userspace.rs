@@ -2,7 +2,7 @@ use core::ptr;
 
 use crate::{
     elf::{self, Elf, ProgramHeader},
-    gdt, ipc, memory,
+    exceptions, gdt, ipc, memory,
     memory::{FRAME_SIZE, FrameAllocator},
     paging::{self, AddressSpace, PageFlags},
     serial, syscall,
@@ -63,6 +63,7 @@ pub fn enter(image: UserImage) -> ! {
 
     gdt::init();
     serial::write_str("GDT initialized\n");
+    exceptions::init();
     syscall::init();
     serial::write_str("Syscall path initialized\n");
 
@@ -75,6 +76,7 @@ pub fn enter(image: UserImage) -> ! {
 pub fn enter_ipc_demo(initial: ipc::ProcessContext) -> ! {
     gdt::init();
     serial::write_str("GDT initialized\n");
+    exceptions::init();
     syscall::init();
     serial::write_str("Syscall path initialized\n");
 

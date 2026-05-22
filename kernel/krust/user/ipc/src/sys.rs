@@ -2,6 +2,8 @@ use core::arch::asm;
 
 pub const ENDPOINT_CAP_SLOT: u64 = 0;
 pub const STATUS_BAD_CAPABILITY: u64 = u64::MAX - 1;
+pub const STATUS_BAD_BUFFER: u64 = u64::MAX - 2;
+pub const BAD_USER_PTR: u64 = 0x0000_6000_0000_0000;
 
 const SYS_WRITE_SERIAL: u64 = 1;
 const SYS_EXIT: u64 = 2;
@@ -17,6 +19,11 @@ pub fn write_serial(message: &[u8]) -> u64 {
     )
 }
 
+#[allow(dead_code)]
+pub fn write_serial_raw(user_ptr: u64, len: u64) -> u64 {
+    syscall3(SYS_WRITE_SERIAL, user_ptr, len, 0)
+}
+
 pub fn ipc_send(cap_slot: u64, message: &[u8]) -> u64 {
     syscall3(
         SYS_IPC_SEND,
@@ -26,6 +33,11 @@ pub fn ipc_send(cap_slot: u64, message: &[u8]) -> u64 {
     )
 }
 
+#[allow(dead_code)]
+pub fn ipc_send_raw(cap_slot: u64, user_ptr: u64, len: u64) -> u64 {
+    syscall3(SYS_IPC_SEND, cap_slot, user_ptr, len)
+}
+
 pub fn ipc_recv(cap_slot: u64, buffer: &mut [u8]) -> u64 {
     syscall3(
         SYS_IPC_RECV,
@@ -33,6 +45,11 @@ pub fn ipc_recv(cap_slot: u64, buffer: &mut [u8]) -> u64 {
         buffer.as_mut_ptr() as u64,
         buffer.len() as u64,
     )
+}
+
+#[allow(dead_code)]
+pub fn ipc_recv_raw(cap_slot: u64, user_ptr: u64, len: u64) -> u64 {
+    syscall3(SYS_IPC_RECV, cap_slot, user_ptr, len)
 }
 
 pub fn exit(status: u64) -> ! {
