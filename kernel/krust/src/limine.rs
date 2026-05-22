@@ -18,6 +18,12 @@ const MEMMAP_REQUEST_ID: [u64; 4] = [
     0x67cf3d9d378a806f,
     0xe304acdfc50c3c62,
 ];
+const HHDM_REQUEST_ID: [u64; 4] = [
+    COMMON_MAGIC_0,
+    COMMON_MAGIC_1,
+    0x48dcf1cb8ad2b852,
+    0x63984e959a98244b,
+];
 const MODULE_REQUEST_ID: [u64; 4] = [
     COMMON_MAGIC_0,
     COMMON_MAGIC_1,
@@ -46,6 +52,10 @@ static BASE_REVISION: BaseRevision = BaseRevision::new(0);
 #[used]
 #[unsafe(link_section = ".requests")]
 static MEMMAP_REQUEST: Request<MemmapResponse> = Request::new(MEMMAP_REQUEST_ID);
+
+#[used]
+#[unsafe(link_section = ".requests")]
+static HHDM_REQUEST: Request<HhdmResponse> = Request::new(HHDM_REQUEST_ID);
 
 #[used]
 #[unsafe(link_section = ".requests")]
@@ -152,6 +162,12 @@ struct MemmapResponse {
 }
 
 #[repr(C)]
+struct HhdmResponse {
+    revision: u64,
+    offset: u64,
+}
+
+#[repr(C)]
 struct ModuleResponse {
     revision: u64,
     module_count: u64,
@@ -231,6 +247,10 @@ pub fn memory_map() -> Option<MemoryMap> {
     MEMMAP_REQUEST
         .response()
         .map(|response| MemoryMap { response })
+}
+
+pub fn hhdm_offset() -> Option<u64> {
+    HHDM_REQUEST.response().map(|response| response.offset)
 }
 
 pub fn modules() -> Option<Modules> {

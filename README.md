@@ -28,13 +28,14 @@ vertex-os/
   flake.nix              Planned root flake entrypoint
 ```
 
-## Krust M3
+## Krust M4
 
-The first native physical memory allocator milestone lives in `kernel/krust`.
-It is isolated from the hosted Cargo workspace and boots a Limine ISO under
-QEMU until Krust prints `Krust Kernel booted`, reads Limine's memory map, finds
-the packaged `hello-generation.vertex.json` boot module, allocates/frees 4 KiB
-physical frames, prints allocator stats to the serial console, and halts.
+The first native virtual memory milestone lives in `kernel/krust`. It is
+isolated from the hosted Cargo workspace and boots a Limine ISO under QEMU
+until Krust prints `Krust Kernel booted`, reads Limine's memory map, finds the
+packaged `hello-generation.vertex.json` boot module, allocates/frees 4 KiB
+physical frames, maps a small kernel-heap virtual range, verifies virtual-page
+read/write access, prints memory stats to the serial console, and halts.
 
 ```sh
 cd kernel/krust

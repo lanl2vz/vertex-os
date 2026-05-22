@@ -3,6 +3,7 @@
 
 mod limine;
 mod memory;
+mod paging;
 mod serial;
 
 use core::arch::asm;
@@ -69,24 +70,34 @@ fn print_boot_info() {
     }
 
     print_manifest_module();
-    run_physical_allocator_demo(&memory_map);
+    let mut allocator = match init_physical_allocator(&memory_map) {
+        Some(allocator) => allocator,
+        None => return,
+    };
+
+    run_physical_allocator_demo(&mut allocator);
+    run_virtual_memory_demo(&mut allocator);
 }
 
-fn run_physical_allocator_demo(memory_map: &limine::MemoryMap) {
+fn init_physical_allocator(memory_map: &limine::MemoryMap) -> Option<memory::FrameAllocator> {
     let mut allocator = memory::FrameAllocator::new();
 
     match allocator.init_from_limine(memory_map) {
         Ok(()) => {}
         Err(memory::InitError::TooManyRanges) => {
             serial::write_str("Physical allocator init failed: too many usable ranges\n");
-            return;
+            return None;
         }
         Err(memory::InitError::NoUsableFrames) => {
             serial::write_str("Physical allocator init failed: no usable frames\n");
-            return;
+            return None;
         }
     }
 
+    Some(allocator)
+}
+
+fn run_physical_allocator_demo(allocator: &mut memory::FrameAllocator) {
     print_allocator_stats("Physical allocator initial", &allocator);
 
     let Some(frame0) = allocator.allocate() else {
@@ -135,6 +146,94 @@ fn run_physical_allocator_demo(memory_map: &limine::MemoryMap) {
     } else {
         serial::write_str("Physical allocator demo failed: reuse mismatch\n");
     }
+}
+
+fn run_virtual_memory_demo(allocator: &mut memory::FrameAllocator) {
+    let Some(hhdm_offset) = limine::hhdm_offset() else {
+        serial::write_str("Virtual memory demo failed: HHDM unavailable\n");
+        return;
+    };
+
+    serial::write_str("Limine HHDM offset: ");
+    serial::write_u64_hex(hhdm_offset);
+    serial::write_str("\n");
+
+    let mut mapper = unsafe { paging::Mapper::active(hhdm_offset) };
+    serial::write_str("Active PML4 physical: ");
+    serial::write_u64_hex(mapper.root_table_physical());
+    serial::write_str("\n");
+
+    let Some(page0) = paging::kernel_heap_page(0) else {
+        serial::write_str("Virtual memory demo failed: page0\n");
+        return;
+    };
+    let Some(page1) = paging::kernel_heap_page(1) else {
+        serial::write_str("Virtual memory demo failed: page1\n");
+        return;
+    };
+    let Some(frame0) = allocator.allocate() else {
+        serial::write_str("Virtual memory demo failed: frame0\n");
+        return;
+    };
+    let Some(frame1) = allocator.allocate() else {
+        serial::write_str("Virtual memory demo failed: frame1\n");
+        return;
+    };
+
+    if let Err(error) = mapper.map_page(page0, frame0, allocator) {
+        print_map_error("Virtual memory map failed for page0", error);
+        return;
+    }
+    if let Err(error) = mapper.map_page(page1, frame1, allocator) {
+        print_map_error("Virtual memory map failed for page1", error);
+        return;
+    }
+
+    serial::write_str("Virtual memory mapped heap page: virt=");
+    serial::write_u64_hex(page0);
+    serial::write_str(" phys=");
+    serial::write_u64_hex(frame0.start());
+    serial::write_str("\n");
+    serial::write_str("Virtual memory mapped heap page: virt=");
+    serial::write_u64_hex(page1);
+    serial::write_str(" phys=");
+    serial::write_u64_hex(frame1.start());
+    serial::write_str("\n");
+
+    unsafe {
+        let ptr0 = page0 as *mut u64;
+        let ptr1 = page1 as *mut u64;
+        ptr0.write_volatile(0x4b525553545f4845);
+        ptr1.write_volatile(0x41505f4d41505045);
+
+        let value0 = ptr0.read_volatile();
+        let value1 = ptr1.read_volatile();
+
+        serial::write_str("Virtual memory heap readback: ");
+        serial::write_u64_hex(value0);
+        serial::write_str(" ");
+        serial::write_u64_hex(value1);
+        serial::write_str("\n");
+
+        if value0 == 0x4b525553545f4845 && value1 == 0x41505f4d41505045 {
+            serial::write_str("Virtual memory demo ok\n");
+        } else {
+            serial::write_str("Virtual memory demo failed: readback mismatch\n");
+        }
+    }
+
+    print_allocator_stats("Physical allocator after virtual memory", allocator);
+}
+
+fn print_map_error(label: &str, error: paging::MapError) {
+    serial::write_str(label);
+    serial::write_str(": ");
+    match error {
+        paging::MapError::OutOfFrames => serial::write_str("out of frames"),
+        paging::MapError::AlreadyMapped => serial::write_str("already mapped"),
+        paging::MapError::HugePageEncountered => serial::write_str("huge page encountered"),
+    }
+    serial::write_str("\n");
 }
 
 fn print_allocator_stats(label: &str, allocator: &memory::FrameAllocator) {

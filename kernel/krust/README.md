@@ -1,6 +1,6 @@
 # Krust Kernel
 
-Krust M3 is the first native physical memory allocator milestone.
+Krust M4 is the first native virtual memory milestone.
 
 The target is intentionally small:
 
@@ -15,11 +15,14 @@ Limine loads `hello-generation.vertex.json` as a boot module
 Krust finds the manifest module and prints its generation ID
 Krust builds a physical frame allocator from usable memory map entries
 Krust allocates, frees, and reuses 4 KiB physical frames
+Krust walks the active x86_64 page tables through Limine's HHDM
+Krust maps a small fixed kernel-heap virtual range
+Krust writes and reads through the mapped virtual pages
 Krust halts forever
 ```
 
-No heap, virtual memory manager, interrupts, userspace, full manifest parsing, Vertex IR
-integration, filesystem, network, or device drivers are part of M2.
+No dynamic heap allocator, interrupts, userspace, full manifest parsing, Vertex
+IR integration, filesystem, network, or device drivers are part of M4.
 
 ## Prerequisites
 
@@ -97,6 +100,7 @@ Limine base revision supported
 Limine memory map entries: ...
 Vertex manifest generation: gen:hello-0001
 Physical allocator demo ok
+Virtual memory demo ok
 ```
 
 QEMU runs with `-display none`, so all kernel output is written through the
@@ -116,16 +120,17 @@ Krust Kernel booted
 Limine memory map entries:
 Vertex manifest generation: gen:hello-0001
 Physical allocator demo ok
+Virtual memory demo ok
 ```
 
 ## Machine Notes
 
 Linux x86_64 can add KVM later with QEMU flags such as `-enable-kvm -cpu host`.
-That is not enabled by default so the M3 command stays portable:
+That is not enabled by default so the M4 command stays portable:
 
 ```sh
 QEMU_EXTRA="-enable-kvm -cpu host" make smoke
 ```
 
 macOS Apple Silicon can run `qemu-system-x86_64` by emulation. It is slower than
-native AArch64 virtualization, but it is enough for the M3 serial milestone.
+native AArch64 virtualization, but it is enough for the M4 serial milestone.
