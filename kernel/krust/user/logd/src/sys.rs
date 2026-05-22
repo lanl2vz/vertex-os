@@ -8,6 +8,7 @@ const SYS_IPC_SEND: u64 = 3;
 const SYS_IPC_RECV: u64 = 4;
 const SYS_LOG_WRITE: u64 = 7;
 const SYS_PROCESS_START: u64 = 9;
+const SYS_IO_WRITE: u64 = 28;
 
 pub fn ipc_send(cap_slot: u64, message: &[u8]) -> u64 {
     syscall3(
@@ -38,6 +39,10 @@ pub fn log(cap_slot: u64, message: &[u8]) -> u64 {
 
 pub fn process_start(cap_slot: u64, process_index: u64) -> u64 {
     syscall3(SYS_PROCESS_START, cap_slot, process_index, 0)
+}
+
+pub fn io_write(cap_slot: u64, port: u64, value: u8) -> u64 {
+    syscall3(SYS_IO_WRITE, cap_slot, port, value as u64)
 }
 
 pub fn exit(status: u64) -> ! {

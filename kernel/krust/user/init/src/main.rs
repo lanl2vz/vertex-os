@@ -6,7 +6,7 @@ mod sys;
 use core::panic::PanicInfo;
 
 const KRUSTBOOT_MAGIC: &[u8; 16] = b"KRUSTBOOTV0\0\0\0\0\0";
-const KRUSTBOOT_VERSION: u16 = 3;
+const KRUSTBOOT_VERSION: u16 = 4;
 const MANIFEST_BUFFER_LEN: usize = 16 * 1024;
 const OFFSET_VERSION: usize = 16;
 const OFFSET_BOOT_MODULES: usize = 18;
@@ -16,7 +16,11 @@ const OFFSET_GRANTS: usize = 24;
 const OFFSET_STORE_OBJECTS: usize = 26;
 const OFFSET_STATE_VOLUMES: usize = 28;
 const OFFSET_NETWORK_PORTS: usize = 30;
-const OFFSET_GENERATION_ID: usize = 32;
+const OFFSET_IO_PORTS: usize = 32;
+const OFFSET_MMIO_REGIONS: usize = 34;
+const OFFSET_INTERRUPT_LINES: usize = 36;
+const OFFSET_DMA_REGIONS: usize = 38;
+const OFFSET_GENERATION_ID: usize = 40;
 const STRING_LEN: usize = 64;
 const OFFSET_PARENT_GENERATION_ID: usize = OFFSET_GENERATION_ID + STRING_LEN;
 const BOOT_MODULE_RECORD_LEN: usize = STRING_LEN * 2;
@@ -83,6 +87,10 @@ pub extern "C" fn _start() -> ! {
     let store_objects = read_u16(&manifest, OFFSET_STORE_OBJECTS);
     let state_volumes = read_u16(&manifest, OFFSET_STATE_VOLUMES);
     let network_ports = read_u16(&manifest, OFFSET_NETWORK_PORTS);
+    let io_ports = read_u16(&manifest, OFFSET_IO_PORTS);
+    let mmio_regions = read_u16(&manifest, OFFSET_MMIO_REGIONS);
+    let interrupt_lines = read_u16(&manifest, OFFSET_INTERRUPT_LINES);
+    let dma_regions = read_u16(&manifest, OFFSET_DMA_REGIONS);
 
     log_count(b"vertex-init boot modules: ", boot_modules);
     log_count(b"vertex-init processes: ", processes);
@@ -91,6 +99,10 @@ pub extern "C" fn _start() -> ! {
     log_count(b"vertex-init store objects: ", store_objects);
     log_count(b"vertex-init state volumes: ", state_volumes);
     log_count(b"vertex-init network ports: ", network_ports);
+    log_count(b"vertex-init io ports: ", io_ports);
+    log_count(b"vertex-init mmio regions: ", mmio_regions);
+    log_count(b"vertex-init interrupt lines: ", interrupt_lines);
+    log_count(b"vertex-init dma regions: ", dma_regions);
     run_resource_quota_tests(processes, parent_generation);
 
     let mut order = [0u16; MAX_PROCESSES];

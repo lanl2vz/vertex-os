@@ -41,6 +41,16 @@
       "references": []
     },
     {
+      "id": "store:serial-driver-demo",
+      "name": "serial-driver-demo",
+      "kind": "executable",
+      "path": "/vertex/store/demo-serial-driver",
+      "hashAlgorithm": "blake3",
+      "hash": "demo-not-a-real-hash-serial-driver",
+      "sizeBytes": 65536,
+      "references": []
+    },
+    {
       "id": "store:logd-demo",
       "name": "logd-demo",
       "kind": "executable",
@@ -58,6 +68,36 @@
       "hashAlgorithm": "blake3",
       "hash": "demo-not-a-real-hash-netstack",
       "sizeBytes": 131072,
+      "references": []
+    },
+    {
+      "id": "store:block-driver-demo",
+      "name": "block-driver-demo",
+      "kind": "executable",
+      "path": "/vertex/store/demo-block-driver",
+      "hashAlgorithm": "blake3",
+      "hash": "demo-not-a-real-hash-block-driver",
+      "sizeBytes": 65536,
+      "references": []
+    },
+    {
+      "id": "store:vertex-store-demo",
+      "name": "vertex-store-demo",
+      "kind": "executable",
+      "path": "/vertex/store/demo-vertex-store",
+      "hashAlgorithm": "blake3",
+      "hash": "demo-not-a-real-hash-vertex-store",
+      "sizeBytes": 65536,
+      "references": []
+    },
+    {
+      "id": "store:vertex-state-demo",
+      "name": "vertex-state-demo",
+      "kind": "executable",
+      "path": "/vertex/store/demo-vertex-state",
+      "hashAlgorithm": "blake3",
+      "hash": "demo-not-a-real-hash-vertex-state",
+      "sizeBytes": 65536,
       "references": []
     },
     {
@@ -140,9 +180,37 @@
       "argsDefault": []
     },
     {
+      "id": "exe:serial-driver",
+      "storeObject": "store:serial-driver-demo",
+      "entrypoint": "bin/serial-driver",
+      "abi": "hosted-linux-process.v0",
+      "argsDefault": []
+    },
+    {
       "id": "exe:logd",
       "storeObject": "store:logd-demo",
       "entrypoint": "bin/logd",
+      "abi": "hosted-linux-process.v0",
+      "argsDefault": []
+    },
+    {
+      "id": "exe:block-driver",
+      "storeObject": "store:block-driver-demo",
+      "entrypoint": "bin/block-driver",
+      "abi": "hosted-linux-process.v0",
+      "argsDefault": []
+    },
+    {
+      "id": "exe:vertex-store",
+      "storeObject": "store:vertex-store-demo",
+      "entrypoint": "bin/vertex-store",
+      "abi": "hosted-linux-process.v0",
+      "argsDefault": []
+    },
+    {
+      "id": "exe:vertex-state",
+      "storeObject": "store:vertex-state-demo",
+      "entrypoint": "bin/vertex-state",
       "abi": "hosted-linux-process.v0",
       "argsDefault": []
     },
@@ -196,7 +264,33 @@
       "argsDefault": []
     }
   ],
-  "devices": [],
+  "devices": [
+    {
+      "id": "device:serial-com1",
+      "kind": "io-port-range",
+      "selector": {
+        "base": "0x3f8",
+        "length": 8
+      },
+      "driver": "svc:serial-driver",
+      "properties": {
+        "model": "ns16550a"
+      }
+    },
+    {
+      "id": "device:virtio-blk0",
+      "kind": "virtio-blk-mmio",
+      "selector": {
+        "base": "0x10001000",
+        "length": 4096,
+        "irq": 5
+      },
+      "driver": "svc:block-driver",
+      "properties": {
+        "transport": "virtio-mmio-proof"
+      }
+    }
+  ],
   "stateVolumes": [
     {
       "id": "state:counter",
@@ -221,6 +315,25 @@
       "rights": ["read"],
       "properties": {
         "clock": "monotonic"
+      }
+    },
+    {
+      "id": "cap:io.com1",
+      "kind": "io-port",
+      "provider": "device:serial-com1",
+      "rights": ["read", "write"],
+      "properties": {
+        "base": "0x3f8",
+        "length": 8
+      }
+    },
+    {
+      "id": "cap:serial.console",
+      "kind": "ipc-endpoint",
+      "provider": "svc:serial-driver",
+      "rights": ["send"],
+      "properties": {
+        "protocol": "vertex.serial.v0"
       }
     },
     {
@@ -253,10 +366,75 @@
       }
     },
     {
+      "id": "cap:mmio.virtio-blk0",
+      "kind": "mmio-region",
+      "provider": "device:virtio-blk0",
+      "rights": ["map"],
+      "properties": {
+        "base": "0x10001000",
+        "length": 4096
+      }
+    },
+    {
+      "id": "cap:irq.virtio-blk0",
+      "kind": "interrupt-line",
+      "provider": "device:virtio-blk0",
+      "rights": ["listen"],
+      "properties": {
+        "irq": 5
+      }
+    },
+    {
+      "id": "cap:dma.virtio-blk0",
+      "kind": "dma-region",
+      "provider": "device:virtio-blk0",
+      "rights": ["read", "write", "map"],
+      "properties": {
+        "base": 0,
+        "length": 4096
+      }
+    },
+    {
+      "id": "cap:block.io",
+      "kind": "ipc-endpoint",
+      "provider": "svc:block-driver",
+      "rights": ["sendrecv"],
+      "properties": {
+        "protocol": "vertex.block.v0"
+      }
+    },
+    {
+      "id": "cap:store.hello-text.api",
+      "kind": "ipc-endpoint",
+      "provider": "svc:vertex-store",
+      "rights": ["sendrecv"],
+      "properties": {
+        "protocol": "vertex.store.v0",
+        "object": "store:hello-text"
+      }
+    },
+    {
       "id": "cap:store.hello-text",
       "kind": "store-object",
       "provider": "store:hello-text",
       "rights": ["read"],
+      "properties": {}
+    },
+    {
+      "id": "cap:state.counter.api",
+      "kind": "ipc-endpoint",
+      "provider": "svc:vertex-state",
+      "rights": ["sendrecv"],
+      "properties": {
+        "protocol": "vertex.state.v0",
+        "volume": "state:counter"
+      }
+    },
+    {
+      "id": "cap:state.counter.backend",
+      "kind": "state-volume",
+      "provider": "state:counter",
+      "rights": ["read", "write", "snapshot", "restore"],
       "properties": {}
     },
     {
@@ -308,13 +486,37 @@
       }
     },
     {
+      "id": "svc:serial-driver",
+      "name": "serial-driver",
+      "executable": "exe:serial-driver",
+      "args": [],
+      "env": {},
+      "requires": [
+        { "capability": "cap:io.com1", "rights": ["read", "write"] }
+      ],
+      "provides": ["cap:serial.console"],
+      "state": [],
+      "secrets": [],
+      "restart": "never",
+      "resources": {
+        "memoryMaxBytes": 33554432,
+        "cpuShares": 25
+      },
+      "health": null,
+      "lifecycle": {
+        "startAfter": ["svc:vertex-supervisor"],
+        "stopBefore": []
+      }
+    },
+    {
       "id": "svc:logd",
       "name": "logd",
       "executable": "exe:logd",
       "args": [],
       "env": {},
       "requires": [
-        { "capability": "cap:clock.monotonic", "rights": ["read"] }
+        { "capability": "cap:clock.monotonic", "rights": ["read"] },
+        { "capability": "cap:serial.console", "rights": ["send"] }
       ],
       "provides": ["cap:log.sink"],
       "state": [],
@@ -329,7 +531,7 @@
         "target": "cap:log.sink"
       },
       "lifecycle": {
-        "startAfter": ["svc:vertex-supervisor"],
+        "startAfter": ["svc:serial-driver"],
         "stopBefore": []
       }
     },
@@ -349,6 +551,77 @@
       "resources": {
         "memoryMaxBytes": 67108864,
         "cpuShares": 100
+      },
+      "health": null,
+      "lifecycle": {
+        "startAfter": ["svc:vertex-supervisor"],
+        "stopBefore": []
+      }
+    },
+    {
+      "id": "svc:block-driver",
+      "name": "block-driver",
+      "executable": "exe:block-driver",
+      "args": [],
+      "env": {},
+      "requires": [
+        { "capability": "cap:mmio.virtio-blk0", "rights": ["map"] },
+        { "capability": "cap:irq.virtio-blk0", "rights": ["listen"] },
+        { "capability": "cap:dma.virtio-blk0", "rights": ["read", "write", "map"] }
+      ],
+      "provides": ["cap:block.io"],
+      "state": [],
+      "secrets": [],
+      "restart": "never",
+      "resources": {
+        "memoryMaxBytes": 33554432,
+        "cpuShares": 25
+      },
+      "health": null,
+      "lifecycle": {
+        "startAfter": ["svc:vertex-supervisor"],
+        "stopBefore": []
+      }
+    },
+    {
+      "id": "svc:vertex-store",
+      "name": "vertex-store",
+      "executable": "exe:vertex-store",
+      "args": [],
+      "env": {},
+      "requires": [
+        { "capability": "cap:block.io", "rights": ["sendrecv"] }
+      ],
+      "provides": ["cap:store.hello-text.api"],
+      "state": [],
+      "secrets": [],
+      "restart": "never",
+      "resources": {
+        "memoryMaxBytes": 33554432,
+        "cpuShares": 25
+      },
+      "health": null,
+      "lifecycle": {
+        "startAfter": ["svc:block-driver"],
+        "stopBefore": []
+      }
+    },
+    {
+      "id": "svc:vertex-state",
+      "name": "vertex-state",
+      "executable": "exe:vertex-state",
+      "args": [],
+      "env": {},
+      "requires": [
+        { "capability": "cap:state.counter.backend", "rights": ["read", "write", "snapshot", "restore"] }
+      ],
+      "provides": ["cap:state.counter.api"],
+      "state": ["state:counter"],
+      "secrets": [],
+      "restart": "never",
+      "resources": {
+        "memoryMaxBytes": 33554432,
+        "cpuShares": 25
       },
       "health": null,
       "lifecycle": {
@@ -388,7 +661,7 @@
       "args": [],
       "env": {},
       "requires": [
-        { "capability": "cap:store.hello-text", "rights": ["read"] }
+        { "capability": "cap:store.hello-text.api", "rights": ["sendrecv"] }
       ],
       "provides": [],
       "state": [],
@@ -400,7 +673,7 @@
       },
       "health": null,
       "lifecycle": {
-        "startAfter": ["svc:vertex-supervisor"],
+        "startAfter": ["svc:vertex-store"],
         "stopBefore": []
       }
     },
@@ -411,7 +684,7 @@
       "args": [],
       "env": {},
       "requires": [
-        { "capability": "cap:state.counter.write", "rights": ["write"] }
+        { "capability": "cap:state.counter.api", "rights": ["sendrecv"] }
       ],
       "provides": [],
       "state": ["state:counter"],
@@ -423,7 +696,7 @@
       },
       "health": null,
       "lifecycle": {
-        "startAfter": ["svc:vertex-supervisor"],
+        "startAfter": ["svc:vertex-state"],
         "stopBefore": []
       }
     },
@@ -434,7 +707,7 @@
       "args": [],
       "env": {},
       "requires": [
-        { "capability": "cap:state.counter.read", "rights": ["read", "snapshot", "restore"] }
+        { "capability": "cap:state.counter.api", "rights": ["sendrecv"] }
       ],
       "provides": [],
       "state": ["state:counter"],
@@ -499,8 +772,12 @@
     "rootService": "svc:vertex-supervisor",
     "startOrder": [
       "svc:vertex-supervisor",
+      "svc:serial-driver",
       "svc:logd",
       "svc:netstack",
+      "svc:block-driver",
+      "svc:vertex-store",
+      "svc:vertex-state",
       "svc:echo-server",
       "svc:model-reader",
       "svc:counter-service",

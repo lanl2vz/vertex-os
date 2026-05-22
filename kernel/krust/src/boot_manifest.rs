@@ -4,7 +4,7 @@ pub const MODULE_STRING: &[u8] = b"krustboot-manifest";
 pub const FALLBACK_MODULE_STRING: &[u8] = b"krustboot-fallback-manifest";
 
 const COMPACT_MAGIC: &[u8; 16] = b"KRUSTBOOTV0\0\0\0\0\0";
-const COMPACT_VERSION: u16 = 3;
+const COMPACT_VERSION: u16 = 4;
 const V1_MAGIC: &[u8; 16] = b"KRUSTBOOTV1\0\0\0\0\0";
 const V1_VERSION: u16 = 1;
 const V1_HEADER_SIZE: usize = 164;
@@ -20,6 +20,10 @@ const MAX_GRANTS: usize = 64;
 const MAX_STORE_OBJECTS: usize = 4;
 const MAX_STATE_VOLUMES: usize = 4;
 const MAX_NETWORK_PORTS: usize = 4;
+const MAX_IO_PORT_RANGES: usize = 4;
+const MAX_MMIO_REGIONS: usize = 4;
+const MAX_INTERRUPT_LINES: usize = 4;
+const MAX_DMA_REGIONS: usize = 4;
 pub const MAX_PROCESS_REFS: usize = 4;
 
 pub const RIGHT_SEND: u16 = 1 << 0;
@@ -31,12 +35,17 @@ pub const RIGHT_RESTORE: u16 = 1 << 5;
 pub const RIGHT_CONTROL: u16 = 1 << 6;
 pub const RIGHT_BIND: u16 = 1 << 7;
 pub const RIGHT_LISTEN: u16 = 1 << 8;
+pub const RIGHT_MAP: u16 = 1 << 9;
 
 pub const OBJECT_ENDPOINT: u16 = 1;
 pub const OBJECT_STORE: u16 = 2;
 pub const OBJECT_STATE: u16 = 3;
 pub const OBJECT_TIMER: u16 = 4;
 pub const OBJECT_NETWORK_PORT: u16 = 5;
+pub const OBJECT_IO_PORT_RANGE: u16 = 6;
+pub const OBJECT_MMIO_REGION: u16 = 7;
+pub const OBJECT_INTERRUPT_LINE: u16 = 8;
+pub const OBJECT_DMA_REGION: u16 = 9;
 
 #[derive(Clone, Copy)]
 pub struct BootModule<'a> {
@@ -93,6 +102,33 @@ pub struct NetworkPort<'a> {
     pub id: &'a str,
 }
 
+#[derive(Clone, Copy)]
+pub struct IoPortRange<'a> {
+    pub id: &'a str,
+    pub base: u64,
+    pub length: u64,
+}
+
+#[derive(Clone, Copy)]
+pub struct MmioRegion<'a> {
+    pub id: &'a str,
+    pub base: u64,
+    pub length: u64,
+}
+
+#[derive(Clone, Copy)]
+pub struct InterruptLine<'a> {
+    pub id: &'a str,
+    pub line: u64,
+}
+
+#[derive(Clone, Copy)]
+pub struct DmaRegion<'a> {
+    pub id: &'a str,
+    pub base: u64,
+    pub length: u64,
+}
+
 pub struct Manifest<'a> {
     generation_id: &'a str,
     parent_generation_id: &'a str,
@@ -114,6 +150,14 @@ pub struct Manifest<'a> {
     state_volume_count: usize,
     network_ports: [Option<NetworkPort<'a>>; MAX_NETWORK_PORTS],
     network_port_count: usize,
+    io_ports: [Option<IoPortRange<'a>>; MAX_IO_PORT_RANGES],
+    io_port_count: usize,
+    mmio_regions: [Option<MmioRegion<'a>>; MAX_MMIO_REGIONS],
+    mmio_region_count: usize,
+    interrupt_lines: [Option<InterruptLine<'a>>; MAX_INTERRUPT_LINES],
+    interrupt_line_count: usize,
+    dma_regions: [Option<DmaRegion<'a>>; MAX_DMA_REGIONS],
+    dma_region_count: usize,
 }
 
 struct Global<T>(UnsafeCell<T>);
@@ -135,6 +179,10 @@ pub enum ParseError {
     TooManyStoreObjects,
     TooManyStateVolumes,
     TooManyNetworkPorts,
+    TooManyIoPortRanges,
+    TooManyMmioRegions,
+    TooManyInterruptLines,
+    TooManyDmaRegions,
     InvalidString,
     InvalidReference,
     InvalidRights,
@@ -168,6 +216,14 @@ impl<'a> Manifest<'a> {
             state_volume_count: 0,
             network_ports: [None; MAX_NETWORK_PORTS],
             network_port_count: 0,
+            io_ports: [None; MAX_IO_PORT_RANGES],
+            io_port_count: 0,
+            mmio_regions: [None; MAX_MMIO_REGIONS],
+            mmio_region_count: 0,
+            interrupt_lines: [None; MAX_INTERRUPT_LINES],
+            interrupt_line_count: 0,
+            dma_regions: [None; MAX_DMA_REGIONS],
+            dma_region_count: 0,
         }
     }
 
@@ -223,6 +279,22 @@ impl<'a> Manifest<'a> {
         self.network_port_count
     }
 
+    pub fn io_port_count(&self) -> usize {
+        self.io_port_count
+    }
+
+    pub fn mmio_region_count(&self) -> usize {
+        self.mmio_region_count
+    }
+
+    pub fn interrupt_line_count(&self) -> usize {
+        self.interrupt_line_count
+    }
+
+    pub fn dma_region_count(&self) -> usize {
+        self.dma_region_count
+    }
+
     pub fn boot_module(&self, index: usize) -> Option<BootModule<'a>> {
         if index < self.boot_module_count {
             self.boot_modules[index]
@@ -274,6 +346,38 @@ impl<'a> Manifest<'a> {
     pub fn network_port(&self, index: usize) -> Option<NetworkPort<'a>> {
         if index < self.network_port_count {
             self.network_ports[index]
+        } else {
+            None
+        }
+    }
+
+    pub fn io_port(&self, index: usize) -> Option<IoPortRange<'a>> {
+        if index < self.io_port_count {
+            self.io_ports[index]
+        } else {
+            None
+        }
+    }
+
+    pub fn mmio_region(&self, index: usize) -> Option<MmioRegion<'a>> {
+        if index < self.mmio_region_count {
+            self.mmio_regions[index]
+        } else {
+            None
+        }
+    }
+
+    pub fn interrupt_line(&self, index: usize) -> Option<InterruptLine<'a>> {
+        if index < self.interrupt_line_count {
+            self.interrupt_lines[index]
+        } else {
+            None
+        }
+    }
+
+    pub fn dma_region(&self, index: usize) -> Option<DmaRegion<'a>> {
+        if index < self.dma_region_count {
+            self.dma_regions[index]
         } else {
             None
         }
@@ -397,6 +501,11 @@ fn parse_compact_into(
         reader.read_count(MAX_STATE_VOLUMES, ParseError::TooManyStateVolumes)?;
     let network_port_count =
         reader.read_count(MAX_NETWORK_PORTS, ParseError::TooManyNetworkPorts)?;
+    let io_port_count = reader.read_count(MAX_IO_PORT_RANGES, ParseError::TooManyIoPortRanges)?;
+    let mmio_region_count = reader.read_count(MAX_MMIO_REGIONS, ParseError::TooManyMmioRegions)?;
+    let interrupt_line_count =
+        reader.read_count(MAX_INTERRUPT_LINES, ParseError::TooManyInterruptLines)?;
+    let dma_region_count = reader.read_count(MAX_DMA_REGIONS, ParseError::TooManyDmaRegions)?;
     let generation_id = reader.read_fixed_str()?;
     let parent_generation_id = reader.read_fixed_str_allow_empty()?;
 
@@ -412,6 +521,10 @@ fn parse_compact_into(
     manifest.store_object_count = store_object_count;
     manifest.state_volume_count = state_volume_count;
     manifest.network_port_count = network_port_count;
+    manifest.io_port_count = io_port_count;
+    manifest.mmio_region_count = mmio_region_count;
+    manifest.interrupt_line_count = interrupt_line_count;
+    manifest.dma_region_count = dma_region_count;
 
     let mut index = 0;
     while index < boot_module_count {
@@ -505,6 +618,45 @@ fn parse_compact_into(
         index += 1;
     }
 
+    index = 0;
+    while index < io_port_count {
+        manifest.io_ports[index] = Some(IoPortRange {
+            id: reader.read_fixed_str()?,
+            base: reader.read_u64()?,
+            length: reader.read_u64()?,
+        });
+        index += 1;
+    }
+
+    index = 0;
+    while index < mmio_region_count {
+        manifest.mmio_regions[index] = Some(MmioRegion {
+            id: reader.read_fixed_str()?,
+            base: reader.read_u64()?,
+            length: reader.read_u64()?,
+        });
+        index += 1;
+    }
+
+    index = 0;
+    while index < interrupt_line_count {
+        manifest.interrupt_lines[index] = Some(InterruptLine {
+            id: reader.read_fixed_str()?,
+            line: reader.read_u64()?,
+        });
+        index += 1;
+    }
+
+    index = 0;
+    while index < dma_region_count {
+        manifest.dma_regions[index] = Some(DmaRegion {
+            id: reader.read_fixed_str()?,
+            base: reader.read_u64()?,
+            length: reader.read_u64()?,
+        });
+        index += 1;
+    }
+
     validate_manifest(manifest)?;
 
     if !reader.finished() {
@@ -565,7 +717,17 @@ fn validate_manifest(manifest: &Manifest<'_>) -> Result<(), ParseError> {
             OBJECT_STATE if grant.object_index < manifest.state_volume_count => {}
             OBJECT_TIMER if grant.object_index == 0 => {}
             OBJECT_NETWORK_PORT if grant.object_index < manifest.network_port_count => {}
+            OBJECT_IO_PORT_RANGE if grant.object_index < manifest.io_port_count => {}
+            OBJECT_MMIO_REGION if grant.object_index < manifest.mmio_region_count => {}
+            OBJECT_INTERRUPT_LINE if grant.object_index < manifest.interrupt_line_count => {}
+            OBJECT_DMA_REGION if grant.object_index < manifest.dma_region_count => {}
             OBJECT_ENDPOINT | OBJECT_STORE | OBJECT_STATE | OBJECT_TIMER | OBJECT_NETWORK_PORT => {
+                return Err(ParseError::InvalidReference);
+            }
+            OBJECT_IO_PORT_RANGE
+            | OBJECT_MMIO_REGION
+            | OBJECT_INTERRUPT_LINE
+            | OBJECT_DMA_REGION => {
                 return Err(ParseError::InvalidReference);
             }
             _ => return Err(ParseError::InvalidObjectKind),
@@ -580,7 +742,8 @@ fn validate_manifest(manifest: &Manifest<'_>) -> Result<(), ParseError> {
                     | RIGHT_RESTORE
                     | RIGHT_CONTROL
                     | RIGHT_BIND
-                    | RIGHT_LISTEN)
+                    | RIGHT_LISTEN
+                    | RIGHT_MAP)
                 != 0
         {
             return Err(ParseError::InvalidRights);

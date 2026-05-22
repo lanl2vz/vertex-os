@@ -3,8 +3,8 @@ use core::arch::asm;
 pub const STATUS_OK: u64 = 0;
 
 const SYS_EXIT: u64 = 2;
+const SYS_IPC_SEND: u64 = 3;
 const SYS_LOG_WRITE: u64 = 7;
-const SYS_STATE_WRITE: u64 = 14;
 
 pub fn log(cap_slot: u64, message: &[u8]) -> u64 {
     syscall3(
@@ -15,12 +15,12 @@ pub fn log(cap_slot: u64, message: &[u8]) -> u64 {
     )
 }
 
-pub fn state_write(cap_slot: u64, value: &[u8]) -> u64 {
+pub fn ipc_send(cap_slot: u64, message: &[u8]) -> u64 {
     syscall3(
-        SYS_STATE_WRITE,
+        SYS_IPC_SEND,
         cap_slot,
-        value.as_ptr() as u64,
-        value.len() as u64,
+        message.as_ptr() as u64,
+        message.len() as u64,
     )
 }
 

@@ -28,12 +28,12 @@ vertex-os/
     netstack/            Demo hosted network capability provider
     echo-server/         Demo service consuming log and network capabilities
   kernel/
-    krust/               Bootable Krust kernel prototype, currently covering M14-M31 native graph activation and substrate hardening
+    krust/               Bootable Krust kernel prototype, currently covering M14-M36 native graph activation and substrate hardening
   lang/
     vertex-lang/         Planned typed system-definition language
 ```
 
-## Krust M14-M31
+## Krust M14-M36
 
 The current native activation path lives in `kernel/krust`. It is isolated
 from the hosted Cargo workspace and boots a Limine ISO under QEMU. The ISO
@@ -48,24 +48,24 @@ manifest through cap[0], logs through cap[1], starts declared services through
 cap[2] process-control, waits for readiness, delegates attenuated IPC authority,
 and supervises process exits. The QEMU smoke path now proves Manifest v1 bounds
 checks, capability provenance/revocation, typed arena allocation, resource
-quotas, service-local store/state/timer access, PIT timer preemption,
-user page-fault containment, and a real restart of `flaky-service`, not
-init-owned transcript logging.
+quotas, PIT timer preemption, user page-fault containment, explicit I/O
+capabilities, user-space serial and block drivers, native store/state services,
+and a real restart of `flaky-service`, not init-owned transcript logging.
 
 ```sh
 scripts/krust-smoke.sh
 ```
 
 The clean-clone release gate validates the hosted build, checks the Krust
-toolchain, rebuilds the ISO from clean kernel artifacts, and runs the M14-M31
+toolchain, rebuilds the ISO from clean kernel artifacts, and runs the M14-M36
 QEMU test matrix:
 
 ```sh
 scripts/krust-release-gate.sh
 ```
 
-See [docs/krust-milestones.md](docs/krust-milestones.md) for M0 through M31
-completion status and the planned M32-M40 substrate-hardening roadmap,
+See [docs/krust-milestones.md](docs/krust-milestones.md) for M0 through M36
+completion status and the planned M37-M40 substrate-hardening roadmap,
 and [docs/krust-abi-v0.md](docs/krust-abi-v0.md) for the current syscall,
 capability, process, and IPC ABI.
 

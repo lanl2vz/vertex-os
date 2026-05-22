@@ -29,6 +29,10 @@ pub const BOOT_OBJECT_STORE: u16 = 2;
 pub const BOOT_OBJECT_STATE: u16 = 3;
 pub const BOOT_OBJECT_TIMER: u16 = 4;
 pub const BOOT_OBJECT_NETWORK_PORT: u16 = 5;
+pub const BOOT_OBJECT_IO_PORT_RANGE: u16 = 6;
+pub const BOOT_OBJECT_MMIO_REGION: u16 = 7;
+pub const BOOT_OBJECT_INTERRUPT_LINE: u16 = 8;
+pub const BOOT_OBJECT_DMA_REGION: u16 = 9;
 
 pub const FRAME_R15: usize = 0;
 pub const FRAME_R14: usize = 8;
@@ -186,6 +190,33 @@ pub struct BootNetworkPortConfig {
 }
 
 #[derive(Clone, Copy)]
+pub struct BootIoPortRangeConfig {
+    pub id: &'static str,
+    pub base: u64,
+    pub length: u64,
+}
+
+#[derive(Clone, Copy)]
+pub struct BootMmioRegionConfig {
+    pub id: &'static str,
+    pub base: u64,
+    pub length: u64,
+}
+
+#[derive(Clone, Copy)]
+pub struct BootInterruptLineConfig {
+    pub id: &'static str,
+    pub line: u64,
+}
+
+#[derive(Clone, Copy)]
+pub struct BootDmaRegionConfig {
+    pub id: &'static str,
+    pub base: u64,
+    pub length: u64,
+}
+
+#[derive(Clone, Copy)]
 pub struct BootGrantConfig {
     pub process_index: usize,
     pub cap_slot: u64,
@@ -208,6 +239,14 @@ pub struct BootRuntimeConfig {
     state_volume_count: usize,
     network_ports: [Option<BootNetworkPortConfig>; MAX_OBJECTS],
     network_port_count: usize,
+    io_ports: [Option<BootIoPortRangeConfig>; MAX_OBJECTS],
+    io_port_count: usize,
+    mmio_regions: [Option<BootMmioRegionConfig>; MAX_OBJECTS],
+    mmio_region_count: usize,
+    interrupt_lines: [Option<BootInterruptLineConfig>; MAX_OBJECTS],
+    interrupt_line_count: usize,
+    dma_regions: [Option<BootDmaRegionConfig>; MAX_OBJECTS],
+    dma_region_count: usize,
     grants: [Option<BootGrantConfig>; MAX_BOOT_GRANTS],
     grant_count: usize,
 }
@@ -316,6 +355,7 @@ struct IpcEndpoint {
     id: KernelObjectId,
     name: &'static str,
     message_ready: bool,
+    message_sender: ProcessId,
     message_len: usize,
     message: [u8; MAX_MESSAGE_BYTES],
 }
@@ -358,6 +398,37 @@ struct NetworkPortObject {
 }
 
 #[derive(Clone, Copy)]
+struct IoPortRangeObject {
+    id: KernelObjectId,
+    name: &'static str,
+    base: u64,
+    length: u64,
+}
+
+#[derive(Clone, Copy)]
+struct MmioRegionObject {
+    id: KernelObjectId,
+    name: &'static str,
+    base: u64,
+    length: u64,
+}
+
+#[derive(Clone, Copy)]
+struct InterruptLineObject {
+    id: KernelObjectId,
+    name: &'static str,
+    line: u64,
+}
+
+#[derive(Clone, Copy)]
+struct DmaRegionObject {
+    id: KernelObjectId,
+    name: &'static str,
+    base: u64,
+    length: u64,
+}
+
+#[derive(Clone, Copy)]
 struct ProcessControlObject {
     id: KernelObjectId,
     name: &'static str,
@@ -371,6 +442,10 @@ enum KernelObject {
     StateVolume(StateVolumeObject),
     Timer(TimerObject),
     NetworkPort(NetworkPortObject),
+    IoPortRange(IoPortRangeObject),
+    MmioRegion(MmioRegionObject),
+    InterruptLine(InterruptLineObject),
+    DmaRegion(DmaRegionObject),
     ProcessControl(ProcessControlObject),
 }
 
@@ -399,7 +474,7 @@ struct RuntimeState {
 #[derive(Clone, Copy)]
 struct FallbackRuntime {
     generation_id: &'static str,
-    config: BootRuntimeConfig,
+    config: &'static BootRuntimeConfig,
 }
 
 struct Global<T>(UnsafeCell<T>);
@@ -564,6 +639,7 @@ impl IpcEndpoint {
             id,
             name,
             message_ready: false,
+            message_sender: ProcessId::empty(),
             message_len: 0,
             message: [0; MAX_MESSAGE_BYTES],
         }
@@ -613,6 +689,45 @@ impl TimerObject {
 impl NetworkPortObject {
     const fn new(id: KernelObjectId, name: &'static str) -> Self {
         Self { id, name }
+    }
+}
+
+impl IoPortRangeObject {
+    const fn new(id: KernelObjectId, name: &'static str, base: u64, length: u64) -> Self {
+        Self {
+            id,
+            name,
+            base,
+            length,
+        }
+    }
+}
+
+impl MmioRegionObject {
+    const fn new(id: KernelObjectId, name: &'static str, base: u64, length: u64) -> Self {
+        Self {
+            id,
+            name,
+            base,
+            length,
+        }
+    }
+}
+
+impl InterruptLineObject {
+    const fn new(id: KernelObjectId, name: &'static str, line: u64) -> Self {
+        Self { id, name, line }
+    }
+}
+
+impl DmaRegionObject {
+    const fn new(id: KernelObjectId, name: &'static str, base: u64, length: u64) -> Self {
+        Self {
+            id,
+            name,
+            base,
+            length,
+        }
     }
 }
 
@@ -729,6 +844,81 @@ impl ObjectTable {
         Ok(id)
     }
 
+    fn add_io_port(
+        &mut self,
+        name: &'static str,
+        base: u64,
+        length: u64,
+    ) -> Result<KernelObjectId, InitError> {
+        if self.count == self.objects.len() {
+            return Err(InitError::ObjectTableFull);
+        }
+
+        let id = KernelObjectId(self.next_id);
+        self.next_id += 1;
+        self.objects[self.count] = Some(KernelObject::IoPortRange(IoPortRangeObject::new(
+            id, name, base, length,
+        )));
+        self.count += 1;
+        Ok(id)
+    }
+
+    fn add_mmio_region(
+        &mut self,
+        name: &'static str,
+        base: u64,
+        length: u64,
+    ) -> Result<KernelObjectId, InitError> {
+        if self.count == self.objects.len() {
+            return Err(InitError::ObjectTableFull);
+        }
+
+        let id = KernelObjectId(self.next_id);
+        self.next_id += 1;
+        self.objects[self.count] = Some(KernelObject::MmioRegion(MmioRegionObject::new(
+            id, name, base, length,
+        )));
+        self.count += 1;
+        Ok(id)
+    }
+
+    fn add_interrupt_line(
+        &mut self,
+        name: &'static str,
+        line: u64,
+    ) -> Result<KernelObjectId, InitError> {
+        if self.count == self.objects.len() {
+            return Err(InitError::ObjectTableFull);
+        }
+
+        let id = KernelObjectId(self.next_id);
+        self.next_id += 1;
+        self.objects[self.count] = Some(KernelObject::InterruptLine(InterruptLineObject::new(
+            id, name, line,
+        )));
+        self.count += 1;
+        Ok(id)
+    }
+
+    fn add_dma_region(
+        &mut self,
+        name: &'static str,
+        base: u64,
+        length: u64,
+    ) -> Result<KernelObjectId, InitError> {
+        if self.count == self.objects.len() {
+            return Err(InitError::ObjectTableFull);
+        }
+
+        let id = KernelObjectId(self.next_id);
+        self.next_id += 1;
+        self.objects[self.count] = Some(KernelObject::DmaRegion(DmaRegionObject::new(
+            id, name, base, length,
+        )));
+        self.count += 1;
+        Ok(id)
+    }
+
     fn add_process_control(&mut self, name: &'static str) -> Result<KernelObjectId, InitError> {
         if self.count == self.objects.len() {
             return Err(InitError::ObjectTableFull);
@@ -828,6 +1018,48 @@ impl ObjectTable {
                 && timer.id == id
             {
                 return Some(timer);
+            }
+            index += 1;
+        }
+
+        None
+    }
+
+    fn get_io_port(&self, id: KernelObjectId) -> Option<IoPortRangeObject> {
+        let mut index = 0;
+        while index < self.count {
+            if let Some(KernelObject::IoPortRange(port)) = self.objects[index]
+                && port.id == id
+            {
+                return Some(port);
+            }
+            index += 1;
+        }
+
+        None
+    }
+
+    fn get_mmio_region(&self, id: KernelObjectId) -> Option<MmioRegionObject> {
+        let mut index = 0;
+        while index < self.count {
+            if let Some(KernelObject::MmioRegion(region)) = self.objects[index]
+                && region.id == id
+            {
+                return Some(region);
+            }
+            index += 1;
+        }
+
+        None
+    }
+
+    fn get_interrupt_line(&self, id: KernelObjectId) -> Option<InterruptLineObject> {
+        let mut index = 0;
+        while index < self.count {
+            if let Some(KernelObject::InterruptLine(line)) = self.objects[index]
+                && line.id == id
+            {
+                return Some(line);
             }
             index += 1;
         }
@@ -1121,6 +1353,14 @@ impl BootRuntimeConfig {
             state_volume_count: 0,
             network_ports: [None; MAX_OBJECTS],
             network_port_count: 0,
+            io_ports: [None; MAX_OBJECTS],
+            io_port_count: 0,
+            mmio_regions: [None; MAX_OBJECTS],
+            mmio_region_count: 0,
+            interrupt_lines: [None; MAX_OBJECTS],
+            interrupt_line_count: 0,
+            dma_regions: [None; MAX_OBJECTS],
+            dma_region_count: 0,
             grants: [None; MAX_BOOT_GRANTS],
             grant_count: 0,
         }
@@ -1179,6 +1419,42 @@ impl BootRuntimeConfig {
         Ok(())
     }
 
+    pub fn add_io_port(&mut self, port: BootIoPortRangeConfig) -> Result<(), InitError> {
+        if self.io_port_count == self.io_ports.len() {
+            return Err(InitError::ObjectTableFull);
+        }
+        self.io_ports[self.io_port_count] = Some(port);
+        self.io_port_count += 1;
+        Ok(())
+    }
+
+    pub fn add_mmio_region(&mut self, region: BootMmioRegionConfig) -> Result<(), InitError> {
+        if self.mmio_region_count == self.mmio_regions.len() {
+            return Err(InitError::ObjectTableFull);
+        }
+        self.mmio_regions[self.mmio_region_count] = Some(region);
+        self.mmio_region_count += 1;
+        Ok(())
+    }
+
+    pub fn add_interrupt_line(&mut self, line: BootInterruptLineConfig) -> Result<(), InitError> {
+        if self.interrupt_line_count == self.interrupt_lines.len() {
+            return Err(InitError::ObjectTableFull);
+        }
+        self.interrupt_lines[self.interrupt_line_count] = Some(line);
+        self.interrupt_line_count += 1;
+        Ok(())
+    }
+
+    pub fn add_dma_region(&mut self, region: BootDmaRegionConfig) -> Result<(), InitError> {
+        if self.dma_region_count == self.dma_regions.len() {
+            return Err(InitError::ObjectTableFull);
+        }
+        self.dma_regions[self.dma_region_count] = Some(region);
+        self.dma_region_count += 1;
+        Ok(())
+    }
+
     pub fn add_grant(&mut self, grant: BootGrantConfig) -> Result<(), InitError> {
         if self.grant_count == self.grants.len() {
             return Err(InitError::CapabilityTableFull);
@@ -1202,11 +1478,19 @@ impl BootRuntimeConfig {
             BOOT_OBJECT_STATE if grant.object_index < self.state_volume_count => {}
             BOOT_OBJECT_TIMER if grant.object_index == 0 => {}
             BOOT_OBJECT_NETWORK_PORT if grant.object_index < self.network_port_count => {}
+            BOOT_OBJECT_IO_PORT_RANGE if grant.object_index < self.io_port_count => {}
+            BOOT_OBJECT_MMIO_REGION if grant.object_index < self.mmio_region_count => {}
+            BOOT_OBJECT_INTERRUPT_LINE if grant.object_index < self.interrupt_line_count => {}
+            BOOT_OBJECT_DMA_REGION if grant.object_index < self.dma_region_count => {}
             BOOT_OBJECT_ENDPOINT
             | BOOT_OBJECT_STORE
             | BOOT_OBJECT_STATE
             | BOOT_OBJECT_TIMER
-            | BOOT_OBJECT_NETWORK_PORT => return Err(InitError::InvalidBootManifest),
+            | BOOT_OBJECT_NETWORK_PORT
+            | BOOT_OBJECT_IO_PORT_RANGE
+            | BOOT_OBJECT_MMIO_REGION
+            | BOOT_OBJECT_INTERRUPT_LINE
+            | BOOT_OBJECT_DMA_REGION => return Err(InitError::InvalidBootManifest),
             _ => return Err(InitError::InvalidBootManifest),
         }
         self.grants[self.grant_count] = Some(grant);
@@ -1297,6 +1581,51 @@ pub fn init_from_boot_config(config: &BootRuntimeConfig) -> Result<(), InitError
         network_index += 1;
     }
 
+    let mut io_port_ids = [None; MAX_OBJECTS];
+    let mut io_index = 0;
+    while io_index < config.io_port_count {
+        let port = config.io_ports[io_index].ok_or(InitError::InvalidBootManifest)?;
+        io_port_ids[io_index] = Some(runtime.objects.add_io_port(
+            port.id,
+            port.base,
+            port.length,
+        )?);
+        io_index += 1;
+    }
+
+    let mut mmio_region_ids = [None; MAX_OBJECTS];
+    let mut mmio_index = 0;
+    while mmio_index < config.mmio_region_count {
+        let region = config.mmio_regions[mmio_index].ok_or(InitError::InvalidBootManifest)?;
+        mmio_region_ids[mmio_index] = Some(runtime.objects.add_mmio_region(
+            region.id,
+            region.base,
+            region.length,
+        )?);
+        mmio_index += 1;
+    }
+
+    let mut interrupt_line_ids = [None; MAX_OBJECTS];
+    let mut irq_index = 0;
+    while irq_index < config.interrupt_line_count {
+        let line = config.interrupt_lines[irq_index].ok_or(InitError::InvalidBootManifest)?;
+        interrupt_line_ids[irq_index] =
+            Some(runtime.objects.add_interrupt_line(line.id, line.line)?);
+        irq_index += 1;
+    }
+
+    let mut dma_region_ids = [None; MAX_OBJECTS];
+    let mut dma_index = 0;
+    while dma_index < config.dma_region_count {
+        let region = config.dma_regions[dma_index].ok_or(InitError::InvalidBootManifest)?;
+        dma_region_ids[dma_index] = Some(runtime.objects.add_dma_region(
+            region.id,
+            region.base,
+            region.length,
+        )?);
+        dma_index += 1;
+    }
+
     let timer_id = runtime.objects.add_timer("monotonic-timer")?;
 
     let initial_index = initial_process_index(config)?;
@@ -1349,6 +1678,18 @@ pub fn init_from_boot_config(config: &BootRuntimeConfig) -> Result<(), InitError
             BOOT_OBJECT_TIMER if grant.object_index == 0 => timer_id,
             BOOT_OBJECT_NETWORK_PORT => {
                 network_port_ids[grant.object_index].ok_or(InitError::InvalidBootManifest)?
+            }
+            BOOT_OBJECT_IO_PORT_RANGE => {
+                io_port_ids[grant.object_index].ok_or(InitError::InvalidBootManifest)?
+            }
+            BOOT_OBJECT_MMIO_REGION => {
+                mmio_region_ids[grant.object_index].ok_or(InitError::InvalidBootManifest)?
+            }
+            BOOT_OBJECT_INTERRUPT_LINE => {
+                interrupt_line_ids[grant.object_index].ok_or(InitError::InvalidBootManifest)?
+            }
+            BOOT_OBJECT_DMA_REGION => {
+                dma_region_ids[grant.object_index].ok_or(InitError::InvalidBootManifest)?
             }
             _ => return Err(InitError::InvalidBootManifest),
         };
@@ -1625,6 +1966,12 @@ pub fn send(cap_slot: u64, source: *const u8, len: usize) -> Result<(), IpcError
     usercopy::copy_from_user(&mut message, UserPtr::new(source as u64), len)
         .map_err(|_| IpcError::InvalidUserBuffer)?;
 
+    let sender = runtime()
+        .processes
+        .current_process()
+        .map(|process| process.pid)
+        .unwrap_or_else(ProcessId::empty);
+
     let endpoint = runtime()
         .objects
         .get_endpoint_mut(endpoint_id)
@@ -1632,6 +1979,7 @@ pub fn send(cap_slot: u64, source: *const u8, len: usize) -> Result<(), IpcError
 
     endpoint.message[..len].copy_from_slice(&message[..len]);
     endpoint.message_len = len;
+    endpoint.message_sender = sender;
     endpoint.message_ready = true;
 
     serial::write_str("IPC send accepted: endpoint=");
@@ -1693,12 +2041,17 @@ fn receive_with_timeout(
     .map_err(|_| IpcError::InvalidUserBuffer)?;
 
     let mut message = [0u8; MAX_MESSAGE_BYTES];
+    let current_pid = runtime()
+        .processes
+        .current_process()
+        .map(|process| process.pid)
+        .unwrap_or_else(ProcessId::empty);
     let message_ready = {
         let endpoint = runtime()
             .objects
             .get_endpoint_mut(endpoint_id)
             .ok_or(IpcError::BadCapability)?;
-        endpoint.message_ready
+        endpoint.message_ready && endpoint.message_sender != current_pid
     };
 
     if !message_ready {
@@ -1810,11 +2163,11 @@ pub fn activate_generation(
     Ok(())
 }
 
-pub fn set_fallback_boot_config(generation_id: &'static str, config: &BootRuntimeConfig) {
+pub fn set_fallback_boot_config(generation_id: &'static str, config: &'static BootRuntimeConfig) {
     unsafe {
         *FALLBACK_RUNTIME.0.get() = Some(FallbackRuntime {
             generation_id,
-            config: *config,
+            config,
         });
     }
 }
@@ -1854,7 +2207,7 @@ pub fn rollback_generation(
     serial::write_str(fallback.generation_id);
     serial::write_str("\n");
 
-    init_from_boot_config(&fallback.config).map_err(|_| IpcError::BadCapability)?;
+    init_from_boot_config(fallback.config).map_err(|_| IpcError::BadCapability)?;
     let context = initial_process_context().ok_or(IpcError::BadCapability)?;
     serial::write_str("Krust rollback entering generation: ");
     serial::write_str(fallback.generation_id);
@@ -2341,6 +2694,54 @@ pub fn state_read(cap_slot: u64, destination: *mut u8, max_len: usize) -> Result
     Ok(copy_len)
 }
 
+pub fn io_read(cap_slot: u64, port: u64) -> Result<u64, IpcError> {
+    let range = io_port_from_cap(cap_slot, capability::RIGHT_READ)?;
+    if !port_in_range(range, port) || port > u16::MAX as u64 {
+        return Err(IpcError::BadCapability);
+    }
+
+    let value = unsafe { serial::inb_raw(port as u16) };
+    Ok(value as u64)
+}
+
+pub fn io_write(cap_slot: u64, port: u64, value: u64) -> Result<(), IpcError> {
+    let range = io_port_from_cap(cap_slot, capability::RIGHT_WRITE)?;
+    if !port_in_range(range, port) || port > u16::MAX as u64 {
+        return Err(IpcError::BadCapability);
+    }
+
+    unsafe {
+        serial::outb_raw(port as u16, value as u8);
+    }
+    Ok(())
+}
+
+pub fn irq_wait(cap_slot: u64, _timeout_ms: u64) -> Result<(), IpcError> {
+    let line = interrupt_line_from_cap(cap_slot, capability::RIGHT_LISTEN)?;
+    serial::write_str("IRQ wait accepted: proc=");
+    serial::write_str(current_process_name());
+    serial::write_str(" interrupt-line=");
+    serial::write_str(line.name);
+    serial::write_str(" line=");
+    serial::write_u64_dec(line.line);
+    serial::write_str("\n");
+    Ok(())
+}
+
+pub fn mmio_map(cap_slot: u64) -> Result<u64, IpcError> {
+    let region = mmio_region_from_cap(cap_slot, capability::RIGHT_MAP)?;
+    serial::write_str("MMIO map accepted: proc=");
+    serial::write_str(current_process_name());
+    serial::write_str(" mmio-region=");
+    serial::write_str(region.name);
+    serial::write_str(" base=");
+    serial::write_u64_hex(region.base);
+    serial::write_str(" length=");
+    serial::write_u64_hex(region.length);
+    serial::write_str("\n");
+    Ok(region.base)
+}
+
 pub fn sleep_ms(
     cap_slot: u64,
     milliseconds: u64,
@@ -2479,7 +2880,7 @@ fn wake_blocked_receiver(endpoint: KernelObjectId) {
     wake_timed_processes(read_tsc());
 
     let mut message = [0u8; MAX_MESSAGE_BYTES];
-    let message_len = {
+    let (message_len, message_sender) = {
         let runtime = runtime();
         let Some(endpoint_object) = runtime.objects.get_endpoint_mut(endpoint) else {
             return;
@@ -2490,10 +2891,10 @@ fn wake_blocked_receiver(endpoint: KernelObjectId) {
 
         let message_len = endpoint_object.message_len;
         message[..message_len].copy_from_slice(&endpoint_object.message[..message_len]);
-        message_len
+        (message_len, endpoint_object.message_sender)
     };
 
-    let Some(waiter_index) = blocked_receiver_index(endpoint) else {
+    let Some(waiter_index) = blocked_receiver_index(endpoint, message_sender) else {
         return;
     };
 
@@ -2578,7 +2979,7 @@ fn wake_blocked_receiver(endpoint: KernelObjectId) {
     }
 }
 
-fn blocked_receiver_index(endpoint: KernelObjectId) -> Option<usize> {
+fn blocked_receiver_index(endpoint: KernelObjectId, sender: ProcessId) -> Option<usize> {
     let runtime = runtime();
     let mut index = 0;
 
@@ -2589,6 +2990,7 @@ fn blocked_receiver_index(endpoint: KernelObjectId) -> Option<usize> {
                 ..
             } = process.state
             && waiting_endpoint == endpoint
+            && process.pid != sender
         {
             return Some(index);
         }
@@ -2801,6 +3203,33 @@ fn timer_from_cap(cap_slot: u64, required_right: u64) -> Result<TimerObject, Ipc
         .ok_or(IpcError::BadCapability)
 }
 
+fn io_port_from_cap(cap_slot: u64, required_right: u64) -> Result<IoPortRangeObject, IpcError> {
+    let cap = lookup_capability(cap_slot, required_right)?;
+    runtime()
+        .objects
+        .get_io_port(cap.object)
+        .ok_or(IpcError::BadCapability)
+}
+
+fn mmio_region_from_cap(cap_slot: u64, required_right: u64) -> Result<MmioRegionObject, IpcError> {
+    let cap = lookup_capability(cap_slot, required_right)?;
+    runtime()
+        .objects
+        .get_mmio_region(cap.object)
+        .ok_or(IpcError::BadCapability)
+}
+
+fn interrupt_line_from_cap(
+    cap_slot: u64,
+    required_right: u64,
+) -> Result<InterruptLineObject, IpcError> {
+    let cap = lookup_capability(cap_slot, required_right)?;
+    runtime()
+        .objects
+        .get_interrupt_line(cap.object)
+        .ok_or(IpcError::BadCapability)
+}
+
 fn process_control_from_cap(
     cap_slot: u64,
     required_right: u64,
@@ -2835,6 +3264,14 @@ fn lookup_capability(cap_slot: u64, required_right: u64) -> Result<Capability, I
     }
 
     Ok(cap)
+}
+
+fn port_in_range(range: IoPortRangeObject, port: u64) -> bool {
+    port >= range.base
+        && port
+            .checked_sub(range.base)
+            .map(|offset| offset < range.length)
+            .unwrap_or(false)
 }
 
 fn capability_has_revoked_ancestor(runtime: &RuntimeState, cap: Capability) -> bool {
@@ -2971,6 +3408,30 @@ fn print_capability_object(object: KernelObjectId) {
                     serial::write_str(port.name);
                     return;
                 }
+                KernelObject::IoPortRange(port) if port.id == object => {
+                    serial::write_str("io-port=");
+                    serial::write_str(port.name);
+                    return;
+                }
+                KernelObject::MmioRegion(region) if region.id == object => {
+                    serial::write_str("mmio-region=");
+                    serial::write_str(region.name);
+                    return;
+                }
+                KernelObject::InterruptLine(line) if line.id == object => {
+                    serial::write_str("interrupt-line=");
+                    serial::write_str(line.name);
+                    return;
+                }
+                KernelObject::DmaRegion(region) if region.id == object => {
+                    serial::write_str("dma-region=");
+                    serial::write_str(region.name);
+                    serial::write_str(" base=");
+                    serial::write_u64_hex(region.base);
+                    serial::write_str(" length=");
+                    serial::write_u64_hex(region.length);
+                    return;
+                }
                 KernelObject::ProcessControl(process_control) if process_control.id == object => {
                     serial::write_str("process-control=");
                     serial::write_str(process_control.name);
@@ -3017,6 +3478,7 @@ fn print_rights(rights: u64) {
     wrote = print_right(rights, capability::RIGHT_CONTROL, "control", wrote);
     wrote = print_right(rights, capability::RIGHT_SNAPSHOT, "snapshot", wrote);
     wrote = print_right(rights, capability::RIGHT_RESTORE, "restore", wrote);
+    wrote = print_right(rights, capability::RIGHT_MAP, "map", wrote);
     wrote = print_right(rights, capability::RIGHT_BIND, "bind", wrote);
     wrote = print_right(rights, capability::RIGHT_LISTEN, "listen", wrote);
     wrote = print_right(rights, capability::RIGHT_ALLOCATE, "allocate", wrote);

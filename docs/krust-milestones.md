@@ -6,7 +6,7 @@ IR and graph semantics; Krust is the native enforcement path.
 
 ## Status Summary
 
-Current status: M14-M31 are implemented and smoke-tested under
+Current status: M14-M36 are implemented and smoke-tested under
 `qemu-system-x86_64` with Limine.
 
 ```sh
@@ -20,9 +20,14 @@ scripts/krust-test.sh typed-arenas
 scripts/krust-test.sh quotas
 scripts/krust-test.sh preemption
 scripts/krust-test.sh user-fault
+scripts/krust-test.sh m32
+scripts/krust-test.sh m33
+scripts/krust-test.sh m34
+scripts/krust-test.sh m35
+scripts/krust-test.sh m36
 ```
 
-Next direction: M32-M40 continue hardening the M14-M31 graph-activation proof
+Next direction: M37-M40 continue hardening the M14-M36 graph-activation proof
 into a small, reliable, extensible capability microkernel substrate.
 
 ## M0: Serial Boot
@@ -849,6 +854,7 @@ done: Makefile recipes are parsed by make before the gate proceeds
 done: all M14-M24 QEMU tests are run from the gate
 done: M26-M29 manifest, capability, arena, quota, and malformed-manifest QEMU tests are run from the gate
 done: M30-M31 timer-preemption and user-fault containment QEMU tests are run from the gate
+done: M32-M36 I/O, serial-driver, block-driver, store-service, and state-service QEMU tests are run from the gate
 done: all QEMU transcript checks have bounded polling windows
 done: missing and forbidden transcript lines are reported explicitly
 done: README.md, docs/krust-milestones.md, docs/krust-abi-v0.md, and kernel/krust/README.md agree
@@ -1128,7 +1134,7 @@ delivery later.
 
 ## M32: I/O Capability Substrate
 
-Status: planned.
+Status: done.
 
 Goal: expose hardware authority through kernel objects before adding real
 drivers.
@@ -1154,18 +1160,23 @@ SYS_MMIO_MAP
 Acceptance tests:
 
 ```text
-serial-driver has COM1 I/O port capability
-serial-driver can write byte
-echo lacks I/O capability
-echo I/O write rejected
+done: serial-driver has COM1 I/O port capability
+done: serial-driver can write byte
+done: echo lacks I/O capability
+done: echo I/O write rejected
 ```
 
 The enforcement rule is simple: only services with explicit I/O capabilities can
 touch hardware resources.
 
+KrustBoot now carries `IoPortRange`, `MmioRegion`, `InterruptLine`, and
+`DmaRegion` grants into the kernel runtime. `SYS_IO_READ`, `SYS_IO_WRITE`,
+`SYS_IRQ_WAIT`, and `SYS_MMIO_MAP` resolve process-local capabilities before
+touching or exposing any hardware-shaped resource.
+
 ## M33: Move Serial Logging Toward User Space
 
-Status: planned.
+Status: done.
 
 Goal: keep kernel serial as a debug and panic path, but move normal logging
 toward a user-space driver model.
@@ -1182,20 +1193,25 @@ serial-driver writes to serial
 Acceptance tests:
 
 ```text
-serial-driver ready
-logd sends log message
-serial-driver writes message to COM1
-logd cannot write COM1 directly
-echo cannot write COM1 directly
-kernel debug serial still works for panic path
+done: serial-driver ready
+done: logd sends log message
+done: serial-driver writes message to COM1
+done: logd cannot write COM1 directly
+done: echo cannot write COM1 directly
+done: kernel debug serial still works for panic path
 ```
 
 This aligns Krust with the microkernel direction: drivers belong in userspace
 when the kernel can safely enforce the resource boundary.
 
+Normal demo logging now includes a user-space path where `logd` sends to
+`serial-driver`, and `serial-driver` writes COM1 through `SYS_IO_WRITE`. The
+kernel serial writer remains available for early boot, debug transcripts, and
+panic paths.
+
 ## M34: First Real Block-Device Path
 
-Status: planned.
+Status: done.
 
 Goal: add storage transport without adding a filesystem yet.
 
@@ -1211,19 +1227,24 @@ block-read/block-write IPC protocol
 Acceptance tests:
 
 ```text
-block-driver ready
-store-service requests block read
-block-driver returns bytes
-unauthorized service cannot talk to block-driver
-unauthorized service cannot access MMIO, IRQ, or DMA capabilities
+done: block-driver ready
+done: store-service requests block read
+done: block-driver returns bytes
+done: unauthorized service cannot talk to block-driver
+done: unauthorized service cannot access MMIO, IRQ, or DMA capabilities
 ```
 
 This may need to split into multiple sub-milestones if PCI enumeration, virtio
 queues, DMA, and IRQ handling prove too large for one step.
 
+The first path is deliberately still a proof transport: `block-driver` owns the
+virtio-blk shaped MMIO, IRQ, and DMA capabilities and serves a small
+block-read IPC protocol. Real virtio queue setup and a real disk image remain
+future driver work.
+
 ## M35: Native Immutable Store Service
 
-Status: planned.
+Status: done.
 
 Goal: implement the first native Vertex store feature without implementing
 POSIX or a general filesystem.
@@ -1246,19 +1267,23 @@ store:blake3:<hash>
 Acceptance tests:
 
 ```text
-model-reader asks for store:hello-text
-vertex-store verifies hash
-model-reader reads bytes
-modified object fails hash check
-unauthorized process cannot read object
+done: model-reader asks for store:hello-text
+done: vertex-store verifies hash
+done: model-reader reads bytes
+done: modified object fails hash check
+done: unauthorized process cannot read object
 ```
 
 This turns the current boot-module store proof into a real immutable object
 service.
 
+`model-reader` now talks to `vertex-store` over an explicit store IPC endpoint.
+`vertex-store` requests bytes from `block-driver`, verifies the expected object
+content, rejects a modified-object negative check, and replies to the reader.
+
 ## M36: Native State-Volume Service
 
-Status: planned.
+Status: done.
 
 Goal: add real mutable state while keeping it distinct from immutable store
 objects.
@@ -1275,16 +1300,21 @@ vertex-state
 Acceptance tests:
 
 ```text
-counter-service writes state
-reader-service reads state
-reader-service write denied
-snapshot created
-state restored
-system generation rollback does not automatically roll back state unless policy says so
+done: counter-service writes state
+done: reader-service reads state
+done: reader-service write denied
+done: snapshot created
+done: state restored
+done: system generation rollback does not automatically roll back state unless policy says so
 ```
 
 Immutable system rollback and mutable state rollback are related policy
 decisions, not the same operation.
+
+`counter-service` and `reader-service` now use a `vertex-state` IPC endpoint
+instead of direct kernel state syscalls. `vertex-state` owns the state-volume
+backend capability, performs the write/read/deny flow, and demonstrates
+explicit snapshot and restore policy separation.
 
 ## M37: Native Generation Switch
 
@@ -1368,7 +1398,7 @@ documented host tool versions for Rust, qemu, limine, xorriso, and cargo tools
 locked Cargo dependencies
 kernel/krust/rust-toolchain.toml as the native Krust toolchain pin
 make doctor checks every required tool and reports actionable fixes
-single release-gate script that runs the clean-clone M14-M31 proof
+single release-gate script that runs the clean-clone M14-M36 proof
 ```
 
 Acceptance tests:
@@ -1410,11 +1440,11 @@ base for the next phase.
 
 ## Immediate Issue List
 
-Create these next:
+Completed first slices:
 
 ```text
-M32.1  Add first I/O capability substrate path
-M33.1  Move serial logging toward user space
+done: M32.1  Add first I/O capability substrate path
+done: M33.1  Move serial logging toward user space
 ```
 
 ## Deferred Work
@@ -1442,9 +1472,9 @@ A native booted Vertex system should be able to activate, switch, inspect,
 revoke, and persist declared generation graphs under explicit authority.
 ```
 
-M13 proved that native services can run under explicit authority. M14-M31 prove
+M13 proved that native services can run under explicit authority. M14-M36 prove
 that the graph itself decides which native services exist, when they start,
 what they receive, why they are allowed to communicate, and how authority and
 resources are bounded, while timer preemption and user fault containment keep
-the kernel in control. M32-M40 should make that model reliable enough to become
+the kernel in control. M37-M40 should make that model reliable enough to become
 the long-lived Vertex native runtime base.

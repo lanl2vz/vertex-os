@@ -5,10 +5,12 @@ native Krust QEMU/Limine milestone. It is intentionally small and unstable. Its
 current job is to boot native `vertex-init`, start a tiny declared service
 graph, and enforce explicit process-local capabilities.
 
-Milestone status: ABI v0 now covers the M14-M31 native activation and substrate
+Milestone status: ABI v0 now covers the M14-M36 native activation and substrate
 proof. M25 adds the release gate. M26-M29 add Manifest v1 parsing, capability
 provenance/revocation, typed arena allocation checks, and resource quotas.
-M30-M31 add PIT-backed preemption and user page-fault containment. This is
+M30-M31 add PIT-backed preemption and user page-fault containment. M32-M36 add
+I/O capability objects, user-space serial and block-driver proof paths, and
+native store/state services. This is
 still experimental and does not freeze syscall, capability, process, or IPC ABI
 surface.
 
@@ -77,6 +79,10 @@ process frame, switch CR3, and return into another userspace process through
 | 24 | `SYS_CAP_COPY` | `arg0 = source_cap_slot`, `arg1 = target_cap_slot`, `arg2 = rights_mask` | status |
 | 25 | `SYS_ENDPOINT_CREATE` | `arg0 = process_control_cap_slot`, `arg1 = target_cap_slot` | status |
 | 26 | `SYS_QUOTA_DELEGATE` | `arg0 = process_control_cap_slot`, `arg1 = target_process_index`, `arg2 = max_endpoints` | status |
+| 27 | `SYS_IO_READ` | `arg0 = io_port_cap_slot`, `arg1 = port`, `arg2 = 0` | byte value or error status |
+| 28 | `SYS_IO_WRITE` | `arg0 = io_port_cap_slot`, `arg1 = port`, `arg2 = byte value` | status |
+| 29 | `SYS_IRQ_WAIT` | `arg0 = interrupt_line_cap_slot`, `arg1 = timeout_ms`, `arg2 = 0` | status |
+| 30 | `SYS_MMIO_MAP` | `arg0 = mmio_region_cap_slot` | mapped base proof value or error status |
 
 ## Return Status Values
 
@@ -116,7 +122,7 @@ becoming uncontrolled kernel faults.
 Capabilities are process-local. A capability slot number is meaningful only in
 the current process's capability space.
 
-Current M14-M31 layout:
+Current M14-M36 layout:
 
 ```text
 vertex-init:
@@ -131,6 +137,29 @@ logd:
   cap[0] = endpoint log-sink, rights=receive
   cap[1] = endpoint serial-log, rights=send
   cap[2] = endpoint readiness, rights=send
+  cap[3] = endpoint serial-console, rights=send after vertex-init derives and transfers it
+
+serial-driver:
+  cap[0] = endpoint serial-console, rights=receive
+  cap[1] = endpoint serial-log, rights=send
+  cap[3] = io-port cap:io.com1, rights=read|write
+
+block-driver:
+  cap[0] = endpoint block-io, rights=send|receive
+  cap[1] = endpoint serial-log, rights=send
+  cap[3] = mmio-region cap:mmio.virtio-blk0, rights=map
+  cap[4] = interrupt-line cap:irq.virtio-blk0, rights=listen
+  cap[5] = dma-region cap:dma.virtio-blk0, rights=read|write|map
+
+vertex-store:
+  cap[0] = endpoint store-hello-text-api, rights=send|receive
+  cap[1] = endpoint serial-log, rights=send
+  cap[3] = endpoint block-io, rights=send|receive after vertex-init derives and transfers it
+
+vertex-state:
+  cap[0] = endpoint state-counter-api, rights=send|receive
+  cap[1] = endpoint serial-log, rights=send
+  cap[3] = state-volume state:counter, rights=read|write|snapshot|restore
 
 echo:
   cap[1] = endpoint serial-log, rights=send
@@ -138,15 +167,15 @@ echo:
   cap[0] = endpoint log-sink, rights=send after vertex-init derives and transfers it
 
 model-reader:
-  cap[0] = store-object store:hello-text, rights=read
+  cap[0] = endpoint store-hello-text-api, rights=send|receive after vertex-init derives and transfers it
   cap[1] = endpoint serial-log, rights=send
 
 counter-service:
-  cap[0] = state-volume state:counter, rights=write
+  cap[0] = endpoint state-counter-api, rights=send|receive after vertex-init derives and transfers it
   cap[1] = endpoint serial-log, rights=send
 
 reader-service:
-  cap[0] = state-volume state:counter, rights=read|snapshot|restore
+  cap[0] = endpoint state-counter-api, rights=send|receive after vertex-init derives and transfers it
   cap[1] = endpoint serial-log, rights=send
 
 timer-service:
@@ -178,11 +207,20 @@ SYS_OBJECT_READ requires read rights on a store-object cap.
 SYS_STATE_WRITE requires write rights on a state-volume cap.
 SYS_STATE_READ requires read rights on a state-volume cap.
 SYS_SLEEP_MS requires control rights on a timer cap.
+SYS_IO_READ requires read rights on an io-port cap and a port inside the granted range.
+SYS_IO_WRITE requires write rights on an io-port cap and a port inside the granted range.
+SYS_IRQ_WAIT requires listen rights on an interrupt-line cap.
+SYS_MMIO_MAP requires map rights on an mmio-region cap.
 ```
 
 Native network-port objects currently grant bind/listen authority to declared
 services; the proof path records and enforces the capability object, but does
 not yet include a network driver syscall that consumes it.
+
+Native I/O objects now cover the first hardware authority substrate:
+`IoPortRange`, `MmioRegion`, `InterruptLine`, and `DmaRegion`. `DmaRegion`
+authority is represented and granted to `block-driver`; real DMA mapping is not
+implemented in ABI v0.
 
 Capability records carry kernel-owned metadata:
 
@@ -325,19 +363,23 @@ the original receive call site with `rax = delivered_len`.
 
 ## Native vertex-init Semantics
 
-The current hello generation boots one initial userspace process and eight
+The current hello generation boots one initial userspace process and twelve
 declared service processes:
 
 ```text
 process[0] = vertex-init
-process[1] = logd
-process[2] = netstack
-process[3] = echo
-process[4] = model-reader
-process[5] = counter-service
-process[6] = reader-service
-process[7] = timer-service
-process[8] = flaky-service
+process[1] = serial-driver
+process[2] = logd
+process[3] = netstack
+process[4] = block-driver
+process[5] = vertex-store
+process[6] = vertex-state
+process[7] = echo
+process[8] = model-reader
+process[9] = counter-service
+process[10] = reader-service
+process[11] = timer-service
+process[12] = flaky-service
 ```
 
 `vertex-init` uses these syscalls:
@@ -385,8 +427,10 @@ SYS_IPC_RECV_TIMEOUT(cap[3], buffer, packed(timeout_ms, len))
 manifest dependencies, waits for logd readiness, derives and transfers endpoint
 caps with the rights requested by each consumer, starts the declared services,
 and observes their exit status. Negative capability tests prove echo cannot
-receive on its send-only cap, logd cannot start processes without
-process-control, and reader-service cannot write through a read-only state cap.
+receive on its send-only cap, logd and echo cannot write COM1 directly, echo
+cannot talk to block-driver or device objects without authority, logd cannot
+start processes without process-control, and reader-service write attempts are
+denied by `vertex-state`.
 
 ## Boot ABI
 
@@ -416,6 +460,10 @@ grants
 store_objects
 state_volumes
 network_ports
+io_port_ranges
+mmio_regions
+interrupt_lines
+dma_regions
 ```
 
 Manifest v1 adds a fixed header, record table, checksum, and record bounds
@@ -437,7 +485,7 @@ cap[4+] endpoint authority for graph-delegated endpoints, one authority cap per
 declared endpoint beyond the fixed serial-log/readiness endpoints
 ```
 
-Endpoint, store-object, state-volume, and timer grants for declared services
+Endpoint, hardware, store-object, state-volume, and timer grants for declared services
 come from the compact manifest. Endpoint consumers do not receive static boot
 send grants for delegated authority; vertex-init derives and transfers the
 attenuated cap before starting the consumer. A transfer to a still-declared

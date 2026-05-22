@@ -221,23 +221,31 @@ fn compile_boot_manifest_emits_krustboot_plan() {
         &output_arg,
     ]));
 
-    assert!(stdout.contains("format: KrustBootManifest v3"));
+    assert!(stdout.contains("format: KrustBoot Manifest v1"));
     assert!(stdout.contains("generation: gen:hello-0001"));
-    assert!(stdout.contains("boot_modules: 9"));
-    assert!(stdout.contains("processes: 9"));
-    assert!(stdout.contains("endpoints: 3"));
-    assert!(stdout.contains("grants: 18"));
-    assert!(stdout.contains("store_objects: 1"));
+    assert!(stdout.contains("boot_modules: 13"));
+    assert!(stdout.contains("processes: 13"));
+    assert!(stdout.contains("endpoints: 7"));
+    assert!(stdout.contains("grants: 32"));
+    assert!(stdout.contains("store_objects: 0"));
     assert!(stdout.contains("state_volumes: 1"));
     assert!(stdout.contains("network_ports: 1"));
+    assert!(stdout.contains("io_ports: 1"));
+    assert!(stdout.contains("mmio_regions: 1"));
+    assert!(stdout.contains("interrupt_lines: 1"));
+    assert!(stdout.contains("dma_regions: 1"));
 
     let bytes = fs::read(&output_path).expect("read krustboot output");
-    assert!(bytes.starts_with(b"KRUSTBOOTV0\0\0\0\0\0"));
+    assert!(bytes.starts_with(b"KRUSTBOOTV1\0\0\0\0\0"));
     assert!(contains_bytes(&bytes, b"gen:hello-0001"));
     assert!(contains_bytes(&bytes, b"vertex-init"));
+    assert!(contains_bytes(&bytes, b"serial-driver"));
     assert!(contains_bytes(&bytes, b"serial-log"));
     assert!(contains_bytes(&bytes, b"logd"));
     assert!(contains_bytes(&bytes, b"netstack"));
+    assert!(contains_bytes(&bytes, b"block-driver"));
+    assert!(contains_bytes(&bytes, b"vertex-store"));
+    assert!(contains_bytes(&bytes, b"vertex-state"));
     assert!(contains_bytes(&bytes, b"echo"));
     assert!(contains_bytes(&bytes, b"model-reader"));
     assert!(contains_bytes(&bytes, b"counter-service"));
@@ -245,8 +253,15 @@ fn compile_boot_manifest_emits_krustboot_plan() {
     assert!(contains_bytes(&bytes, b"timer-service"));
     assert!(contains_bytes(&bytes, b"flaky-service"));
     assert!(contains_bytes(&bytes, b"log-sink"));
+    assert!(contains_bytes(&bytes, b"serial-console"));
+    assert!(contains_bytes(&bytes, b"block-io"));
+    assert!(contains_bytes(&bytes, b"store-hello-text-api"));
+    assert!(contains_bytes(&bytes, b"state-counter-api"));
     assert!(contains_bytes(&bytes, b"readiness"));
-    assert!(contains_bytes(&bytes, b"store:hello-text"));
+    assert!(contains_bytes(&bytes, b"cap:io.com1"));
+    assert!(contains_bytes(&bytes, b"cap:mmio.virtio-blk0"));
+    assert!(contains_bytes(&bytes, b"cap:irq.virtio-blk0"));
+    assert!(contains_bytes(&bytes, b"cap:dma.virtio-blk0"));
     assert!(contains_bytes(&bytes, b"cap:net.tcp.8080"));
 }
 

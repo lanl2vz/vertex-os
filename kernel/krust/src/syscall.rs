@@ -37,6 +37,10 @@ const SYS_CAP_MOVE: u64 = 23;
 const SYS_CAP_COPY: u64 = 24;
 const SYS_ENDPOINT_CREATE: u64 = 25;
 const SYS_QUOTA_DELEGATE: u64 = 26;
+const SYS_IO_READ: u64 = 27;
+const SYS_IO_WRITE: u64 = 28;
+const SYS_IRQ_WAIT: u64 = 29;
+const SYS_MMIO_MAP: u64 = 30;
 
 const STATUS_OK: u64 = 0;
 const STATUS_BAD_CAPABILITY: u64 = u64::MAX - 1;
@@ -295,6 +299,22 @@ pub extern "C" fn krust_syscall_dispatch(
         SYS_QUOTA_DELEGATE => match ipc::quota_delegate(arg0, arg1, arg2) {
             Ok(()) => frame.rax = STATUS_OK,
             Err(error) => frame.rax = ipc_error_status("SYS_QUOTA_DELEGATE", error),
+        },
+        SYS_IO_READ => match ipc::io_read(arg0, arg1) {
+            Ok(value) => frame.rax = value,
+            Err(error) => frame.rax = ipc_error_status("SYS_IO_READ", error),
+        },
+        SYS_IO_WRITE => match ipc::io_write(arg0, arg1, arg2) {
+            Ok(()) => frame.rax = STATUS_OK,
+            Err(error) => frame.rax = ipc_error_status("SYS_IO_WRITE", error),
+        },
+        SYS_IRQ_WAIT => match ipc::irq_wait(arg0, arg1) {
+            Ok(()) => frame.rax = STATUS_OK,
+            Err(error) => frame.rax = ipc_error_status("SYS_IRQ_WAIT", error),
+        },
+        SYS_MMIO_MAP => match ipc::mmio_map(arg0) {
+            Ok(base) => frame.rax = base,
+            Err(error) => frame.rax = ipc_error_status("SYS_MMIO_MAP", error),
         },
         _ => {
             serial::write_str("Unknown userspace syscall: ");

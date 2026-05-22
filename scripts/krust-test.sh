@@ -190,6 +190,62 @@ delegated quota cannot exceed parent quota
 service with no allocation authority cannot create endpoint
 '
         ;;
+    m32|io-substrate)
+        MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
+        EXPECT_ACTIVATION_SUCCESS=1
+        required_lines='
+proc=serial-driver cap[3] io-port=cap:io.com1 rights=read|write
+serial-driver has COM1 I/O port capability
+serial-driver can write byte
+echo I/O write rejected
+'
+        ;;
+    m33|serial-driver)
+        MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
+        EXPECT_ACTIVATION_SUCCESS=1
+        required_lines='
+serial-driver ready
+logd sends log message
+serial-driver writes message to COM1
+logd cannot write COM1 directly
+echo cannot write COM1 directly
+Krust Kernel booted
+'
+        ;;
+    m34|block-driver)
+        MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
+        EXPECT_ACTIVATION_SUCCESS=1
+        required_lines='
+block-driver ready
+store-service requests block read
+block-driver returns bytes
+unauthorized service cannot talk to block-driver
+unauthorized service cannot access MMIO, IRQ, or DMA capabilities
+'
+        ;;
+    m35|store-service)
+        MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
+        EXPECT_ACTIVATION_SUCCESS=1
+        required_lines='
+model-reader asks for store:hello-text
+vertex-store verifies hash
+model-reader reads bytes
+modified object fails hash check
+unauthorized process cannot read object
+'
+        ;;
+    m36|state-service)
+        MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
+        EXPECT_ACTIVATION_SUCCESS=1
+        required_lines='
+counter-service writes state
+reader-service reads state
+reader-service write denied
+snapshot created
+state restored
+system generation rollback does not automatically roll back state unless policy says so
+'
+        ;;
     manifest-truncated)
         MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
         KRUSTBOOT_CORRUPT=truncated
@@ -239,7 +295,7 @@ activation failed
 '
         ;;
     *)
-        echo "usage: scripts/krust-test.sh <m13|m14|valid-activation|manifest-cycle|bad-cap|readiness|readiness-timeout|rollback|store-state|timer|preemption|m30|user-fault|m31|restart|manifest-v1|cap-lifecycle|typed-arenas|quotas|manifest-truncated|manifest-bad-magic|manifest-raw-compact|manifest-unsupported-version|manifest-oob-record|manifest-missing-provider>" >&2
+        echo "usage: scripts/krust-test.sh <m13|m14|valid-activation|manifest-cycle|bad-cap|readiness|readiness-timeout|rollback|store-state|timer|preemption|m30|user-fault|m31|restart|manifest-v1|cap-lifecycle|typed-arenas|quotas|m32|io-substrate|m33|serial-driver|m34|block-driver|m35|store-service|m36|state-service|manifest-truncated|manifest-bad-magic|manifest-raw-compact|manifest-unsupported-version|manifest-oob-record|manifest-missing-provider>" >&2
         exit 2
         ;;
 esac

@@ -8,6 +8,7 @@ use core::panic::PanicInfo;
 const CAP_LOG_SINK: u64 = 0;
 const CAP_SERIAL_LOG: u64 = 1;
 const CAP_READINESS: u64 = 2;
+const CAP_SERIAL_DRIVER: u64 = 3;
 const ECHO_PROCESS_INDEX: u64 = 2;
 const PROTOCOL_HEALTH_V0: u16 = 2;
 const MESSAGE_READY: u16 = 1;
@@ -22,6 +23,16 @@ pub extern "C" fn _start() -> ! {
         sys::exit(1);
     }
     log(b"logd ready");
+
+    if sys::ipc_send(CAP_SERIAL_DRIVER, b"logd sends log message") == sys::STATUS_BAD_CAPABILITY {
+        log(b"logd serial-driver unavailable");
+    }
+    if sys::io_write(CAP_SERIAL_DRIVER, 0x3f8, b'!') == sys::STATUS_BAD_CAPABILITY {
+        log(b"logd cannot write COM1 directly");
+    } else {
+        log(b"logd COM1 denial failed");
+        sys::exit(1);
+    }
 
     let mut buffer = [0u8; 64];
     let received = sys::ipc_recv(CAP_LOG_SINK, &mut buffer);

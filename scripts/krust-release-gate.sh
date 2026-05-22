@@ -4,7 +4,7 @@ set -eu
 ROOT_DIR=$(CDPATH= cd "$(dirname "$0")/.." && pwd)
 KRUST_DIR=${KRUST_DIR:-"$ROOT_DIR/kernel/krust"}
 LOG_DIR=${LOG_DIR:-"$KRUST_DIR/build/release-gate"}
-KRUST_CASES=${KRUST_CASES:-"m14 manifest-cycle bad-cap readiness-timeout rollback store-state timer preemption user-fault restart manifest-v1 cap-lifecycle typed-arenas quotas manifest-truncated manifest-bad-magic manifest-raw-compact manifest-unsupported-version manifest-oob-record manifest-missing-provider"}
+KRUST_CASES=${KRUST_CASES:-"m14 manifest-cycle bad-cap readiness-timeout rollback store-state timer preemption user-fault restart manifest-v1 cap-lifecycle typed-arenas quotas m32 m33 m34 m35 m36 manifest-truncated manifest-bad-magic manifest-raw-compact manifest-unsupported-version manifest-oob-record manifest-missing-provider"}
 
 fail() {
     echo "error: $*" >&2
@@ -68,17 +68,17 @@ check_no_trailing_whitespace docs/krust-abi-v0.md
 check_no_trailing_whitespace kernel/krust/README.md
 
 step "checking Krust status documentation"
-require_doc_line README.md "M14-M31"
+require_doc_line README.md "M14-M36"
 require_doc_line README.md "scripts/krust-release-gate.sh"
-require_doc_line docs/krust-milestones.md "Current status: M14-M31"
+require_doc_line docs/krust-milestones.md "Current status: M14-M36"
 require_doc_line docs/krust-milestones.md "## M25: Reproducible Clean-Clone Release Gate"
 require_doc_line docs/krust-milestones.md "done: all M14-M24 QEMU tests are run from the gate"
 require_doc_line docs/krust-milestones.md "done: M26-M29 manifest, capability, arena, quota, and malformed-manifest QEMU tests are run from the gate"
 require_doc_line docs/krust-milestones.md "done: M30-M31 timer-preemption and user-fault containment QEMU tests are run from the gate"
 require_doc_line docs/krust-milestones.md "done: unwrapped compact payload rejected"
 require_doc_line docs/krust-milestones.md "## M29: Resource Accounting And Quotas"
-require_doc_line docs/krust-abi-v0.md "M30-M31 add"
-require_doc_line kernel/krust/README.md "M26-M31 Substrate"
+require_doc_line docs/krust-abi-v0.md "M32-M36 add"
+require_doc_line kernel/krust/README.md "M26-M36 Substrate"
 require_doc_line kernel/krust/README.md "scripts/krust-release-gate.sh"
 
 step "cargo build --offline"
@@ -99,4 +99,4 @@ for case_name in $KRUST_CASES; do
 done
 
 echo
-echo "Krust release gate ok: clean-clone M14-M31 proof is repeatable."
+echo "Krust release gate ok: clean-clone M14-M36 proof is repeatable."

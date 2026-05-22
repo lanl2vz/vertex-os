@@ -341,6 +341,54 @@ fn run_capability_table_demo(allocator: &memory::FrameAllocator, heap: KernelHea
             return;
         }
     };
+    let com1_ports = match table.add_object(
+        capability::KernelObjectKind::IoPortRange,
+        "io:com1",
+        0x3f8,
+        8,
+    ) {
+        Ok(id) => id,
+        Err(_) => {
+            serial::write_str("Capability table demo failed: COM1 I/O object\n");
+            return;
+        }
+    };
+    let virtio_mmio = match table.add_object(
+        capability::KernelObjectKind::MmioRegion,
+        "mmio:virtio-blk0",
+        0x1000_1000,
+        0x1000,
+    ) {
+        Ok(id) => id,
+        Err(_) => {
+            serial::write_str("Capability table demo failed: virtio MMIO object\n");
+            return;
+        }
+    };
+    let virtio_irq = match table.add_object(
+        capability::KernelObjectKind::InterruptLine,
+        "irq:virtio-blk0",
+        5,
+        1,
+    ) {
+        Ok(id) => id,
+        Err(_) => {
+            serial::write_str("Capability table demo failed: virtio IRQ object\n");
+            return;
+        }
+    };
+    let virtio_dma = match table.add_object(
+        capability::KernelObjectKind::DmaRegion,
+        "dma:virtio-blk0",
+        0,
+        0x1000,
+    ) {
+        Ok(id) => id,
+        Err(_) => {
+            serial::write_str("Capability table demo failed: virtio DMA object\n");
+            return;
+        }
+    };
 
     if table
         .grant(
@@ -373,6 +421,17 @@ fn run_capability_table_demo(allocator: &memory::FrameAllocator, heap: KernelHea
             )
             .is_err()
         || table.grant(boot_module, capability::RIGHT_READ).is_err()
+        || table
+            .grant(com1_ports, capability::RIGHT_READ | capability::RIGHT_WRITE)
+            .is_err()
+        || table.grant(virtio_mmio, capability::RIGHT_MAP).is_err()
+        || table.grant(virtio_irq, capability::RIGHT_LISTEN).is_err()
+        || table
+            .grant(
+                virtio_dma,
+                capability::RIGHT_READ | capability::RIGHT_WRITE | capability::RIGHT_MAP,
+            )
+            .is_err()
     {
         serial::write_str("Capability table demo failed: grant\n");
         return;
@@ -380,7 +439,7 @@ fn run_capability_table_demo(allocator: &memory::FrameAllocator, heap: KernelHea
 
     table.print();
 
-    if table.object_count() == 6 && table.capability_count() == 6 {
+    if table.object_count() == 10 && table.capability_count() == 10 {
         serial::write_str("Capability table demo ok\n");
     } else {
         serial::write_str("Capability table demo failed: count mismatch\n");
@@ -725,6 +784,73 @@ fn build_boot_runtime_config(
     }
 
     index = 0;
+    while index < boot_manifest.io_port_count() {
+        let port = boot_manifest.io_port(index)?;
+        if config
+            .add_io_port(ipc::BootIoPortRangeConfig {
+                id: port.id,
+                base: port.base,
+                length: port.length,
+            })
+            .is_err()
+        {
+            serial::write_str("KrustBoot runtime plan failed: io port table\n");
+            return None;
+        }
+        index += 1;
+    }
+
+    index = 0;
+    while index < boot_manifest.mmio_region_count() {
+        let region = boot_manifest.mmio_region(index)?;
+        if config
+            .add_mmio_region(ipc::BootMmioRegionConfig {
+                id: region.id,
+                base: region.base,
+                length: region.length,
+            })
+            .is_err()
+        {
+            serial::write_str("KrustBoot runtime plan failed: mmio region table\n");
+            return None;
+        }
+        index += 1;
+    }
+
+    index = 0;
+    while index < boot_manifest.interrupt_line_count() {
+        let line = boot_manifest.interrupt_line(index)?;
+        if config
+            .add_interrupt_line(ipc::BootInterruptLineConfig {
+                id: line.id,
+                line: line.line,
+            })
+            .is_err()
+        {
+            serial::write_str("KrustBoot runtime plan failed: interrupt line table\n");
+            return None;
+        }
+        index += 1;
+    }
+
+    index = 0;
+    while index < boot_manifest.dma_region_count() {
+        let region = boot_manifest.dma_region(index)?;
+        if config
+            .add_dma_region(ipc::BootDmaRegionConfig {
+                id: region.id,
+                base: region.base,
+                length: region.length,
+            })
+            .is_err()
+        {
+            serial::write_str("KrustBoot runtime plan failed: dma region table\n");
+            return None;
+        }
+        index += 1;
+    }
+
+    index = 0;
     while index < boot_manifest.grant_count() {
         let grant = boot_manifest.grant(index)?;
         let rights = capability_rights_from_boot(grant.rights);
@@ -779,6 +905,9 @@ fn capability_rights_from_boot(rights: u16) -> u64 {
     }
     if rights & boot_manifest::RIGHT_LISTEN != 0 {
         out |= capability::RIGHT_LISTEN;
+    }
+    if rights & boot_manifest::RIGHT_MAP != 0 {
+        out |= capability::RIGHT_MAP;
     }
     out
 }
@@ -1075,6 +1204,80 @@ fn print_boot_manifest(manifest: &boot_manifest::Manifest<'static>) {
         }
         index += 1;
     }
+
+    serial::write_str("KrustBoot io port ranges: ");
+    serial::write_u64_dec(manifest.io_port_count() as u64);
+    serial::write_str("\n");
+    index = 0;
+    while index < manifest.io_port_count() {
+        if let Some(port) = manifest.io_port(index) {
+            serial::write_str("  io_port[");
+            serial::write_u64_dec(index as u64);
+            serial::write_str("] id=");
+            serial::write_str(port.id);
+            serial::write_str(" base=");
+            serial::write_u64_hex(port.base);
+            serial::write_str(" length=");
+            serial::write_u64_hex(port.length);
+            serial::write_str("\n");
+        }
+        index += 1;
+    }
+
+    serial::write_str("KrustBoot mmio regions: ");
+    serial::write_u64_dec(manifest.mmio_region_count() as u64);
+    serial::write_str("\n");
+    index = 0;
+    while index < manifest.mmio_region_count() {
+        if let Some(region) = manifest.mmio_region(index) {
+            serial::write_str("  mmio_region[");
+            serial::write_u64_dec(index as u64);
+            serial::write_str("] id=");
+            serial::write_str(region.id);
+            serial::write_str(" base=");
+            serial::write_u64_hex(region.base);
+            serial::write_str(" length=");
+            serial::write_u64_hex(region.length);
+            serial::write_str("\n");
+        }
+        index += 1;
+    }
+
+    serial::write_str("KrustBoot interrupt lines: ");
+    serial::write_u64_dec(manifest.interrupt_line_count() as u64);
+    serial::write_str("\n");
+    index = 0;
+    while index < manifest.interrupt_line_count() {
+        if let Some(line) = manifest.interrupt_line(index) {
+            serial::write_str("  interrupt_line[");
+            serial::write_u64_dec(index as u64);
+            serial::write_str("] id=");
+            serial::write_str(line.id);
+            serial::write_str(" line=");
+            serial::write_u64_dec(line.line);
+            serial::write_str("\n");
+        }
+        index += 1;
+    }
+
+    serial::write_str("KrustBoot dma regions: ");
+    serial::write_u64_dec(manifest.dma_region_count() as u64);
+    serial::write_str("\n");
+    index = 0;
+    while index < manifest.dma_region_count() {
+        if let Some(region) = manifest.dma_region(index) {
+            serial::write_str("  dma_region[");
+            serial::write_u64_dec(index as u64);
+            serial::write_str("] id=");
+            serial::write_str(region.id);
+            serial::write_str(" base=");
+            serial::write_u64_hex(region.base);
+            serial::write_str(" length=");
+            serial::write_u64_hex(region.length);
+            serial::write_str("\n");
+        }
+        index += 1;
+    }
 }
 
 fn print_boot_grant_object(
@@ -1119,6 +1322,42 @@ fn print_boot_grant_object(
                 manifest
                     .network_port(object_index)
                     .map(|port| port.id)
+                    .unwrap_or("<bad>"),
+            );
+        }
+        boot_manifest::OBJECT_IO_PORT_RANGE => {
+            serial::write_str("io-port=");
+            serial::write_str(
+                manifest
+                    .io_port(object_index)
+                    .map(|port| port.id)
+                    .unwrap_or("<bad>"),
+            );
+        }
+        boot_manifest::OBJECT_MMIO_REGION => {
+            serial::write_str("mmio-region=");
+            serial::write_str(
+                manifest
+                    .mmio_region(object_index)
+                    .map(|region| region.id)
+                    .unwrap_or("<bad>"),
+            );
+        }
+        boot_manifest::OBJECT_INTERRUPT_LINE => {
+            serial::write_str("interrupt-line=");
+            serial::write_str(
+                manifest
+                    .interrupt_line(object_index)
+                    .map(|line| line.id)
+                    .unwrap_or("<bad>"),
+            );
+        }
+        boot_manifest::OBJECT_DMA_REGION => {
+            serial::write_str("dma-region=");
+            serial::write_str(
+                manifest
+                    .dma_region(object_index)
+                    .map(|region| region.id)
                     .unwrap_or("<bad>"),
             );
         }
@@ -1167,6 +1406,13 @@ fn print_boot_grant_rights(rights: u16) {
         serial::write_str("restore");
         wrote = true;
     }
+    if rights & boot_manifest::RIGHT_MAP != 0 {
+        if wrote {
+            serial::write_str("|");
+        }
+        serial::write_str("map");
+        wrote = true;
+    }
     if rights & boot_manifest::RIGHT_CONTROL != 0 {
         if wrote {
             serial::write_str("|");
@@ -1211,6 +1457,14 @@ fn print_boot_manifest_error(error: boot_manifest::ParseError) {
         boot_manifest::ParseError::TooManyNetworkPorts => {
             serial::write_str("too many network ports")
         }
+        boot_manifest::ParseError::TooManyIoPortRanges => {
+            serial::write_str("too many io port ranges")
+        }
+        boot_manifest::ParseError::TooManyMmioRegions => serial::write_str("too many mmio regions"),
+        boot_manifest::ParseError::TooManyInterruptLines => {
+            serial::write_str("too many interrupt lines")
+        }
+        boot_manifest::ParseError::TooManyDmaRegions => serial::write_str("too many dma regions"),
         boot_manifest::ParseError::InvalidString => serial::write_str("invalid string"),
         boot_manifest::ParseError::InvalidReference => serial::write_str("invalid reference"),
         boot_manifest::ParseError::InvalidRights => serial::write_str("invalid rights"),

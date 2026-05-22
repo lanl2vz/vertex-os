@@ -30,6 +30,28 @@ pub extern "C" fn _start() -> ! {
         sys::exit(1);
     }
 
+    if sys::io_write(CAP_LOG_SINK, 0x3f8, b'!') == sys::STATUS_BAD_CAPABILITY {
+        log(b"echo I/O write rejected");
+        log(b"echo cannot write COM1 directly");
+    } else {
+        log(b"echo I/O denial failed");
+        sys::exit(1);
+    }
+    if sys::ipc_send(3, b"block read") == sys::STATUS_BAD_CAPABILITY {
+        log(b"unauthorized service cannot talk to block-driver");
+    } else {
+        log(b"echo block-driver denial failed");
+        sys::exit(1);
+    }
+    if sys::mmio_map(3) == sys::STATUS_BAD_CAPABILITY
+        && sys::irq_wait(3, 0) == sys::STATUS_BAD_CAPABILITY
+    {
+        log(b"unauthorized service cannot access MMIO, IRQ, or DMA capabilities");
+    } else {
+        log(b"echo device authority denial failed");
+        sys::exit(1);
+    }
+
     if sys::cap_inspect(CAP_LOG_SINK) == sys::STATUS_BAD_CAPABILITY {
         log(b"echo cap inspect failed");
         sys::exit(1);
@@ -78,6 +100,7 @@ pub extern "C" fn _start() -> ! {
     let mut object_buffer = [0u8; 16];
     if sys::object_read(CAP_LOG_SINK, &mut object_buffer) == sys::STATUS_BAD_CAPABILITY {
         log(b"echo read rejected: bad capability");
+        log(b"unauthorized process cannot read object");
     } else {
         log(b"echo negative object-read failed");
         sys::exit(1);

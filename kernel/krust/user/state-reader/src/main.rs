@@ -13,11 +13,15 @@ const CAP_SERIAL_LOG: u64 = 1;
 pub extern "C" fn _start() -> ! {
     let mut buffer = [0u8; 8];
     log(b"reader-service has read-only cap");
-    let mut read = sys::state_read(CAP_STATE, &mut buffer);
+    if sys::ipc_send(CAP_STATE, b"R") != sys::STATUS_OK {
+        log(b"reader-service state read request failed");
+        sys::exit(1);
+    }
+    let mut read = sys::ipc_recv(CAP_STATE, &mut buffer);
     let mut attempts = 0;
     while read == sys::STATUS_EMPTY && attempts < 64 {
         sys::yield_now();
-        read = sys::state_read(CAP_STATE, &mut buffer);
+        read = sys::ipc_recv(CAP_STATE, &mut buffer);
         attempts += 1;
     }
     if read == sys::STATUS_BAD_CAPABILITY
@@ -27,9 +31,16 @@ pub extern "C" fn _start() -> ! {
         log(b"reader-service state read failed");
         sys::exit(1);
     }
+    log(b"reader-service reads state");
     log(b"reader-service reads value");
 
-    if sys::state_write(CAP_STATE, b"2") == sys::STATUS_BAD_CAPABILITY {
+    if sys::ipc_send(CAP_STATE, b"W2") != sys::STATUS_OK {
+        log(b"reader-service write request failed");
+        sys::exit(1);
+    }
+    let mut denial = [0u8; 8];
+    let denied = sys::ipc_recv(CAP_STATE, &mut denial);
+    if denied == 6 && bytes_eq(&denial[..6], b"DENIED") {
         log(b"reader-service write rejected");
     } else {
         log(b"reader-service write denial failed");
@@ -43,6 +54,20 @@ fn log(message: &[u8]) {
     if sys::log(CAP_SERIAL_LOG, message) != sys::STATUS_OK {
         sys::exit(1);
     }
+}
+
+fn bytes_eq(left: &[u8], right: &[u8]) -> bool {
+    if left.len() != right.len() {
+        return false;
+    }
+    let mut index = 0;
+    while index < left.len() {
+        if left[index] != right[index] {
+            return false;
+        }
+        index += 1;
+    }
+    true
 }
 
 #[panic_handler]

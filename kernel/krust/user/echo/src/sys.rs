@@ -16,6 +16,9 @@ const SYS_CAP_INSPECT: u64 = 22;
 const SYS_CAP_MOVE: u64 = 23;
 const SYS_CAP_COPY: u64 = 24;
 const SYS_ENDPOINT_CREATE: u64 = 25;
+const SYS_IO_WRITE: u64 = 28;
+const SYS_IRQ_WAIT: u64 = 29;
+const SYS_MMIO_MAP: u64 = 30;
 
 pub fn ipc_send(cap_slot: u64, message: &[u8]) -> u64 {
     syscall3(
@@ -66,6 +69,18 @@ pub fn cap_copy(source_slot: u64, target_slot: u64, rights: u64) -> u64 {
 
 pub fn endpoint_create(control_slot: u64, cap_slot: u64) -> u64 {
     syscall3(SYS_ENDPOINT_CREATE, control_slot, cap_slot, 0)
+}
+
+pub fn io_write(cap_slot: u64, port: u64, value: u8) -> u64 {
+    syscall3(SYS_IO_WRITE, cap_slot, port, value as u64)
+}
+
+pub fn irq_wait(cap_slot: u64, timeout_ms: u64) -> u64 {
+    syscall3(SYS_IRQ_WAIT, cap_slot, timeout_ms, 0)
+}
+
+pub fn mmio_map(cap_slot: u64) -> u64 {
+    syscall3(SYS_MMIO_MAP, cap_slot, 0, 0)
 }
 
 pub fn object_read(cap_slot: u64, buffer: &mut [u8]) -> u64 {

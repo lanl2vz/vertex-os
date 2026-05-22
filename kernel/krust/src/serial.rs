@@ -106,7 +106,7 @@ fn transmit_empty() -> bool {
     unsafe { inb(LINE_STATUS) & 0x20 != 0 }
 }
 
-unsafe fn outb(port: u16, value: u8) {
+pub unsafe fn outb_raw(port: u16, value: u8) {
     unsafe {
         asm!(
             "out dx, al",
@@ -117,7 +117,7 @@ unsafe fn outb(port: u16, value: u8) {
     }
 }
 
-unsafe fn inb(port: u16) -> u8 {
+pub unsafe fn inb_raw(port: u16) -> u8 {
     let value: u8;
     unsafe {
         asm!(
@@ -128,4 +128,14 @@ unsafe fn inb(port: u16) -> u8 {
         );
     }
     value
+}
+
+unsafe fn outb(port: u16, value: u8) {
+    unsafe {
+        outb_raw(port, value);
+    }
+}
+
+unsafe fn inb(port: u16) -> u8 {
+    unsafe { inb_raw(port) }
 }

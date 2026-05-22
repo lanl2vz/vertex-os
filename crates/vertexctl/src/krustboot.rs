@@ -1,8 +1,9 @@
+use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use vertex_ir::{GenerationManifest, Service};
 
 const COMPACT_MAGIC: &[u8; 16] = b"KRUSTBOOTV0\0\0\0\0\0";
-const COMPACT_VERSION: u16 = 3;
+const COMPACT_VERSION: u16 = 4;
 const V1_MAGIC: &[u8; 16] = b"KRUSTBOOTV1\0\0\0\0\0";
 const V1_VERSION: u16 = 1;
 const V1_HEADER_SIZE: usize = 164;
@@ -10,7 +11,7 @@ const V1_CHECKSUM_OFFSET: usize = 32;
 const V1_RECORD_SIZE: usize = 12;
 const V1_RECORD_COUNT: usize = 9;
 const V1_PAYLOAD_OFFSET: usize = V1_HEADER_SIZE + V1_RECORD_COUNT * V1_RECORD_SIZE;
-const COMPACT_HEADER_SIZE: usize = 160;
+const COMPACT_HEADER_SIZE: usize = 168;
 const STRING_LEN: usize = 64;
 const BOOT_MODULE_RECORD_LEN: usize = STRING_LEN * 2;
 const PROCESS_REF_LIST_LEN: usize = 2 + MAX_PROCESS_REFS * 2;
@@ -22,6 +23,10 @@ const GRANT_RECORD_LEN: usize = 12;
 const STORE_OBJECT_RECORD_LEN: usize = STRING_LEN * 3 + 8;
 const STATE_VOLUME_RECORD_LEN: usize = STRING_LEN;
 const NETWORK_PORT_RECORD_LEN: usize = STRING_LEN;
+const IO_PORT_RECORD_LEN: usize = STRING_LEN + 16;
+const MMIO_REGION_RECORD_LEN: usize = STRING_LEN + 16;
+const INTERRUPT_LINE_RECORD_LEN: usize = STRING_LEN + 8;
+const DMA_REGION_RECORD_LEN: usize = STRING_LEN + 16;
 const MAX_BOOT_MODULES: usize = 16;
 const MAX_PROCESSES: usize = 16;
 const MAX_ENDPOINTS: usize = 16;
@@ -29,6 +34,10 @@ const MAX_GRANTS: usize = 64;
 const MAX_STORE_OBJECTS: usize = 4;
 const MAX_STATE_VOLUMES: usize = 4;
 const MAX_NETWORK_PORTS: usize = 4;
+const MAX_IO_PORT_RANGES: usize = 4;
+const MAX_MMIO_REGIONS: usize = 4;
+const MAX_INTERRUPT_LINES: usize = 4;
+const MAX_DMA_REGIONS: usize = 4;
 const MAX_PROCESS_REFS: usize = 4;
 const RIGHT_SEND: u16 = 1 << 0;
 const RIGHT_RECEIVE: u16 = 1 << 1;
@@ -39,11 +48,16 @@ const RIGHT_RESTORE: u16 = 1 << 5;
 const RIGHT_CONTROL: u16 = 1 << 6;
 const RIGHT_BIND: u16 = 1 << 7;
 const RIGHT_LISTEN: u16 = 1 << 8;
+const RIGHT_MAP: u16 = 1 << 9;
 const OBJECT_ENDPOINT: u16 = 1;
 const OBJECT_STORE: u16 = 2;
 const OBJECT_STATE: u16 = 3;
 const OBJECT_TIMER: u16 = 4;
 const OBJECT_NETWORK_PORT: u16 = 5;
+const OBJECT_IO_PORT_RANGE: u16 = 6;
+const OBJECT_MMIO_REGION: u16 = 7;
+const OBJECT_INTERRUPT_LINE: u16 = 8;
+const OBJECT_DMA_REGION: u16 = 9;
 const RECORD_BOOT_MODULE: u16 = 1;
 const RECORD_PROCESS: u16 = 2;
 const RECORD_ENDPOINT: u16 = 3;
@@ -79,6 +93,10 @@ pub fn compile(manifest: &GenerationManifest) -> Result<Vec<u8>, String> {
     push_count(&mut body, plan.store_objects.len(), "store_objects")?;
     push_count(&mut body, plan.state_volumes.len(), "state_volumes")?;
     push_count(&mut body, plan.network_ports.len(), "network_ports")?;
+    push_count(&mut body, plan.io_ports.len(), "io_ports")?;
+    push_count(&mut body, plan.mmio_regions.len(), "mmio_regions")?;
+    push_count(&mut body, plan.interrupt_lines.len(), "interrupt_lines")?;
+    push_count(&mut body, plan.dma_regions.len(), "dma_regions")?;
     push_fixed_str(&mut body, &manifest.generation.id)?;
     push_fixed_str(
         &mut body,
@@ -130,6 +148,29 @@ pub fn compile(manifest: &GenerationManifest) -> Result<Vec<u8>, String> {
         push_fixed_str(&mut body, &port.id)?;
     }
 
+    for port in &plan.io_ports {
+        push_fixed_str(&mut body, &port.id)?;
+        push_u64(&mut body, port.base);
+        push_u64(&mut body, port.length);
+    }
+
+    for region in &plan.mmio_regions {
+        push_fixed_str(&mut body, &region.id)?;
+        push_u64(&mut body, region.base);
+        push_u64(&mut body, region.length);
+    }
+
+    for line in &plan.interrupt_lines {
+        push_fixed_str(&mut body, &line.id)?;
+        push_u64(&mut body, line.line);
+    }
+
+    for region in &plan.dma_regions {
+        push_fixed_str(&mut body, &region.id)?;
+        push_u64(&mut body, region.base);
+        push_u64(&mut body, region.length);
+    }
+
     wrap_v1(manifest, &plan, &body)
 }
 
@@ -148,6 +189,10 @@ pub fn summary(manifest: &GenerationManifest, output_path: &str, byte_len: usize
          store_objects: {}\n\
          state_volumes: {}\n\
          network_ports: {}\n\
+         io_ports: {}\n\
+         mmio_regions: {}\n\
+         interrupt_lines: {}\n\
+         dma_regions: {}\n\
          bytes: {byte_len}",
         manifest.generation.id,
         manifest.generation.parent.as_deref().unwrap_or("<none>"),
@@ -157,7 +202,11 @@ pub fn summary(manifest: &GenerationManifest, output_path: &str, byte_len: usize
         plan.grants.len(),
         plan.store_objects.len(),
         plan.state_volumes.len(),
-        plan.network_ports.len()
+        plan.network_ports.len(),
+        plan.io_ports.len(),
+        plan.mmio_regions.len(),
+        plan.interrupt_lines.len(),
+        plan.dma_regions.len()
     )
 }
 
@@ -271,6 +320,10 @@ struct BootPlan {
     store_objects: Vec<StoreObject>,
     state_volumes: Vec<StateVolume>,
     network_ports: Vec<NetworkPort>,
+    io_ports: Vec<IoPortRange>,
+    mmio_regions: Vec<MmioRegion>,
+    interrupt_lines: Vec<InterruptLine>,
+    dma_regions: Vec<DmaRegion>,
 }
 
 #[derive(Debug, Clone)]
@@ -328,6 +381,33 @@ struct StateVolume {
 #[derive(Debug, Clone)]
 struct NetworkPort {
     id: String,
+}
+
+#[derive(Debug, Clone)]
+struct IoPortRange {
+    id: String,
+    base: u64,
+    length: u64,
+}
+
+#[derive(Debug, Clone)]
+struct MmioRegion {
+    id: String,
+    base: u64,
+    length: u64,
+}
+
+#[derive(Debug, Clone)]
+struct InterruptLine {
+    id: String,
+    line: u64,
+}
+
+#[derive(Debug, Clone)]
+struct DmaRegion {
+    id: String,
+    base: u64,
+    length: u64,
 }
 
 fn derive_plan(manifest: &GenerationManifest) -> Result<BootPlan, String> {
@@ -468,6 +548,8 @@ fn derive_plan(manifest: &GenerationManifest) -> Result<BootPlan, String> {
         else {
             continue;
         };
+        let provider_rights = RIGHT_RECEIVE
+            | (endpoint_rights_mask(&[], &capability.rights, &capability.id)? & RIGHT_SEND);
 
         add_process_endpoint_ref(
             &mut processes,
@@ -480,7 +562,7 @@ fn derive_plan(manifest: &GenerationManifest) -> Result<BootPlan, String> {
             object_kind: OBJECT_ENDPOINT,
             object_name: endpoint.clone(),
             cap_slot: SERVICE_CAP_SLOT,
-            rights: RIGHT_RECEIVE,
+            rights: provider_rights,
         });
 
         grants.push(Grant {
@@ -541,6 +623,10 @@ fn derive_plan(manifest: &GenerationManifest) -> Result<BootPlan, String> {
     let mut store_objects = Vec::new();
     let mut state_volumes = Vec::new();
     let mut network_ports = Vec::new();
+    let mut io_ports = Vec::new();
+    let mut mmio_regions = Vec::new();
+    let mut interrupt_lines = Vec::new();
+    let mut dma_regions = Vec::new();
     let mut next_object_slots = initial_object_cap_slots(&processes);
     for service in &manifest.services {
         let Some(process_name) = native_process_for_service(&processes, &service.id) else {
@@ -624,6 +710,62 @@ fn derive_plan(manifest: &GenerationManifest) -> Result<BootPlan, String> {
                         )?,
                     });
                 }
+                "io-port" => {
+                    push_unique_io_port(&mut io_ports, manifest, capability)?;
+                    grants.push(Grant {
+                        process: process_name.clone(),
+                        object_kind: OBJECT_IO_PORT_RANGE,
+                        object_name: capability.id.clone(),
+                        cap_slot: next_object_cap_slot(&mut next_object_slots, &process_name)?,
+                        rights: rights_mask(
+                            &requirement.rights,
+                            &capability.rights,
+                            &capability.id,
+                        )?,
+                    });
+                }
+                "mmio-region" => {
+                    push_unique_mmio_region(&mut mmio_regions, manifest, capability)?;
+                    grants.push(Grant {
+                        process: process_name.clone(),
+                        object_kind: OBJECT_MMIO_REGION,
+                        object_name: capability.id.clone(),
+                        cap_slot: next_object_cap_slot(&mut next_object_slots, &process_name)?,
+                        rights: rights_mask(
+                            &requirement.rights,
+                            &capability.rights,
+                            &capability.id,
+                        )?,
+                    });
+                }
+                "interrupt-line" => {
+                    push_unique_interrupt_line(&mut interrupt_lines, manifest, capability)?;
+                    grants.push(Grant {
+                        process: process_name.clone(),
+                        object_kind: OBJECT_INTERRUPT_LINE,
+                        object_name: capability.id.clone(),
+                        cap_slot: next_object_cap_slot(&mut next_object_slots, &process_name)?,
+                        rights: rights_mask(
+                            &requirement.rights,
+                            &capability.rights,
+                            &capability.id,
+                        )?,
+                    });
+                }
+                "dma-region" => {
+                    push_unique_dma_region(&mut dma_regions, manifest, capability)?;
+                    grants.push(Grant {
+                        process: process_name.clone(),
+                        object_kind: OBJECT_DMA_REGION,
+                        object_name: capability.id.clone(),
+                        cap_slot: next_object_cap_slot(&mut next_object_slots, &process_name)?,
+                        rights: rights_mask(
+                            &requirement.rights,
+                            &capability.rights,
+                            &capability.id,
+                        )?,
+                    });
+                }
                 "ipc-endpoint" | "clock" => {}
                 other => {
                     return Err(format!(
@@ -656,6 +798,10 @@ fn derive_plan(manifest: &GenerationManifest) -> Result<BootPlan, String> {
         store_objects,
         state_volumes,
         network_ports,
+        io_ports,
+        mmio_regions,
+        interrupt_lines,
+        dma_regions,
     })
 }
 
@@ -740,6 +886,150 @@ fn push_unique_state_volume(states: &mut Vec<StateVolume>, state_id: String) {
 fn push_unique_network_port(ports: &mut Vec<NetworkPort>, port_id: String) {
     if !ports.iter().any(|port| port.id == port_id) {
         ports.push(NetworkPort { id: port_id });
+    }
+}
+
+fn push_unique_io_port(
+    ports: &mut Vec<IoPortRange>,
+    manifest: &GenerationManifest,
+    capability: &vertex_ir::Capability,
+) -> Result<(), String> {
+    if ports.iter().any(|port| port.id == capability.id) {
+        return Ok(());
+    }
+    let device = manifest
+        .devices
+        .iter()
+        .find(|device| device.id == capability.provider)
+        .ok_or_else(|| {
+            format!(
+                "capability {} references unknown I/O device {}",
+                capability.id, capability.provider
+            )
+        })?;
+    ports.push(IoPortRange {
+        id: capability.id.clone(),
+        base: value_u64(&capability.properties, "base")
+            .or_else(|| value_u64(&capability.properties, "portBase"))
+            .or_else(|| value_u64(&capability.properties, "port"))
+            .or_else(|| value_u64(&device.selector, "base"))
+            .or_else(|| value_u64(&device.selector, "portBase"))
+            .or_else(|| value_u64(&device.selector, "port"))
+            .ok_or_else(|| format!("io-port capability {} missing base port", capability.id))?,
+        length: value_u64(&capability.properties, "length")
+            .or_else(|| value_u64(&capability.properties, "ports"))
+            .or_else(|| value_u64(&device.selector, "length"))
+            .or_else(|| value_u64(&device.selector, "ports"))
+            .unwrap_or(1),
+    });
+    Ok(())
+}
+
+fn push_unique_mmio_region(
+    regions: &mut Vec<MmioRegion>,
+    manifest: &GenerationManifest,
+    capability: &vertex_ir::Capability,
+) -> Result<(), String> {
+    if regions.iter().any(|region| region.id == capability.id) {
+        return Ok(());
+    }
+    let device = manifest
+        .devices
+        .iter()
+        .find(|device| device.id == capability.provider)
+        .ok_or_else(|| {
+            format!(
+                "capability {} references unknown MMIO device {}",
+                capability.id, capability.provider
+            )
+        })?;
+    regions.push(MmioRegion {
+        id: capability.id.clone(),
+        base: value_u64(&capability.properties, "base")
+            .or_else(|| value_u64(&device.selector, "base"))
+            .ok_or_else(|| format!("mmio-region capability {} missing base", capability.id))?,
+        length: value_u64(&capability.properties, "length")
+            .or_else(|| value_u64(&device.selector, "length"))
+            .unwrap_or(4096),
+    });
+    Ok(())
+}
+
+fn push_unique_interrupt_line(
+    lines: &mut Vec<InterruptLine>,
+    manifest: &GenerationManifest,
+    capability: &vertex_ir::Capability,
+) -> Result<(), String> {
+    if lines.iter().any(|line| line.id == capability.id) {
+        return Ok(());
+    }
+    let device = manifest
+        .devices
+        .iter()
+        .find(|device| device.id == capability.provider)
+        .ok_or_else(|| {
+            format!(
+                "capability {} references unknown interrupt device {}",
+                capability.id, capability.provider
+            )
+        })?;
+    lines.push(InterruptLine {
+        id: capability.id.clone(),
+        line: value_u64(&capability.properties, "line")
+            .or_else(|| value_u64(&capability.properties, "irq"))
+            .or_else(|| value_u64(&device.selector, "line"))
+            .or_else(|| value_u64(&device.selector, "irq"))
+            .ok_or_else(|| format!("interrupt-line capability {} missing line", capability.id))?,
+    });
+    Ok(())
+}
+
+fn push_unique_dma_region(
+    regions: &mut Vec<DmaRegion>,
+    manifest: &GenerationManifest,
+    capability: &vertex_ir::Capability,
+) -> Result<(), String> {
+    if regions.iter().any(|region| region.id == capability.id) {
+        return Ok(());
+    }
+    let device = manifest
+        .devices
+        .iter()
+        .find(|device| device.id == capability.provider)
+        .ok_or_else(|| {
+            format!(
+                "capability {} references unknown DMA device {}",
+                capability.id, capability.provider
+            )
+        })?;
+    regions.push(DmaRegion {
+        id: capability.id.clone(),
+        base: value_u64(&capability.properties, "base")
+            .or_else(|| value_u64(&device.selector, "base"))
+            .unwrap_or(0),
+        length: value_u64(&capability.properties, "length")
+            .or_else(|| value_u64(&device.selector, "length"))
+            .unwrap_or(4096),
+    });
+    Ok(())
+}
+
+fn value_u64(value: &Value, key: &str) -> Option<u64> {
+    value.get(key).and_then(|value| {
+        value
+            .as_u64()
+            .or_else(|| value.as_str().and_then(parse_u64_literal))
+    })
+}
+
+fn parse_u64_literal(value: &str) -> Option<u64> {
+    if let Some(hex) = value
+        .strip_prefix("0x")
+        .or_else(|| value.strip_prefix("0X"))
+    {
+        u64::from_str_radix(hex, 16).ok()
+    } else {
+        value.parse::<u64>().ok()
     }
 }
 
@@ -832,6 +1122,26 @@ fn validate_plan(plan: &BootPlan) -> Result<(), String> {
     if plan.network_ports.len() > MAX_NETWORK_PORTS {
         return Err(format!(
             "native boot plan exceeds {MAX_NETWORK_PORTS} network ports"
+        ));
+    }
+    if plan.io_ports.len() > MAX_IO_PORT_RANGES {
+        return Err(format!(
+            "native boot plan exceeds {MAX_IO_PORT_RANGES} io port ranges"
+        ));
+    }
+    if plan.mmio_regions.len() > MAX_MMIO_REGIONS {
+        return Err(format!(
+            "native boot plan exceeds {MAX_MMIO_REGIONS} mmio regions"
+        ));
+    }
+    if plan.interrupt_lines.len() > MAX_INTERRUPT_LINES {
+        return Err(format!(
+            "native boot plan exceeds {MAX_INTERRUPT_LINES} interrupt lines"
+        ));
+    }
+    if plan.dma_regions.len() > MAX_DMA_REGIONS {
+        return Err(format!(
+            "native boot plan exceeds {MAX_DMA_REGIONS} dma regions"
         ));
     }
 
@@ -1065,6 +1375,7 @@ fn rights_mask(required: &[String], capability: &[String], context: &str) -> Res
             "control" => mask |= RIGHT_CONTROL,
             "bind" => mask |= RIGHT_BIND,
             "listen" => mask |= RIGHT_LISTEN,
+            "map" => mask |= RIGHT_MAP,
             other => return Err(format!("unsupported native right {other} for {context}")),
         }
     }
@@ -1163,6 +1474,34 @@ fn network_port_index(plan: &BootPlan, id: &str) -> Result<usize, String> {
         .ok_or_else(|| format!("unknown network port {id}"))
 }
 
+fn io_port_index(plan: &BootPlan, id: &str) -> Result<usize, String> {
+    plan.io_ports
+        .iter()
+        .position(|port| port.id == id)
+        .ok_or_else(|| format!("unknown io port {id}"))
+}
+
+fn mmio_region_index(plan: &BootPlan, id: &str) -> Result<usize, String> {
+    plan.mmio_regions
+        .iter()
+        .position(|region| region.id == id)
+        .ok_or_else(|| format!("unknown mmio region {id}"))
+}
+
+fn interrupt_line_index(plan: &BootPlan, id: &str) -> Result<usize, String> {
+    plan.interrupt_lines
+        .iter()
+        .position(|line| line.id == id)
+        .ok_or_else(|| format!("unknown interrupt line {id}"))
+}
+
+fn dma_region_index(plan: &BootPlan, id: &str) -> Result<usize, String> {
+    plan.dma_regions
+        .iter()
+        .position(|region| region.id == id)
+        .ok_or_else(|| format!("unknown dma region {id}"))
+}
+
 fn object_index(plan: &BootPlan, grant: &Grant) -> Result<usize, String> {
     match grant.object_kind {
         OBJECT_ENDPOINT => endpoint_index(plan, &grant.object_name),
@@ -1170,6 +1509,10 @@ fn object_index(plan: &BootPlan, grant: &Grant) -> Result<usize, String> {
         OBJECT_STATE => state_index(plan, &grant.object_name),
         OBJECT_TIMER if grant.object_name == "monotonic-timer" => Ok(0),
         OBJECT_NETWORK_PORT => network_port_index(plan, &grant.object_name),
+        OBJECT_IO_PORT_RANGE => io_port_index(plan, &grant.object_name),
+        OBJECT_MMIO_REGION => mmio_region_index(plan, &grant.object_name),
+        OBJECT_INTERRUPT_LINE => interrupt_line_index(plan, &grant.object_name),
+        OBJECT_DMA_REGION => dma_region_index(plan, &grant.object_name),
         other => Err(format!("unsupported native object kind {other}")),
     }
 }
@@ -1263,6 +1606,10 @@ struct BodySections {
     store_objects: (usize, usize),
     state_volumes: (usize, usize),
     network_ports: (usize, usize),
+    io_ports: (usize, usize),
+    mmio_regions: (usize, usize),
+    interrupt_lines: (usize, usize),
+    dma_regions: (usize, usize),
 }
 
 fn wrap_v1(manifest: &GenerationManifest, plan: &BootPlan, body: &[u8]) -> Result<Vec<u8>, String> {
@@ -1346,7 +1693,11 @@ fn wrap_v1(manifest: &GenerationManifest, plan: &BootPlan, body: &[u8]) -> Resul
         RECORD_POLICY,
         0,
         payload_offset + sections.network_ports.0,
-        sections.network_ports.1,
+        sections.network_ports.1
+            + sections.io_ports.1
+            + sections.mmio_regions.1
+            + sections.interrupt_lines.1
+            + sections.dma_regions.1,
     )?;
     debug_assert_eq!(bytes.len(), payload_offset);
 
@@ -1357,7 +1708,7 @@ fn wrap_v1(manifest: &GenerationManifest, plan: &BootPlan, body: &[u8]) -> Resul
 
 impl BodySections {
     fn new(plan: &BootPlan) -> Self {
-        let generation = (32, STRING_LEN * 2);
+        let generation = (40, STRING_LEN * 2);
         let boot_modules = (
             COMPACT_HEADER_SIZE,
             plan.boot_modules.len() * BOOT_MODULE_RECORD_LEN,
@@ -1386,6 +1737,22 @@ impl BodySections {
             state_volumes.0 + state_volumes.1,
             plan.network_ports.len() * NETWORK_PORT_RECORD_LEN,
         );
+        let io_ports = (
+            network_ports.0 + network_ports.1,
+            plan.io_ports.len() * IO_PORT_RECORD_LEN,
+        );
+        let mmio_regions = (
+            io_ports.0 + io_ports.1,
+            plan.mmio_regions.len() * MMIO_REGION_RECORD_LEN,
+        );
+        let interrupt_lines = (
+            mmio_regions.0 + mmio_regions.1,
+            plan.interrupt_lines.len() * INTERRUPT_LINE_RECORD_LEN,
+        );
+        let dma_regions = (
+            interrupt_lines.0 + interrupt_lines.1,
+            plan.dma_regions.len() * DMA_REGION_RECORD_LEN,
+        );
 
         Self {
             generation,
@@ -1396,6 +1763,10 @@ impl BodySections {
             store_objects,
             state_volumes,
             network_ports,
+            io_ports,
+            mmio_regions,
+            interrupt_lines,
+            dma_regions,
         }
     }
 }
@@ -1537,6 +1908,10 @@ mod tests {
             store_objects: Vec::new(),
             state_volumes: Vec::new(),
             network_ports: Vec::new(),
+            io_ports: Vec::new(),
+            mmio_regions: Vec::new(),
+            interrupt_lines: Vec::new(),
+            dma_regions: Vec::new(),
         };
 
         let error = validate_plan(&plan).expect_err("duplicate cap slot should fail");

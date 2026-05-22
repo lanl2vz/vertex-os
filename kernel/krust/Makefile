@@ -7,9 +7,13 @@ BOOT_MANIFEST := $(BUILD_DIR)/hello-generation.krustboot
 FALLBACK_BOOT_MANIFEST := $(BUILD_DIR)/fallback-generation.krustboot
 KERNEL_ELF := target/$(KRUST_TARGET)/debug/krust
 INIT_TARGET_DIR := user/init/target/$(KRUST_TARGET)/debug
+SERIAL_DRIVER_TARGET_DIR := user/serial-driver/target/$(KRUST_TARGET)/debug
 LOGD_TARGET_DIR := user/logd/target/$(KRUST_TARGET)/debug
 ECHO_TARGET_DIR := user/echo/target/$(KRUST_TARGET)/debug
 NETSTACK_TARGET_DIR := user/netstack/target/$(KRUST_TARGET)/debug
+BLOCK_DRIVER_TARGET_DIR := user/block-driver/target/$(KRUST_TARGET)/debug
+VERTEX_STORE_TARGET_DIR := user/vertex-store/target/$(KRUST_TARGET)/debug
+VERTEX_STATE_TARGET_DIR := user/vertex-state/target/$(KRUST_TARGET)/debug
 MODEL_READER_TARGET_DIR := user/model-reader/target/$(KRUST_TARGET)/debug
 COUNTER_TARGET_DIR := user/counter/target/$(KRUST_TARGET)/debug
 STATE_READER_TARGET_DIR := user/state-reader/target/$(KRUST_TARGET)/debug
@@ -18,9 +22,13 @@ FLAKY_TARGET_DIR := user/flaky/target/$(KRUST_TARGET)/debug
 HOG_TARGET_DIR := user/hog/target/$(KRUST_TARGET)/debug
 FAULTY_TARGET_DIR := user/faulty/target/$(KRUST_TARGET)/debug
 VERTEX_INIT_ELF := $(INIT_TARGET_DIR)/vertex-init
+SERIAL_DRIVER_ELF := $(SERIAL_DRIVER_TARGET_DIR)/serial-driver
 LOGD_ELF := $(LOGD_TARGET_DIR)/logd
 ECHO_ELF := $(ECHO_TARGET_DIR)/echo
 NETSTACK_ELF := $(NETSTACK_TARGET_DIR)/netstack
+BLOCK_DRIVER_ELF := $(BLOCK_DRIVER_TARGET_DIR)/block-driver
+VERTEX_STORE_ELF := $(VERTEX_STORE_TARGET_DIR)/vertex-store
+VERTEX_STATE_ELF := $(VERTEX_STATE_TARGET_DIR)/vertex-state
 MODEL_READER_ELF := $(MODEL_READER_TARGET_DIR)/model-reader
 COUNTER_ELF := $(COUNTER_TARGET_DIR)/counter
 STATE_READER_ELF := $(STATE_READER_TARGET_DIR)/state-reader
@@ -48,9 +56,13 @@ kernel:
 
 user:
 	cd user/init && cargo build --target $(KRUST_TARGET)
+	cd user/serial-driver && cargo build --target $(KRUST_TARGET)
 	cd user/logd && cargo build --target $(KRUST_TARGET)
 	cd user/echo && cargo build --target $(KRUST_TARGET)
 	cd user/netstack && cargo build --target $(KRUST_TARGET)
+	cd user/block-driver && cargo build --target $(KRUST_TARGET)
+	cd user/vertex-store && cargo build --target $(KRUST_TARGET)
+	cd user/vertex-state && cargo build --target $(KRUST_TARGET)
 	cd user/model-reader && cargo build --target $(KRUST_TARGET)
 	cd user/counter && cargo build --target $(KRUST_TARGET)
 	cd user/state-reader && cargo build --target $(KRUST_TARGET)
@@ -76,9 +88,13 @@ iso: build boot-manifest check-tools check-limine-dir
 	mkdir -p $(ISO_ROOT)/boot $(ISO_ROOT)/EFI/BOOT
 	cp $(KERNEL_ELF) $(ISO_ROOT)/boot/krust.elf
 	cp $(VERTEX_INIT_ELF) $(ISO_ROOT)/boot/vertex-init.elf
+	cp $(SERIAL_DRIVER_ELF) $(ISO_ROOT)/boot/serial-driver.elf
 	cp $(LOGD_ELF) $(ISO_ROOT)/boot/logd.elf
 	cp $(ECHO_ELF) $(ISO_ROOT)/boot/echo.elf
 	cp $(NETSTACK_ELF) $(ISO_ROOT)/boot/netstack.elf
+	cp $(BLOCK_DRIVER_ELF) $(ISO_ROOT)/boot/block-driver.elf
+	cp $(VERTEX_STORE_ELF) $(ISO_ROOT)/boot/vertex-store.elf
+	cp $(VERTEX_STATE_ELF) $(ISO_ROOT)/boot/vertex-state.elf
 	cp $(MODEL_READER_ELF) $(ISO_ROOT)/boot/model-reader.elf
 	cp $(COUNTER_ELF) $(ISO_ROOT)/boot/counter.elf
 	cp $(STATE_READER_ELF) $(ISO_ROOT)/boot/state-reader.elf
@@ -135,7 +151,7 @@ release-gate:
 	../../scripts/krust-release-gate.sh
 
 clean:
-	rm -rf $(BUILD_DIR) target user/init/target user/logd/target user/echo/target user/netstack/target user/model-reader/target user/counter/target user/state-reader/target user/timer/target user/flaky/target user/hog/target user/faulty/target
+	rm -rf $(BUILD_DIR) target user/init/target user/serial-driver/target user/logd/target user/echo/target user/netstack/target user/block-driver/target user/vertex-store/target user/vertex-state/target user/model-reader/target user/counter/target user/state-reader/target user/timer/target user/flaky/target user/hog/target user/faulty/target
 
 check-tools:
 	@command -v rustc >/dev/null 2>&1 || { echo "error: rustc not found. Install Rust stable."; exit 1; }
