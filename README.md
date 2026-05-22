@@ -58,6 +58,12 @@ See [docs/krust-milestones.md](docs/krust-milestones.md) for M0 through M13,
 and [docs/krust-abi-v0.md](docs/krust-abi-v0.md) for the current syscall,
 capability, process, and IPC ABI.
 
+The post-M13 roadmap is also tracked in
+[docs/krust-milestones.md](docs/krust-milestones.md). The next strategic target
+is native activation of a real generation graph: M14 removes the hardcoded
+service graph, M15 adds readiness and lifecycle semantics, and M16 compiles
+native KrustBoot directly from full Vertex IR.
+
 ## Current Demo
 
 Build and validate the example generation:
