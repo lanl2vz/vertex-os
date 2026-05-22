@@ -29,6 +29,9 @@ SECTIONS
     . = ALIGN(4K);
     .data :
     {
+        KEEP(*(.requests_start_marker))
+        KEEP(*(.requests))
+        KEEP(*(.requests_end_marker))
         *(.data .data.*)
     } :data
 

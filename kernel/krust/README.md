@@ -1,6 +1,6 @@
 # Krust Kernel
 
-Krust M0 is the first native Vertex OS kernel milestone.
+Krust M1 is the first native Vertex OS boot-information milestone.
 
 The target is intentionally small:
 
@@ -9,11 +9,13 @@ QEMU boots a Limine ISO
 Limine loads krust.elf
 Krust enters 64-bit Rust code
 Krust writes "Krust Kernel booted" to COM1 serial
+Krust reads the Limine memory map response
+Krust prints every memory map entry to serial
 Krust halts forever
 ```
 
 No memory manager, heap, interrupts, userspace, manifest parsing, Vertex IR
-integration, filesystem, network, or device drivers are part of M0.
+integration, filesystem, network, or device drivers are part of M1.
 
 ## Prerequisites
 
@@ -87,6 +89,8 @@ Expected terminal output:
 
 ```text
 Krust Kernel booted
+Limine base revision supported
+Limine memory map entries: ...
 ```
 
 QEMU runs with `-display none`, so all kernel output is written through the
@@ -99,20 +103,21 @@ make smoke
 ```
 
 The smoke test boots QEMU headlessly, captures serial output to
-`build/serial.log`, and passes when it sees:
+`build/serial.log`, and passes when it sees both:
 
 ```text
 Krust Kernel booted
+Limine memory map entries:
 ```
 
 ## Machine Notes
 
 Linux x86_64 can add KVM later with QEMU flags such as `-enable-kvm -cpu host`.
-That is not enabled by default so the M0 command stays portable:
+That is not enabled by default so the M1 command stays portable:
 
 ```sh
 QEMU_EXTRA="-enable-kvm -cpu host" make smoke
 ```
 
 macOS Apple Silicon can run `qemu-system-x86_64` by emulation. It is slower than
-native AArch64 virtualization, but it is enough for the M0 serial milestone.
+native AArch64 virtualization, but it is enough for the M1 serial milestone.

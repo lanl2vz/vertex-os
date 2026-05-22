@@ -28,16 +28,17 @@ vertex-os/
   flake.nix              Planned root flake entrypoint
 ```
 
-## Krust M0
+## Krust M1
 
-The first native kernel milestone lives in `kernel/krust`. It is isolated from
-the hosted Cargo workspace and boots a Limine ISO under QEMU until Krust prints
-`Krust Kernel booted` to the serial console and halts.
+The first native boot-information milestone lives in `kernel/krust`. It is
+isolated from the hosted Cargo workspace and boots a Limine ISO under QEMU
+until Krust prints `Krust Kernel booted`, reads Limine's memory map, prints the
+memory map entries to the serial console, and halts.
 
 ```sh
 cd kernel/krust
 make build
-LIMINE_DIR=/path/to/limine/assets make run
+make smoke
 ```
 
 ## Current Demo

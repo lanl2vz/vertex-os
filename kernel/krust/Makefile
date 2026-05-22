@@ -50,17 +50,17 @@ smoke: iso
 	@$(QEMU) $(QEMU_EXTRA) -m 256M -serial file:$(BUILD_DIR)/serial.log -monitor none -display none -no-reboot -no-shutdown -cdrom $(ISO_IMAGE) & \
 	pid=$$!; \
 	for _ in 1 2 3 4 5; do \
-		if grep -q "Krust Kernel booted" $(BUILD_DIR)/serial.log 2>/dev/null; then \
+		if grep -q "Krust Kernel booted" $(BUILD_DIR)/serial.log 2>/dev/null && grep -q "Limine memory map entries:" $(BUILD_DIR)/serial.log 2>/dev/null; then \
 			kill $$pid >/dev/null 2>&1 || true; \
 			wait $$pid >/dev/null 2>&1 || true; \
-			echo "smoke ok: Krust Kernel booted"; \
+			echo "smoke ok: Krust Kernel booted and printed Limine memory map"; \
 			exit 0; \
 		fi; \
 		sleep 1; \
 	done; \
 	kill $$pid >/dev/null 2>&1 || true; \
 	wait $$pid >/dev/null 2>&1 || true; \
-	echo "smoke failed: serial output did not contain Krust Kernel booted"; \
+	echo "smoke failed: serial output did not contain Krust Kernel booted and Limine memory map entries"; \
 	test ! -f $(BUILD_DIR)/serial.log || cat $(BUILD_DIR)/serial.log; \
 	exit 1
 

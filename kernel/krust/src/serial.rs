@@ -25,6 +25,36 @@ pub fn write_str(value: &str) {
     }
 }
 
+pub fn write_u64_dec(mut value: u64) {
+    if value == 0 {
+        write_byte(b'0');
+        return;
+    }
+
+    let mut buffer = [0u8; 20];
+    let mut index = buffer.len();
+
+    while value > 0 {
+        index -= 1;
+        buffer[index] = b'0' + (value % 10) as u8;
+        value /= 10;
+    }
+
+    for byte in &buffer[index..] {
+        write_byte(*byte);
+    }
+}
+
+pub fn write_u64_hex(value: u64) {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+
+    write_str("0x");
+    for nibble in (0..16).rev() {
+        let digit = ((value >> (nibble * 4)) & 0xf) as usize;
+        write_byte(HEX[digit]);
+    }
+}
+
 fn write_byte(byte: u8) {
     if byte == b'\n' {
         write_byte(b'\r');
