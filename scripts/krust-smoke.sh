@@ -65,7 +65,7 @@ boot_module[8] name=flaky-service string=flaky
 process[0] name=vertex-init module=vertex-init initial=yes
 process[1] name=logd module=logd initial=no service=svc:logd restart=1 health=ipc-ping
 process[2] name=netstack module=netstack initial=no service=svc:netstack restart=1
-process[3] name=echo module=echo initial=no service=svc:echo-server restart=1
+process[3] name=echo module=echo initial=no service=svc:echo-server restart=2
 process[4] name=model-reader module=model-reader initial=no service=svc:model-reader restart=0
 process[5] name=counter-service module=counter initial=no service=svc:counter-service restart=0
 process[6] name=reader-service module=state-reader initial=no service=svc:state-reader restart=0
@@ -175,13 +175,21 @@ reader-service write rejected
 Native state-volume access ok
 timer-service sleeps 10 ms
 Timer sleep accepted: proc=timer-service timer=monotonic-timer ms=10
+Timer sleep blocked: proc=timer-service
+Timer wake: proc=timer-service
 wakes
 timer ok
 Native timer ok
+vertex-init observes exit
+restart policy = always
+vertex-init restarts echo once
+Krust process restart reload: proc=echo
+echo restart retained delegated log cap
 flaky-service exits with status 1
 vertex-init observes failure
 restart policy = on-failure
 vertex-init restarts flaky-service once
+Krust process restart reload: proc=flaky-service
 flaky-service exits 0
 Native restart policy ok
 Native manifest-driven activation ok

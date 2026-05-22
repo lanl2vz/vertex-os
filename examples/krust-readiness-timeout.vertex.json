@@ -1,9 +1,9 @@
 {
   "schema": "vertex.ir.v0",
   "generation": {
-    "id": "gen:hello-0001",
+    "id": "gen:readiness-timeout-0001",
     "createdUtc": "2026-05-22T00:00:00Z",
-    "description": "Minimal Vertex OS hosted demo generation",
+    "description": "Krust readiness timeout test generation",
     "parent": null,
     "manifestHash": null
   },
@@ -310,7 +310,7 @@
     {
       "id": "svc:logd",
       "name": "logd",
-      "executable": "exe:logd",
+      "executable": "exe:netstack",
       "args": [],
       "env": {},
       "requires": [
@@ -370,7 +370,7 @@
       "provides": ["cap:echo.api"],
       "state": [],
       "secrets": [],
-      "restart": "always",
+      "restart": "on-failure",
       "resources": {
         "memoryMaxBytes": 67108864,
         "cpuShares": 100

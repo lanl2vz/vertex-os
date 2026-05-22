@@ -103,6 +103,12 @@ fn validates_both_example_manifests() {
         "examples/deny-log-generation.vertex.json",
     ]));
     assert!(deny_log.contains("valid: gen:deny-log-0001"));
+
+    let readiness_timeout = assert_success(run(&[
+        "validate",
+        "examples/krust-readiness-timeout.vertex.json",
+    ]));
+    assert!(readiness_timeout.contains("valid: gen:readiness-timeout-0001"));
 }
 
 #[test]

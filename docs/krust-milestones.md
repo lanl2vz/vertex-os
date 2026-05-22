@@ -522,7 +522,7 @@ Policies:
 restart = never
 restart = on-failure
 restart = always
-max_restarts
+max_restarts = 1 in the ABI v0 native proof
 ```
 
 Acceptance evidence:
@@ -532,7 +532,12 @@ flaky-service exits with status 1
 vertex-init observes failure
 restart policy = on-failure
 vertex-init restarts flaky-service once
+Krust process restart reload: proc=flaky-service
 flaky-service exits 0
+restart policy = always
+vertex-init restarts echo once
+Krust process restart reload: proc=echo
+echo restart retained delegated log cap
 Native restart policy ok
 ```
 
@@ -731,12 +736,16 @@ Acceptance evidence:
 ```text
 timer-service sleeps 10 ms
 Timer sleep accepted: proc=timer-service timer=monotonic-timer ms=10
+Timer sleep blocked: proc=timer-service
+Timer wake: proc=timer-service
 wakes
 logs "timer ok"
 ```
 
 This enables readiness timeouts, restart backoff, and activation failure
-handling.
+handling without keeping the sleeping process runnable. M23 still uses a
+cooperative TSC-polled idle wait when no process is ready; interrupt-driven
+timer wakeup is outside this milestone.
 
 ## M24: Hostless Native Test Runner
 

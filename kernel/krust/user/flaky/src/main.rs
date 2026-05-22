@@ -3,20 +3,14 @@
 
 mod sys;
 
-use core::{
-    panic::PanicInfo,
-    sync::atomic::{AtomicU64, Ordering},
-};
+use core::panic::PanicInfo;
 
 const CAP_SERIAL_LOG: u64 = 1;
-
-static RUNS: AtomicU64 = AtomicU64::new(0);
 
 #[unsafe(link_section = ".text._start")]
 #[unsafe(no_mangle)]
 pub extern "C" fn _start() -> ! {
-    let run = RUNS.fetch_add(1, Ordering::Relaxed);
-    if run == 0 {
+    if sys::process_attempt() <= 1 {
         log(b"flaky-service exits with status 1");
         sys::exit(1);
     }

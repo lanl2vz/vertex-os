@@ -9,6 +9,7 @@ const SYS_IPC_RECV: u64 = 4;
 const SYS_LOG_WRITE: u64 = 7;
 const SYS_CAP_DROP: u64 = 11;
 const SYS_OBJECT_READ: u64 = 13;
+const SYS_PROCESS_ATTEMPT: u64 = 20;
 
 pub fn ipc_send(cap_slot: u64, message: &[u8]) -> u64 {
     syscall3(
@@ -48,6 +49,10 @@ pub fn object_read(cap_slot: u64, buffer: &mut [u8]) -> u64 {
         buffer.as_mut_ptr() as u64,
         buffer.len() as u64,
     )
+}
+
+pub fn process_attempt() -> u64 {
+    syscall3(SYS_PROCESS_ATTEMPT, 0, 0, 0)
 }
 
 pub fn exit(status: u64) -> ! {

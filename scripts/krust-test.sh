@@ -37,12 +37,20 @@ negative test: logd process-start rejected: bad capability
 reader-service write rejected
 '
         ;;
-    readiness-timeout|readiness)
+    readiness)
         MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
         required_lines='
 logd ready
 vertex-init observed ready: logd
 Native readiness activation ok
+'
+        ;;
+    readiness-timeout)
+        MANIFEST="$ROOT_DIR/examples/krust-readiness-timeout.vertex.json"
+        required_lines='
+vertex-init readiness timeout
+activation failed
+Native service activation failed
 '
         ;;
     rollback)
@@ -82,7 +90,12 @@ flaky-service exits with status 1
 vertex-init observes failure
 restart policy = on-failure
 vertex-init restarts flaky-service once
+Krust process restart reload: proc=flaky-service
 flaky-service exits 0
+restart policy = always
+vertex-init restarts echo once
+Krust process restart reload: proc=echo
+echo restart retained delegated log cap
 Native restart policy ok
 '
         ;;

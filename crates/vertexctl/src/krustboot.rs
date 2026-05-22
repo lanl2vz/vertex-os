@@ -1189,3 +1189,54 @@ fn push_fixed_str(bytes: &mut Vec<u8>, value: &str) -> Result<(), String> {
     bytes.extend_from_slice(&slot);
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validate_boot_plan_rejects_duplicate_process_cap_slots() {
+        let plan = BootPlan {
+            boot_modules: vec![BootModule {
+                name: "init".to_owned(),
+                module_string: "vertex-init".to_owned(),
+            }],
+            processes: vec![NativeProcess {
+                name: "vertex-init".to_owned(),
+                module_string: "vertex-init".to_owned(),
+                initial: true,
+                service_id: "svc:vertex-supervisor".to_owned(),
+                start_after: Vec::new(),
+                requires_endpoints: Vec::new(),
+                provides_endpoints: Vec::new(),
+                health_kind: String::new(),
+                restart: RESTART_NEVER,
+            }],
+            endpoints: vec![Endpoint {
+                name: "serial-log".to_owned(),
+            }],
+            grants: vec![
+                Grant {
+                    process: "vertex-init".to_owned(),
+                    object_kind: OBJECT_ENDPOINT,
+                    object_name: "serial-log".to_owned(),
+                    cap_slot: 1,
+                    rights: RIGHT_SEND,
+                },
+                Grant {
+                    process: "vertex-init".to_owned(),
+                    object_kind: OBJECT_ENDPOINT,
+                    object_name: "serial-log".to_owned(),
+                    cap_slot: 1,
+                    rights: RIGHT_RECEIVE,
+                },
+            ],
+            store_objects: Vec::new(),
+            state_volumes: Vec::new(),
+            network_ports: Vec::new(),
+        };
+
+        let error = validate_plan(&plan).expect_err("duplicate cap slot should fail");
+        assert!(error.contains("duplicate grant cap slot 1 for process vertex-init"));
+    }
+}

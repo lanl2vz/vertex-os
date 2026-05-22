@@ -1,4 +1,7 @@
-use core::{arch::asm, cell::UnsafeCell};
+use core::{
+    arch::{asm, x86_64::__cpuid_count},
+    cell::UnsafeCell,
+};
 
 use crate::{
     capability, gdt, paging, serial,
@@ -16,6 +19,9 @@ const MAX_BOOT_GRANTS: usize = 64;
 const MAX_STATE_VALUE_BYTES: usize = 64;
 const INITIAL_USER_RFLAGS: u64 = 0x2;
 const STATUS_BAD_BUFFER: u64 = u64::MAX - 2;
+const STATUS_OK: u64 = 0;
+const STATUS_TIMEOUT: u64 = u64::MAX - 9;
+const FALLBACK_TSC_TICKS_PER_MS: u64 = 1_000_000;
 pub const BOOT_OBJECT_ENDPOINT: u16 = 1;
 pub const BOOT_OBJECT_STORE: u16 = 2;
 pub const BOOT_OBJECT_STATE: u16 = 3;
@@ -88,6 +94,7 @@ pub struct ProcessContext {
 pub struct BootProcessConfig {
     pub name: &'static str,
     pub context: ProcessContext,
+    pub restart_context: ProcessContext,
     pub initial: bool,
 }
 
@@ -156,6 +163,10 @@ enum ProcessState {
         endpoint: KernelObjectId,
         destination: u64,
         max_len: usize,
+        timeout_tsc: Option<u64>,
+    },
+    Sleeping {
+        wake_tsc: u64,
     },
     Exited,
 }
@@ -168,6 +179,7 @@ impl ProcessState {
             Self::Ready => "ready",
             Self::Running => "running",
             Self::BlockedOnEndpoint { .. } => "blocked",
+            Self::Sleeping { .. } => "sleeping",
             Self::Exited => "exited",
         }
     }
@@ -212,12 +224,15 @@ struct Process {
     pid: ProcessId,
     name: &'static str,
     context: ProcessContext,
+    restart_context: ProcessContext,
     state: ProcessState,
     caps: CapabilitySpace,
+    initial_caps: CapabilitySpace,
     saved_frame: SyscallFrame,
     has_saved_frame: bool,
     exit_status: u64,
     has_exited: bool,
+    start_count: u64,
 }
 
 #[derive(Clone, Copy)]
@@ -328,6 +343,9 @@ impl CapabilitySpace {
         if slot >= self.caps.len() {
             return Err(InitError::CapabilityTableFull);
         }
+        if self.caps[slot].is_some() {
+            return Err(InitError::InvalidBootManifest);
+        }
 
         self.caps[slot] = Some(Capability { object, rights });
         Ok(())
@@ -360,12 +378,19 @@ impl Process {
                 entry: 0,
                 stack_top: 0,
             },
+            restart_context: ProcessContext {
+                cr3: 0,
+                entry: 0,
+                stack_top: 0,
+            },
             state: ProcessState::Empty,
             caps: CapabilitySpace::new(),
+            initial_caps: CapabilitySpace::new(),
             saved_frame: SyscallFrame::empty(),
             has_saved_frame: false,
             exit_status: 0,
             has_exited: false,
+            start_count: 0,
         }
     }
 
@@ -373,19 +398,24 @@ impl Process {
         pid: ProcessId,
         name: &'static str,
         context: ProcessContext,
+        restart_context: ProcessContext,
         state: ProcessState,
         caps: CapabilitySpace,
     ) -> Self {
+        let start_count = if state == ProcessState::Running { 1 } else { 0 };
         Self {
             pid,
             name,
             context,
+            restart_context,
             state,
             caps,
+            initial_caps: caps,
             saved_frame: SyscallFrame::empty(),
             has_saved_frame: false,
             exit_status: 0,
             has_exited: false,
+            start_count,
         }
     }
 }
@@ -555,7 +585,8 @@ impl ObjectTable {
 
         let id = KernelObjectId(self.next_id);
         self.next_id += 1;
-        self.objects[self.count] = Some(KernelObject::NetworkPort(NetworkPortObject::new(id, name)));
+        self.objects[self.count] =
+            Some(KernelObject::NetworkPort(NetworkPortObject::new(id, name)));
         self.count += 1;
         Ok(id)
     }
@@ -706,6 +737,7 @@ impl ProcessTable {
         &mut self,
         name: &'static str,
         context: ProcessContext,
+        restart_context: ProcessContext,
         state: ProcessState,
         caps: CapabilitySpace,
     ) -> Result<ProcessId, InitError> {
@@ -715,7 +747,14 @@ impl ProcessTable {
 
         let pid = ProcessId::new(self.next_id);
         self.next_id += 1;
-        self.processes[self.count] = Some(Process::new(pid, name, context, state, caps));
+        self.processes[self.count] = Some(Process::new(
+            pid,
+            name,
+            context,
+            restart_context,
+            state,
+            caps,
+        ));
         self.count += 1;
         Ok(pid)
     }
@@ -779,11 +818,12 @@ impl ProcessTable {
         None
     }
 
-    fn next_ready_index_round_robin(&self) -> Option<usize> {
+    fn next_ready_index_round_robin(&self, include_current: bool) -> Option<usize> {
         if self.count == 0 {
             return None;
         }
 
+        let current = self.current_index();
         let start = self
             .current_index()
             .map(|index| (index + 1) % self.count)
@@ -792,6 +832,10 @@ impl ProcessTable {
 
         while offset < self.count {
             let index = (start + offset) % self.count;
+            if !include_current && current == Some(index) {
+                offset += 1;
+                continue;
+            }
             if let Some(process) = self.processes[index]
                 && process.state == ProcessState::Ready
             {
@@ -901,6 +945,16 @@ impl BootRuntimeConfig {
         }
         if grant.process_index >= self.process_count {
             return Err(InitError::InvalidBootManifest);
+        }
+        let mut index = 0;
+        while index < self.grant_count {
+            if let Some(existing) = self.grants[index]
+                && existing.process_index == grant.process_index
+                && existing.cap_slot == grant.cap_slot
+            {
+                return Err(InitError::InvalidBootManifest);
+            }
+            index += 1;
         }
         match grant.object_kind {
             BOOT_OBJECT_ENDPOINT if grant.object_index < self.endpoint_count => {}
@@ -1016,6 +1070,7 @@ pub fn init_from_boot_config(config: &BootRuntimeConfig) -> Result<(), InitError
         let pid = runtime.processes.add_process(
             process.name,
             process.context,
+            process.restart_context,
             state,
             process_caps[process_index],
         )?;
@@ -1118,7 +1173,7 @@ pub fn yield_current_process(frame: &mut SyscallFrame) -> ScheduleResult {
         process.name
     };
 
-    if schedule_next_ready(frame) {
+    if schedule_next_ready_excluding_current(frame) {
         ScheduleResult::Switched
     } else {
         let runtime = runtime();
@@ -1176,6 +1231,32 @@ pub fn receive(
     max_len: usize,
     frame: &mut SyscallFrame,
 ) -> Result<(), IpcError> {
+    receive_with_timeout(cap_slot, destination, max_len, None, frame)
+}
+
+pub fn receive_timeout(
+    cap_slot: u64,
+    destination: *mut u8,
+    max_len: usize,
+    timeout_ms: u64,
+    frame: &mut SyscallFrame,
+) -> Result<(), IpcError> {
+    receive_with_timeout(
+        cap_slot,
+        destination,
+        max_len,
+        Some(deadline_after_ms(timeout_ms)),
+        frame,
+    )
+}
+
+fn receive_with_timeout(
+    cap_slot: u64,
+    destination: *mut u8,
+    max_len: usize,
+    timeout_tsc: Option<u64>,
+    frame: &mut SyscallFrame,
+) -> Result<(), IpcError> {
     let endpoint_id = match endpoint_from_cap(cap_slot, capability::RIGHT_RECEIVE) {
         Ok(endpoint_id) => endpoint_id,
         Err(error) => {
@@ -1201,7 +1282,7 @@ pub fn receive(
     };
 
     if !message_ready {
-        if block_current_on_endpoint(endpoint_id, destination as u64, max_len, frame) {
+        if block_current_on_endpoint(endpoint_id, destination as u64, max_len, timeout_tsc, frame) {
             return Ok(());
         }
 
@@ -1383,10 +1464,19 @@ pub fn start_process(cap_slot: u64, process_index: u64) -> Result<(), IpcError> 
             return Err(IpcError::BadCapability);
         }
 
+        if process.state == ProcessState::Exited {
+            process.context = process.restart_context;
+            process.caps = process.initial_caps;
+            serial::write_str("Krust process restart reload: proc=");
+            serial::write_str(process.name);
+            serial::write_str("\n");
+        }
+
         process.state = ProcessState::Ready;
         process.has_saved_frame = false;
         process.exit_status = 0;
         process.has_exited = false;
+        process.start_count = process.start_count.saturating_add(1);
         process.name
     };
 
@@ -1398,7 +1488,17 @@ pub fn start_process(cap_slot: u64, process_index: u64) -> Result<(), IpcError> 
     Ok(())
 }
 
+pub fn process_attempt() -> Result<u64, IpcError> {
+    let runtime = runtime();
+    runtime
+        .processes
+        .current_process()
+        .map(|process| process.start_count)
+        .ok_or(IpcError::BadCapability)
+}
+
 pub fn process_status(cap_slot: u64, process_index: u64) -> Result<u64, IpcError> {
+    wake_timed_processes(read_tsc());
     let _process_control = process_control_from_cap(cap_slot, capability::RIGHT_CONTROL)?;
     let Ok(process_index) = usize::try_from(process_index) else {
         return Err(IpcError::BadCapability);
@@ -1495,10 +1595,21 @@ pub fn cap_transfer(
         else {
             return Err(IpcError::BadCapability);
         };
-        target_process
-            .caps
+        let persist_for_restart = target_process.state == ProcessState::Declared;
+        let mut next_caps = target_process.caps;
+        let mut next_initial_caps = target_process.initial_caps;
+        next_caps
             .grant(target_slot, cap.object, rights_mask)
             .map_err(|_| IpcError::BadCapability)?;
+        if persist_for_restart {
+            next_initial_caps
+                .grant(target_slot, cap.object, rights_mask)
+                .map_err(|_| IpcError::BadCapability)?;
+        }
+        target_process.caps = next_caps;
+        if persist_for_restart {
+            target_process.initial_caps = next_initial_caps;
+        }
         (caller, target_process.name)
     };
 
@@ -1588,7 +1699,11 @@ pub fn state_read(cap_slot: u64, destination: *mut u8, max_len: usize) -> Result
     Ok(copy_len)
 }
 
-pub fn sleep_ms(cap_slot: u64, milliseconds: u64) -> Result<(), IpcError> {
+pub fn sleep_ms(
+    cap_slot: u64,
+    milliseconds: u64,
+    frame: &mut SyscallFrame,
+) -> Result<(), IpcError> {
     let timer = timer_from_cap(cap_slot, capability::RIGHT_CONTROL)?;
     serial::write_str("Timer sleep accepted: proc=");
     serial::write_str(current_process_name());
@@ -1598,13 +1713,39 @@ pub fn sleep_ms(cap_slot: u64, milliseconds: u64) -> Result<(), IpcError> {
     serial::write_u64_dec(milliseconds);
     serial::write_str("\n");
 
-    let start = read_tsc();
-    let cycles = milliseconds.saturating_mul(1_000_000);
-    while read_tsc().wrapping_sub(start) < cycles {
-        core::hint::spin_loop();
+    if milliseconds == 0 {
+        frame.rax = STATUS_OK;
+        return Ok(());
     }
 
-    Ok(())
+    let wake_tsc = deadline_after_ms(milliseconds);
+    let current = {
+        let runtime = runtime();
+        let Some(process) = runtime.processes.current_process_mut() else {
+            return Err(IpcError::BadCapability);
+        };
+
+        process.saved_frame = *frame;
+        process.saved_frame.rax = STATUS_OK;
+        process.has_saved_frame = true;
+        process.state = ProcessState::Sleeping { wake_tsc };
+        process.name
+    };
+
+    serial::write_str("Timer sleep blocked: proc=");
+    serial::write_str(current);
+    serial::write_str("\n");
+
+    if schedule_next_ready(frame) {
+        return Ok(());
+    }
+
+    let runtime = runtime();
+    if let Some(process) = runtime.processes.current_process_mut() {
+        process.state = ProcessState::Running;
+    }
+
+    Err(IpcError::Empty)
 }
 
 fn read_tsc() -> u64 {
@@ -1621,10 +1762,34 @@ fn read_tsc() -> u64 {
     ((high as u64) << 32) | low as u64
 }
 
+fn deadline_after_ms(milliseconds: u64) -> u64 {
+    read_tsc().saturating_add(milliseconds.saturating_mul(tsc_ticks_per_ms()))
+}
+
+fn tsc_ticks_per_ms() -> u64 {
+    let leaf15 = __cpuid_count(0x15, 0);
+    if leaf15.eax != 0 && leaf15.ebx != 0 && leaf15.ecx != 0 {
+        let hz = (leaf15.ecx as u64)
+            .saturating_mul(leaf15.ebx as u64)
+            .saturating_div(leaf15.eax as u64);
+        if hz != 0 {
+            return hz / 1_000;
+        }
+    }
+
+    let leaf16 = __cpuid_count(0x16, 0);
+    if leaf16.eax != 0 {
+        return (leaf16.eax as u64).saturating_mul(1_000);
+    }
+
+    FALLBACK_TSC_TICKS_PER_MS
+}
+
 fn block_current_on_endpoint(
     endpoint: KernelObjectId,
     destination: u64,
     max_len: usize,
+    timeout_tsc: Option<u64>,
     frame: &mut SyscallFrame,
 ) -> bool {
     let current = {
@@ -1639,6 +1804,7 @@ fn block_current_on_endpoint(
             endpoint,
             destination,
             max_len,
+            timeout_tsc,
         };
         process.name
     };
@@ -1647,6 +1813,9 @@ fn block_current_on_endpoint(
     serial::write_str(current);
     serial::write_str(" endpoint=");
     serial::write_u64_dec(endpoint.raw());
+    if timeout_tsc.is_some() {
+        serial::write_str(" timeout=yes");
+    }
     serial::write_str("\n");
 
     if schedule_next_ready(frame) {
@@ -1785,7 +1954,101 @@ fn blocked_receiver_index(endpoint: KernelObjectId) -> Option<usize> {
     None
 }
 
+fn wake_timed_processes(now: u64) -> usize {
+    let runtime = runtime();
+    let mut woke = 0;
+    let mut index = 0;
+    while index < runtime.processes.count {
+        if let Some(process) = runtime.processes.processes[index].as_mut() {
+            match process.state {
+                ProcessState::Sleeping { wake_tsc } if deadline_reached(now, wake_tsc) => {
+                    process.saved_frame.rax = STATUS_OK;
+                    process.state = ProcessState::Ready;
+                    woke += 1;
+                    serial::write_str("Timer wake: proc=");
+                    serial::write_str(process.name);
+                    serial::write_str("\n");
+                }
+                ProcessState::BlockedOnEndpoint {
+                    timeout_tsc: Some(timeout_tsc),
+                    ..
+                } if deadline_reached(now, timeout_tsc) => {
+                    process.saved_frame.rax = STATUS_TIMEOUT;
+                    process.state = ProcessState::Ready;
+                    woke += 1;
+                    serial::write_str("IPC receive timeout: proc=");
+                    serial::write_str(process.name);
+                    serial::write_str("\n");
+                }
+                _ => {}
+            }
+        }
+        index += 1;
+    }
+    woke
+}
+
+fn next_deadline_tsc() -> Option<u64> {
+    let runtime = runtime();
+    let mut next = None;
+    let mut index = 0;
+    while index < runtime.processes.count {
+        if let Some(process) = runtime.processes.processes[index] {
+            let deadline = match process.state {
+                ProcessState::Sleeping { wake_tsc } => Some(wake_tsc),
+                ProcessState::BlockedOnEndpoint {
+                    timeout_tsc: Some(timeout_tsc),
+                    ..
+                } => Some(timeout_tsc),
+                _ => None,
+            };
+            if let Some(deadline) = deadline
+                && next
+                    .map(|current| deadline_before(deadline, current))
+                    .unwrap_or(true)
+            {
+                next = Some(deadline);
+            }
+        }
+        index += 1;
+    }
+    next
+}
+
+fn wait_until_deadline(deadline: u64) {
+    while !deadline_reached(read_tsc(), deadline) {
+        core::hint::spin_loop();
+    }
+}
+
+fn deadline_reached(now: u64, deadline: u64) -> bool {
+    (now as i64).wrapping_sub(deadline as i64) >= 0
+}
+
+fn deadline_before(left: u64, right: u64) -> bool {
+    (left as i64).wrapping_sub(right as i64) < 0
+}
+
 fn schedule_next_ready(frame: &mut SyscallFrame) -> bool {
+    schedule_next_ready_inner(frame, true)
+}
+
+fn schedule_next_ready_excluding_current(frame: &mut SyscallFrame) -> bool {
+    schedule_next_ready_inner(frame, false)
+}
+
+fn schedule_next_ready_inner(frame: &mut SyscallFrame, include_current: bool) -> bool {
+    wake_timed_processes(read_tsc());
+    if runtime()
+        .processes
+        .next_ready_index_round_robin(include_current)
+        .is_none()
+        && let Some(deadline) = next_deadline_tsc()
+    {
+        wait_until_deadline(deadline);
+        wake_timed_processes(read_tsc());
+    }
+
     let (from, to, next_frame, next_cr3) = {
         let runtime = runtime();
         let from = runtime
@@ -1793,7 +2056,10 @@ fn schedule_next_ready(frame: &mut SyscallFrame) -> bool {
             .current_process()
             .map(|process| process.name)
             .unwrap_or("<none>");
-        let Some(next_index) = runtime.processes.next_ready_index_round_robin() else {
+        let Some(next_index) = runtime
+            .processes
+            .next_ready_index_round_robin(include_current)
+        else {
             return false;
         };
         let (next_pid, to, next_frame, next_cr3) = {

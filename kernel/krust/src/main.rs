@@ -15,8 +15,8 @@ mod syscall;
 mod usercopy;
 mod userspace;
 
-use core::{arch::asm, cell::UnsafeCell};
 use core::panic::PanicInfo;
+use core::{arch::asm, cell::UnsafeCell};
 
 const MAX_BOOT_PROCESSES: usize = 16;
 
@@ -384,10 +384,7 @@ fn run_capability_table_demo(allocator: &memory::FrameAllocator, heap: KernelHea
     }
 }
 
-fn run_native_boot(
-    allocator: &mut memory::FrameAllocator,
-    boot_manifests: &BootManifests,
-) {
+fn run_native_boot(allocator: &mut memory::FrameAllocator, boot_manifests: &BootManifests) {
     let Some(config) = prepare_native_boot_config(
         allocator,
         boot_manifests.selected,
@@ -400,7 +397,9 @@ fn run_native_boot(
 
     if let Some(fallback_manifest) = boot_manifests.fallback {
         if fallback_manifest.generation_id() == boot_manifests.selected.generation_id() {
-            serial::write_str("KrustBoot fallback manifest matches selected generation; ignoring\n");
+            serial::write_str(
+                "KrustBoot fallback manifest matches selected generation; ignoring\n",
+            );
         } else if let Some(fallback_config) = prepare_native_boot_config(
             allocator,
             fallback_manifest,
@@ -444,6 +443,7 @@ fn prepare_native_boot_config(
     };
 
     let mut images = [None; MAX_BOOT_PROCESSES];
+    let mut restart_images = [None; MAX_BOOT_PROCESSES];
     let mut index = 0;
     while index < boot_manifest.process_count() {
         let Some(process) = boot_manifest.process(index) else {
@@ -454,12 +454,16 @@ fn prepare_native_boot_config(
             return None;
         };
         images[index] = Some(image);
+        let Some(restart_image) = load_boot_process_image(process, hhdm_offset, allocator) else {
+            return None;
+        };
+        restart_images[index] = Some(restart_image);
         index += 1;
     }
 
     let config = unsafe { &mut *config_slot.0.get() };
     *config = ipc::BootRuntimeConfig::new();
-    build_boot_runtime_config(boot_manifest, &images, config)?;
+    build_boot_runtime_config(boot_manifest, &images, &restart_images, config)?;
     let Some(manifest_module) = find_module_by_string(manifest_module_string) else {
         serial::write_str("KrustBoot runtime init failed: manifest module missing\n");
         return None;
@@ -520,6 +524,7 @@ fn load_boot_process_image(
 fn build_boot_runtime_config(
     boot_manifest: &boot_manifest::Manifest<'static>,
     images: &[Option<userspace::UserImage>; MAX_BOOT_PROCESSES],
+    restart_images: &[Option<userspace::UserImage>; MAX_BOOT_PROCESSES],
     config: &mut ipc::BootRuntimeConfig,
 ) -> Option<()> {
     let mut index = 0;
@@ -544,6 +549,10 @@ fn build_boot_runtime_config(
             serial::write_str("KrustBoot runtime plan failed: process image gap\n");
             return None;
         };
+        let Some(restart_image) = restart_images[index] else {
+            serial::write_str("KrustBoot runtime plan failed: restart image gap\n");
+            return None;
+        };
         if config
             .add_process(ipc::BootProcessConfig {
                 name: process.name,
@@ -551,6 +560,11 @@ fn build_boot_runtime_config(
                     cr3: image.cr3,
                     entry: image.entry,
                     stack_top: image.stack_top,
+                },
+                restart_context: ipc::ProcessContext {
+                    cr3: restart_image.cr3,
+                    entry: restart_image.entry,
+                    stack_top: restart_image.stack_top,
                 },
                 initial: process.initial,
             })

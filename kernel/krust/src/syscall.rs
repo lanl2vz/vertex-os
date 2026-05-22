@@ -29,6 +29,8 @@ const SYS_STATE_READ: u64 = 15;
 const SYS_SLEEP_MS: u64 = 16;
 const SYS_PROCESS_STATUS: u64 = 17;
 const SYS_ROLLBACK_GENERATION: u64 = 18;
+const SYS_IPC_RECV_TIMEOUT: u64 = 19;
+const SYS_PROCESS_ATTEMPT: u64 = 20;
 
 const STATUS_OK: u64 = 0;
 const STATUS_BAD_CAPABILITY: u64 = u64::MAX - 1;
@@ -188,8 +190,8 @@ pub extern "C" fn krust_syscall_dispatch(
             Ok(len) => frame.rax = len as u64,
             Err(error) => frame.rax = ipc_error_status("SYS_STATE_READ", error),
         },
-        SYS_SLEEP_MS => match ipc::sleep_ms(arg0, arg1) {
-            Ok(()) => frame.rax = STATUS_OK,
+        SYS_SLEEP_MS => match ipc::sleep_ms(arg0, arg1, frame) {
+            Ok(()) => {}
             Err(error) => frame.rax = ipc_error_status("SYS_SLEEP_MS", error),
         },
         SYS_PROCESS_STATUS => match ipc::process_status(arg0, arg1) {
@@ -204,6 +206,18 @@ pub extern "C" fn krust_syscall_dispatch(
         ) {
             Ok(()) => frame.rax = STATUS_OK,
             Err(error) => frame.rax = ipc_error_status("SYS_ROLLBACK_GENERATION", error),
+        },
+        SYS_IPC_RECV_TIMEOUT => {
+            let max_len = usize::try_from(arg2 & 0xffff_ffff).unwrap_or(usize::MAX);
+            let timeout_ms = arg2 >> 32;
+            match ipc::receive_timeout(arg0, arg1 as *mut u8, max_len, timeout_ms, frame) {
+                Ok(()) => {}
+                Err(error) => frame.rax = ipc_error_status("SYS_IPC_RECV_TIMEOUT", error),
+            }
+        }
+        SYS_PROCESS_ATTEMPT => match ipc::process_attempt() {
+            Ok(attempt) => frame.rax = attempt,
+            Err(error) => frame.rax = ipc_error_status("SYS_PROCESS_ATTEMPT", error),
         },
         _ => {
             serial::write_str("Unknown userspace syscall: ");

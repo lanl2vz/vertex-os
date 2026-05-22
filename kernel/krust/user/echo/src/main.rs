@@ -15,7 +15,11 @@ pub extern "C" fn _start() -> ! {
         log(b"echo send failed");
         sys::exit(1);
     }
-    log(b"echo sent message to logd");
+    if sys::process_attempt() > 1 {
+        log(b"echo restart retained delegated log cap");
+    } else {
+        log(b"echo sent message to logd");
+    }
 
     let mut denied = [0u8; 8];
     if sys::ipc_recv(CAP_LOG_SINK, &mut denied) == sys::STATUS_BAD_CAPABILITY {

@@ -32,7 +32,7 @@ Krust grants vertex-init cap[2] process-control authority, cap[3] readiness rece
 Krust grants store/state/timer authority only to services that declare those capabilities
 Krust installs a minimal IDT for #UD, #GP, and #PF
 Krust enters ring 3 at the initial process entry point
-Krust tracks Declared, Ready, Running, BlockedOnEndpoint, and Exited process states
+Krust tracks Declared, Ready, Running, BlockedOnEndpoint, Sleeping, and Exited process states
 Krust validates syscall user buffers by walking user page tables
 vertex-init reads the compact manifest through cap[0]
 vertex-init logs through cap[1]
@@ -43,15 +43,17 @@ echo sends one message to logd through an explicit IPC capability
 echo drops its endpoint capability and denied authority stays rejected
 model-reader reads an immutable store object through its own store capability
 counter-service writes a state volume, and reader-service reads it through read-only state authority
-timer-service sleeps through its own timer capability
-flaky-service exits non-zero once and vertex-init restarts it according to restart policy
+timer-service sleeps through its own timer capability without monopolizing the scheduler
+echo proves bounded restart=always with delegated endpoint authority restored, and flaky-service proves restart=on-failure from a fresh restart context
 logd receives the message and denial tests reject missing authority
 Krust halts after `Native service activation ok`
 ```
 
 No dynamic heap allocator, APIC-backed timer, preemption, user page-fault
 recovery, full interrupt handling, full JSON parsing in the kernel, filesystem,
-network, or device drivers are part of this native proof. The kernel consumes a
+network, or device drivers are part of this native proof. Timer deadlines use
+cooperative sleep states; when no process is ready, the scheduler polls TSC until
+the next deadline rather than sleeping on an interrupt. The kernel consumes a
 compact KrustBoot manifest compiled by hosted `vertexctl`; graph interpretation
 and lifecycle policy remain a userspace responsibility.
 
@@ -231,10 +233,19 @@ State read accepted: proc=reader-service state=state:counter
 reader-service write rejected
 Native state-volume access ok
 Timer sleep accepted: proc=timer-service timer=monotonic-timer ms=10
+Timer sleep blocked: proc=timer-service
+Timer wake: proc=timer-service
 Native timer ok
+vertex-init observes exit
+restart policy = always
+vertex-init restarts echo once
+Krust process restart reload: proc=echo
+echo restart retained delegated log cap
 flaky-service exits with status 1
 vertex-init observes failure
+restart policy = on-failure
 vertex-init restarts flaky-service once
+Krust process restart reload: proc=flaky-service
 flaky-service exits 0
 Native restart policy ok
 Native manifest-driven activation ok
@@ -336,8 +347,17 @@ State write accepted: proc=counter-service state=state:counter
 State read accepted: proc=reader-service state=state:counter
 reader-service write rejected
 Timer sleep accepted: proc=timer-service timer=monotonic-timer ms=10
+Timer sleep blocked: proc=timer-service
+Timer wake: proc=timer-service
+vertex-init observes exit
+restart policy = always
+vertex-init restarts echo once
+Krust process restart reload: proc=echo
+echo restart retained delegated log cap
 flaky-service exits with status 1
+restart policy = on-failure
 vertex-init restarts flaky-service once
+Krust process restart reload: proc=flaky-service
 flaky-service exits 0
 Native manifest-driven activation ok
 Native readiness activation ok

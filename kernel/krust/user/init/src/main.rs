@@ -29,7 +29,10 @@ const MESSAGE_READY: u16 = 1;
 const ENVELOPE_LEN: usize = 16;
 const MAX_PROCESSES: usize = 16;
 const RESTART_ON_FAILURE: u16 = 1;
+const RESTART_ALWAYS: u16 = 2;
+const MAX_NATIVE_RESTARTS: u16 = 1;
 const STATUS_RUNNING: u64 = u64::MAX - 8;
+const READINESS_TIMEOUT_MS: u64 = 50;
 
 #[unsafe(link_section = ".text._start")]
 #[unsafe(no_mangle)]
@@ -345,9 +348,13 @@ fn endpoint_has_provider(
 
 fn wait_ready(expected_name: &[u8], parent_generation: &[u8]) {
     let mut buffer = [0u8; 64];
-    let received = sys::readiness_recv(&mut buffer);
+    let received = sys::readiness_recv_timeout(&mut buffer, READINESS_TIMEOUT_MS);
     if received == sys::STATUS_BAD_CAPABILITY || received == sys::STATUS_BAD_BUFFER {
         log(b"vertex-init readiness wait failed");
+        activation_failed(parent_generation);
+    }
+    if received == sys::STATUS_TIMEOUT {
+        log(b"vertex-init readiness timeout");
         activation_failed(parent_generation);
     }
 
@@ -409,6 +416,10 @@ fn transfer_endpoint_requirements(
             log(b"vertex-init cap transfer failed");
             activation_failed(parent_generation);
         }
+        if sys::cap_drop(sys::CAP_DERIVED) != sys::STATUS_OK {
+            log(b"vertex-init cap scratch drop failed");
+            activation_failed(parent_generation);
+        }
         requirement_index += 1;
     }
 }
@@ -458,7 +469,7 @@ fn supervise_services(
     parent_generation: &[u8],
 ) {
     let mut complete = [false; MAX_PROCESSES];
-    let mut restarted = [false; MAX_PROCESSES];
+    let mut restart_counts = [0u16; MAX_PROCESSES];
     let mut complete_count = 0;
     let mut restart_observed = false;
 
@@ -483,26 +494,38 @@ fn supervise_services(
             }
 
             let name = process_name(manifest, boot_modules, process_index);
-            if status == 0 {
-                complete[process_index] = true;
-                complete_count += 1;
-                made_progress = true;
-                index += 1;
-                continue;
-            }
-
-            if process_restart_policy(manifest, boot_modules, process_index) == RESTART_ON_FAILURE
-                && !restarted[process_index]
-            {
-                log(b"vertex-init observes failure");
-                log(b"restart policy = on-failure");
+            let restart_policy = process_restart_policy(manifest, boot_modules, process_index);
+            let restart_count = restart_counts[process_index];
+            let should_restart = restart_count < MAX_NATIVE_RESTARTS
+                && (restart_policy == RESTART_ALWAYS
+                    || (restart_policy == RESTART_ON_FAILURE && status != 0));
+            if should_restart {
+                if status == 0 {
+                    log(b"vertex-init observes exit");
+                    log(b"restart policy = always");
+                } else {
+                    log(b"vertex-init observes failure");
+                    if restart_policy == RESTART_ALWAYS {
+                        log(b"restart policy = always");
+                    } else {
+                        log(b"restart policy = on-failure");
+                    }
+                }
                 log_restart_once(name);
                 if sys::process_start(process_index as u64) != sys::STATUS_OK {
                     log_prefix(b"vertex-init service restart failed: ", name);
                     activation_failed(parent_generation);
                 }
-                restarted[process_index] = true;
+                restart_counts[process_index] = restart_count.saturating_add(1);
                 restart_observed = true;
+                made_progress = true;
+                index += 1;
+                continue;
+            }
+
+            if status == 0 {
+                complete[process_index] = true;
+                complete_count += 1;
                 made_progress = true;
                 index += 1;
                 continue;

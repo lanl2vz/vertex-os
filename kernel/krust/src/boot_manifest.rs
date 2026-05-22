@@ -109,10 +109,8 @@ struct Global<T>(UnsafeCell<T>);
 
 unsafe impl<T> Sync for Global<T> {}
 
-static SELECTED_MANIFEST: Global<Manifest<'static>> =
-    Global(UnsafeCell::new(Manifest::empty()));
-static FALLBACK_MANIFEST: Global<Manifest<'static>> =
-    Global(UnsafeCell::new(Manifest::empty()));
+static SELECTED_MANIFEST: Global<Manifest<'static>> = Global(UnsafeCell::new(Manifest::empty()));
+static FALLBACK_MANIFEST: Global<Manifest<'static>> = Global(UnsafeCell::new(Manifest::empty()));
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ParseError {
@@ -265,10 +263,7 @@ fn parse_static(
     Ok(unsafe { &*slot.0.get() })
 }
 
-fn parse_into(
-    bytes: &'static [u8],
-    manifest: &mut Manifest<'static>,
-) -> Result<(), ParseError> {
+fn parse_into(bytes: &'static [u8], manifest: &mut Manifest<'static>) -> Result<(), ParseError> {
     let mut reader = Reader::new(bytes);
     if reader.read_exact(MAGIC.len())? != MAGIC {
         return Err(ParseError::BadMagic);
@@ -480,7 +475,10 @@ fn validate_manifest(manifest: &Manifest<'_>) -> Result<(), ParseError> {
     Ok(())
 }
 
-fn validate_endpoint_rights(rights: [u16; MAX_PROCESS_REFS], count: usize) -> Result<(), ParseError> {
+fn validate_endpoint_rights(
+    rights: [u16; MAX_PROCESS_REFS],
+    count: usize,
+) -> Result<(), ParseError> {
     let mut index = 0;
     while index < count {
         if rights[index] == 0 || rights[index] & !(RIGHT_SEND | RIGHT_RECEIVE) != 0 {

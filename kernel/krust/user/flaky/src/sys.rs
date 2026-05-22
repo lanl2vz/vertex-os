@@ -4,6 +4,7 @@ pub const STATUS_OK: u64 = 0;
 
 const SYS_EXIT: u64 = 2;
 const SYS_LOG_WRITE: u64 = 7;
+const SYS_PROCESS_ATTEMPT: u64 = 20;
 
 pub fn log(cap_slot: u64, message: &[u8]) -> u64 {
     syscall3(
@@ -12,6 +13,10 @@ pub fn log(cap_slot: u64, message: &[u8]) -> u64 {
         message.as_ptr() as u64,
         message.len() as u64,
     )
+}
+
+pub fn process_attempt() -> u64 {
+    syscall3(SYS_PROCESS_ATTEMPT, 0, 0, 0)
 }
 
 pub fn exit(status: u64) -> ! {

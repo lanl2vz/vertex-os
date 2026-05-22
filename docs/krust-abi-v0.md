@@ -58,6 +58,8 @@ entry into another userspace process. There is no timer preemption in ABI v0.
 | 16 | `SYS_SLEEP_MS` | `arg0 = timer_cap_slot`, `arg1 = milliseconds`, `arg2 = 0` | status |
 | 17 | `SYS_PROCESS_STATUS` | `arg0 = process_control_cap_slot`, `arg1 = process_index`, `arg2 = 0` | exit status, running marker, or error status |
 | 18 | `SYS_ROLLBACK_GENERATION` | `arg0 = process_control_cap_slot`, `arg1 = generation_ptr`, `arg2 = len` | switches to the prepared fallback generation or returns error |
+| 19 | `SYS_IPC_RECV_TIMEOUT` | `arg0 = cap_slot`, `arg1 = user_ptr`, `arg2 = timeout_ms << 32 \| max_len` | byte count, `STATUS_TIMEOUT`, or error status |
+| 20 | `SYS_PROCESS_ATTEMPT` | none | current process start attempt count |
 
 ## Return Status Values
 
@@ -69,6 +71,7 @@ entry into another userspace process. There is no timer preemption in ABI v0.
 | `STATUS_TOO_LARGE` | `u64::MAX - 3` | IPC message length exceeded the kernel's fixed message buffer. |
 | `STATUS_EMPTY` | `u64::MAX - 4` | Endpoint had no message and no process could be scheduled after blocking. |
 | `STATUS_RUNNING` | `u64::MAX - 8` | `SYS_PROCESS_STATUS` target has not exited. |
+| `STATUS_TIMEOUT` | `u64::MAX - 9` | A timed IPC receive expired before a message arrived. |
 | `u64::MAX` | `u64::MAX` | Unknown syscall number. |
 
 For `SYS_IPC_RECV`, any return value less than or equal to the destination
@@ -176,6 +179,7 @@ Declared
 Ready
 Running
 BlockedOnEndpoint
+Sleeping
 Exited
 ```
 
@@ -206,11 +210,24 @@ requires control rights on the process-control cap
 target process index must exist in the compact manifest process table
 target process state must be Declared or Exited
 on success: Declared -> Ready
+restart success: Exited -> Ready with the restart context and initial caps restored
 on failure: STATUS_BAD_CAPABILITY
 ```
 
 Restart uses the same syscall; restarting an exited process resets its saved
-frame and exit status before making it Ready again.
+frame, exit status, capability table, and user context before making it Ready
+again. ABI v0 native supervision is explicitly bounded to one restart per
+service; `restart = always` means "restart after the first exit" in this proof,
+not an unbounded service-manager loop. `SYS_PROCESS_ATTEMPT` lets a process
+distinguish its first start from a kernel-mediated restart without relying on
+preserved process memory.
+
+`SYS_SLEEP_MS` moves the caller into `Sleeping` and yields to another ready
+process. Deadlines use CPUID-reported TSC/base frequency when available, with a
+fixed fallback only when the CPU does not report a usable frequency. If no
+process is ready, ABI v0 waits for the next sleep or receive-timeout deadline by
+polling TSC in the cooperative scheduler; this is not APIC-backed or
+interrupt-driven wakeup.
 
 ## IPC Semantics
 
@@ -289,6 +306,9 @@ SYS_PROCESS_STATUS(cap[2], process_index, 0)
 SYS_ROLLBACK_GENERATION(cap[2], parent_generation_id, len)
   reinitializes runtime tables from the prepared fallback manifest and enters
   the fallback generation's initial process
+
+SYS_IPC_RECV_TIMEOUT(cap[3], buffer, packed(timeout_ms, len))
+  waits for readiness with a scheduler timeout
 ```
 
 `vertex-init` reads the compact manifest, computes the activation order from
@@ -341,4 +361,6 @@ declared endpoint beyond the fixed serial-log/readiness endpoints
 Endpoint, store-object, state-volume, and timer grants for declared services
 come from the compact manifest. Endpoint consumers do not receive static boot
 send grants for delegated authority; vertex-init derives and transfers the
-attenuated cap before starting the consumer.
+attenuated cap before starting the consumer. A transfer to a still-declared
+process becomes part of that process's restart baseline, so the one ABI v0
+restart restores the delegated endpoint cap along with static grants.
