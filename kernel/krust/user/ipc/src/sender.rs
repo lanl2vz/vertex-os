@@ -10,6 +10,12 @@ use core::panic::PanicInfo;
 pub extern "C" fn _start() -> ! {
     sys::write_serial(b"ipc sender started");
 
+    let mut denied_receive = [0u8; 8];
+    if sys::ipc_recv(sys::ENDPOINT_CAP_SLOT, &mut denied_receive) != sys::STATUS_BAD_CAPABILITY {
+        sys::write_serial(b"ipc sender negative receive failed");
+        sys::exit(1);
+    }
+
     let message = b"Krust IPC ping";
     let status = sys::ipc_send(sys::ENDPOINT_CAP_SLOT, message);
 

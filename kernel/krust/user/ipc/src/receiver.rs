@@ -16,6 +16,12 @@ pub extern "C" fn _start() -> ! {
     if received <= buffer.len() as u64 {
         sys::write_serial(b"ipc receiver received message");
         sys::write_serial(&buffer[..received as usize]);
+
+        if sys::ipc_send(sys::ENDPOINT_CAP_SLOT, b"not allowed") != sys::STATUS_BAD_CAPABILITY {
+            sys::write_serial(b"ipc receiver negative send failed");
+            sys::exit(1);
+        }
+
         sys::exit(0);
     }
 

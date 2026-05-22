@@ -2,7 +2,7 @@ use core::ptr;
 
 use crate::{
     elf::{self, Elf, ProgramHeader},
-    gdt, memory,
+    gdt, ipc, memory,
     memory::{FRAME_SIZE, FrameAllocator},
     paging::{self, AddressSpace, PageFlags},
     serial, syscall,
@@ -72,19 +72,15 @@ pub fn enter(image: UserImage) -> ! {
     }
 }
 
-pub fn enter_ipc_demo(sender: UserImage, receiver: UserImage) -> ! {
-    print_image("Krust IPC sender ELF loaded", sender);
-    print_image("Krust IPC receiver ELF loaded", receiver);
-
+pub fn enter_ipc_demo(initial: ipc::ProcessContext) -> ! {
     gdt::init();
     serial::write_str("GDT initialized\n");
     syscall::init();
     serial::write_str("Syscall path initialized\n");
-    syscall::set_receiver_image(receiver);
 
     serial::write_str("Entering IPC sender userspace\n");
     unsafe {
-        gdt::enter_user_mode(sender.cr3, sender.entry, sender.stack_top);
+        gdt::enter_user_mode(initial.cr3, initial.entry, initial.stack_top);
     }
 }
 

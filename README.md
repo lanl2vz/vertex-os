@@ -6,7 +6,7 @@ Krust Kernel is the native Rust kernel prototype that will enforce that graph's
 runtime authority. The repository now has two active tracks: a hosted Linux
 prototype for Vertex IR, `vertexctl`, supervisor behavior, and capability
 semantics; and a bootable Krust kernel under `kernel/krust` that runs under
-QEMU/Limine and has reached the M7 userspace IPC capability milestone.
+QEMU/Limine and has reached the M8 process capability enforcement milestone.
 
 ## Repository Layout
 
@@ -25,23 +25,24 @@ vertex-os/
     netstack/            Demo hosted network capability provider
     echo-server/         Demo service consuming log and network capabilities
   kernel/
-    krust/               Bootable Krust kernel prototype, currently at M7 IPC
+    krust/               Bootable Krust kernel prototype, currently at M8 caps
   lang/
     vertex-lang/         Planned typed system-definition language
   nix/                   Nix support modules and builders
   flake.nix              Planned root flake entrypoint
 ```
 
-## Krust M7
+## Krust M8
 
-The first native IPC capability milestone lives in `kernel/krust`. It is
-isolated from the hosted Cargo workspace and boots a Limine ISO under QEMU until
-Krust prints `Krust Kernel booted`, reads Limine's memory map, finds the
-packaged `hello-generation.vertex.json` boot module, exercises physical and
-virtual memory, creates boot kernel objects and compact capabilities, loads two
-static userspace ELF modules, gives `ipc-sender` a send capability to endpoint
-1, gives `ipc-receiver` a receive capability to the same endpoint, enters ring
-3, transfers `Krust IPC ping`, and halts after `IPC demo ok`.
+The first native process capability enforcement milestone lives in
+`kernel/krust`. It is isolated from the hosted Cargo workspace and boots a
+Limine ISO under QEMU until Krust prints `Krust Kernel booted`, reads Limine's
+memory map, finds the packaged `hello-generation.vertex.json` boot module,
+exercises physical and virtual memory, creates boot kernel objects and compact
+capabilities, loads two static userspace ELF modules, creates a process table
+and endpoint table, grants process-local endpoint capabilities, accepts the
+authorized send/receive path, rejects unauthorized cross-operations, transfers
+`Krust IPC ping`, and halts after `IPC demo ok`.
 
 ```sh
 cd kernel/krust

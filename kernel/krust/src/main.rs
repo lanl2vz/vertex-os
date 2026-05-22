@@ -374,9 +374,6 @@ fn run_ipc_demo(allocator: &mut memory::FrameAllocator) {
         return;
     };
 
-    ipc::reset_for_boot();
-    ipc::print_boot_capability_table();
-
     let Some(sender) = load_user_image(
         "Krust IPC sender module",
         KRUST_IPC_SENDER_MODULE,
@@ -394,7 +391,46 @@ fn run_ipc_demo(allocator: &mut memory::FrameAllocator) {
         return;
     };
 
-    userspace::enter_ipc_demo(sender, receiver);
+    serial::write_str("Krust IPC sender ELF loaded: entry=");
+    serial::write_u64_hex(sender.entry);
+    serial::write_str(" stack=");
+    serial::write_u64_hex(sender.stack_top);
+    serial::write_str(" cr3=");
+    serial::write_u64_hex(sender.cr3);
+    serial::write_str("\n");
+
+    serial::write_str("Krust IPC receiver ELF loaded: entry=");
+    serial::write_u64_hex(receiver.entry);
+    serial::write_str(" stack=");
+    serial::write_u64_hex(receiver.stack_top);
+    serial::write_str(" cr3=");
+    serial::write_u64_hex(receiver.cr3);
+    serial::write_str("\n");
+
+    if ipc::init_for_boot(
+        ipc::ProcessContext {
+            cr3: sender.cr3,
+            entry: sender.entry,
+            stack_top: sender.stack_top,
+        },
+        ipc::ProcessContext {
+            cr3: receiver.cr3,
+            entry: receiver.entry,
+            stack_top: receiver.stack_top,
+        },
+    )
+    .is_err()
+    {
+        serial::write_str("IPC runtime init failed\n");
+        return;
+    }
+
+    let Some(initial) = ipc::initial_process_context() else {
+        serial::write_str("IPC runtime init failed: no initial process\n");
+        return;
+    };
+
+    userspace::enter_ipc_demo(initial);
 }
 
 fn load_user_image(

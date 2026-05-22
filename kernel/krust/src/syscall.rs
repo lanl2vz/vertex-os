@@ -1,6 +1,6 @@
 use core::arch::{asm, global_asm};
 
-use crate::{gdt, ipc, serial, userspace::UserImage};
+use crate::{gdt, ipc, serial};
 
 const IA32_EFER: u32 = 0xc000_0080;
 const IA32_STAR: u32 = 0xc000_0081;
@@ -27,8 +27,6 @@ pub struct SyscallStack([u8; SYSCALL_STACK_SIZE]);
 
 #[unsafe(no_mangle)]
 static mut KRUST_SYSCALL_STACK: SyscallStack = SyscallStack([0; SYSCALL_STACK_SIZE]);
-
-static mut RECEIVER_IMAGE: Option<UserImage> = None;
 
 unsafe extern "C" {
     fn krust_syscall_entry();
@@ -76,12 +74,6 @@ pub fn init() {
     }
 }
 
-pub fn set_receiver_image(image: UserImage) {
-    unsafe {
-        RECEIVER_IMAGE = Some(image);
-    }
-}
-
 #[unsafe(no_mangle)]
 pub extern "C" fn krust_syscall_dispatch(number: u64, arg0: u64, arg1: u64, arg2: u64) -> u64 {
     match number {
@@ -123,33 +115,29 @@ pub extern "C" fn krust_syscall_dispatch(number: u64, arg0: u64, arg1: u64, arg2
 }
 
 fn exit_current_process(status: u64) -> ! {
-    match ipc::current_process() {
-        ipc::ProcessId::Sender => {
-            serial::write_str("IPC sender exited: status=");
-            serial::write_u64_dec(status);
+    serial::write_str("Process exited: proc=");
+    serial::write_str(ipc::current_process_name());
+    serial::write_str(" status=");
+    serial::write_u64_dec(status);
+    serial::write_str("\n");
+
+    match ipc::exit_current_process(status) {
+        ipc::ExitAction::Switch { name, context } => {
+            serial::write_str("Switching to process: ");
+            serial::write_str(name);
             serial::write_str("\n");
-            start_receiver()
+            unsafe {
+                gdt::enter_user_mode(context.cr3, context.entry, context.stack_top);
+            }
         }
-        ipc::ProcessId::Receiver => {
-            serial::write_str("IPC receiver exited: status=");
-            serial::write_u64_dec(status);
-            serial::write_str("\nIPC demo ok\n");
+        ipc::ExitAction::Halt { ok } => {
+            if ok {
+                serial::write_str("IPC demo ok\n");
+            } else {
+                serial::write_str("IPC demo failed\n");
+            }
             halt_loop()
         }
-    }
-}
-
-fn start_receiver() -> ! {
-    let Some(receiver) = (unsafe { RECEIVER_IMAGE }) else {
-        serial::write_str("IPC receiver image unavailable\n");
-        halt_loop();
-    };
-
-    ipc::set_current_process(ipc::ProcessId::Receiver);
-
-    serial::write_str("Switching to IPC receiver\n");
-    unsafe {
-        gdt::enter_user_mode(receiver.cr3, receiver.entry, receiver.stack_top);
     }
 }
 

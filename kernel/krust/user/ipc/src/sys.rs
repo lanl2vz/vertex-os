@@ -1,6 +1,7 @@
 use core::arch::asm;
 
 pub const ENDPOINT_CAP_SLOT: u64 = 0;
+pub const STATUS_BAD_CAPABILITY: u64 = u64::MAX - 1;
 
 const SYS_WRITE_SERIAL: u64 = 1;
 const SYS_EXIT: u64 = 2;
@@ -16,7 +17,6 @@ pub fn write_serial(message: &[u8]) -> u64 {
     )
 }
 
-#[allow(dead_code)]
 pub fn ipc_send(cap_slot: u64, message: &[u8]) -> u64 {
     syscall3(
         SYS_IPC_SEND,
@@ -26,7 +26,6 @@ pub fn ipc_send(cap_slot: u64, message: &[u8]) -> u64 {
     )
 }
 
-#[allow(dead_code)]
 pub fn ipc_recv(cap_slot: u64, buffer: &mut [u8]) -> u64 {
     syscall3(
         SYS_IPC_RECV,
