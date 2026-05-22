@@ -35,6 +35,7 @@ Build and validate the example generation:
 ```sh
 cargo build --offline
 target/debug/vertexctl validate examples/hello-generation.vertex.json
+target/debug/vertexctl validate examples/hello-stateful-generation.vertex.json
 target/debug/vertexctl graph examples/hello-generation.vertex.json
 target/debug/vertexctl why examples/hello-generation.vertex.json svc:echo-server cap:log.sink
 ```
@@ -52,3 +53,11 @@ target/debug/vertex-supervisor --run-once /private/tmp/vertex-os-demo/hello-gene
 ```
 
 In restricted sandboxes, local socket binding may require running the supervisor outside the sandbox.
+
+Track hosted generation activation state under `.vertex/`:
+
+```sh
+target/debug/vertexctl activate /private/tmp/vertex-os-demo/hello-generation.hosted.vertex.json --run-once
+target/debug/vertexctl generations
+target/debug/vertexctl rollback --run-once
+```

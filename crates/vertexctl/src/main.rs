@@ -1,3 +1,5 @@
+mod hosted;
+
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -28,6 +30,10 @@ fn run(args: Vec<String>) -> Result<(), String> {
         "graph" => graph_cmd(&args[1..]),
         "why" => why_cmd(&args[1..]),
         "materialize-demo" => materialize_demo_cmd(&args[1..]),
+        "activate" => activate_cmd(&args[1..]),
+        "switch" => switch_cmd(&args[1..]),
+        "rollback" => rollback_cmd(&args[1..]),
+        "generations" => generations_cmd(&args[1..]),
         "-h" | "--help" | "help" => {
             print_usage();
             Ok(())
@@ -136,6 +142,22 @@ fn materialize_demo_cmd(args: &[String]) -> Result<(), String> {
 
     println!("{}", manifest_out.display());
     Ok(())
+}
+
+fn activate_cmd(args: &[String]) -> Result<(), String> {
+    hosted::activate(hosted::parse_activation_args(args)?, "activate")
+}
+
+fn switch_cmd(args: &[String]) -> Result<(), String> {
+    hosted::activate(hosted::parse_activation_args(args)?, "switch")
+}
+
+fn rollback_cmd(args: &[String]) -> Result<(), String> {
+    hosted::rollback(hosted::parse_rollback_args(args)?)
+}
+
+fn generations_cmd(args: &[String]) -> Result<(), String> {
+    hosted::generations(hosted::parse_generations_args(args)?)
 }
 
 fn materialize_demo_store(
@@ -265,6 +287,10 @@ fn print_usage() {
            vertexctl validate <manifest>\n\
            vertexctl graph <manifest>\n\
            vertexctl why <manifest> <service> <capability>\n\
-           vertexctl materialize-demo <manifest> <output-dir>"
+           vertexctl materialize-demo <manifest> <output-dir>\n\
+           vertexctl activate <manifest> [--state-root <dir>] [--run-once]\n\
+           vertexctl switch <manifest> [--state-root <dir>] [--run-once]\n\
+           vertexctl rollback [--state-root <dir>] [--run-once] [--restore-state]\n\
+           vertexctl generations [--state-root <dir>]"
     );
 }

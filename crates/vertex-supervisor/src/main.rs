@@ -10,6 +10,7 @@ use vertex_ir::{Capability, GenerationManifest, Service, load_manifest, validate
 struct Args {
     dry_run: bool,
     run_once: bool,
+    state_root: PathBuf,
     manifest_path: String,
 }
 
@@ -62,9 +63,12 @@ fn activate(manifest: &GenerationManifest, args: &Args) -> Result<(), String> {
     println!("activating generation {}", manifest.generation.id);
     println!("root service {}", manifest.activation.root_service);
 
+    let state_root = canonicalize_state_root(&args.state_root)?;
     let runtime_dir = create_runtime_dir(manifest)?;
     let capabilities = build_hosted_capabilities(manifest, &runtime_dir);
+    ensure_state_volumes(manifest, &state_root)?;
     println!("runtime dir {}", runtime_dir.display());
+    println!("state root {}", state_root.display());
 
     let mut children = Vec::new();
     for service_id in &manifest.activation.start_order {
@@ -83,14 +87,16 @@ fn activate(manifest: &GenerationManifest, args: &Args) -> Result<(), String> {
         let executable = resolve_service_executable(manifest, service)?;
         let grants = granted_capabilities(service, &capabilities)?;
         let provides = provided_capabilities(service, &capabilities)?;
+        let state_volumes = service_state_volumes(service, manifest, &state_root)?;
 
         if args.dry_run {
             println!(
-                "would start {} as {} with grants [{}] provides [{}]",
+                "would start {} as {} with grants [{}] provides [{}] state [{}]",
                 service.id,
                 executable.display(),
                 grants,
-                provides
+                provides,
+                state_volumes
             );
             continue;
         }
@@ -102,6 +108,7 @@ fn activate(manifest: &GenerationManifest, args: &Args) -> Result<(), String> {
         command.env("VERTEX_SERVICE_ID", &service.id);
         command.env("VERTEX_GRANTED_CAPS", &grants);
         command.env("VERTEX_PROVIDED_CAPS", &provides);
+        command.env("VERTEX_STATE_VOLUMES", &state_volumes);
         command.env("VERTEX_RUNTIME_DIR", &runtime_dir);
         if args.run_once {
             command.env("VERTEX_DEMO_RUN_ONCE", "1");
@@ -184,6 +191,53 @@ fn provided_capabilities(
     }
 
     Ok(provided.join(";"))
+}
+
+fn service_state_volumes(
+    service: &Service,
+    manifest: &GenerationManifest,
+    state_root: &Path,
+) -> Result<String, String> {
+    let mut volumes = Vec::new();
+    for state_id in &service.state {
+        let Some(state) = manifest.state_volume(state_id) else {
+            return Err(format!(
+                "service {} references unknown state volume {}",
+                service.id, state_id
+            ));
+        };
+        let current = state_current_path(state_root, &state.id);
+        fs::create_dir_all(&current).map_err(|source| {
+            format!(
+                "failed to create state volume {} for {}: {source}",
+                current.display(),
+                service.id
+            )
+        })?;
+        volumes.push(format!("state:{}|{}", state.id, current.display()));
+    }
+    Ok(volumes.join(";"))
+}
+
+fn ensure_state_volumes(manifest: &GenerationManifest, state_root: &Path) -> Result<(), String> {
+    for state in &manifest.state_volumes {
+        let current = state_current_path(state_root, &state.id);
+        fs::create_dir_all(&current).map_err(|source| {
+            format!(
+                "failed to create state volume {} at {}: {source}",
+                state.id,
+                current.display()
+            )
+        })?;
+    }
+    Ok(())
+}
+
+fn state_current_path(state_root: &Path, state_id: &str) -> PathBuf {
+    state_root
+        .join("state-volumes")
+        .join(sanitize_id(state_id))
+        .join("current")
 }
 
 fn encode_capability(capability: &HostedCapability, rights_override: Option<&[String]>) -> String {
@@ -270,6 +324,17 @@ fn runtime_root() -> PathBuf {
     }
 }
 
+fn canonicalize_state_root(path: &Path) -> Result<PathBuf, String> {
+    fs::create_dir_all(path)
+        .map_err(|source| format!("failed to create state root {}: {source}", path.display()))?;
+    path.canonicalize().map_err(|source| {
+        format!(
+            "failed to canonicalize state root {}: {source}",
+            path.display()
+        )
+    })
+}
+
 fn sanitize_id(id: &str) -> String {
     id.chars()
         .map(|ch| {
@@ -304,30 +369,43 @@ fn wait_for_children(mut children: Vec<(String, Child)>) -> Result<(), String> {
 fn parse_args(args: Vec<String>) -> Result<Args, String> {
     let mut dry_run = false;
     let mut run_once = false;
+    let mut state_root = PathBuf::from(".vertex");
     let mut manifest_path = None;
+    let mut idx = 0;
 
-    for arg in args {
-        match arg.as_str() {
+    while idx < args.len() {
+        match args[idx].as_str() {
             "--dry-run" => dry_run = true,
             "--run-once" => run_once = true,
+            "--state-root" => {
+                idx += 1;
+                let Some(path) = args.get(idx) else {
+                    return Err("--state-root requires a directory".to_owned());
+                };
+                state_root = PathBuf::from(path);
+            }
             other if other.starts_with('-') => {
                 return Err(format!("unknown option {other}"));
             }
             _ => {
-                if manifest_path.replace(arg).is_some() {
+                if manifest_path.replace(args[idx].clone()).is_some() {
                     return Err(
-                        "usage: vertex-supervisor [--dry-run] [--run-once] <manifest>".to_owned(),
+                        "usage: vertex-supervisor [--state-root <dir>] [--dry-run] [--run-once] <manifest>"
+                            .to_owned(),
                     );
                 }
             }
         }
+        idx += 1;
     }
 
     Ok(Args {
         dry_run,
         run_once,
+        state_root,
         manifest_path: manifest_path.ok_or_else(|| {
-            "usage: vertex-supervisor [--dry-run] [--run-once] <manifest>".to_owned()
+            "usage: vertex-supervisor [--state-root <dir>] [--dry-run] [--run-once] <manifest>"
+                .to_owned()
         })?,
     })
 }
@@ -336,8 +414,8 @@ fn print_usage() {
     println!(
         "vertex-supervisor\n\n\
          usage:\n\
-           vertex-supervisor --dry-run <manifest>\n\
-           vertex-supervisor --run-once <manifest>\n\
+           vertex-supervisor --state-root <dir> --dry-run <manifest>\n\
+           vertex-supervisor --state-root <dir> --run-once <manifest>\n\
            vertex-supervisor <manifest>"
     );
 }
