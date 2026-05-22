@@ -2,7 +2,11 @@
 
 Vertex OS is a typed, reproducible, capability-secure operating-system prototype where a running machine is represented as a generation graph.
 
-Krust Kernel is the Rust kernel planned to enforce that graph's runtime authority. The current repository starts with the hosted Linux prototype: Vertex IR, `vertexctl`, a hosted supervisor, and small userland services that demonstrate explicit capability passing.
+Krust Kernel is the native Rust kernel prototype that will enforce that graph's
+runtime authority. The repository now has two active tracks: a hosted Linux
+prototype for Vertex IR, `vertexctl`, supervisor behavior, and capability
+semantics; and a bootable Krust kernel under `kernel/krust` that runs under
+QEMU/Limine and has reached the M7 userspace IPC capability milestone.
 
 ## Repository Layout
 
@@ -21,7 +25,7 @@ vertex-os/
     netstack/            Demo hosted network capability provider
     echo-server/         Demo service consuming log and network capabilities
   kernel/
-    krust/               Planned Krust Kernel prototype
+    krust/               Bootable Krust kernel prototype, currently at M7 IPC
   lang/
     vertex-lang/         Planned typed system-definition language
   nix/                   Nix support modules and builders
