@@ -1,6 +1,6 @@
 # Krust Kernel
 
-Krust M2 is the first native Vertex manifest module milestone.
+Krust M3 is the first native physical memory allocator milestone.
 
 The target is intentionally small:
 
@@ -13,10 +13,12 @@ Krust reads the Limine memory map response
 Krust prints every memory map entry to serial
 Limine loads `hello-generation.vertex.json` as a boot module
 Krust finds the manifest module and prints its generation ID
+Krust builds a physical frame allocator from usable memory map entries
+Krust allocates, frees, and reuses 4 KiB physical frames
 Krust halts forever
 ```
 
-No memory manager, heap, interrupts, userspace, full manifest parsing, Vertex IR
+No heap, virtual memory manager, interrupts, userspace, full manifest parsing, Vertex IR
 integration, filesystem, network, or device drivers are part of M2.
 
 ## Prerequisites
@@ -94,6 +96,7 @@ Krust Kernel booted
 Limine base revision supported
 Limine memory map entries: ...
 Vertex manifest generation: gen:hello-0001
+Physical allocator demo ok
 ```
 
 QEMU runs with `-display none`, so all kernel output is written through the
@@ -112,16 +115,17 @@ The smoke test boots QEMU headlessly, captures serial output to
 Krust Kernel booted
 Limine memory map entries:
 Vertex manifest generation: gen:hello-0001
+Physical allocator demo ok
 ```
 
 ## Machine Notes
 
 Linux x86_64 can add KVM later with QEMU flags such as `-enable-kvm -cpu host`.
-That is not enabled by default so the M2 command stays portable:
+That is not enabled by default so the M3 command stays portable:
 
 ```sh
 QEMU_EXTRA="-enable-kvm -cpu host" make smoke
 ```
 
 macOS Apple Silicon can run `qemu-system-x86_64` by emulation. It is slower than
-native AArch64 virtualization, but it is enough for the M2 serial milestone.
+native AArch64 virtualization, but it is enough for the M3 serial milestone.

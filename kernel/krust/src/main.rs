@@ -2,6 +2,7 @@
 #![no_main]
 
 mod limine;
+mod memory;
 mod serial;
 
 use core::arch::asm;
@@ -68,6 +69,89 @@ fn print_boot_info() {
     }
 
     print_manifest_module();
+    run_physical_allocator_demo(&memory_map);
+}
+
+fn run_physical_allocator_demo(memory_map: &limine::MemoryMap) {
+    let mut allocator = memory::FrameAllocator::new();
+
+    match allocator.init_from_limine(memory_map) {
+        Ok(()) => {}
+        Err(memory::InitError::TooManyRanges) => {
+            serial::write_str("Physical allocator init failed: too many usable ranges\n");
+            return;
+        }
+        Err(memory::InitError::NoUsableFrames) => {
+            serial::write_str("Physical allocator init failed: no usable frames\n");
+            return;
+        }
+    }
+
+    print_allocator_stats("Physical allocator initial", &allocator);
+
+    let Some(frame0) = allocator.allocate() else {
+        serial::write_str("Physical allocator demo failed: alloc0\n");
+        return;
+    };
+    let Some(frame1) = allocator.allocate() else {
+        serial::write_str("Physical allocator demo failed: alloc1\n");
+        return;
+    };
+    let Some(frame2) = allocator.allocate() else {
+        serial::write_str("Physical allocator demo failed: alloc2\n");
+        return;
+    };
+
+    serial::write_str("Physical allocator allocated: ");
+    serial::write_u64_hex(frame0.start());
+    serial::write_str(" ");
+    serial::write_u64_hex(frame1.start());
+    serial::write_str(" ");
+    serial::write_u64_hex(frame2.start());
+    serial::write_str("\n");
+
+    if allocator.free(frame1).is_err() {
+        serial::write_str("Physical allocator demo failed: free\n");
+        return;
+    }
+
+    serial::write_str("Physical allocator freed: ");
+    serial::write_u64_hex(frame1.start());
+    serial::write_str("\n");
+
+    let Some(reused) = allocator.allocate() else {
+        serial::write_str("Physical allocator demo failed: reuse\n");
+        return;
+    };
+
+    serial::write_str("Physical allocator reused: ");
+    serial::write_u64_hex(reused.start());
+    serial::write_str("\n");
+
+    print_allocator_stats("Physical allocator final", &allocator);
+
+    if reused.start() == frame1.start() {
+        serial::write_str("Physical allocator demo ok\n");
+    } else {
+        serial::write_str("Physical allocator demo failed: reuse mismatch\n");
+    }
+}
+
+fn print_allocator_stats(label: &str, allocator: &memory::FrameAllocator) {
+    let stats = allocator.stats();
+
+    serial::write_str(label);
+    serial::write_str(": ranges=");
+    serial::write_u64_dec(stats.range_count as u64);
+    serial::write_str(" total_frames=");
+    serial::write_u64_dec(stats.total_frames);
+    serial::write_str(" allocated_frames=");
+    serial::write_u64_dec(stats.allocated_frames);
+    serial::write_str(" free_frames=");
+    serial::write_u64_dec(stats.free_frames);
+    serial::write_str(" recycled_frames=");
+    serial::write_u64_dec(stats.recycled_frames as u64);
+    serial::write_str("\n");
 }
 
 fn print_manifest_module() {
