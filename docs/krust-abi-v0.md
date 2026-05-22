@@ -5,17 +5,19 @@ native Krust QEMU/Limine milestone. It is intentionally small and unstable. Its
 current job is to boot native `vertex-init`, start a tiny declared service
 graph, and enforce explicit process-local capabilities.
 
-Milestone status: ABI v0 now covers the M14-M29 native activation and substrate
+Milestone status: ABI v0 now covers the M14-M31 native activation and substrate
 proof. M25 adds the release gate. M26-M29 add Manifest v1 parsing, capability
-provenance/revocation, typed arena allocation checks, and resource quotas. This
-is still experimental and does not freeze syscall, capability, process, or IPC
-ABI surface.
+provenance/revocation, typed arena allocation checks, and resource quotas.
+M30-M31 add PIT-backed preemption and user page-fault containment. This is
+still experimental and does not freeze syscall, capability, process, or IPC ABI
+surface.
 
 ## Machine ABI
 
 Architecture: `x86_64`.
 
-Syscall mechanism: `syscall` / `sysretq`.
+Syscall mechanism: `syscall` entry with `iretq` return from the saved userspace
+frame.
 
 Register convention:
 
@@ -25,22 +27,25 @@ rdi = arg0
 rsi = arg1
 rdx = arg2
 rax = return value
-rcx = clobbered by syscall/sysret
-r11 = clobbered by syscall/sysret
+rcx = clobbered by syscall entry
+r11 = clobbered by syscall entry
 ```
 
-The kernel saves this minimal return frame on syscall entry:
+The kernel saves a full userspace register return frame on syscall entry and
+on user timer interrupts:
 
 ```text
-user_rsp
+r15..rax
 user_rip
+user_cs
 user_rflags
-rax
+user_rsp
+user_ss
 ```
 
-The cooperative scheduler can save that frame into the current process, load a
-different process frame, switch CR3, and return from the same kernel syscall
-entry into another userspace process. There is no timer preemption in ABI v0.
+The scheduler can save that frame into the current process, load a different
+process frame, switch CR3, and return into another userspace process through
+`iretq`.
 
 ## Syscall Numbers
 
@@ -84,6 +89,7 @@ entry into another userspace process. There is no timer preemption in ABI v0.
 | `STATUS_EMPTY` | `u64::MAX - 4` | Endpoint had no message and no process could be scheduled after blocking. |
 | `STATUS_RUNNING` | `u64::MAX - 8` | `SYS_PROCESS_STATUS` target has not exited. |
 | `STATUS_TIMEOUT` | `u64::MAX - 9` | A timed IPC receive expired before a message arrived. |
+| `STATUS_PROCESS_FAULT` | `u64::MAX - 10` | The target exited because of a contained userspace fault. |
 | `u64::MAX` | `u64::MAX` | Unknown syscall number. |
 
 For `SYS_IPC_RECV`, any return value less than or equal to the destination
@@ -110,7 +116,7 @@ becoming uncontrolled kernel faults.
 Capabilities are process-local. A capability slot number is meaningful only in
 the current process's capability space.
 
-Current M14-M29 layout:
+Current M14-M31 layout:
 
 ```text
 vertex-init:
@@ -241,12 +247,14 @@ entry
 stack_top
 state
 capability space
-optional saved syscall frame
+optional saved userspace frame
 resource quota counters
 ```
 
-Scheduling is cooperative and round-robin. A context switch currently happens
-only when a syscall explicitly yields, exits, or blocks on IPC.
+Scheduling is round-robin with both cooperative and PIT-backed preemptive
+switches. A context switch can happen when a syscall explicitly yields, exits,
+or blocks on IPC, and also when PIT IRQ0 interrupts a running userspace process
+while another process is ready.
 
 Non-initial processes loaded from the compact manifest start in `Declared`.
 They are not scheduler candidates until `SYS_PROCESS_START` changes them to
@@ -274,9 +282,13 @@ preserved process memory.
 `SYS_SLEEP_MS` moves the caller into `Sleeping` and yields to another ready
 process. Deadlines use CPUID-reported TSC/base frequency when available, with a
 fixed fallback only when the CPU does not report a usable frequency. If no
-process is ready, ABI v0 waits for the next sleep or receive-timeout deadline by
-polling TSC in the cooperative scheduler; this is not APIC-backed or
-interrupt-driven wakeup.
+process is ready, ABI v0 waits through the PIT interrupt path instead of
+accepting a cooperative-only TSC polling fallback.
+
+User page faults are process-contained. A direct userspace page fault identifies
+the current process, marks that process `Exited` with
+`STATUS_PROCESS_FAULT = u64::MAX - 10`, schedules another ready process, and
+keeps the kernel running. Kernel faults still stop the kernel.
 
 ## IPC Semantics
 
@@ -308,7 +320,7 @@ SYS_IPC_RECV(cap_slot, user_ptr, max_len)
 
 When a sender wakes a blocked receiver, the kernel copies the message into the
 receiver's address space and stores the delivered byte count in the receiver's
-saved syscall frame. When that process is scheduled again, `sysretq` returns to
+saved syscall frame. When that process is scheduled again, `iretq` returns to
 the original receive call site with `rax = delivered_len`.
 
 ## Native vertex-init Semantics

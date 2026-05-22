@@ -1,0 +1,231 @@
+{
+  "schema": "vertex.ir.v0",
+  "generation": {
+    "id": "gen:preempt-0001",
+    "createdUtc": "2026-05-22T00:00:00Z",
+    "description": "Krust M30 preemption regression generation",
+    "parent": null,
+    "manifestHash": null
+  },
+  "kernel": {
+    "id": "kernel:hosted-linux-placeholder",
+    "kind": "hosted-linux",
+    "storeObject": "store:hosted-kernel-placeholder",
+    "abi": "hosted-linux.v0",
+    "target": "x86_64-linux"
+  },
+  "init": {
+    "id": "init:vertex-init",
+    "executable": "exe:vertex-init",
+    "mode": "hosted-linux"
+  },
+  "store": [
+    {
+      "id": "store:hosted-kernel-placeholder",
+      "name": "hosted-kernel-placeholder",
+      "kind": "kernel-image",
+      "path": "/vertex/store/kernel-placeholder",
+      "hashAlgorithm": "blake3",
+      "hash": "demo-not-a-real-hash-kernel",
+      "sizeBytes": 0,
+      "references": []
+    },
+    {
+      "id": "store:vertex-init-demo",
+      "name": "vertex-init-demo",
+      "kind": "executable",
+      "path": "/vertex/store/vertex-init",
+      "hashAlgorithm": "blake3",
+      "hash": "demo-not-a-real-hash-vertex-init",
+      "sizeBytes": 65536,
+      "references": []
+    },
+    {
+      "id": "store:logd-demo",
+      "name": "logd-demo",
+      "kind": "executable",
+      "path": "/vertex/store/logd",
+      "hashAlgorithm": "blake3",
+      "hash": "demo-not-a-real-hash-logd",
+      "sizeBytes": 65536,
+      "references": []
+    },
+    {
+      "id": "store:echo-demo",
+      "name": "echo-demo",
+      "kind": "executable",
+      "path": "/vertex/store/echo",
+      "hashAlgorithm": "blake3",
+      "hash": "demo-not-a-real-hash-echo",
+      "sizeBytes": 65536,
+      "references": []
+    },
+    {
+      "id": "store:hog-demo",
+      "name": "hog-demo",
+      "kind": "executable",
+      "path": "/vertex/store/hog",
+      "hashAlgorithm": "blake3",
+      "hash": "demo-not-a-real-hash-hog",
+      "sizeBytes": 65536,
+      "references": []
+    }
+  ],
+  "executables": [
+    {
+      "id": "exe:vertex-init",
+      "storeObject": "store:vertex-init-demo",
+      "entrypoint": "bin/vertex-init",
+      "abi": "hosted-linux-process.v0",
+      "argsDefault": []
+    },
+    {
+      "id": "exe:logd",
+      "storeObject": "store:logd-demo",
+      "entrypoint": "bin/logd",
+      "abi": "hosted-linux-process.v0",
+      "argsDefault": []
+    },
+    {
+      "id": "exe:echo",
+      "storeObject": "store:echo-demo",
+      "entrypoint": "bin/echo",
+      "abi": "hosted-linux-process.v0",
+      "argsDefault": []
+    },
+    {
+      "id": "exe:hog",
+      "storeObject": "store:hog-demo",
+      "entrypoint": "bin/hog",
+      "abi": "hosted-linux-process.v0",
+      "argsDefault": []
+    }
+  ],
+  "devices": [],
+  "stateVolumes": [],
+  "secrets": [],
+  "capabilities": [
+    {
+      "id": "cap:log.sink",
+      "kind": "ipc-endpoint",
+      "provider": "svc:logd",
+      "rights": ["send"],
+      "properties": {
+        "protocol": "vertex.log.v0"
+      }
+    }
+  ],
+  "services": [
+    {
+      "id": "svc:vertex-supervisor",
+      "name": "vertex-supervisor",
+      "executable": "exe:vertex-init",
+      "args": [],
+      "env": {},
+      "requires": [],
+      "provides": [],
+      "state": [],
+      "secrets": [],
+      "restart": "never",
+      "resources": {
+        "memoryMaxBytes": 134217728,
+        "cpuShares": 100
+      },
+      "health": null,
+      "lifecycle": {
+        "startAfter": [],
+        "stopBefore": []
+      }
+    },
+    {
+      "id": "svc:logd",
+      "name": "logd",
+      "executable": "exe:logd",
+      "args": [],
+      "env": {},
+      "requires": [],
+      "provides": ["cap:log.sink"],
+      "state": [],
+      "secrets": [],
+      "restart": "on-failure",
+      "resources": {
+        "memoryMaxBytes": 33554432,
+        "cpuShares": 50
+      },
+      "health": {
+        "kind": "ipc-ping",
+        "target": "cap:log.sink"
+      },
+      "lifecycle": {
+        "startAfter": ["svc:vertex-supervisor"],
+        "stopBefore": []
+      }
+    },
+    {
+      "id": "svc:cpu-hog",
+      "name": "cpu-hog",
+      "executable": "exe:hog",
+      "args": [],
+      "env": {},
+      "requires": [],
+      "provides": [],
+      "state": [],
+      "secrets": [],
+      "restart": "never",
+      "resources": {
+        "memoryMaxBytes": 33554432,
+        "cpuShares": 25
+      },
+      "health": null,
+      "lifecycle": {
+        "startAfter": ["svc:logd"],
+        "stopBefore": []
+      }
+    },
+    {
+      "id": "svc:echo-server",
+      "name": "echo",
+      "executable": "exe:echo",
+      "args": [],
+      "env": {},
+      "requires": [
+        { "capability": "cap:log.sink", "rights": ["send"] }
+      ],
+      "provides": [],
+      "state": [],
+      "secrets": [],
+      "restart": "never",
+      "resources": {
+        "memoryMaxBytes": 33554432,
+        "cpuShares": 25
+      },
+      "health": null,
+      "lifecycle": {
+        "startAfter": ["svc:cpu-hog"],
+        "stopBefore": []
+      }
+    }
+  ],
+  "activation": {
+    "rootService": "svc:vertex-supervisor",
+    "startOrder": [
+      "svc:vertex-supervisor",
+      "svc:logd",
+      "svc:cpu-hog",
+      "svc:echo-server"
+    ],
+    "rollbackPolicy": {
+      "default": "system-only",
+      "state": "preserve-unless-explicit"
+    },
+    "onFailure": "stop-activation"
+  },
+  "policies": {
+    "defaultAuthority": "deny",
+    "allowAmbientFilesystem": false,
+    "allowAmbientNetwork": false,
+    "allowAmbientDevices": false,
+    "capabilityDelegation": "explicit-only",
+    "unknownReferences": "reject"
+  }
+}

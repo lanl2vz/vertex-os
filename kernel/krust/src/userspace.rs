@@ -5,7 +5,7 @@ use crate::{
     exceptions, gdt, ipc, memory,
     memory::{FRAME_SIZE, FrameAllocator},
     paging::{self, AddressSpace, PageFlags},
-    serial, syscall,
+    serial, syscall, timer,
 };
 
 const USER_CANONICAL_LIMIT: u64 = 0x0000_8000_0000_0000;
@@ -64,6 +64,7 @@ pub fn enter(image: UserImage) -> ! {
     gdt::init();
     serial::write_str("GDT initialized\n");
     exceptions::init();
+    timer::init();
     syscall::init();
     serial::write_str("Syscall path initialized\n");
 
@@ -77,6 +78,7 @@ pub fn enter_initial_process(initial_name: &str, initial: ipc::ProcessContext) -
     gdt::init();
     serial::write_str("GDT initialized\n");
     exceptions::init();
+    timer::init();
     syscall::init();
     serial::write_str("Syscall path initialized\n");
 

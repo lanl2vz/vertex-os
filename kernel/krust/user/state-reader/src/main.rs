@@ -13,7 +13,13 @@ const CAP_SERIAL_LOG: u64 = 1;
 pub extern "C" fn _start() -> ! {
     let mut buffer = [0u8; 8];
     log(b"reader-service has read-only cap");
-    let read = sys::state_read(CAP_STATE, &mut buffer);
+    let mut read = sys::state_read(CAP_STATE, &mut buffer);
+    let mut attempts = 0;
+    while read == sys::STATUS_EMPTY && attempts < 64 {
+        sys::yield_now();
+        read = sys::state_read(CAP_STATE, &mut buffer);
+        attempts += 1;
+    }
     if read == sys::STATUS_BAD_CAPABILITY
         || read == sys::STATUS_BAD_BUFFER
         || read > buffer.len() as u64

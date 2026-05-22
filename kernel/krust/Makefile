@@ -15,6 +15,8 @@ COUNTER_TARGET_DIR := user/counter/target/$(KRUST_TARGET)/debug
 STATE_READER_TARGET_DIR := user/state-reader/target/$(KRUST_TARGET)/debug
 TIMER_TARGET_DIR := user/timer/target/$(KRUST_TARGET)/debug
 FLAKY_TARGET_DIR := user/flaky/target/$(KRUST_TARGET)/debug
+HOG_TARGET_DIR := user/hog/target/$(KRUST_TARGET)/debug
+FAULTY_TARGET_DIR := user/faulty/target/$(KRUST_TARGET)/debug
 VERTEX_INIT_ELF := $(INIT_TARGET_DIR)/vertex-init
 LOGD_ELF := $(LOGD_TARGET_DIR)/logd
 ECHO_ELF := $(ECHO_TARGET_DIR)/echo
@@ -24,6 +26,8 @@ COUNTER_ELF := $(COUNTER_TARGET_DIR)/counter
 STATE_READER_ELF := $(STATE_READER_TARGET_DIR)/state-reader
 TIMER_ELF := $(TIMER_TARGET_DIR)/timer
 FLAKY_ELF := $(FLAKY_TARGET_DIR)/flaky
+HOG_ELF := $(HOG_TARGET_DIR)/hog
+FAULTY_ELF := $(FAULTY_TARGET_DIR)/faulty
 VERTEX_MANIFEST ?= ../../examples/hello-generation.vertex.json
 FALLBACK_MANIFEST ?=
 KRUSTBOOT_CORRUPT ?=
@@ -52,6 +56,8 @@ user:
 	cd user/state-reader && cargo build --target $(KRUST_TARGET)
 	cd user/timer && cargo build --target $(KRUST_TARGET)
 	cd user/flaky && cargo build --target $(KRUST_TARGET)
+	cd user/hog && cargo build --target $(KRUST_TARGET)
+	cd user/faulty && cargo build --target $(KRUST_TARGET)
 
 boot-manifest:
 	mkdir -p $(BUILD_DIR)
@@ -78,6 +84,8 @@ iso: build boot-manifest check-tools check-limine-dir
 	cp $(STATE_READER_ELF) $(ISO_ROOT)/boot/state-reader.elf
 	cp $(TIMER_ELF) $(ISO_ROOT)/boot/timer.elf
 	cp $(FLAKY_ELF) $(ISO_ROOT)/boot/flaky.elf
+	cp $(HOG_ELF) $(ISO_ROOT)/boot/hog.elf
+	cp $(FAULTY_ELF) $(ISO_ROOT)/boot/faulty.elf
 	cp assets/hello-text.txt $(ISO_ROOT)/boot/hello-text.txt
 	cp $(BOOT_MANIFEST) $(ISO_ROOT)/boot/hello-generation.krustboot
 	cp $(FALLBACK_BOOT_MANIFEST) $(ISO_ROOT)/boot/fallback-generation.krustboot
@@ -121,13 +129,13 @@ doctor: check-tools check-rust-target check-limine-dir
 	@echo "limine: $$(command -v $(LIMINE))"
 	@echo "xorriso: $$(command -v $(XORRISO))"
 	@echo "LIMINE_DIR: $(LIMINE_DIR)"
-	@echo "Krust M14-M29 toolchain is ready."
+	@echo "Krust M14-M31 toolchain is ready."
 
 release-gate:
 	../../scripts/krust-release-gate.sh
 
 clean:
-	rm -rf $(BUILD_DIR) target user/init/target user/logd/target user/echo/target user/netstack/target user/model-reader/target user/counter/target user/state-reader/target user/timer/target user/flaky/target
+	rm -rf $(BUILD_DIR) target user/init/target user/logd/target user/echo/target user/netstack/target user/model-reader/target user/counter/target user/state-reader/target user/timer/target user/flaky/target user/hog/target user/faulty/target
 
 check-tools:
 	@command -v rustc >/dev/null 2>&1 || { echo "error: rustc not found. Install Rust stable."; exit 1; }

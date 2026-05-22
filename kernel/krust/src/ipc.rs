@@ -18,10 +18,11 @@ const MAX_CAPS: usize = 32;
 const MAX_BOOT_GRANTS: usize = 128;
 const MAX_REVOKED_CAPS: usize = 128;
 const MAX_STATE_VALUE_BYTES: usize = 64;
-const INITIAL_USER_RFLAGS: u64 = 0x2;
+const INITIAL_USER_RFLAGS: u64 = 0x202;
 const STATUS_BAD_BUFFER: u64 = u64::MAX - 2;
 const STATUS_OK: u64 = 0;
 const STATUS_TIMEOUT: u64 = u64::MAX - 9;
+pub const STATUS_PROCESS_FAULT: u64 = u64::MAX - 10;
 const FALLBACK_TSC_TICKS_PER_MS: u64 = 1_000_000;
 pub const BOOT_OBJECT_ENDPOINT: u16 = 1;
 pub const BOOT_OBJECT_STORE: u16 = 2;
@@ -29,31 +30,87 @@ pub const BOOT_OBJECT_STATE: u16 = 3;
 pub const BOOT_OBJECT_TIMER: u16 = 4;
 pub const BOOT_OBJECT_NETWORK_PORT: u16 = 5;
 
+pub const FRAME_R15: usize = 0;
+pub const FRAME_R14: usize = 8;
+pub const FRAME_R13: usize = 16;
+pub const FRAME_R12: usize = 24;
+pub const FRAME_R11: usize = 32;
+pub const FRAME_R10: usize = 40;
+pub const FRAME_R9: usize = 48;
+pub const FRAME_R8: usize = 56;
+pub const FRAME_RSI: usize = 64;
+pub const FRAME_RDI: usize = 72;
+pub const FRAME_RBP: usize = 80;
+pub const FRAME_RDX: usize = 88;
+pub const FRAME_RCX: usize = 96;
+pub const FRAME_RBX: usize = 104;
+pub const FRAME_RAX: usize = 112;
+pub const FRAME_USER_RIP: usize = 120;
+pub const FRAME_USER_CS: usize = 128;
+pub const FRAME_USER_RFLAGS: usize = 136;
+pub const FRAME_USER_RSP: usize = 144;
+pub const FRAME_USER_SS: usize = 152;
+pub const FRAME_SIZE: usize = 160;
+
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct SyscallFrame {
-    pub user_rsp: u64,
-    pub user_rip: u64,
-    pub user_rflags: u64,
+    r15: u64,
+    r14: u64,
+    r13: u64,
+    r12: u64,
+    r11: u64,
+    r10: u64,
+    r9: u64,
+    r8: u64,
+    rsi: u64,
+    rdi: u64,
+    rbp: u64,
+    rdx: u64,
+    rcx: u64,
+    rbx: u64,
     pub rax: u64,
+    pub user_rip: u64,
+    pub user_cs: u64,
+    pub user_rflags: u64,
+    pub user_rsp: u64,
+    pub user_ss: u64,
 }
 
 impl SyscallFrame {
     const fn empty() -> Self {
         Self {
-            user_rsp: 0,
-            user_rip: 0,
-            user_rflags: 0,
+            r15: 0,
+            r14: 0,
+            r13: 0,
+            r12: 0,
+            r11: 0,
+            r10: 0,
+            r9: 0,
+            r8: 0,
+            rsi: 0,
+            rdi: 0,
+            rbp: 0,
+            rdx: 0,
+            rcx: 0,
+            rbx: 0,
             rax: 0,
+            user_rip: 0,
+            user_cs: 0,
+            user_rflags: 0,
+            user_rsp: 0,
+            user_ss: 0,
         }
     }
 
     fn from_context(context: ProcessContext) -> Self {
         Self {
-            user_rsp: context.stack_top,
             user_rip: context.entry,
+            user_cs: gdt::USER_CODE_SELECTOR as u64,
             user_rflags: INITIAL_USER_RFLAGS,
-            rax: 0,
+            user_rsp: context.stack_top,
+            user_ss: gdt::USER_DATA_SELECTOR as u64,
+            ..Self::empty()
         }
     }
 }
@@ -1465,6 +1522,95 @@ pub fn yield_current_process(frame: &mut SyscallFrame) -> ScheduleResult {
     }
 }
 
+pub fn preempt_current_process(frame: &mut SyscallFrame) -> ScheduleResult {
+    wake_timed_processes(read_tsc());
+    let current = {
+        let runtime = runtime();
+        if runtime
+            .processes
+            .next_ready_index_round_robin(false)
+            .is_none()
+        {
+            return ScheduleResult::Continue;
+        }
+        let Some(process) = runtime.processes.current_process_mut() else {
+            return ScheduleResult::Halt { ok: false };
+        };
+        if process.state != ProcessState::Running {
+            return ScheduleResult::Continue;
+        }
+
+        process.saved_frame = *frame;
+        process.has_saved_frame = true;
+        process.state = ProcessState::Ready;
+        process.name
+    };
+
+    if schedule_next_ready_no_wait_excluding_current(frame) {
+        serial::write_str("Scheduler preempted process without explicit yield: from=");
+        serial::write_str(current);
+        serial::write_str(" to=");
+        serial::write_str(current_process_name());
+        serial::write_str("\n");
+        ScheduleResult::Switched
+    } else {
+        let runtime = runtime();
+        if let Some(process) = runtime.processes.current_process_mut() {
+            process.state = ProcessState::Running;
+        }
+        ScheduleResult::Continue
+    }
+}
+
+pub fn wake_timed_from_interrupt() {
+    wake_timed_processes(read_tsc());
+}
+
+pub fn fault_current_process(
+    reason: &str,
+    address: u64,
+    error_code: u64,
+    frame: &mut SyscallFrame,
+) -> ScheduleResult {
+    let (name, initial_faulted) = {
+        let runtime = runtime();
+        let Some(process) = runtime.processes.current_process_mut() else {
+            return ScheduleResult::Halt { ok: false };
+        };
+        let initial = process.pid.raw() == 1;
+        process.state = ProcessState::Exited;
+        process.has_saved_frame = false;
+        process.exit_status = STATUS_PROCESS_FAULT;
+        process.has_exited = true;
+        (process.name, initial)
+    };
+
+    serial::write_str("User process fault contained: proc=");
+    serial::write_str(name);
+    serial::write_str(" reason=");
+    serial::write_str(reason);
+    serial::write_str(" address=");
+    serial::write_u64_hex(address);
+    serial::write_str(" error=");
+    serial::write_u64_hex(error_code);
+    serial::write_str("\n");
+    serial::write_str("direct invalid userspace load killed only process: ");
+    serial::write_str(name);
+    serial::write_str("\n");
+
+    if initial_faulted {
+        return ScheduleResult::Halt { ok: false };
+    }
+
+    if schedule_next_ready_no_wait(frame) {
+        ScheduleResult::Switched
+    } else {
+        ScheduleResult::Halt {
+            ok: runtime().processes.all_exited_successfully(),
+        }
+    }
+}
+
 pub fn send(cap_slot: u64, source: *const u8, len: usize) -> Result<(), IpcError> {
     if len > MAX_MESSAGE_BYTES {
         return Err(IpcError::MessageTooLarge);
@@ -1713,11 +1859,13 @@ pub fn rollback_generation(
 
     init_from_boot_config(&fallback.config).map_err(|_| IpcError::BadCapability)?;
     let context = initial_process_context().ok_or(IpcError::BadCapability)?;
-    *frame = SyscallFrame::from_context(context);
+    serial::write_str("Krust rollback entering generation: ");
+    serial::write_str(fallback.generation_id);
+    serial::write_str("\n");
+    let _ = frame;
     unsafe {
-        gdt::switch_address_space(context.cr3);
+        gdt::enter_user_mode(context.cr3, context.entry, context.stack_top);
     }
-    Ok(())
 }
 
 pub fn start_process(cap_slot: u64, process_index: u64) -> Result<(), IpcError> {
@@ -2515,8 +2663,8 @@ fn next_deadline_tsc() -> Option<u64> {
 }
 
 fn wait_until_deadline(deadline: u64) {
-    while !deadline_reached(read_tsc(), deadline) {
-        core::hint::spin_loop();
+    while !deadline_reached(read_tsc(), deadline) && wake_timed_processes(read_tsc()) == 0 {
+        crate::timer::wait_for_interrupt();
     }
 }
 
@@ -2529,23 +2677,45 @@ fn deadline_before(left: u64, right: u64) -> bool {
 }
 
 fn schedule_next_ready(frame: &mut SyscallFrame) -> bool {
-    schedule_next_ready_inner(frame, true)
+    schedule_next_ready_inner(frame, true, true)
 }
 
 fn schedule_next_ready_excluding_current(frame: &mut SyscallFrame) -> bool {
-    schedule_next_ready_inner(frame, false)
+    schedule_next_ready_inner(frame, false, true)
 }
 
-fn schedule_next_ready_inner(frame: &mut SyscallFrame, include_current: bool) -> bool {
+fn schedule_next_ready_no_wait(frame: &mut SyscallFrame) -> bool {
+    schedule_next_ready_inner(frame, true, false)
+}
+
+fn schedule_next_ready_no_wait_excluding_current(frame: &mut SyscallFrame) -> bool {
+    schedule_next_ready_inner(frame, false, false)
+}
+
+fn schedule_next_ready_inner(
+    frame: &mut SyscallFrame,
+    include_current: bool,
+    wait_for_deadline: bool,
+) -> bool {
     wake_timed_processes(read_tsc());
-    if runtime()
-        .processes
-        .next_ready_index_round_robin(include_current)
-        .is_none()
+    if wait_for_deadline
+        && runtime()
+            .processes
+            .next_ready_index_round_robin(include_current)
+            .is_none()
         && let Some(deadline) = next_deadline_tsc()
     {
         wait_until_deadline(deadline);
         wake_timed_processes(read_tsc());
+    }
+
+    if !wait_for_deadline
+        && runtime()
+            .processes
+            .next_ready_index_round_robin(include_current)
+            .is_none()
+    {
+        return false;
     }
 
     let (from, to, next_frame, next_cr3) = {

@@ -86,6 +86,32 @@ timer ok
 Native timer ok
 '
         ;;
+    preemption|m30)
+        MANIFEST="$ROOT_DIR/examples/krust-preemption-generation.vertex.json"
+        required_lines='
+PIT timer interrupt initialized: vector=32 hz=100
+Timer tick increments: ticks=1
+Preemption disabled in kernel critical sections
+cpu-hog starts without yielding
+Scheduler preempted process without explicit yield: from=cpu-hog
+logd received: hello from echo
+'
+        ;;
+    user-fault|m31)
+        MANIFEST="$ROOT_DIR/examples/krust-user-fault-generation.vertex.json"
+        required_lines='
+faulty-service triggers direct invalid load
+User page fault: proc=faulty-service
+User process fault contained: proc=faulty-service
+direct invalid userspace load killed only process: faulty-service
+vertex-init observes failure
+restart policy = on-failure
+vertex-init restarts faulty-service once
+Krust process restart reload: proc=faulty-service
+faulty-service exits 0 after restart
+Native service activation ok
+'
+        ;;
     restart)
         MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
         required_lines='
@@ -196,7 +222,7 @@ activation failed
 '
         ;;
     *)
-        echo "usage: scripts/krust-test.sh <m13|m14|valid-activation|manifest-cycle|bad-cap|readiness|readiness-timeout|rollback|store-state|timer|restart|manifest-v1|cap-lifecycle|typed-arenas|quotas|manifest-truncated|manifest-bad-magic|manifest-raw-compact|manifest-unsupported-version|manifest-oob-record|manifest-missing-provider>" >&2
+        echo "usage: scripts/krust-test.sh <m13|m14|valid-activation|manifest-cycle|bad-cap|readiness|readiness-timeout|rollback|store-state|timer|preemption|m30|user-fault|m31|restart|manifest-v1|cap-lifecycle|typed-arenas|quotas|manifest-truncated|manifest-bad-magic|manifest-raw-compact|manifest-unsupported-version|manifest-oob-record|manifest-missing-provider>" >&2
         exit 2
         ;;
 esac

@@ -1,0 +1,138 @@
+{
+  "schema": "vertex.ir.v0",
+  "generation": {
+    "id": "gen:user-fault-0001",
+    "createdUtc": "2026-05-22T00:00:00Z",
+    "description": "Krust M31 userspace page-fault containment regression generation",
+    "parent": null,
+    "manifestHash": null
+  },
+  "kernel": {
+    "id": "kernel:hosted-linux-placeholder",
+    "kind": "hosted-linux",
+    "storeObject": "store:hosted-kernel-placeholder",
+    "abi": "hosted-linux.v0",
+    "target": "x86_64-linux"
+  },
+  "init": {
+    "id": "init:vertex-init",
+    "executable": "exe:vertex-init",
+    "mode": "hosted-linux"
+  },
+  "store": [
+    {
+      "id": "store:hosted-kernel-placeholder",
+      "name": "hosted-kernel-placeholder",
+      "kind": "kernel-image",
+      "path": "/vertex/store/kernel-placeholder",
+      "hashAlgorithm": "blake3",
+      "hash": "demo-not-a-real-hash-kernel",
+      "sizeBytes": 0,
+      "references": []
+    },
+    {
+      "id": "store:vertex-init-demo",
+      "name": "vertex-init-demo",
+      "kind": "executable",
+      "path": "/vertex/store/vertex-init",
+      "hashAlgorithm": "blake3",
+      "hash": "demo-not-a-real-hash-vertex-init",
+      "sizeBytes": 65536,
+      "references": []
+    },
+    {
+      "id": "store:faulty-demo",
+      "name": "faulty-demo",
+      "kind": "executable",
+      "path": "/vertex/store/faulty",
+      "hashAlgorithm": "blake3",
+      "hash": "demo-not-a-real-hash-faulty",
+      "sizeBytes": 65536,
+      "references": []
+    }
+  ],
+  "executables": [
+    {
+      "id": "exe:vertex-init",
+      "storeObject": "store:vertex-init-demo",
+      "entrypoint": "bin/vertex-init",
+      "abi": "hosted-linux-process.v0",
+      "argsDefault": []
+    },
+    {
+      "id": "exe:faulty",
+      "storeObject": "store:faulty-demo",
+      "entrypoint": "bin/faulty",
+      "abi": "hosted-linux-process.v0",
+      "argsDefault": []
+    }
+  ],
+  "devices": [],
+  "stateVolumes": [],
+  "secrets": [],
+  "capabilities": [],
+  "services": [
+    {
+      "id": "svc:vertex-supervisor",
+      "name": "vertex-supervisor",
+      "executable": "exe:vertex-init",
+      "args": [],
+      "env": {},
+      "requires": [],
+      "provides": [],
+      "state": [],
+      "secrets": [],
+      "restart": "never",
+      "resources": {
+        "memoryMaxBytes": 134217728,
+        "cpuShares": 100
+      },
+      "health": null,
+      "lifecycle": {
+        "startAfter": [],
+        "stopBefore": []
+      }
+    },
+    {
+      "id": "svc:faulty-service",
+      "name": "faulty-service",
+      "executable": "exe:faulty",
+      "args": [],
+      "env": {},
+      "requires": [],
+      "provides": [],
+      "state": [],
+      "secrets": [],
+      "restart": "on-failure",
+      "resources": {
+        "memoryMaxBytes": 33554432,
+        "cpuShares": 25
+      },
+      "health": null,
+      "lifecycle": {
+        "startAfter": ["svc:vertex-supervisor"],
+        "stopBefore": []
+      }
+    }
+  ],
+  "activation": {
+    "rootService": "svc:vertex-supervisor",
+    "startOrder": [
+      "svc:vertex-supervisor",
+      "svc:faulty-service"
+    ],
+    "rollbackPolicy": {
+      "default": "system-only",
+      "state": "preserve-unless-explicit"
+    },
+    "onFailure": "stop-activation"
+  },
+  "policies": {
+    "defaultAuthority": "deny",
+    "allowAmbientFilesystem": false,
+    "allowAmbientNetwork": false,
+    "allowAmbientDevices": false,
+    "capabilityDelegation": "explicit-only",
+    "unknownReferences": "reject"
+  }
+}

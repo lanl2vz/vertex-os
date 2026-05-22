@@ -1,7 +1,7 @@
 # Krust Kernel
 
-Krust now covers the M14-M29 native graph-activation proof path and substrate
-hardening. The planned M30-M40 roadmap is tracked in
+Krust now covers the M14-M31 native graph-activation proof path and substrate
+hardening. The planned M32-M40 roadmap is tracked in
 `../../docs/krust-milestones.md`.
 
 The target is intentionally small:
@@ -25,7 +25,7 @@ Krust writes and reads through the mapped virtual pages
 Krust allocates typed endpoint and process arenas from the kernel heap and checks capacity failure paths
 Krust creates fixed kernel objects and boot capabilities
 Krust prints the boot capability table
-Limine loads native service ELFs for vertex-init, logd, netstack, echo, model-reader, counter, state-reader, timer, and flaky-service
+Limine loads native service ELFs for vertex-init, logd, netstack, echo, model-reader, counter, state-reader, timer, flaky-service, cpu-hog, and faulty-service
 Krust loads each declared process into a fresh low-half address space
 Krust creates a runtime process table and endpoint table from the KrustBoot manifest
 Krust allocates runtime process IDs and states from KrustBoot process records
@@ -33,7 +33,9 @@ Krust grants vertex-init cap[0] read rights to the manifest module
 Krust grants vertex-init cap[1] send rights to the serial-log endpoint
 Krust grants vertex-init cap[2] process-control authority with control, allocate, delegate, and revoke rights; cap[3] readiness receive authority; and per-endpoint attenuable endpoint authority starting at cap[4]
 Krust grants store/state/timer authority only to services that declare those capabilities
-Krust installs a minimal IDT for #UD, #GP, and #PF
+Krust installs a minimal IDT for #UD, #GP, #PF, and PIT IRQ0
+Krust installs a TSS-backed ring-0 interrupt stack for user traps
+Krust programs the PIT/PIC timer path and preempts CPU-bound userspace
 Krust enters ring 3 at the initial process entry point
 Krust tracks Declared, Ready, Running, BlockedOnEndpoint, Sleeping, and Exited process states
 Krust validates syscall user buffers by walking user page tables
@@ -49,19 +51,20 @@ echo drops its endpoint capability and denied authority stays rejected
 model-reader reads an immutable store object through its own store capability
 counter-service writes a state volume, and reader-service reads it through read-only state authority
 timer-service sleeps through its own timer capability without monopolizing the scheduler
+cpu-hog proves a CPU-bound userspace loop cannot starve logd
+faulty-service proves a direct userspace page fault kills only that process and can be restarted
 echo proves bounded restart=always with delegated endpoint authority restored, and flaky-service proves restart=on-failure from a fresh restart context
 logd receives the message and denial tests reject missing authority
 Krust halts after `Native service activation ok`
 ```
 
-No unbounded general-purpose allocator, APIC-backed timer, preemption, user
-page-fault recovery, full interrupt handling, full JSON parsing in the kernel,
-filesystem, network, or device drivers are part of this native proof. Timer
-deadlines use cooperative sleep states; when no process is ready, the scheduler
-polls TSC until the next deadline rather than sleeping on an interrupt. The
-kernel consumes a compact KrustBoot Manifest v1 artifact compiled by hosted
-`vertexctl`; graph interpretation and lifecycle policy remain a userspace
-responsibility.
+No unbounded general-purpose allocator, APIC-backed timer, advanced fault
+delivery, full interrupt handling, full JSON parsing in the kernel, filesystem,
+network, or device drivers are part of this native proof. Timer deadlines now
+wake through the PIT interrupt path, and bad userspace page faults are contained
+as process failures. The kernel consumes a compact KrustBoot Manifest v1
+artifact compiled by hosted `vertexctl`; graph interpretation and lifecycle
+policy remain a userspace responsibility.
 
 ## Prerequisites
 
@@ -284,14 +287,14 @@ make smoke
 ```
 
 The smoke test boots QEMU headlessly, captures serial output to
-`build/serial.log`, and passes when it sees the M14-M29 boot transcript. The same
+`build/serial.log`, and passes when it sees the M14-M31 boot transcript. The same
 check is available from the repository root:
 
 ```sh
 scripts/krust-smoke.sh
 ```
 
-## M26-M29 Substrate Gate
+## M26-M31 Substrate Gate
 
 Run the clean-clone gate from the repository root:
 
@@ -307,13 +310,13 @@ make release-gate
 
 The gate checks script executability and shell syntax, verifies Makefile recipe
 parsing, checks Rust formatting and milestone Markdown whitespace, confirms the
-M14-M29 documentation anchors, runs `cargo build --offline`, validates
+M14-M31 documentation anchors, runs `cargo build --offline`, validates
 `examples/hello-generation.vertex.json`, runs `make doctor`, rebuilds from
-`make clean`, runs `make smoke`, and then runs the M14-M29 QEMU cases: `m14`,
+`make clean`, runs `make smoke`, and then runs the M14-M31 QEMU cases: `m14`,
 `manifest-cycle`, `bad-cap`, `readiness-timeout`, `rollback`, `store-state`,
-`timer`, `restart`, `manifest-v1`, `cap-lifecycle`, `typed-arenas`, `quotas`,
-and the malformed-manifest cases. If the offline build fails, the gate prints
-the Cargo cache or vendoring prerequisite explicitly.
+`timer`, `preemption`, `user-fault`, `restart`, `manifest-v1`, `cap-lifecycle`,
+`typed-arenas`, `quotas`, and the malformed-manifest cases. If the offline build
+fails, the gate prints the Cargo cache or vendoring prerequisite explicitly.
 
 The expected transcript includes:
 

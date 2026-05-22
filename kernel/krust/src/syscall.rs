@@ -10,7 +10,7 @@ const IA32_FMASK: u32 = 0xc000_0084;
 const EFER_SYSCALL_ENABLE: u64 = 1;
 const RFLAGS_INTERRUPT_ENABLE: u64 = 1 << 9;
 
-const SYSCALL_STACK_SIZE: usize = 64 * 1024;
+const SYSCALL_STACK_SIZE: usize = 256 * 1024;
 const SYS_WRITE_SERIAL: u64 = 1;
 const SYS_EXIT: u64 = 2;
 const SYS_IPC_SEND: u64 = 3;
@@ -49,6 +49,8 @@ pub struct SyscallStack([u8; SYSCALL_STACK_SIZE]);
 
 #[unsafe(no_mangle)]
 static mut KRUST_SYSCALL_STACK: SyscallStack = SyscallStack([0; SYSCALL_STACK_SIZE]);
+#[unsafe(no_mangle)]
+static mut KRUST_SYSCALL_USER_RSP: u64 = 0;
 
 unsafe extern "C" {
     fn krust_syscall_entry();
@@ -58,32 +60,77 @@ global_asm!(
     r#"
     .global krust_syscall_entry
 krust_syscall_entry:
-    mov r10, rsp
+    mov [rip + KRUST_SYSCALL_USER_RSP], rsp
     lea rsp, [rip + KRUST_SYSCALL_STACK + {syscall_stack_size}]
-    sub rsp, 64
-    mov [rsp + 0], r10
-    mov [rsp + 8], rcx
-    mov [rsp + 16], r11
-    mov qword ptr [rsp + 24], 0
-    mov [rsp + 32], rdi
-    mov [rsp + 40], rsi
-    mov [rsp + 48], rdx
-    mov qword ptr [rsp + 56], 0
-    mov rdi, rax
-    mov rsi, [rsp + 32]
-    mov rdx, [rsp + 40]
-    mov rcx, [rsp + 48]
+    sub rsp, {frame_size}
+    mov [rsp + {r15}], r15
+    mov [rsp + {r14}], r14
+    mov [rsp + {r13}], r13
+    mov [rsp + {r12}], r12
+    mov [rsp + {r11}], r11
+    mov [rsp + {r10}], r10
+    mov [rsp + {r9}], r9
+    mov [rsp + {r8}], r8
+    mov [rsp + {rsi}], rsi
+    mov [rsp + {rdi}], rdi
+    mov [rsp + {rbp}], rbp
+    mov [rsp + {rdx}], rdx
+    mov [rsp + {rcx}], rcx
+    mov [rsp + {rbx}], rbx
+    mov [rsp + {rax}], rax
+    mov [rsp + {user_rip}], rcx
+    mov qword ptr [rsp + {user_cs}], {user_code}
+    mov [rsp + {user_rflags}], r11
+    mov r10, [rip + KRUST_SYSCALL_USER_RSP]
+    mov [rsp + {user_rsp}], r10
+    mov qword ptr [rsp + {user_ss}], {user_data}
+    mov rdi, [rsp + {rax}]
+    mov rsi, [rsp + {rdi}]
+    mov rdx, [rsp + {rsi}]
+    mov rcx, [rsp + {rdx}]
     mov r8, rsp
     call krust_syscall_dispatch
-    mov r10, [rsp + 0]
-    mov rcx, [rsp + 8]
-    mov r11, [rsp + 16]
-    mov rax, [rsp + 24]
-    add rsp, 64
-    mov rsp, r10
-    sysretq
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop r11
+    pop r10
+    pop r9
+    pop r8
+    pop rsi
+    pop rdi
+    pop rbp
+    pop rdx
+    pop rcx
+    pop rbx
+    pop rax
+    iretq
 "#,
     syscall_stack_size = const SYSCALL_STACK_SIZE,
+    frame_size = const ipc::FRAME_SIZE,
+    r15 = const ipc::FRAME_R15,
+    r14 = const ipc::FRAME_R14,
+    r13 = const ipc::FRAME_R13,
+    r12 = const ipc::FRAME_R12,
+    r11 = const ipc::FRAME_R11,
+    r10 = const ipc::FRAME_R10,
+    r9 = const ipc::FRAME_R9,
+    r8 = const ipc::FRAME_R8,
+    rsi = const ipc::FRAME_RSI,
+    rdi = const ipc::FRAME_RDI,
+    rbp = const ipc::FRAME_RBP,
+    rdx = const ipc::FRAME_RDX,
+    rcx = const ipc::FRAME_RCX,
+    rbx = const ipc::FRAME_RBX,
+    rax = const ipc::FRAME_RAX,
+    user_rip = const ipc::FRAME_USER_RIP,
+    user_cs = const ipc::FRAME_USER_CS,
+    user_rflags = const ipc::FRAME_USER_RFLAGS,
+    user_rsp = const ipc::FRAME_USER_RSP,
+    user_ss = const ipc::FRAME_USER_SS,
+    user_code = const gdt::USER_CODE_SELECTOR as u64,
+    user_data = const gdt::USER_DATA_SELECTOR as u64,
 );
 
 pub fn init() {

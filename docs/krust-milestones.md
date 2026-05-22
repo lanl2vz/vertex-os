@@ -6,7 +6,7 @@ IR and graph semantics; Krust is the native enforcement path.
 
 ## Status Summary
 
-Current status: M14-M29 are implemented and smoke-tested under
+Current status: M14-M31 are implemented and smoke-tested under
 `qemu-system-x86_64` with Limine.
 
 ```sh
@@ -18,9 +18,11 @@ scripts/krust-test.sh manifest-v1
 scripts/krust-test.sh cap-lifecycle
 scripts/krust-test.sh typed-arenas
 scripts/krust-test.sh quotas
+scripts/krust-test.sh preemption
+scripts/krust-test.sh user-fault
 ```
 
-Next direction: M30-M40 continue hardening the M14-M29 graph-activation proof
+Next direction: M32-M40 continue hardening the M14-M31 graph-activation proof
 into a small, reliable, extensible capability microkernel substrate.
 
 ## M0: Serial Boot
@@ -116,8 +118,8 @@ permissions before copying.
 Acceptance evidence in smoke:
 
 ```text
-IDT initialized: #UD #GP #PF
-Bad pointer test: SYS_WRITE_SERIAL returned STATUS_BAD_BUFFER
+IDT initialized: #UD #GP #PF IRQ0
+Legacy SYS_WRITE_SERIAL rejected: use SYS_LOG_WRITE
 Bad pointer test: SYS_IPC_SEND returned STATUS_BAD_BUFFER
 Bad pointer test: SYS_IPC_RECV returned STATUS_BAD_BUFFER
 ```
@@ -821,11 +823,9 @@ M39  Reproducible build environment
 M40  Vertex Native Runtime ABI v1
 ```
 
-M30 is the immediate priority. M39 can run in parallel with scheduler and fault
+M32 is the immediate priority. M39 can run in parallel with I/O and storage
 work because reproducible development tooling is part of the system story, not
-an afterthought. M31 may be implemented before M30 if interrupt-driven
-preemption exposes too much shared-state risk; fault containment is a smaller
-robustness step than full scheduler preemption.
+an afterthought.
 
 ## M25: Reproducible Clean-Clone Release Gate
 
@@ -848,6 +848,7 @@ done: Rust formatting and milestone Markdown whitespace are checked by the gate
 done: Makefile recipes are parsed by make before the gate proceeds
 done: all M14-M24 QEMU tests are run from the gate
 done: M26-M29 manifest, capability, arena, quota, and malformed-manifest QEMU tests are run from the gate
+done: M30-M31 timer-preemption and user-fault containment QEMU tests are run from the gate
 done: all QEMU transcript checks have bounded polling windows
 done: missing and forbidden transcript lines are reported explicitly
 done: README.md, docs/krust-milestones.md, docs/krust-abi-v0.md, and kernel/krust/README.md agree
@@ -1044,7 +1045,7 @@ delegation cannot exceed the caller's quota.
 
 ## M30: Real Timer Interrupt And Preemptive Scheduling
 
-Status: planned.
+Status: done.
 
 Goal: let Krust regain control without relying on userspace to yield.
 
@@ -1069,12 +1070,23 @@ scheduler preempts process without explicit yield
 preemption can be disabled for critical kernel regions
 ```
 
+Acceptance evidence:
+
+```text
+PIT timer interrupt initialized: vector=32 hz=100
+Timer tick increments: ticks=1
+Preemption disabled in kernel critical sections
+cpu-hog starts without yielding
+Scheduler preempted process without explicit yield: from=cpu-hog
+logd received: hello from echo
+```
+
 Do not over-engineer fairness in this milestone. The first target is control
 recovery and correct wakeups.
 
 ## M31: User Page-Fault Handling And Process Death
 
-Status: planned.
+Status: done.
 
 Goal: turn bad userspace memory behavior into process failure instead of kernel
 failure.
@@ -1097,6 +1109,19 @@ direct invalid userspace load kills only that process
 init observes service failure
 restart policy can restart it
 kernel does not panic
+```
+
+Acceptance evidence:
+
+```text
+faulty-service triggers direct invalid load
+User page fault: proc=faulty-service
+User process fault contained: proc=faulty-service
+direct invalid userspace load killed only process: faulty-service
+vertex-init observes failure
+vertex-init restarts faulty-service once
+faulty-service exits 0 after restart
+Native service activation ok
 ```
 
 This milestone should be kept narrow: process containment first, advanced fault
@@ -1344,7 +1369,7 @@ documented host tool versions for Rust, qemu, limine, xorriso, and cargo tools
 locked Cargo dependencies
 kernel/krust/rust-toolchain.toml as the native Krust toolchain pin
 make doctor checks every required tool and reports actionable fixes
-single release-gate script that runs the clean-clone M14-M29 proof
+single release-gate script that runs the clean-clone M14-M31 proof
 ```
 
 Acceptance tests:
@@ -1389,8 +1414,6 @@ base for the next phase.
 Create these next:
 
 ```text
-M30.1  Add real timer interrupt path
-M31.1  Add user page-fault-to-process-failure handling
 M32.1  Add first I/O capability substrate path
 M33.1  Move serial logging toward user space
 ```
@@ -1420,8 +1443,9 @@ A native booted Vertex system should be able to activate, switch, inspect,
 revoke, and persist declared generation graphs under explicit authority.
 ```
 
-M13 proved that native services can run under explicit authority. M14-M29 prove
+M13 proved that native services can run under explicit authority. M14-M31 prove
 that the graph itself decides which native services exist, when they start,
 what they receive, why they are allowed to communicate, and how authority and
-resources are bounded. M30-M40 should make that model reliable enough to become
+resources are bounded, while timer preemption and user fault containment keep
+the kernel in control. M32-M40 should make that model reliable enough to become
 the long-lived Vertex native runtime base.

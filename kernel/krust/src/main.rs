@@ -13,6 +13,7 @@ mod memory;
 mod paging;
 mod serial;
 mod syscall;
+mod timer;
 mod usercopy;
 mod userspace;
 
