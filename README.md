@@ -30,8 +30,6 @@ vertex-os/
     krust/               Bootable Krust kernel prototype, currently covering M14-M24 native graph activation
   lang/
     vertex-lang/         Planned typed system-definition language
-  nix/                   Nix support modules and builders
-  flake.nix              Planned root flake entrypoint
 ```
 
 ## Krust M14-M24
@@ -55,7 +53,8 @@ init-owned transcript logging.
 scripts/krust-smoke.sh
 ```
 
-See [docs/krust-milestones.md](docs/krust-milestones.md) for M0 through M24,
+See [docs/krust-milestones.md](docs/krust-milestones.md) for M0 through M24
+completion status and the planned M25-M40 substrate-hardening roadmap,
 and [docs/krust-abi-v0.md](docs/krust-abi-v0.md) for the current syscall,
 capability, process, and IPC ABI.
 

@@ -1,6 +1,8 @@
 # Krust Kernel
 
-Krust now covers the M14-M24 native graph-activation proof path.
+Krust now covers the M14-M24 native graph-activation proof path. The planned
+M25-M40 substrate-hardening roadmap is tracked in
+`../../docs/krust-milestones.md`.
 
 The target is intentionally small:
 

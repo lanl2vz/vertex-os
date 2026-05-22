@@ -646,7 +646,7 @@ VIR v2 should be suitable for Krust-native boot.
 
 VIR v0 does not attempt to specify:
 
-- complete package build derivations
+- complete package build recipes
 - full POSIX compatibility
 - dynamic service discovery
 - distributed deployment

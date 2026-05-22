@@ -15,6 +15,9 @@ scripts/krust-test.sh manifest-cycle
 scripts/krust-test.sh rollback
 ```
 
+Next direction: M25-M40 harden the M14-M24 graph-activation proof into a
+small, reliable, extensible capability microkernel substrate.
+
 ## M0: Serial Boot
 
 Status: done.
@@ -195,7 +198,7 @@ and native `vertex-init` activates a compact generation from the manifest. Full
 service spawning is deliberately left for the next milestone.
 
 Non-goals for M12: filesystems, networking, GPU, USB, timer preemption,
-multicore, POSIX compatibility, the Nix store, and the Haskell/typed DSL.
+multicore, POSIX compatibility, host package stores, and the Haskell/typed DSL.
 
 ## M13: Native Service Activation
 
@@ -783,61 +786,654 @@ state write denial
 This test runner is infrastructure for keeping Krust stable as native graph
 semantics become richer.
 
-## Recommended Order
+## Phase 3: Krust Substrate Hardening
 
-The next planned milestones should be implemented in this order:
+M14-M24 prove that Krust can activate a declared native service graph under
+explicit authority. The next phase should stop expanding the demo graph and
+make the substrate durable: manifest ABI, capability lifecycle, resource
+accounting, scheduling, fault recovery, I/O authority, user-space drivers,
+persistent store/state services, generation switching, native introspection,
+and a reproducible build environment.
 
-```text
-M14  Manifest-driven native activation
-M15  Native readiness and service lifecycle
-M16  Compile native KrustBoot from full Vertex IR
-M17  Capability derivation, attenuation, drop, and transfer
-M18  Native supervision and restart policy
-M19  Native immutable store-object read capabilities
-M20  Native generation identity and rollback selection
-M21  Native state-volume read/write capabilities
-M22  Standard native component protocol
-M23  Timer/sleep capability
-M24  QEMU native test suite
-```
-
-The first three are the highest priority:
+Recommended order:
 
 ```text
-M14: no hardcoded service graph
-M15: service readiness/failure semantics
-M16: native boot manifest generated from real Vertex IR
+M25  Reproducible clean-clone release gate
+M26  KrustBoot Manifest v1
+M27  Capability model v1: provenance, revocation, and audit
+M28  Kernel heap and typed object arenas
+M29  Resource accounting and quotas
+M30  Real timer interrupt and preemptive scheduling
+M31  User page-fault handling and process death
+M32  I/O capability substrate
+M33  Move serial logging toward user space
+M34  First real block-device path
+M35  Native immutable store service
+M36  Native state-volume service
+M37  Native generation switch
+M38  Native vertexctl-like introspection service
+M39  Reproducible build environment
+M40  Vertex Native Runtime ABI v1
 ```
 
-These milestones bridge from "Krust can run services" to "Vertex OS can
-activate a declared system."
+M25 is the immediate priority. M39 can run in parallel with M25-M28 because
+reproducible development tooling is part of the system story, not an afterthought.
+M31 may be implemented before M30 if interrupt-driven preemption exposes too
+much shared-state risk; fault containment is a smaller robustness step than full
+scheduler preemption.
+
+## M25: Reproducible Clean-Clone Release Gate
+
+Status: planned.
+
+Goal: make the current M14-M24 proof boring and repeatable from a clean clone
+before adding new kernel mechanisms.
+
+The release gate should cover:
+
+```sh
+cargo build --offline
+target/debug/vertexctl validate examples/hello-generation.vertex.json
+cd kernel/krust
+make doctor
+make clean
+make smoke
+cd ../..
+scripts/krust-test.sh m14
+scripts/krust-test.sh manifest-cycle
+scripts/krust-test.sh bad-cap
+scripts/krust-test.sh readiness-timeout
+scripts/krust-test.sh rollback
+scripts/krust-test.sh store-state
+scripts/krust-test.sh timer
+scripts/krust-test.sh restart
+```
+
+Acceptance criteria:
+
+```text
+all scripts are formatted and executable
+all Makefile recipes are correctly tab-indented
+all M14-M24 QEMU tests pass from a clean clone
+all QEMU tests have bounded timeouts
+missing transcript lines produce clear failures
+README.md, docs/krust-milestones.md, docs/krust-abi-v0.md, and kernel/krust/README.md agree
+offline build either works from documented inputs or fails with an explicit cache/vendor prerequisite
+```
+
+This milestone protects the current proof from becoming fragile as the kernel
+gains more moving parts.
+
+## M26: KrustBoot Manifest v1
+
+Status: planned.
+
+Goal: replace the current fixed-offset proof manifest with a versioned native
+ABI artifact that can evolve without silent parser breakage.
+
+Manifest header fields:
+
+```text
+magic
+version
+total_size
+header_size
+record_table_offset
+record_count
+generation_id
+parent_generation_id
+checksum_or_hash
+```
+
+Records should be self-describing:
+
+```text
+kind
+id
+offset
+length
+```
+
+Initial record kinds:
+
+```text
+BootModule
+Process
+Endpoint
+Grant
+StoreObject
+StateVolume
+Timer
+Generation
+Policy
+```
+
+Acceptance tests:
+
+```text
+valid manifest boots
+truncated manifest rejected
+bad magic rejected
+unsupported version rejected
+out-of-bounds record rejected
+cyclic dependency rejected
+missing provider rejected
+```
+
+The parser should live behind a shared, bounds-checked layout API usable by
+hosted `vertexctl`, native `vertex-init`, and the kernel without pulling full
+JSON or graph interpretation into Krust.
+
+## M27: Capability Model v1: Provenance, Revocation, And Audit
+
+Status: planned.
+
+Goal: make authority lineage explicit so generation switches and supervision can
+revoke obsolete service authority.
+
+Capability metadata:
+
+```text
+cap_id
+object_id
+rights
+owner_process
+parent_cap_id
+generation_id
+delegated_by
+revoked
+```
+
+Operations:
+
+```text
+SYS_CAP_REVOKE
+SYS_CAP_INSPECT
+SYS_CAP_MOVE
+```
+
+Semantic rule: derived capabilities must not outlive revoked parent authority
+unless they are explicitly marked as independently rooted.
+
+Acceptance tests:
+
+```text
+init derives send-only cap for echo
+echo can send
+init revokes parent or delegation
+echo send now fails
+cap inspect shows parent chain
+cap transfer cannot amplify rights
+cap move removes source slot
+cap copy preserves source slot
+```
+
+If revocation needs dynamic metadata that does not fit the current fixed tables,
+do the minimal M28 arena work first rather than encoding permanent complexity
+into fixed arrays.
+
+## M28: Kernel Heap And Typed Object Arenas
+
+Status: planned.
+
+Goal: move beyond fixed proof tables without adding an unbounded general-purpose
+runtime to the kernel.
+
+Add:
+
+```text
+frame allocator to page mapper path
+small kernel heap
+typed process arena
+typed endpoint arena
+typed capability arena
+typed timer arena
+typed store/state object arenas
+```
+
+The first implementation should prefer fixed-size typed arenas allocated from a
+real heap, with explicit capacity and failure paths.
+
+Acceptance tests:
+
+```text
+create 32 endpoints
+create 32 processes
+allocate, free, and reuse kernel objects
+allocation failure returns a controlled error
+no silent object-table overwrite
+```
+
+This milestone is the point where Krust starts moving from a fixed demo kernel
+toward a small extensible kernel substrate.
+
+## M29: Resource Accounting And Quotas
+
+Status: planned.
+
+Goal: make resource ownership as explicit as authority. A capability OS should
+not let one service consume all kernel objects by accident.
+
+Process quota fields:
+
+```text
+max_caps
+max_endpoints
+max_memory_pages
+max_child_processes
+max_ipc_bytes
+```
+
+Resource rights:
+
+```text
+allocate
+delegate
+control
+revoke
+```
+
+Acceptance tests:
+
+```text
+service with no allocation authority cannot create endpoint
+service with quota=1 endpoint can create one endpoint
+second endpoint creation fails
+init can delegate smaller quota
+delegated quota cannot exceed parent quota
+```
+
+Quotas should be enforced at the same boundary as capabilities, not as advisory
+metadata in userspace.
+
+## M30: Real Timer Interrupt And Preemptive Scheduling
+
+Status: planned.
+
+Goal: let Krust regain control without relying on userspace to yield.
+
+Start with the simplest QEMU-friendly path:
+
+```text
+PIT or local APIC timer
+IDT interrupt entry
+tick counter
+sleep queue
+preemptive scheduler option
+critical kernel regions where preemption is disabled
+```
+
+Acceptance tests:
+
+```text
+timer tick increments
+process sleeping 10 ms wakes
+CPU-bound process cannot starve logd
+scheduler preempts process without explicit yield
+preemption can be disabled for critical kernel regions
+```
+
+Do not over-engineer fairness in this milestone. The first target is control
+recovery and correct wakeups.
+
+## M31: User Page-Fault Handling And Process Death
+
+Status: planned.
+
+Goal: turn bad userspace memory behavior into process failure instead of kernel
+failure.
+
+Behavior:
+
+```text
+userspace page fault identifies current process
+bad userspace fault marks only that process Failed or Exited
+init observes failure through SYS_PROCESS_STATUS
+restart policy can restart the failed service
+kernel continues running
+```
+
+Acceptance tests:
+
+```text
+bad-pointer syscall returns STATUS_BAD_BUFFER
+direct invalid userspace load kills only that process
+init observes service failure
+restart policy can restart it
+kernel does not panic
+```
+
+This milestone should be kept narrow: process containment first, advanced fault
+delivery later.
+
+## M32: I/O Capability Substrate
+
+Status: planned.
+
+Goal: expose hardware authority through kernel objects before adding real
+drivers.
+
+Kernel object kinds:
+
+```text
+IoPortRange
+MmioRegion
+InterruptLine
+DmaRegion
+```
+
+Syscalls:
+
+```text
+SYS_IO_READ
+SYS_IO_WRITE
+SYS_IRQ_WAIT
+SYS_MMIO_MAP
+```
+
+Acceptance tests:
+
+```text
+serial-driver has COM1 I/O port capability
+serial-driver can write byte
+echo lacks I/O capability
+echo I/O write rejected
+```
+
+The enforcement rule is simple: only services with explicit I/O capabilities can
+touch hardware resources.
+
+## M33: Move Serial Logging Toward User Space
+
+Status: planned.
+
+Goal: keep kernel serial as a debug and panic path, but move normal logging
+toward a user-space driver model.
+
+Flow:
+
+```text
+Krust grants serial-driver I/O port capability
+serial-driver owns COM1
+logd sends messages to serial-driver
+serial-driver writes to serial
+```
+
+Acceptance tests:
+
+```text
+serial-driver ready
+logd sends log message
+serial-driver writes message to COM1
+logd cannot write COM1 directly
+echo cannot write COM1 directly
+kernel debug serial still works for panic path
+```
+
+This aligns Krust with the microkernel direction: drivers belong in userspace
+when the kernel can safely enforce the resource boundary.
+
+## M34: First Real Block-Device Path
+
+Status: planned.
+
+Goal: add storage transport without adding a filesystem yet.
+
+Preferred first target:
+
+```text
+QEMU virtual disk
+virtio-blk driver service
+virtio MMIO or PCI authority
+block-read/block-write IPC protocol
+```
+
+Acceptance tests:
+
+```text
+block-driver ready
+store-service requests block read
+block-driver returns bytes
+unauthorized service cannot talk to block-driver
+unauthorized service cannot access MMIO, IRQ, or DMA capabilities
+```
+
+This may need to split into multiple sub-milestones if PCI enumeration, virtio
+queues, DMA, and IRQ handling prove too large for one step.
+
+## M35: Native Immutable Store Service
+
+Status: planned.
+
+Goal: implement the first native Vertex store feature without implementing
+POSIX or a general filesystem.
+
+Service:
+
+```text
+vertex-store
+  reads content-addressed objects from block service
+  exposes StoreObjectRead capabilities
+  verifies object hashes
+```
+
+Object identity:
+
+```text
+store:blake3:<hash>
+```
+
+Acceptance tests:
+
+```text
+model-reader asks for store:hello-text
+vertex-store verifies hash
+model-reader reads bytes
+modified object fails hash check
+unauthorized process cannot read object
+```
+
+This turns the current boot-module store proof into a real immutable object
+service.
+
+## M36: Native State-Volume Service
+
+Status: planned.
+
+Goal: add real mutable state while keeping it distinct from immutable store
+objects.
+
+Service:
+
+```text
+vertex-state
+  owns block ranges or state objects
+  exposes state-volume capabilities
+  supports read, write, snapshot, and restore semantics
+```
+
+Acceptance tests:
+
+```text
+counter-service writes state
+reader-service reads state
+reader-service write denied
+snapshot created
+state restored
+system generation rollback does not automatically roll back state unless policy says so
+```
+
+Immutable system rollback and mutable state rollback are related policy
+decisions, not the same operation.
+
+## M37: Native Generation Switch
+
+Status: planned.
+
+Goal: make generation switching real instead of only boot-time generation
+selection and rollback metadata.
+
+Flow:
+
+```text
+vertex-init activates generation A
+vertex-store exposes generation B manifest
+vertex-init validates B
+vertex-init starts B services
+old generation authority is revoked
+if B fails, rollback to A
+```
+
+Acceptance tests:
+
+```text
+boot generation A
+switch to generation B
+service from A loses old capability
+service from B runs
+bad generation C fails
+rollback to B
+```
+
+This milestone depends on manifest v1, revocation, resource accounting, and
+store service work.
+
+## M38: Native Vertexctl-Like Introspection Service
+
+Status: planned.
+
+Goal: bring Vertex explainability into the native system.
+
+Service:
+
+```text
+vertex-inspect
+  asks kernel for process and capability graph
+  asks vertex-init for generation graph
+  emits a structured graph report
+```
+
+Queries:
+
+```text
+why can echo send to logd?
+who can read store:hello-text?
+which generation started process 7?
+which caps were derived from cap 4?
+which service owns state:counter?
+```
+
+Acceptance tests:
+
+```text
+native why echo log-sink
+native who-can state:counter
+native cap provenance report
+```
+
+This is the native counterpart to hosted `vertexctl why` and should reuse the
+same graph vocabulary where possible.
+
+## M39: Reproducible Build Environment
+
+Status: planned.
+
+Goal: make the build environment itself reproducible without requiring an
+external functional package manager.
+
+Add:
+
+```text
+documented host tool versions for Rust, qemu, limine, xorriso, and cargo tools
+locked Cargo dependencies
+kernel/krust/rust-toolchain.toml as the native Krust toolchain pin
+make doctor checks every required tool and reports actionable fixes
+single release-gate script that runs the clean-clone M14-M24 proof
+```
+
+Acceptance tests:
+
+```text
+cargo build --offline
+target/debug/vertexctl validate examples/hello-generation.vertex.json
+cd kernel/krust && make doctor && make smoke
+scripts/krust-test.sh restart
+scripts/krust-test.sh timer
+scripts/krust-test.sh store-state
+```
+
+This can land earlier than M39 as a parallel track. The milestone number marks
+the point by which the project should have first-class, repo-native build
+reproducibility instead of placeholder external tooling.
+
+## M40: Vertex Native Runtime ABI v1
+
+Status: planned.
+
+Goal: freeze a small native ABI subset after the substrate has enough real use
+to reveal the unstable parts.
+
+ABI set:
+
+```text
+KrustBoot Manifest v1
+Krust Syscall ABI v1
+Vertex Native Protocol v1
+Capability Rights v1
+Process Lifecycle v1
+Store Object v1
+State Volume v1
+```
+
+This does not mean Vertex OS is stable. It means the prototype has a durable
+base for the next phase.
+
+## Immediate Issue List
+
+Create these first:
+
+```text
+M25.1  Fix and verify shell, Makefile, Rust, and Markdown formatting
+M25.2  Clean-clone test gate for all M14-M24 scripts
+M25.3  Add CI-style smoke/test wrapper
+M26.1  Define KrustBoot Manifest v1 binary layout
+M26.2  Add manifest bounds and checksum/hash validation
+M26.3  Add invalid-manifest QEMU tests
+M27.1  Add capability provenance metadata
+M27.2  Add SYS_CAP_REVOKE
+M27.3  Add revocation and attenuation tests
+M28.1  Add kernel heap and typed object arenas
+M29.1  Add resource accounting and quotas
+M30.1  Add real timer interrupt path
+M31.1  Add user page-fault-to-process-failure handling
+```
 
 ## Deferred Work
 
-Avoid these until native graph activation, readiness, compilation, supervision,
-and rollback semantics are solid:
+Avoid these until substrate hardening, generation switching, store/state, and
+I/O capability enforcement are solid:
 
 ```text
-filesystem driver
-network driver
 USB
 GPU
+full filesystem
 POSIX compatibility
 Linux syscall compatibility
+network stack
+package manager replacement
 desktop
 Haskell DSL
-full Nix replacement
-dynamic package manager
-preemptive scheduler
 multicore
 ```
 
 They matter eventually, but they distract from the next core proof:
 
 ```text
-A native booted Vertex system should be fully determined by the generation graph.
+A native booted Vertex system should be able to activate, switch, inspect,
+revoke, and persist declared generation graphs under explicit authority.
 ```
 
 M13 proved that native services can run under explicit authority. M14-M24 prove
 that the graph itself decides which native services exist, when they start,
-what they receive, and why they are allowed to communicate.
+what they receive, and why they are allowed to communicate. M25-M40 should make
+that model reliable enough to become the long-lived Vertex native runtime base.

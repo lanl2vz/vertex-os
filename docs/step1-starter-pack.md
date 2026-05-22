@@ -28,7 +28,7 @@ Suggested next implementation order:
 
 The design is inspired by, but not equivalent to, existing systems:
 
-- Nix / NixOS: reproducible, declarative, reliable system construction and rollback.
+- Reproducible declarative systems: reliable system construction, immutable artifacts, and rollback.
 - seL4: capability-oriented microkernel design and high-assurance kernel research.
 - Redox OS: Rust-written microkernel operating-system work with many components in user space.
 

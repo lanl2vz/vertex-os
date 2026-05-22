@@ -11,7 +11,7 @@ Kernel: Krust Kernel
 
 A shorter slogan:
 
-> **NixOS makes the system buildable as a value. Vertex OS should make the system runnable as a value.**
+> **The system graph should be buildable, bootable, and runnable as a value.**
 
 ## Why the name Vertex?
 
@@ -47,9 +47,10 @@ Edges describe explicit relationships:
 
 The operating system is not merely configured by a graph. The operating system **is** the graph, activated and enforced.
 
-## Philosophical inheritance from NixOS
+## Philosophical Inheritance
 
-Vertex OS inherits the strongest ideas from NixOS:
+Vertex OS inherits the strongest ideas from reproducible declarative operating
+systems:
 
 1. **Declarative systems** — the desired system is described, not hand-mutated into existence.
 2. **Reproducibility** — build inputs and system inputs should be explicit.
@@ -58,7 +59,10 @@ Vertex OS inherits the strongest ideas from NixOS:
 5. **Rollback** — previous working generations should remain bootable or activatable.
 6. **Graph thinking** — software is a dependency graph, not a pile of global files.
 
-But Vertex OS changes the target. NixOS primarily makes the system **buildable and deployable** as an immutable closure. Vertex OS should make the system **runnable** as an explicit graph whose runtime authority is also declared.
+But Vertex OS changes the target. Existing declarative systems primarily make
+the system **buildable and deployable** as an immutable closure. Vertex OS
+should make the system **runnable** as an explicit graph whose runtime authority
+is also declared.
 
 ## Core problem with ordinary operating systems
 
@@ -70,7 +74,8 @@ Traditional Unix-like systems expose a great deal of ambient authority:
 - Kernel drivers and system services often hold much more authority than their actual task requires.
 - Mutable state is scattered through `/var`, home directories, sockets, caches, pid files, and logs.
 
-NixOS improves the build and configuration side dramatically, but it still runs mostly on the Linux/Unix authority model.
+Declarative package and system managers improve the build and configuration
+side dramatically, but they usually still run on the Linux/Unix authority model.
 
 Vertex OS exists to remove this mismatch.
 
@@ -108,7 +113,7 @@ The answer should be: because a typed edge exists in the generation graph.
 
 ## Design law 2: explicit runtime authority
 
-Nix-style explicit dependencies should not stop at build time.
+Explicit dependencies should not stop at build time.
 
 Vertex OS should extend explicitness into runtime authority:
 
@@ -235,15 +240,18 @@ Legacy software may run inside a compatibility environment that maps explicit ca
 
 The compatibility layer may emulate ambient authority internally, but it must be bounded by explicit Vertex capabilities from the outside.
 
-## Design law 8: use Nix to bootstrap, not to constrain
+## Design law 8: reproducibility must be native, not outsourced
 
-Early Vertex OS should use Nix to build artifacts, images, examples, test programs, and the first Krust Kernel experiments.
+Early Vertex OS should be buildable with ordinary, pinned, documented tools:
+Rust, Cargo, QEMU, Limine, xorriso, and the repository's own scripts.
 
-Nix is the bootstrap tool.
+External package managers can be useful on individual developer machines, but
+the repo should not require one as a functional dependency.
 
-Vertex OS should eventually define its own generation model, but the first practical project rule should be:
+Vertex OS should define its own generation, store, state, and activation model.
+The practical project rule is:
 
-> **Nix builds Vertex until Vertex can build itself.**
+> **Vertex-native artifacts and manifests are the source of truth.**
 
 ## Principal components
 
