@@ -73,14 +73,16 @@ pub fn enter(image: UserImage) -> ! {
     }
 }
 
-pub fn enter_ipc_demo(initial: ipc::ProcessContext) -> ! {
+pub fn enter_ipc_demo(initial_name: &str, initial: ipc::ProcessContext) -> ! {
     gdt::init();
     serial::write_str("GDT initialized\n");
     exceptions::init();
     syscall::init();
     serial::write_str("Syscall path initialized\n");
 
-    serial::write_str("Entering IPC sender userspace\n");
+    serial::write_str("Entering userspace process: ");
+    serial::write_str(initial_name);
+    serial::write_str("\n");
     unsafe {
         gdt::enter_user_mode(initial.cr3, initial.entry, initial.stack_top);
     }

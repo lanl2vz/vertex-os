@@ -1,6 +1,6 @@
 # Krust Kernel
 
-Krust M9 is the first native safe user-memory milestone.
+Krust M10 is the first native compiled boot-manifest milestone.
 
 The target is intentionally small:
 
@@ -11,8 +11,10 @@ Krust enters 64-bit Rust code
 Krust writes "Krust Kernel booted" to COM1 serial
 Krust reads the Limine memory map response
 Krust prints every memory map entry to serial
-Limine loads `hello-generation.vertex.json` as a boot module
-Krust finds the manifest module and prints its generation ID
+`vertexctl compile-boot-manifest` compiles `hello-generation.vertex.json`'s `krustBoot` section to `hello-generation.krustboot`
+Limine loads `hello-generation.krustboot` as a boot module
+Krust parses the fixed-format KrustBoot manifest and prints its generation ID
+Krust prints the KrustBoot boot modules, processes, endpoints, and grants
 Krust builds a physical frame allocator from usable memory map entries
 Krust allocates, frees, and reuses 4 KiB physical frames
 Krust walks the active x86_64 page tables through Limine's HHDM
@@ -22,11 +24,12 @@ Krust creates fixed kernel objects and boot capabilities
 Krust prints the boot capability table
 Limine loads `krust-ipc-sender.elf` and `krust-ipc-receiver.elf` as boot modules
 Krust loads each static user ELF into a fresh low-half address space
-Krust creates a runtime process table and endpoint table
-Krust gives ipc-sender cap[0] send rights to endpoint 1
-Krust gives ipc-receiver cap[0] receive rights to endpoint 1
+Krust creates a runtime process table and endpoint table from the KrustBoot manifest
+Krust allocates runtime process IDs and states from KrustBoot process records
+Krust grants ipc-sender cap[0] send rights to demo-ipc from the KrustBoot manifest
+Krust grants ipc-receiver cap[0] receive rights to demo-ipc from the KrustBoot manifest
 Krust installs a minimal IDT for #UD, #GP, and #PF
-Krust enters ring 3 at the sender ELF entry point
+Krust enters ring 3 at the initial process entry point
 Krust validates syscall user buffers by walking user page tables
 Bad `sys_write_serial`, `sys_ipc_send`, and `sys_ipc_recv` pointers return STATUS_BAD_BUFFER
 Sender calls `sys_ipc_recv` and is rejected for missing receive rights
@@ -39,11 +42,13 @@ Krust halts after `IPC demo ok`
 ```
 
 No dynamic heap allocator, general scheduler, blocking IPC, full interrupt
-handling, timer/APIC setup, preemption, user page-fault recovery, full manifest
-parsing, Vertex IR integration, filesystem, network, or device drivers are part
-of M9. The M9 syscall path rejects the expected bad-pointer tests before CPU
-faults; the IDT handlers provide a defined serial-log-and-halt path for
-unexpected `#UD`, `#GP`, and `#PF`.
+handling, timer/APIC setup, preemption, user page-fault recovery, full JSON
+parsing in the kernel, full Vertex IR integration, filesystem, network, or
+device drivers are part of M10. The kernel consumes a compact KrustBoot manifest
+compiled by hosted `vertexctl`; full graph interpretation remains a userspace
+responsibility. The M9 syscall path still rejects the expected bad-pointer tests
+before CPU faults, and the IDT handlers provide a defined serial-log-and-halt
+path for unexpected `#UD`, `#GP`, and `#PF`.
 
 ## Prerequisites
 
@@ -107,7 +112,8 @@ This builds `target/x86_64-unknown-none/debug/krust`,
 make iso
 ```
 
-This creates `build/krust.iso`.
+This runs `vertexctl compile-boot-manifest`, writes
+`build/hello-generation.krustboot`, and creates `build/krust.iso`.
 
 ## Run
 
@@ -121,21 +127,30 @@ Expected terminal output:
 Krust Kernel booted
 Limine base revision supported
 Limine memory map entries: ...
-Vertex manifest generation: gen:hello-0001
+KrustBoot manifest generation: gen:hello-0001
+KrustBoot boot modules: 2
+KrustBoot processes: 2
+KrustBoot endpoints: 1
+KrustBoot grants: 2
+  grant[0] process=ipc-sender cap[0] endpoint=demo-ipc rights=send
+  grant[1] process=ipc-receiver cap[0] endpoint=demo-ipc rights=receive
 Physical allocator demo ok
 Virtual memory demo ok
 Capability table demo ok
 Process table entries: 2
 Endpoint table entries: 1
+endpoint[0] id=1 name=demo-ipc
+process[0] id=1 name=ipc-sender state=running
+process[1] id=2 name=ipc-receiver state=ready
 proc=ipc-sender cap[0] endpoint=1 rights=send
 proc=ipc-receiver cap[0] endpoint=1 rights=receive
 GDT initialized
 IDT initialized: #UD #GP #PF
 Syscall path initialized
-Entering IPC sender userspace
+Entering userspace process: ipc-sender
 Userspace sys_write_serial: ipc sender started
 Bad pointer test: SYS_WRITE_SERIAL returned STATUS_BAD_BUFFER
-IPC negative test: sender receive rejected: bad capability
+IPC negative test: ipc-sender receive rejected: bad capability
 Bad pointer test: SYS_IPC_SEND returned STATUS_BAD_BUFFER
 IPC send accepted: endpoint=1 bytes=14
 Userspace sys_write_serial: ipc sender sent message
@@ -144,7 +159,7 @@ IPC receive delivered: endpoint=1 bytes=14
 Userspace sys_write_serial: ipc receiver received message
 Userspace sys_write_serial: Krust IPC ping
 Bad pointer test: SYS_IPC_RECV returned STATUS_BAD_BUFFER
-IPC negative test: receiver send rejected: bad capability
+IPC negative test: ipc-receiver send rejected: bad capability
 IPC demo ok
 ```
 
@@ -163,13 +178,21 @@ The smoke test boots QEMU headlessly, captures serial output to
 ```text
 Krust Kernel booted
 Limine memory map entries:
-Vertex manifest generation: gen:hello-0001
+KrustBoot manifest generation: gen:hello-0001
+KrustBoot processes: 2
+KrustBoot endpoints: 1
+KrustBoot grants: 2
+grant[0] process=ipc-sender cap[0] endpoint=demo-ipc rights=send
+grant[1] process=ipc-receiver cap[0] endpoint=demo-ipc rights=receive
 Physical allocator demo ok
 Virtual memory demo ok
 Capability table demo ok
 IDT initialized: #UD #GP #PF
 Process table entries: 2
 Endpoint table entries: 1
+endpoint[0] id=1 name=demo-ipc
+process[0] id=1 name=ipc-sender state=running
+process[1] id=2 name=ipc-receiver state=ready
 proc=ipc-sender cap[0] endpoint=1 rights=send
 proc=ipc-receiver cap[0] endpoint=1 rights=receive
 Bad pointer test: SYS_WRITE_SERIAL returned STATUS_BAD_BUFFER
@@ -177,8 +200,8 @@ Bad pointer test: SYS_IPC_SEND returned STATUS_BAD_BUFFER
 Bad pointer test: SYS_IPC_RECV returned STATUS_BAD_BUFFER
 IPC send accepted: endpoint=1 bytes=14
 IPC receive delivered: endpoint=1 bytes=14
-IPC negative test: sender receive rejected: bad capability
-IPC negative test: receiver send rejected: bad capability
+IPC negative test: ipc-sender receive rejected: bad capability
+IPC negative test: ipc-receiver send rejected: bad capability
 Krust IPC ping
 IPC demo ok
 ```
@@ -186,11 +209,11 @@ IPC demo ok
 ## Machine Notes
 
 Linux x86_64 can add KVM later with QEMU flags such as `-enable-kvm -cpu host`.
-That is not enabled by default so the M9 command stays portable:
+That is not enabled by default so the M10 command stays portable:
 
 ```sh
 QEMU_EXTRA="-enable-kvm -cpu host" make smoke
 ```
 
 macOS Apple Silicon can run `qemu-system-x86_64` by emulation. It is slower than
-native AArch64 virtualization, but it is enough for the M9 serial milestone.
+native AArch64 virtualization, but it is enough for the M10 serial milestone.

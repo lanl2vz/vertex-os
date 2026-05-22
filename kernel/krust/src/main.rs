@@ -1,6 +1,7 @@
 #![no_std]
 #![no_main]
 
+mod boot_manifest;
 mod capability;
 mod elf;
 mod exceptions;
@@ -17,10 +18,7 @@ mod userspace;
 use core::arch::asm;
 use core::panic::PanicInfo;
 
-const VERTEX_MANIFEST_MODULE: &[u8] = b"vertex-manifest";
-const KRUST_IPC_SENDER_MODULE: &[u8] = b"krust-ipc-sender";
-const KRUST_IPC_RECEIVER_MODULE: &[u8] = b"krust-ipc-receiver";
-const GENERATION_ID_PREFIX: &[u8] = b"gen:";
+const MAX_BOOT_PROCESSES: usize = 4;
 
 #[unsafe(link_section = ".text._start")]
 #[unsafe(no_mangle)]
@@ -79,7 +77,9 @@ fn print_boot_info() {
         index += 1;
     }
 
-    print_manifest_module();
+    let Some(boot_manifest) = print_boot_modules() else {
+        return;
+    };
     let mut allocator = match init_physical_allocator(&memory_map) {
         Some(allocator) => allocator,
         None => return,
@@ -90,7 +90,7 @@ fn print_boot_info() {
         return;
     };
     run_capability_table_demo(&allocator, heap);
-    run_ipc_demo(&mut allocator);
+    run_ipc_demo(&mut allocator, &boot_manifest);
 }
 
 fn init_physical_allocator(memory_map: &limine::MemoryMap) -> Option<memory::FrameAllocator> {
@@ -252,7 +252,7 @@ fn run_virtual_memory_demo(allocator: &mut memory::FrameAllocator) -> Option<Ker
 fn run_capability_table_demo(allocator: &memory::FrameAllocator, heap: KernelHeapMapping) {
     let mut table = capability::CapabilityTable::new();
     let stats = allocator.stats();
-    let manifest_module = find_vertex_manifest_module();
+    let manifest_module = find_boot_manifest_module();
 
     let kernel_process =
         match table.add_object(capability::KernelObjectKind::Process, "proc:kernel", 0, 0) {
@@ -312,7 +312,7 @@ fn run_capability_table_demo(allocator: &memory::FrameAllocator, heap: KernelHea
     };
     let boot_module = match table.add_object(
         capability::KernelObjectKind::BootModule,
-        "module:vertex-manifest",
+        "module:krustboot-manifest",
         manifest_module
             .map(|module| module.address as u64)
             .unwrap_or(0),
@@ -370,60 +370,35 @@ fn run_capability_table_demo(allocator: &memory::FrameAllocator, heap: KernelHea
     }
 }
 
-fn run_ipc_demo(allocator: &mut memory::FrameAllocator) {
+fn run_ipc_demo(
+    allocator: &mut memory::FrameAllocator,
+    boot_manifest: &boot_manifest::Manifest<'static>,
+) {
     let Some(hhdm_offset) = limine::hhdm_offset() else {
         serial::write_str("IPC userspace load failed: HHDM unavailable\n");
         return;
     };
 
-    let Some(sender) = load_user_image(
-        "Krust IPC sender module",
-        KRUST_IPC_SENDER_MODULE,
-        hhdm_offset,
-        allocator,
-    ) else {
+    let mut images = [None; MAX_BOOT_PROCESSES];
+    let mut index = 0;
+    while index < boot_manifest.process_count() {
+        let Some(process) = boot_manifest.process(index) else {
+            serial::write_str("KrustBoot IPC plan failed: process gap\n");
+            return;
+        };
+        let Some(image) = load_boot_process_image(process, hhdm_offset, allocator) else {
+            return;
+        };
+        images[index] = Some(image);
+        index += 1;
+    }
+
+    let Some(config) = build_ipc_boot_config(boot_manifest, &images) else {
         return;
     };
-    let Some(receiver) = load_user_image(
-        "Krust IPC receiver module",
-        KRUST_IPC_RECEIVER_MODULE,
-        hhdm_offset,
-        allocator,
-    ) else {
-        return;
-    };
 
-    serial::write_str("Krust IPC sender ELF loaded: entry=");
-    serial::write_u64_hex(sender.entry);
-    serial::write_str(" stack=");
-    serial::write_u64_hex(sender.stack_top);
-    serial::write_str(" cr3=");
-    serial::write_u64_hex(sender.cr3);
-    serial::write_str("\n");
-
-    serial::write_str("Krust IPC receiver ELF loaded: entry=");
-    serial::write_u64_hex(receiver.entry);
-    serial::write_str(" stack=");
-    serial::write_u64_hex(receiver.stack_top);
-    serial::write_str(" cr3=");
-    serial::write_u64_hex(receiver.cr3);
-    serial::write_str("\n");
-
-    if ipc::init_for_boot(
-        ipc::ProcessContext {
-            cr3: sender.cr3,
-            entry: sender.entry,
-            stack_top: sender.stack_top,
-        },
-        ipc::ProcessContext {
-            cr3: receiver.cr3,
-            entry: receiver.entry,
-            stack_top: receiver.stack_top,
-        },
-    )
-    .is_err()
-    {
-        serial::write_str("IPC runtime init failed\n");
+    if ipc::init_from_boot_config(config).is_err() {
+        serial::write_str("IPC runtime init failed from KrustBoot manifest\n");
         return;
     }
 
@@ -432,36 +407,135 @@ fn run_ipc_demo(allocator: &mut memory::FrameAllocator) {
         return;
     };
 
-    userspace::enter_ipc_demo(initial);
+    userspace::enter_ipc_demo(ipc::initial_process_name(), initial);
 }
 
-fn load_user_image(
-    label: &str,
-    module_string: &[u8],
+fn load_boot_process_image(
+    process: boot_manifest::Process<'static>,
     hhdm_offset: u64,
     allocator: &mut memory::FrameAllocator,
 ) -> Option<userspace::UserImage> {
-    let Some(module) = find_module_by_string(module_string) else {
-        serial::write_str(label);
-        serial::write_str(" unavailable\n");
+    let Some(module) = find_module_by_string(process.module_string.as_bytes()) else {
+        serial::write_str("KrustBoot process module unavailable: process=");
+        serial::write_str(process.name);
+        serial::write_str(" module=");
+        serial::write_str(process.module_string);
+        serial::write_str("\n");
         return None;
     };
 
-    serial::write_str(label);
-    serial::write_str(": ");
+    serial::write_str("KrustBoot process module: process=");
+    serial::write_str(process.name);
+    serial::write_str(" path=");
     serial::write_c_string(module.path);
+    serial::write_str(" string=");
+    serial::write_str(process.module_string);
     serial::write_str(" bytes=");
     serial::write_u64_dec(module.size);
     serial::write_str("\n");
 
     let bytes = unsafe { core::slice::from_raw_parts(module.address, module.size as usize) };
     match userspace::load(bytes, hhdm_offset, allocator) {
-        Ok(image) => Some(image),
+        Ok(image) => {
+            serial::write_str("KrustBoot process ELF loaded: process=");
+            serial::write_str(process.name);
+            serial::write_str(" entry=");
+            serial::write_u64_hex(image.entry);
+            serial::write_str(" stack=");
+            serial::write_u64_hex(image.stack_top);
+            serial::write_str(" cr3=");
+            serial::write_u64_hex(image.cr3);
+            serial::write_str("\n");
+            Some(image)
+        }
         Err(error) => {
             userspace::print_load_error(error);
             None
         }
     }
+}
+
+fn build_ipc_boot_config(
+    boot_manifest: &boot_manifest::Manifest<'static>,
+    images: &[Option<userspace::UserImage>; MAX_BOOT_PROCESSES],
+) -> Option<ipc::BootRuntimeConfig> {
+    let mut config = ipc::BootRuntimeConfig::new();
+
+    let mut index = 0;
+    while index < boot_manifest.endpoint_count() {
+        let endpoint = boot_manifest.endpoint(index)?;
+        if config
+            .add_endpoint(ipc::BootEndpointConfig {
+                name: endpoint.name,
+            })
+            .is_err()
+        {
+            serial::write_str("KrustBoot IPC plan failed: endpoint table\n");
+            return None;
+        }
+        index += 1;
+    }
+
+    index = 0;
+    while index < boot_manifest.process_count() {
+        let process = boot_manifest.process(index)?;
+        let Some(image) = images[index] else {
+            serial::write_str("KrustBoot IPC plan failed: process image gap\n");
+            return None;
+        };
+        if config
+            .add_process(ipc::BootProcessConfig {
+                name: process.name,
+                context: ipc::ProcessContext {
+                    cr3: image.cr3,
+                    entry: image.entry,
+                    stack_top: image.stack_top,
+                },
+                initial: process.initial,
+            })
+            .is_err()
+        {
+            serial::write_str("KrustBoot IPC plan failed: process table\n");
+            return None;
+        }
+        index += 1;
+    }
+
+    index = 0;
+    while index < boot_manifest.grant_count() {
+        let grant = boot_manifest.grant(index)?;
+        let rights = capability_rights_from_boot(grant.rights);
+        if rights == 0 {
+            serial::write_str("KrustBoot IPC plan failed: empty grant rights\n");
+            return None;
+        }
+        if config
+            .add_grant(ipc::BootGrantConfig {
+                process_index: grant.process_index,
+                cap_slot: grant.cap_slot,
+                endpoint_index: grant.endpoint_index,
+                rights,
+            })
+            .is_err()
+        {
+            serial::write_str("KrustBoot IPC plan failed: grant table\n");
+            return None;
+        }
+        index += 1;
+    }
+
+    Some(config)
+}
+
+fn capability_rights_from_boot(rights: u16) -> u64 {
+    let mut out = 0;
+    if rights & boot_manifest::RIGHT_SEND != 0 {
+        out |= capability::RIGHT_SEND;
+    }
+    if rights & boot_manifest::RIGHT_RECEIVE != 0 {
+        out |= capability::RIGHT_RECEIVE;
+    }
+    out
 }
 
 fn print_map_error(label: &str, error: paging::MapError) {
@@ -492,16 +566,17 @@ fn print_allocator_stats(label: &str, allocator: &memory::FrameAllocator) {
     serial::write_str("\n");
 }
 
-fn print_manifest_module() {
+fn print_boot_modules() -> Option<boot_manifest::Manifest<'static>> {
     let Some(modules) = limine::modules() else {
         serial::write_str("Limine modules unavailable\n");
-        return;
+        return None;
     };
 
     serial::write_str("Limine modules: ");
     serial::write_u64_dec(modules.module_count());
     serial::write_str("\n");
 
+    let mut parsed_manifest = None;
     let mut index = 0;
     while index < modules.module_count() {
         if let Some(module) = modules.module(index) {
@@ -515,17 +590,23 @@ fn print_manifest_module() {
             serial::write_u64_dec(module.size);
             serial::write_str("\n");
 
-            if c_string_eq(module.string, VERTEX_MANIFEST_MODULE) {
-                print_vertex_manifest(module);
+            if c_string_eq(module.string, boot_manifest::MODULE_STRING) {
+                parsed_manifest = parse_boot_manifest_module(module);
             }
         }
 
         index += 1;
     }
+
+    if parsed_manifest.is_none() {
+        serial::write_str("KrustBoot manifest unavailable\n");
+    }
+
+    parsed_manifest
 }
 
-fn find_vertex_manifest_module() -> Option<&'static limine::File> {
-    find_module_by_string(VERTEX_MANIFEST_MODULE)
+fn find_boot_manifest_module() -> Option<&'static limine::File> {
+    find_module_by_string(boot_manifest::MODULE_STRING)
 }
 
 fn find_module_by_string(expected: &[u8]) -> Option<&'static limine::File> {
@@ -545,21 +626,28 @@ fn find_module_by_string(expected: &[u8]) -> Option<&'static limine::File> {
     None
 }
 
-fn print_vertex_manifest(module: &limine::File) {
-    serial::write_str("Vertex manifest module: ");
+fn parse_boot_manifest_module(
+    module: &'static limine::File,
+) -> Option<boot_manifest::Manifest<'static>> {
+    serial::write_str("KrustBoot manifest module: ");
     serial::write_c_string(module.path);
     serial::write_str(" bytes=");
     serial::write_u64_dec(module.size);
     serial::write_str("\n");
 
     let bytes = unsafe { core::slice::from_raw_parts(module.address, module.size as usize) };
-    serial::write_str("Vertex manifest generation: ");
-    if let Some(id) = find_generation_id(bytes) {
-        serial::write_ascii_bytes(id);
-    } else {
-        serial::write_str("<not found>");
+    match boot_manifest::parse(bytes) {
+        Ok(manifest) => {
+            print_boot_manifest(&manifest);
+            Some(manifest)
+        }
+        Err(error) => {
+            serial::write_str("KrustBoot manifest parse failed: ");
+            print_boot_manifest_error(error);
+            serial::write_str("\n");
+            None
+        }
     }
-    serial::write_str("\n");
 }
 
 fn c_string_eq(value: *const u8, expected: &[u8]) -> bool {
@@ -580,33 +668,116 @@ fn c_string_eq(value: *const u8, expected: &[u8]) -> bool {
     unsafe { value.add(expected.len()).read() == 0 }
 }
 
-fn find_generation_id(bytes: &[u8]) -> Option<&[u8]> {
-    let start = find_bytes(bytes, GENERATION_ID_PREFIX)?;
-    let mut end = start;
+fn print_boot_manifest(manifest: &boot_manifest::Manifest<'static>) {
+    serial::write_str("KrustBoot manifest generation: ");
+    serial::write_str(manifest.generation_id());
+    serial::write_str("\n");
 
-    while end < bytes.len() {
-        let byte = bytes[end];
-        if !(byte.is_ascii_alphanumeric() || matches!(byte, b':' | b'.' | b'_' | b'-')) {
-            break;
-        }
-        end += 1;
-    }
-
-    Some(&bytes[start..end])
-}
-
-fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    if needle.is_empty() || needle.len() > haystack.len() {
-        return None;
-    }
-
+    serial::write_str("KrustBoot boot modules: ");
+    serial::write_u64_dec(manifest.boot_module_count() as u64);
+    serial::write_str("\n");
     let mut index = 0;
-    while index <= haystack.len() - needle.len() {
-        if &haystack[index..index + needle.len()] == needle {
-            return Some(index);
+    while index < manifest.boot_module_count() {
+        if let Some(module) = manifest.boot_module(index) {
+            serial::write_str("  boot_module[");
+            serial::write_u64_dec(index as u64);
+            serial::write_str("] name=");
+            serial::write_str(module.name);
+            serial::write_str(" string=");
+            serial::write_str(module.module_string);
+            serial::write_str("\n");
         }
         index += 1;
     }
 
-    None
+    serial::write_str("KrustBoot processes: ");
+    serial::write_u64_dec(manifest.process_count() as u64);
+    serial::write_str("\n");
+    index = 0;
+    while index < manifest.process_count() {
+        if let Some(process) = manifest.process(index) {
+            serial::write_str("  process[");
+            serial::write_u64_dec(index as u64);
+            serial::write_str("] name=");
+            serial::write_str(process.name);
+            serial::write_str(" module=");
+            serial::write_str(process.module_string);
+            serial::write_str(" initial=");
+            serial::write_str(if process.initial { "yes" } else { "no" });
+            serial::write_str("\n");
+        }
+        index += 1;
+    }
+
+    serial::write_str("KrustBoot endpoints: ");
+    serial::write_u64_dec(manifest.endpoint_count() as u64);
+    serial::write_str("\n");
+    index = 0;
+    while index < manifest.endpoint_count() {
+        if let Some(endpoint) = manifest.endpoint(index) {
+            serial::write_str("  endpoint[");
+            serial::write_u64_dec(index as u64);
+            serial::write_str("] name=");
+            serial::write_str(endpoint.name);
+            serial::write_str("\n");
+        }
+        index += 1;
+    }
+
+    serial::write_str("KrustBoot grants: ");
+    serial::write_u64_dec(manifest.grant_count() as u64);
+    serial::write_str("\n");
+    index = 0;
+    while index < manifest.grant_count() {
+        if let Some(grant) = manifest.grant(index) {
+            let process = manifest.process(grant.process_index);
+            let endpoint = manifest.endpoint(grant.endpoint_index);
+            serial::write_str("  grant[");
+            serial::write_u64_dec(index as u64);
+            serial::write_str("] process=");
+            serial::write_str(process.map(|process| process.name).unwrap_or("<bad>"));
+            serial::write_str(" cap[");
+            serial::write_u64_dec(grant.cap_slot);
+            serial::write_str("] endpoint=");
+            serial::write_str(endpoint.map(|endpoint| endpoint.name).unwrap_or("<bad>"));
+            serial::write_str(" rights=");
+            print_boot_grant_rights(grant.rights);
+            serial::write_str("\n");
+        }
+        index += 1;
+    }
+}
+
+fn print_boot_grant_rights(rights: u16) {
+    let mut wrote = false;
+    if rights & boot_manifest::RIGHT_SEND != 0 {
+        serial::write_str("send");
+        wrote = true;
+    }
+    if rights & boot_manifest::RIGHT_RECEIVE != 0 {
+        if wrote {
+            serial::write_str("|");
+        }
+        serial::write_str("receive");
+        wrote = true;
+    }
+    if !wrote {
+        serial::write_str("none");
+    }
+}
+
+fn print_boot_manifest_error(error: boot_manifest::ParseError) {
+    match error {
+        boot_manifest::ParseError::Truncated => serial::write_str("truncated"),
+        boot_manifest::ParseError::BadMagic => serial::write_str("bad magic"),
+        boot_manifest::ParseError::UnsupportedVersion => serial::write_str("unsupported version"),
+        boot_manifest::ParseError::TooManyBootModules => serial::write_str("too many boot modules"),
+        boot_manifest::ParseError::TooManyProcesses => serial::write_str("too many processes"),
+        boot_manifest::ParseError::TooManyEndpoints => serial::write_str("too many endpoints"),
+        boot_manifest::ParseError::TooManyGrants => serial::write_str("too many grants"),
+        boot_manifest::ParseError::InvalidString => serial::write_str("invalid string"),
+        boot_manifest::ParseError::InvalidReference => serial::write_str("invalid reference"),
+        boot_manifest::ParseError::InvalidRights => serial::write_str("invalid rights"),
+        boot_manifest::ParseError::TrailingBytes => serial::write_str("trailing bytes"),
+    }
 }

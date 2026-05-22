@@ -27,6 +27,8 @@ pub struct GenerationManifest {
     pub services: Vec<Service>,
     pub activation: Activation,
     pub policies: Policies,
+    #[serde(default)]
+    pub krust_boot: Option<KrustBoot>,
 }
 
 impl GenerationManifest {
@@ -265,6 +267,62 @@ pub struct Policies {
     pub allow_ambient_devices: bool,
     pub capability_delegation: String,
     pub unknown_references: String,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KrustBoot {
+    pub format: String,
+    #[serde(default)]
+    pub boot_modules: Vec<KrustBootModule>,
+    #[serde(default)]
+    pub processes: Vec<KrustBootProcess>,
+    #[serde(default)]
+    pub endpoints: Vec<KrustBootEndpoint>,
+    #[serde(default)]
+    pub grants: Vec<KrustBootGrant>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KrustBootModule {
+    pub name: String,
+    pub module_string: String,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KrustBootProcess {
+    pub name: String,
+    pub module_string: String,
+    #[serde(default)]
+    pub initial: bool,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KrustBootEndpoint {
+    pub name: String,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KrustBootGrant {
+    pub process: String,
+    pub endpoint: String,
+    pub cap_slot: u16,
+    #[serde(default)]
+    pub rights: Vec<String>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
 }

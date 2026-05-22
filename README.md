@@ -6,7 +6,7 @@ Krust Kernel is the native Rust kernel prototype that will enforce that graph's
 runtime authority. The repository now has two active tracks: a hosted Linux
 prototype for Vertex IR, `vertexctl`, supervisor behavior, and capability
 semantics; and a bootable Krust kernel under `kernel/krust` that runs under
-QEMU/Limine and has reached the M9 safe user-memory milestone.
+QEMU/Limine and has reached the M10 compiled boot-manifest milestone.
 
 ## Repository Layout
 
@@ -17,7 +17,7 @@ vertex-os/
   examples/              Example generation manifests
   crates/
     vertex-ir/           Vertex IR model, loader, validation, graph helpers
-    vertexctl/           CLI for validation, graphing, activation, inspection, and rollback
+    vertexctl/           CLI for validation, graphing, boot-manifest compilation, activation, inspection, and rollback
     vertex-supervisor/   Hosted Linux graph activator prototype
   userland/
     vertex-init/         Planned first user-space activator
@@ -25,25 +25,26 @@ vertex-os/
     netstack/            Demo hosted network capability provider
     echo-server/         Demo service consuming log and network capabilities
   kernel/
-    krust/               Bootable Krust kernel prototype, currently at M9 user-copy safety
+    krust/               Bootable Krust kernel prototype, currently at M10 krustboot
   lang/
     vertex-lang/         Planned typed system-definition language
   nix/                   Nix support modules and builders
   flake.nix              Planned root flake entrypoint
 ```
 
-## Krust M9
+## Krust M10
 
-The current native safety milestone lives in `kernel/krust`. It is isolated
-from the hosted Cargo workspace and boots a Limine ISO under QEMU until Krust
-prints `Krust Kernel booted`, reads Limine's memory map, finds the packaged
-`hello-generation.vertex.json` boot module, exercises physical and virtual
-memory, creates boot kernel objects and compact capabilities, loads two static
-userspace ELF modules, creates process-local endpoint capability tables,
-installs a minimal IDT for `#UD`, `#GP`, and `#PF`, validates syscall buffers by
-walking user page tables, rejects bad user pointers with `STATUS_BAD_BUFFER`,
-accepts the authorized send/receive path, rejects unauthorized cross-operations,
-transfers `Krust IPC ping`, and halts after `IPC demo ok`.
+The current native boot-authority milestone lives in `kernel/krust`. It is
+isolated from the hosted Cargo workspace and boots a Limine ISO under QEMU. The
+ISO build first runs `vertexctl compile-boot-manifest` to turn the source
+manifest's `krustBoot` section into `hello-generation.krustboot`, a compact
+fixed-format native boot manifest. Krust parses that module, prints the
+generation/process/endpoint/grant records, allocates runtime process IDs from
+those records, uses the manifest grants to create the IPC endpoint and
+process-local capabilities, loads two static userspace ELF modules, keeps the M9
+IDT and safe user-copy checks, accepts the authorized send/receive path, rejects
+unauthorized cross-operations, transfers `Krust IPC ping`, and halts after
+`IPC demo ok`.
 
 ```sh
 cd kernel/krust
@@ -63,6 +64,7 @@ target/debug/vertexctl validate examples/deny-log-generation.vertex.json
 target/debug/vertexctl graph examples/hello-generation.vertex.json
 target/debug/vertexctl why examples/hello-generation.vertex.json svc:echo-server cap:log.sink
 target/debug/vertexctl who-can examples/hello-generation.vertex.json cap:log.sink --json
+target/debug/vertexctl compile-boot-manifest examples/hello-generation.vertex.json /private/tmp/hello-generation.krustboot
 ```
 
 Materialize the hosted demo into a local store tree:

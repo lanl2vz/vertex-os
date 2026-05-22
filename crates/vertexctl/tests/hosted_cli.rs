@@ -204,6 +204,34 @@ fn who_can_json_reports_capability_authority() {
 }
 
 #[test]
+fn compile_boot_manifest_emits_krustboot_plan() {
+    let dir = temp_dir("krustboot");
+    let output_path = dir.join("hello-generation.krustboot");
+    let output_arg = output_path.to_string_lossy().to_string();
+
+    let stdout = assert_success(run(&[
+        "compile-boot-manifest",
+        "examples/hello-generation.vertex.json",
+        &output_arg,
+    ]));
+
+    assert!(stdout.contains("format: KrustBootManifest v0"));
+    assert!(stdout.contains("generation: gen:hello-0001"));
+    assert!(stdout.contains("processes: 2"));
+    assert!(stdout.contains("endpoints: 1"));
+    assert!(stdout.contains("grants: 2"));
+
+    let bytes = fs::read(&output_path).expect("read krustboot output");
+    assert!(bytes.starts_with(b"KRUSTBOOTV0\0\0\0\0\0"));
+    assert!(contains_bytes(&bytes, b"gen:hello-0001"));
+    assert!(contains_bytes(&bytes, b"ipc-sender"));
+    assert!(contains_bytes(&bytes, b"ipc-receiver"));
+    assert!(contains_bytes(&bytes, b"krust-ipc-sender"));
+    assert!(contains_bytes(&bytes, b"krust-ipc-receiver"));
+    assert!(contains_bytes(&bytes, b"demo-ipc"));
+}
+
+#[test]
 fn state_snapshot_restore_round_trip() {
     let dir = temp_dir("restore");
     let state_root = dir.join("state");
@@ -251,6 +279,12 @@ fn state_snapshot_restore_round_trip() {
 
     let restored = fs::read_to_string(state_current.join("message.txt")).expect("read restored");
     assert_eq!(restored, "original\n");
+}
+
+fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
+    haystack
+        .windows(needle.len())
+        .any(|window| window == needle)
 }
 
 #[cfg(unix)]

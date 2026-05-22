@@ -1,4 +1,5 @@
 mod hosted;
+mod krustboot;
 
 use std::env;
 use std::fs;
@@ -30,6 +31,7 @@ fn run(args: Vec<String>) -> Result<(), String> {
         "graph" => graph_cmd(&args[1..]),
         "why" => why_cmd(&args[1..]),
         "materialize-demo" => materialize_demo_cmd(&args[1..]),
+        "compile-boot-manifest" => compile_boot_manifest_cmd(&args[1..]),
         "activate" => activate_cmd(&args[1..]),
         "switch" => switch_cmd(&args[1..]),
         "rollback" => rollback_cmd(&args[1..]),
@@ -144,6 +146,31 @@ fn materialize_demo_cmd(args: &[String]) -> Result<(), String> {
         .map_err(|source| format!("failed to write {}: {source}", manifest_out.display()))?;
 
     println!("{}", manifest_out.display());
+    Ok(())
+}
+
+fn compile_boot_manifest_cmd(args: &[String]) -> Result<(), String> {
+    let [manifest_path, output_path] = args else {
+        return Err("usage: vertexctl compile-boot-manifest <manifest> <output>".to_owned());
+    };
+
+    let manifest = load_manifest(manifest_path).map_err(|error| error.to_string())?;
+    let report = validate_manifest(&manifest);
+    if !report.is_valid() {
+        print_report(&report);
+        return Err(format!(
+            "manifest {} is invalid; krustboot output suppressed",
+            manifest.generation.id
+        ));
+    }
+
+    let bytes = krustboot::compile(&manifest)?;
+    fs::write(output_path, &bytes)
+        .map_err(|source| format!("failed to write {output_path}: {source}"))?;
+    println!(
+        "{}",
+        krustboot::summary(&manifest, output_path, bytes.len())
+    );
     Ok(())
 }
 
@@ -404,6 +431,7 @@ fn print_usage() {
            vertexctl graph <manifest>\n\
            vertexctl why <manifest> <service> <capability>\n\
            vertexctl materialize-demo <manifest> <output-dir>\n\
+           vertexctl compile-boot-manifest <manifest> <output>\n\
            vertexctl activate <manifest> [--state-root <dir>] [--run-once]\n\
            vertexctl switch <manifest> [--state-root <dir>] [--run-once]\n\
            vertexctl rollback [--state-root <dir>] [--run-once] [--restore-state]\n\

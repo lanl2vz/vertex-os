@@ -124,6 +124,9 @@
         "capabilityDelegation": { "enum": ["explicit-only"] },
         "unknownReferences": { "enum": ["reject", "warn"] }
       }
+    },
+    "krustBoot": {
+      "$ref": "#/$defs/krustBoot"
     }
   },
   "$defs": {
@@ -290,6 +293,80 @@
           "type": "array",
           "minItems": 1,
           "items": { "type": "string" }
+        }
+      }
+    },
+    "krustBoot": {
+      "type": "object",
+      "required": ["format", "bootModules", "processes", "endpoints", "grants"],
+      "additionalProperties": true,
+      "properties": {
+        "format": { "const": "krustboot.v0" },
+        "bootModules": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 4,
+          "items": { "$ref": "#/$defs/krustBootModule" }
+        },
+        "processes": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 4,
+          "items": { "$ref": "#/$defs/krustBootProcess" }
+        },
+        "endpoints": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 4,
+          "items": { "$ref": "#/$defs/krustBootEndpoint" }
+        },
+        "grants": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "items": { "$ref": "#/$defs/krustBootGrant" }
+        }
+      }
+    },
+    "krustBootModule": {
+      "type": "object",
+      "required": ["name", "moduleString"],
+      "additionalProperties": true,
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "maxLength": 63 },
+        "moduleString": { "type": "string", "minLength": 1, "maxLength": 63 }
+      }
+    },
+    "krustBootProcess": {
+      "type": "object",
+      "required": ["name", "moduleString", "initial"],
+      "additionalProperties": true,
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "maxLength": 63 },
+        "moduleString": { "type": "string", "minLength": 1, "maxLength": 63 },
+        "initial": { "type": "boolean" }
+      }
+    },
+    "krustBootEndpoint": {
+      "type": "object",
+      "required": ["name"],
+      "additionalProperties": true,
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "maxLength": 63 }
+      }
+    },
+    "krustBootGrant": {
+      "type": "object",
+      "required": ["process", "endpoint", "capSlot", "rights"],
+      "additionalProperties": true,
+      "properties": {
+        "process": { "type": "string", "minLength": 1, "maxLength": 63 },
+        "endpoint": { "type": "string", "minLength": 1, "maxLength": 63 },
+        "capSlot": { "type": "integer", "minimum": 0, "maximum": 65535 },
+        "rights": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "enum": ["send", "receive"] }
         }
       }
     },

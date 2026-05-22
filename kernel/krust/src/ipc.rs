@@ -5,7 +5,6 @@ use crate::{
     usercopy::{self, UserPtr},
 };
 
-pub const ENDPOINT_CAP_SLOT: u64 = 0;
 pub const BOOT_ENDPOINT_ID: u64 = 1;
 
 const MAX_MESSAGE_BYTES: usize = 128;
@@ -14,17 +13,19 @@ const MAX_PROCESSES: usize = 4;
 const MAX_CAPS: usize = 8;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ProcessId {
-    Sender,
-    Receiver,
-}
+pub struct ProcessId(u64);
 
 impl ProcessId {
-    fn name(self) -> &'static str {
-        match self {
-            Self::Sender => "ipc-sender",
-            Self::Receiver => "ipc-receiver",
-        }
+    const fn empty() -> Self {
+        Self(0)
+    }
+
+    fn new(raw: u64) -> Self {
+        Self(raw)
+    }
+
+    fn raw(self) -> u64 {
+        self.0
     }
 }
 
@@ -44,12 +45,52 @@ pub struct ProcessContext {
     pub stack_top: u64,
 }
 
+#[derive(Clone, Copy)]
+pub struct BootProcessConfig {
+    pub name: &'static str,
+    pub context: ProcessContext,
+    pub initial: bool,
+}
+
+#[derive(Clone, Copy)]
+pub struct BootEndpointConfig {
+    pub name: &'static str,
+}
+
+#[derive(Clone, Copy)]
+pub struct BootGrantConfig {
+    pub process_index: usize,
+    pub cap_slot: u64,
+    pub endpoint_index: usize,
+    pub rights: u64,
+}
+
+pub struct BootRuntimeConfig {
+    processes: [Option<BootProcessConfig>; MAX_PROCESSES],
+    process_count: usize,
+    endpoints: [Option<BootEndpointConfig>; MAX_OBJECTS],
+    endpoint_count: usize,
+    grants: [Option<BootGrantConfig>; MAX_CAPS],
+    grant_count: usize,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ProcessState {
     Empty,
     Ready,
     Running,
     Exited,
+}
+
+impl ProcessState {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Empty => "empty",
+            Self::Ready => "ready",
+            Self::Running => "running",
+            Self::Exited => "exited",
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -68,6 +109,7 @@ pub enum InitError {
     ObjectTableFull,
     ProcessTableFull,
     CapabilityTableFull,
+    InvalidBootManifest,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -101,6 +143,7 @@ struct Process {
 #[derive(Clone, Copy)]
 struct IpcEndpoint {
     id: KernelObjectId,
+    name: &'static str,
     message_ready: bool,
     message_len: usize,
     message: [u8; MAX_MESSAGE_BYTES],
@@ -145,6 +188,7 @@ struct ProcessTable {
     processes: [Option<Process>; MAX_PROCESSES],
     count: usize,
     current: Option<ProcessId>,
+    next_id: u64,
 }
 
 struct RuntimeState {
@@ -186,7 +230,7 @@ impl CapabilitySpace {
 impl Process {
     const fn empty() -> Self {
         Self {
-            pid: ProcessId::Sender,
+            pid: ProcessId::empty(),
             name: "",
             context: ProcessContext {
                 cr3: 0,
@@ -200,13 +244,14 @@ impl Process {
 
     fn new(
         pid: ProcessId,
+        name: &'static str,
         context: ProcessContext,
         state: ProcessState,
         caps: CapabilitySpace,
     ) -> Self {
         Self {
             pid,
-            name: pid.name(),
+            name,
             context,
             state,
             caps,
@@ -215,9 +260,10 @@ impl Process {
 }
 
 impl IpcEndpoint {
-    const fn new(id: KernelObjectId) -> Self {
+    const fn new(id: KernelObjectId, name: &'static str) -> Self {
         Self {
             id,
+            name,
             message_ready: false,
             message_len: 0,
             message: [0; MAX_MESSAGE_BYTES],
@@ -234,14 +280,14 @@ impl ObjectTable {
         }
     }
 
-    fn add_endpoint(&mut self) -> Result<KernelObjectId, InitError> {
+    fn add_endpoint(&mut self, name: &'static str) -> Result<KernelObjectId, InitError> {
         if self.count == self.objects.len() {
             return Err(InitError::ObjectTableFull);
         }
 
         let id = KernelObjectId(self.next_id);
         self.next_id += 1;
-        self.objects[self.count] = Some(KernelObject::IpcEndpoint(IpcEndpoint::new(id)));
+        self.objects[self.count] = Some(KernelObject::IpcEndpoint(IpcEndpoint::new(id, name)));
         self.count += 1;
         Ok(id)
     }
@@ -284,17 +330,26 @@ impl ProcessTable {
             processes: [Some(Process::empty()); MAX_PROCESSES],
             count: 0,
             current: None,
+            next_id: 1,
         }
     }
 
-    fn add_process(&mut self, process: Process) -> Result<(), InitError> {
+    fn add_process(
+        &mut self,
+        name: &'static str,
+        context: ProcessContext,
+        state: ProcessState,
+        caps: CapabilitySpace,
+    ) -> Result<ProcessId, InitError> {
         if self.count == self.processes.len() {
             return Err(InitError::ProcessTableFull);
         }
 
-        self.processes[self.count] = Some(process);
+        let pid = ProcessId::new(self.next_id);
+        self.next_id += 1;
+        self.processes[self.count] = Some(Process::new(pid, name, context, state, caps));
         self.count += 1;
-        Ok(())
+        Ok(pid)
     }
 
     fn set_current(&mut self, pid: ProcessId) {
@@ -367,31 +422,105 @@ impl RuntimeState {
     }
 }
 
-pub fn init_for_boot(sender: ProcessContext, receiver: ProcessContext) -> Result<(), InitError> {
+impl BootRuntimeConfig {
+    pub const fn new() -> Self {
+        Self {
+            processes: [None; MAX_PROCESSES],
+            process_count: 0,
+            endpoints: [None; MAX_OBJECTS],
+            endpoint_count: 0,
+            grants: [None; MAX_CAPS],
+            grant_count: 0,
+        }
+    }
+
+    pub fn add_process(&mut self, process: BootProcessConfig) -> Result<(), InitError> {
+        if self.process_count == self.processes.len() {
+            return Err(InitError::ProcessTableFull);
+        }
+        self.processes[self.process_count] = Some(process);
+        self.process_count += 1;
+        Ok(())
+    }
+
+    pub fn add_endpoint(&mut self, endpoint: BootEndpointConfig) -> Result<(), InitError> {
+        if self.endpoint_count == self.endpoints.len() {
+            return Err(InitError::ObjectTableFull);
+        }
+        self.endpoints[self.endpoint_count] = Some(endpoint);
+        self.endpoint_count += 1;
+        Ok(())
+    }
+
+    pub fn add_grant(&mut self, grant: BootGrantConfig) -> Result<(), InitError> {
+        if self.grant_count == self.grants.len() {
+            return Err(InitError::CapabilityTableFull);
+        }
+        if grant.process_index >= self.process_count {
+            return Err(InitError::InvalidBootManifest);
+        }
+        if grant.endpoint_index >= self.endpoint_count {
+            return Err(InitError::InvalidBootManifest);
+        }
+        self.grants[self.grant_count] = Some(grant);
+        self.grant_count += 1;
+        Ok(())
+    }
+}
+
+pub fn init_from_boot_config(config: BootRuntimeConfig) -> Result<(), InitError> {
     let runtime = runtime();
     *runtime = RuntimeState::new();
 
-    let endpoint = runtime.objects.add_endpoint()?;
+    let mut endpoint_ids = [None; MAX_OBJECTS];
+    let mut endpoint_index = 0;
+    while endpoint_index < config.endpoint_count {
+        let endpoint = config.endpoints[endpoint_index].ok_or(InitError::InvalidBootManifest)?;
+        endpoint_ids[endpoint_index] = Some(runtime.objects.add_endpoint(endpoint.name)?);
+        endpoint_index += 1;
+    }
 
-    let mut sender_caps = CapabilitySpace::new();
-    sender_caps.grant(ENDPOINT_CAP_SLOT, endpoint, capability::RIGHT_SEND)?;
-    runtime.processes.add_process(Process::new(
-        ProcessId::Sender,
-        sender,
-        ProcessState::Running,
-        sender_caps,
-    ))?;
+    let mut process_caps = [CapabilitySpace::new(); MAX_PROCESSES];
+    let mut grant_index = 0;
+    while grant_index < config.grant_count {
+        let grant = config.grants[grant_index].ok_or(InitError::InvalidBootManifest)?;
+        let endpoint = endpoint_ids[grant.endpoint_index].ok_or(InitError::InvalidBootManifest)?;
+        process_caps[grant.process_index].grant(grant.cap_slot, endpoint, grant.rights)?;
+        grant_index += 1;
+    }
 
-    let mut receiver_caps = CapabilitySpace::new();
-    receiver_caps.grant(ENDPOINT_CAP_SLOT, endpoint, capability::RIGHT_RECEIVE)?;
-    runtime.processes.add_process(Process::new(
-        ProcessId::Receiver,
-        receiver,
-        ProcessState::Ready,
-        receiver_caps,
-    ))?;
+    let mut saw_initial = false;
+    let mut process_index = 0;
+    while process_index < config.process_count {
+        let process = config.processes[process_index].ok_or(InitError::InvalidBootManifest)?;
 
-    runtime.processes.set_current(ProcessId::Sender);
+        let state = if process.initial {
+            if saw_initial {
+                return Err(InitError::InvalidBootManifest);
+            }
+            saw_initial = true;
+            ProcessState::Running
+        } else {
+            ProcessState::Ready
+        };
+
+        let pid = runtime.processes.add_process(
+            process.name,
+            process.context,
+            state,
+            process_caps[process_index],
+        )?;
+
+        if process.initial {
+            runtime.processes.set_current(pid);
+        }
+        process_index += 1;
+    }
+
+    if !saw_initial || config.endpoint_count == 0 {
+        return Err(InitError::InvalidBootManifest);
+    }
+
     print_boot_tables(runtime);
     Ok(())
 }
@@ -401,6 +530,10 @@ pub fn initial_process_context() -> Option<ProcessContext> {
         .processes
         .current_process()
         .map(|process| process.context)
+}
+
+pub fn initial_process_name() -> &'static str {
+    current_process_name()
 }
 
 pub fn current_process_name() -> &'static str {
@@ -546,15 +679,37 @@ fn print_boot_tables(runtime: &RuntimeState) {
     serial::write_u64_dec(runtime.objects.endpoint_count() as u64);
     serial::write_str("\n");
 
-    print_process_caps(runtime, ProcessId::Sender);
-    print_process_caps(runtime, ProcessId::Receiver);
+    print_endpoint_labels(runtime);
+
+    let mut index = 0;
+    while index < runtime.processes.count {
+        if let Some(process) = runtime.processes.processes[index] {
+            print_process_state(index, &process);
+            print_process_caps(&process);
+        }
+        index += 1;
+    }
 }
 
-fn print_process_caps(runtime: &RuntimeState, pid: ProcessId) {
-    let Some(process) = runtime.processes.process(pid) else {
-        return;
-    };
+fn print_endpoint_labels(runtime: &RuntimeState) {
+    let mut printed = 0;
+    let mut index = 0;
+    while index < runtime.objects.count {
+        if let Some(KernelObject::IpcEndpoint(endpoint)) = runtime.objects.objects[index] {
+            serial::write_str("endpoint[");
+            serial::write_u64_dec(printed as u64);
+            serial::write_str("] id=");
+            serial::write_u64_dec(endpoint.id.raw());
+            serial::write_str(" name=");
+            serial::write_str(endpoint.name);
+            serial::write_str("\n");
+            printed += 1;
+        }
+        index += 1;
+    }
+}
 
+fn print_process_caps(process: &Process) {
     let mut slot = 0;
     while slot < MAX_CAPS {
         if let Some(cap) = process.caps.caps[slot] {
@@ -570,6 +725,18 @@ fn print_process_caps(runtime: &RuntimeState, pid: ProcessId) {
         }
         slot += 1;
     }
+}
+
+fn print_process_state(index: usize, process: &Process) {
+    serial::write_str("process[");
+    serial::write_u64_dec(index as u64);
+    serial::write_str("] id=");
+    serial::write_u64_dec(process.pid.raw());
+    serial::write_str(" name=");
+    serial::write_str(process.name);
+    serial::write_str(" state=");
+    serial::write_str(process.state.label());
+    serial::write_str("\n");
 }
 
 fn print_rights(rights: u64) {
@@ -596,22 +763,18 @@ fn print_right(rights: u64, right: u64, label: &str, wrote: bool) -> bool {
 
 fn print_negative(operation: &str) {
     serial::write_str("IPC negative test: ");
-    serial::write_str(current_process_short_name());
+    serial::write_str(current_process_label());
     serial::write_str(" ");
     serial::write_str(operation);
     serial::write_str(" rejected: bad capability\n");
 }
 
-fn current_process_short_name() -> &'static str {
-    match runtime()
+fn current_process_label() -> &'static str {
+    runtime()
         .processes
         .current_process()
-        .map(|process| process.pid)
-    {
-        Some(ProcessId::Sender) => "sender",
-        Some(ProcessId::Receiver) => "receiver",
-        None => "<none>",
-    }
+        .map(|process| process.name)
+        .unwrap_or("<none>")
 }
 
 fn runtime() -> &'static mut RuntimeState {

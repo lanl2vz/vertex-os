@@ -19,6 +19,50 @@
     "executable": "exe:vertex-init",
     "mode": "hosted-linux"
   },
+  "krustBoot": {
+    "format": "krustboot.v0",
+    "bootModules": [
+      {
+        "name": "ipc-sender",
+        "moduleString": "krust-ipc-sender"
+      },
+      {
+        "name": "ipc-receiver",
+        "moduleString": "krust-ipc-receiver"
+      }
+    ],
+    "processes": [
+      {
+        "name": "ipc-sender",
+        "moduleString": "krust-ipc-sender",
+        "initial": true
+      },
+      {
+        "name": "ipc-receiver",
+        "moduleString": "krust-ipc-receiver",
+        "initial": false
+      }
+    ],
+    "endpoints": [
+      {
+        "name": "demo-ipc"
+      }
+    ],
+    "grants": [
+      {
+        "process": "ipc-sender",
+        "endpoint": "demo-ipc",
+        "capSlot": 0,
+        "rights": ["send"]
+      },
+      {
+        "process": "ipc-receiver",
+        "endpoint": "demo-ipc",
+        "capSlot": 0,
+        "rights": ["receive"]
+      }
+    ]
+  },
   "store": [
     {
       "id": "store:hosted-kernel-placeholder",
