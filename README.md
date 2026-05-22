@@ -46,10 +46,12 @@ on an empty IPC endpoint, the sender wakes it with `Krust IPC ping`, unauthorize
 cross-operations are rejected, and Krust halts after `IPC demo ok`.
 
 ```sh
-cd kernel/krust
-make build
-make smoke
+scripts/krust-smoke.sh
 ```
+
+See [docs/krust-milestones.md](docs/krust-milestones.md) for M0 through M12,
+and [docs/krust-abi-v0.md](docs/krust-abi-v0.md) for the current syscall,
+capability, process, and IPC ABI.
 
 ## Current Demo
 

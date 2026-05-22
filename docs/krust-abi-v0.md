@@ -1,0 +1,200 @@
+# Krust ABI v0
+
+This document describes the current experimental userspace ABI used by the
+native Krust QEMU/Limine milestone. It is intentionally small and unstable. Its
+job is to support the M11 scheduler and IPC demo, and to provide the starting
+point for M12 native `vertex-init`.
+
+## Machine ABI
+
+Architecture: `x86_64`.
+
+Syscall mechanism: `syscall` / `sysretq`.
+
+Register convention:
+
+```text
+rax = syscall number
+rdi = arg0
+rsi = arg1
+rdx = arg2
+rax = return value
+rcx = clobbered by syscall/sysret
+r11 = clobbered by syscall/sysret
+```
+
+The kernel saves this minimal return frame on syscall entry:
+
+```text
+user_rsp
+user_rip
+user_rflags
+rax
+```
+
+The cooperative scheduler can save that frame into the current process, load a
+different process frame, switch CR3, and return from the same kernel syscall
+entry into another userspace process. There is no timer preemption in ABI v0.
+
+## Syscall Numbers
+
+| Number | Name | Arguments | Return |
+| --- | --- | --- | --- |
+| 1 | `SYS_WRITE_SERIAL` | `arg0 = user_ptr`, `arg1 = len` | status |
+| 2 | `SYS_EXIT` | `arg0 = status` | does not return in normal use |
+| 3 | `SYS_IPC_SEND` | `arg0 = cap_slot`, `arg1 = user_ptr`, `arg2 = len` | status |
+| 4 | `SYS_IPC_RECV` | `arg0 = cap_slot`, `arg1 = user_ptr`, `arg2 = max_len` | byte count or error status |
+| 5 | `SYS_YIELD` | none | status |
+
+## Return Status Values
+
+| Name | Value | Meaning |
+| --- | --- | --- |
+| `STATUS_OK` | `0` | Operation accepted. |
+| `STATUS_BAD_CAPABILITY` | `u64::MAX - 1` | The process does not hold a suitable capability in the requested slot. |
+| `STATUS_BAD_BUFFER` | `u64::MAX - 2` | The user pointer/range failed validation before copying. |
+| `STATUS_TOO_LARGE` | `u64::MAX - 3` | IPC message length exceeded the kernel's fixed message buffer. |
+| `STATUS_EMPTY` | `u64::MAX - 4` | Endpoint had no message and no process could be scheduled after blocking. |
+| `u64::MAX` | `u64::MAX` | Unknown syscall number. |
+
+For `SYS_IPC_RECV`, any return value less than or equal to the destination
+buffer length is a delivered byte count. The current demo treats the high status
+values above as errors.
+
+## User Memory Rules
+
+Syscalls must not directly trust userspace pointers.
+
+ABI v0 validation checks:
+
+- The range is low-half canonical.
+- The range does not overflow.
+- Every page is present in the target user page table.
+- Every page has the x86_64 user bit set.
+- Write destinations have the writable bit set.
+
+Bad pointers return `STATUS_BAD_BUFFER` for the tested syscall path instead of
+becoming uncontrolled kernel faults.
+
+## Capability Slots
+
+Capabilities are process-local. A capability slot number is meaningful only in
+the current process's capability space.
+
+Current demo layout:
+
+```text
+ipc-sender:
+  cap[0] = endpoint demo-ipc, rights=send
+
+ipc-receiver:
+  cap[0] = endpoint demo-ipc, rights=receive
+```
+
+`SYS_IPC_SEND` requires `send` rights on the endpoint capability. `SYS_IPC_RECV`
+requires `receive` rights on the endpoint capability. The syscall layer does not
+special-case process names; it resolves:
+
+```text
+current process -> cap slot -> kernel object -> required rights
+```
+
+Planned M12 `vertex-init` boot caps:
+
+```text
+vertex-init:
+  cap[0] = manifest module read
+  cap[1] = serial/log endpoint
+  cap[2] = process creation authority, temporary
+```
+
+The exact M12 object types and syscall surface are still planned.
+
+## Process Model
+
+ABI v0 uses a fixed-size kernel process table.
+
+Current states:
+
+```text
+Ready
+Running
+BlockedOnEndpoint
+Exited
+```
+
+Each process has:
+
+```text
+pid
+name
+cr3
+entry
+stack_top
+state
+capability space
+optional saved syscall frame
+```
+
+Scheduling is cooperative and round-robin. A context switch currently happens
+only when a syscall explicitly yields, exits, or blocks on IPC.
+
+## IPC Semantics
+
+Endpoints currently hold one fixed-size message buffer.
+
+Send path:
+
+```text
+SYS_IPC_SEND(cap_slot, user_ptr, len)
+  validate send capability
+  copy message from user
+  store message on endpoint
+  wake one process blocked on that endpoint, if any
+```
+
+Receive path:
+
+```text
+SYS_IPC_RECV(cap_slot, user_ptr, max_len)
+  validate receive capability
+  validate writable user buffer
+  if message exists:
+      copy to receiver buffer and return byte count
+  if no message exists:
+      save syscall frame
+      set state to BlockedOnEndpoint
+      schedule the next Ready process
+```
+
+When a sender wakes a blocked receiver, the kernel copies the message into the
+receiver's address space and stores the delivered byte count in the receiver's
+saved syscall frame. When that process is scheduled again, `sysretq` returns to
+the original receive call site with `rax = delivered_len`.
+
+## Boot ABI
+
+Limine loads:
+
+```text
+krust.elf
+hello-generation.krustboot
+userspace ELF modules
+```
+
+Krust consumes the compact KrustBoot manifest rather than parsing full JSON in
+kernel space. Hosted `vertexctl compile-boot-manifest` is responsible for
+converting source Vertex JSON into the compact boot format.
+
+For M11, the compact manifest describes:
+
+```text
+generation_id
+boot_modules
+processes
+endpoints
+grants
+```
+
+For M12, the manifest should describe `vertex-init` and the initial boot
+authority required for it to activate a tiny native generation.

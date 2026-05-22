@@ -65,23 +65,11 @@ run: iso
 	$(QEMU) $(QEMU_EXTRA) -m 256M -serial stdio -monitor none -display none -no-reboot -no-shutdown -cdrom $(ISO_IMAGE)
 
 smoke: iso
-	@rm -f $(BUILD_DIR)/serial.log
-	@$(QEMU) $(QEMU_EXTRA) -m 256M -serial file:$(BUILD_DIR)/serial.log -monitor none -display none -no-reboot -no-shutdown -cdrom $(ISO_IMAGE) & \
-	pid=$$!; \
-	for _ in 1 2 3 4 5 6 7 8; do \
-		if grep -q "Krust Kernel booted" $(BUILD_DIR)/serial.log 2>/dev/null && grep -q "Limine memory map entries:" $(BUILD_DIR)/serial.log 2>/dev/null && grep -q "KrustBoot manifest generation: gen:hello-0001" $(BUILD_DIR)/serial.log 2>/dev/null && grep -q "KrustBoot processes: 2" $(BUILD_DIR)/serial.log 2>/dev/null && grep -q "KrustBoot endpoints: 1" $(BUILD_DIR)/serial.log 2>/dev/null && grep -q "KrustBoot grants: 2" $(BUILD_DIR)/serial.log 2>/dev/null && grep -q "grant\\[0\\] process=ipc-sender cap\\[0\\] endpoint=demo-ipc rights=send" $(BUILD_DIR)/serial.log 2>/dev/null && grep -q "grant\\[1\\] process=ipc-receiver cap\\[0\\] endpoint=demo-ipc rights=receive" $(BUILD_DIR)/serial.log 2>/dev/null && grep -q "Physical allocator demo ok" $(BUILD_DIR)/serial.log 2>/dev/null && grep -q "Virtual memory demo ok" $(BUILD_DIR)/serial.log 2>/dev/null && grep -q "Capability table demo ok" $(BUILD_DIR)/serial.log 2>/dev/null && grep -q "IDT initialized: #UD #GP #PF" $(BUILD_DIR)/serial.log 2>/dev/null && grep -q "Process table entries: 2" $(BUILD_DIR)/serial.log 2>/dev/null && grep -q "Endpoint table entries: 1" $(BUILD_DIR)/serial.log 2>/dev/null && grep -q "endpoint\\[0\\] id=1 name=demo-ipc" $(BUILD_DIR)/serial.log 2>/dev/null && grep -q "process\\[0\\] id=1 name=ipc-sender state=ready" $(BUILD_DIR)/serial.log 2>/dev/null && grep -q "process\\[1\\] id=2 name=ipc-receiver state=running" $(BUILD_DIR)/serial.log 2>/dev/null && grep -q "proc=ipc-sender cap\\[0\\] endpoint=1 rights=send" $(BUILD_DIR)/serial.log 2>/dev/null && grep -q "proc=ipc-receiver cap\\[0\\] endpoint=1 rights=receive" $(BUILD_DIR)/serial.log 2>/dev/null && grep -q "IPC receive blocked: proc=ipc-receiver endpoint=1" $(BUILD_DIR)/serial.log 2>/dev/null && grep -q "Scheduler switch: from=ipc-receiver to=ipc-sender" $(BUILD_DIR)/serial.log 2>/dev/null && grep -q "Scheduler switch: from=ipc-sender to=ipc-receiver" $(BUILD_DIR)/serial.log 2>/dev/null && grep -q "IPC wake receiver: proc=ipc-receiver endpoint=1" $(BUILD_DIR)/serial.log 2>/dev/null && grep -q "Bad pointer test: SYS_WRITE_SERIAL returned STATUS_BAD_BUFFER" $(BUILD_DIR)/serial.log 2>/dev/null && grep -q "Bad pointer test: SYS_IPC_SEND returned STATUS_BAD_BUFFER" $(BUILD_DIR)/serial.log 2>/dev/null && grep -q "Bad pointer test: SYS_IPC_RECV returned STATUS_BAD_BUFFER" $(BUILD_DIR)/serial.log 2>/dev/null && grep -q "IPC send accepted: endpoint=1 bytes=14" $(BUILD_DIR)/serial.log 2>/dev/null && grep -q "IPC receive delivered: endpoint=1 bytes=14" $(BUILD_DIR)/serial.log 2>/dev/null && grep -q "IPC negative test: ipc-sender receive rejected: bad capability" $(BUILD_DIR)/serial.log 2>/dev/null && grep -q "IPC negative test: ipc-receiver send rejected: bad capability" $(BUILD_DIR)/serial.log 2>/dev/null && grep -q "Krust IPC ping" $(BUILD_DIR)/serial.log 2>/dev/null && grep -q "IPC demo ok" $(BUILD_DIR)/serial.log 2>/dev/null; then \
-				kill $$pid >/dev/null 2>&1 || true; \
-				wait $$pid >/dev/null 2>&1 || true; \
-				echo "smoke ok: Krust Kernel booted, parsed KrustBoot manifest, installed IDT handlers, rejected bad user buffers, enforced process capability tables, blocked IPC receive, woke receiver, and ran userspace IPC"; \
-				exit 0; \
-			fi; \
-		sleep 1; \
-	done; \
-	kill $$pid >/dev/null 2>&1 || true; \
-	wait $$pid >/dev/null 2>&1 || true; \
-		echo "smoke failed: serial output did not contain Krust Kernel booted, Limine memory map entries, KrustBoot manifest records, Physical allocator demo ok, Virtual memory demo ok, Capability table demo ok, IDT initialization, runtime process states, process/endpoint tables, scheduler switches, blocked receive/wake, bad pointer rejections, positive IPC, negative capability rejections, Krust IPC ping, and IPC demo ok"; \
-	test ! -f $(BUILD_DIR)/serial.log || cat $(BUILD_DIR)/serial.log; \
-	exit 1
+	@QEMU="$(QEMU)" \
+		QEMU_EXTRA="$(QEMU_EXTRA)" \
+		ISO_IMAGE="$(CURDIR)/$(ISO_IMAGE)" \
+		SERIAL_LOG="$(CURDIR)/$(BUILD_DIR)/serial.log" \
+		../../scripts/krust-smoke.sh --no-build
 
 doctor: check-tools check-limine-dir
 	@echo "qemu: $$(command -v $(QEMU))"

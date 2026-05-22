@@ -180,7 +180,14 @@ make smoke
 ```
 
 The smoke test boots QEMU headlessly, captures serial output to
-`build/serial.log`, and passes when it sees:
+`build/serial.log`, and passes when it sees the M11 boot transcript. The same
+check is available from the repository root:
+
+```sh
+scripts/krust-smoke.sh
+```
+
+The expected transcript includes:
 
 ```text
 Krust Kernel booted
