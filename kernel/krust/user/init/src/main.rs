@@ -395,6 +395,7 @@ fn transfer_endpoint_requirements(
 ) {
     let offset = requires_offset(boot_modules, process_index);
     let count = ref_count(manifest, offset);
+    let has_provided_endpoint = ref_count(manifest, provides_offset(boot_modules, process_index)) > 0;
     let mut requirement_index = 0;
     while requirement_index < count {
         let endpoint_index = endpoint_requirement_value(manifest, offset, requirement_index);
@@ -404,7 +405,7 @@ fn transfer_endpoint_requirements(
             activation_failed(parent_generation);
         };
         let auth_slot = endpoint_auth_slot(endpoint_index);
-        let target_slot = endpoint_target_slot(requirement_index);
+        let target_slot = endpoint_target_slot(has_provided_endpoint, requirement_index);
         log_derive(name, endpoint_index, manifest_rights);
         if sys::cap_derive(auth_slot, sys::CAP_DERIVED, sys_rights) != sys::STATUS_OK {
             log(b"vertex-init cap derive failed");
@@ -431,9 +432,11 @@ fn endpoint_auth_slot(endpoint_index: u16) -> u64 {
     sys::CAP_ENDPOINT_AUTH_BASE + (endpoint_index as u64 - 2)
 }
 
-fn endpoint_target_slot(requirement_index: usize) -> u64 {
-    if requirement_index == 0 {
+fn endpoint_target_slot(has_provided_endpoint: bool, requirement_index: usize) -> u64 {
+    if !has_provided_endpoint && requirement_index == 0 {
         0
+    } else if has_provided_endpoint {
+        3 + requirement_index as u64
     } else {
         2 + requirement_index as u64
     }

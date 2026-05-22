@@ -1834,6 +1834,8 @@ fn block_current_on_endpoint(
 }
 
 fn wake_blocked_receiver(endpoint: KernelObjectId) {
+    wake_timed_processes(read_tsc());
+
     let mut message = [0u8; MAX_MESSAGE_BYTES];
     let message_len = {
         let runtime = runtime();

@@ -363,4 +363,7 @@ come from the compact manifest. Endpoint consumers do not receive static boot
 send grants for delegated authority; vertex-init derives and transfers the
 attenuated cap before starting the consumer. A transfer to a still-declared
 process becomes part of that process's restart baseline, so the one ABI v0
-restart restores the delegated endpoint cap along with static grants.
+restart restores the delegated endpoint cap along with static grants. If a
+service both provides an endpoint and consumes delegated endpoint authority, the
+provided endpoint keeps cap[0] and delegated endpoint caps start at cap[3] to
+avoid the serial-log and readiness slots.

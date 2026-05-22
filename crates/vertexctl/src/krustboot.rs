@@ -678,7 +678,10 @@ fn initial_object_cap_slots(processes: &[NativeProcess]) -> BTreeMap<String, u16
             if process.requires_endpoints.is_empty() && process.provides_endpoints.is_empty() {
                 SERVICE_CAP_SLOT
             } else {
-                first_non_endpoint_service_slot(process.requires_endpoints.len())
+                first_non_endpoint_service_slot(
+                    !process.provides_endpoints.is_empty(),
+                    process.requires_endpoints.len(),
+                )
             };
         if next_slot == SERIAL_RESERVED_CAP_SLOT || next_slot == READINESS_RESERVED_CAP_SLOT {
             next_slot = READINESS_RESERVED_CAP_SLOT + 1;
@@ -688,11 +691,16 @@ fn initial_object_cap_slots(processes: &[NativeProcess]) -> BTreeMap<String, u16
     slots
 }
 
-fn first_non_endpoint_service_slot(endpoint_count: usize) -> u16 {
-    let mut slot = if endpoint_count == 0 {
+fn first_non_endpoint_service_slot(has_provided_endpoint: bool, endpoint_count: usize) -> u16 {
+    let mut slot = if endpoint_count == 0 && !has_provided_endpoint {
         SERVICE_CAP_SLOT
     } else {
-        endpoint_target_slot(endpoint_count - 1) + 1
+        let last_required_slot = if endpoint_count == 0 {
+            SERVICE_CAP_SLOT
+        } else {
+            endpoint_target_slot(has_provided_endpoint, endpoint_count - 1)
+        };
+        last_required_slot + 1
     };
     if slot <= READINESS_RESERVED_CAP_SLOT {
         slot = READINESS_RESERVED_CAP_SLOT + 1;
@@ -1028,9 +1036,11 @@ fn init_endpoint_auth_slot(endpoints: &[Endpoint], endpoint: &str) -> Result<u16
     Ok(INIT_ENDPOINT_AUTH_BASE_SLOT + (index as u16 - 2))
 }
 
-fn endpoint_target_slot(requirement_index: usize) -> u16 {
-    if requirement_index == 0 {
+fn endpoint_target_slot(has_provided_endpoint: bool, requirement_index: usize) -> u16 {
+    if !has_provided_endpoint && requirement_index == 0 {
         SERVICE_CAP_SLOT
+    } else if has_provided_endpoint {
+        READINESS_RESERVED_CAP_SLOT + 1 + requirement_index as u16
     } else {
         READINESS_RESERVED_CAP_SLOT + requirement_index as u16
     }
@@ -1238,5 +1248,22 @@ mod tests {
 
         let error = validate_plan(&plan).expect_err("duplicate cap slot should fail");
         assert!(error.contains("duplicate grant cap slot 1 for process vertex-init"));
+    }
+
+    #[test]
+    fn endpoint_target_slots_do_not_overlap_provider_slot() {
+        assert_eq!(endpoint_target_slot(false, 0), SERVICE_CAP_SLOT);
+        assert_eq!(
+            endpoint_target_slot(false, 1),
+            READINESS_RESERVED_CAP_SLOT + 1
+        );
+        assert_eq!(
+            endpoint_target_slot(true, 0),
+            READINESS_RESERVED_CAP_SLOT + 1
+        );
+        assert_eq!(
+            first_non_endpoint_service_slot(true, 1),
+            READINESS_RESERVED_CAP_SLOT + 2
+        );
     }
 }
