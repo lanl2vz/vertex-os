@@ -25,6 +25,27 @@ pub extern "C" fn _start() -> ! {
         sys::exit(1);
     }
 
+    let mut object_buffer = [0u8; 16];
+    if sys::object_read(CAP_LOG_SINK, &mut object_buffer) == sys::STATUS_BAD_CAPABILITY {
+        log(b"echo read rejected: bad capability");
+    } else {
+        log(b"echo negative object-read failed");
+        sys::exit(1);
+    }
+
+    if sys::cap_drop(CAP_LOG_SINK) != sys::STATUS_OK {
+        log(b"echo drop cap failed");
+        sys::exit(1);
+    }
+    log(b"echo drops cap");
+
+    if sys::ipc_send(CAP_LOG_SINK, b"after drop") == sys::STATUS_BAD_CAPABILITY {
+        log(b"echo send after drop rejected");
+    } else {
+        log(b"echo send after drop failed");
+        sys::exit(1);
+    }
+
     sys::exit(0)
 }
 

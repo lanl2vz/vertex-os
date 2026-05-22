@@ -1,0 +1,140 @@
+{
+  "schema": "vertex.ir.v0",
+  "generation": {
+    "id": "gen:bad-0002",
+    "createdUtc": "2026-05-22T00:00:00Z",
+    "description": "Krust native rollback selection test generation",
+    "parent": "gen:hello-0001",
+    "manifestHash": null
+  },
+  "kernel": {
+    "id": "kernel:krust-placeholder",
+    "kind": "krust-native",
+    "storeObject": "store:kernel-placeholder",
+    "abi": "krust.v0",
+    "target": "x86_64-unknown-none"
+  },
+  "init": {
+    "id": "init:vertex-init",
+    "executable": "exe:vertex-init",
+    "mode": "krust-native"
+  },
+  "store": [
+    {
+      "id": "store:kernel-placeholder",
+      "name": "kernel-placeholder",
+      "kind": "kernel-image",
+      "path": "/vertex/store/kernel-placeholder",
+      "hashAlgorithm": "blake3",
+      "hash": "demo-not-a-real-hash-kernel",
+      "sizeBytes": 0,
+      "references": []
+    },
+    {
+      "id": "store:vertex-init-demo",
+      "name": "vertex-init-demo",
+      "kind": "executable",
+      "path": "/vertex/store/vertex-init",
+      "hashAlgorithm": "blake3",
+      "hash": "demo-not-a-real-hash-init",
+      "sizeBytes": 65536,
+      "references": []
+    },
+    {
+      "id": "store:logd-demo",
+      "name": "logd-demo",
+      "kind": "executable",
+      "path": "/vertex/store/logd",
+      "hashAlgorithm": "blake3",
+      "hash": "demo-not-a-real-hash-logd",
+      "sizeBytes": 65536,
+      "references": []
+    },
+    {
+      "id": "store:echo-demo",
+      "name": "echo-demo",
+      "kind": "executable",
+      "path": "/vertex/store/echo",
+      "hashAlgorithm": "blake3",
+      "hash": "demo-not-a-real-hash-echo",
+      "sizeBytes": 65536,
+      "references": []
+    }
+  ],
+  "executables": [
+    {
+      "id": "exe:vertex-init",
+      "storeObject": "store:vertex-init-demo",
+      "entrypoint": "bin/vertex-init",
+      "abi": "krust-native-process.v0"
+    },
+    {
+      "id": "exe:logd",
+      "storeObject": "store:logd-demo",
+      "entrypoint": "bin/logd",
+      "abi": "krust-native-process.v0"
+    },
+    {
+      "id": "exe:echo",
+      "storeObject": "store:echo-demo",
+      "entrypoint": "bin/echo",
+      "abi": "krust-native-process.v0"
+    }
+  ],
+  "devices": [],
+  "stateVolumes": [],
+  "secrets": [],
+  "capabilities": [],
+  "services": [
+    {
+      "id": "svc:vertex-supervisor",
+      "name": "vertex-init",
+      "executable": "exe:vertex-init",
+      "restart": "never",
+      "health": null,
+      "lifecycle": {
+        "startAfter": [],
+        "stopBefore": []
+      }
+    },
+    {
+      "id": "svc:logd",
+      "name": "logd",
+      "executable": "exe:logd",
+      "restart": "never",
+      "health": null,
+      "lifecycle": {
+        "startAfter": ["svc:echo-server"],
+        "stopBefore": []
+      }
+    },
+    {
+      "id": "svc:echo-server",
+      "name": "echo",
+      "executable": "exe:echo",
+      "restart": "never",
+      "health": null,
+      "lifecycle": {
+        "startAfter": ["svc:logd"],
+        "stopBefore": []
+      }
+    }
+  ],
+  "activation": {
+    "rootService": "svc:vertex-supervisor",
+    "startOrder": ["svc:vertex-supervisor", "svc:logd", "svc:echo-server"],
+    "rollbackPolicy": {
+      "default": "system-only",
+      "state": "preserve-unless-explicit"
+    },
+    "onFailure": "rollback"
+  },
+  "policies": {
+    "defaultAuthority": "deny",
+    "allowAmbientFilesystem": false,
+    "allowAmbientNetwork": false,
+    "allowAmbientDevices": false,
+    "capabilityDelegation": "explicit-only",
+    "unknownReferences": "reject"
+  }
+}

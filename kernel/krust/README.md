@@ -1,6 +1,6 @@
 # Krust Kernel
 
-Krust M13 is the first native multi-service activation milestone.
+Krust now covers the M14-M24 native graph-activation proof path.
 
 The target is intentionally small:
 
@@ -11,10 +11,10 @@ Krust enters 64-bit Rust code
 Krust writes "Krust Kernel booted" to COM1 serial
 Krust reads the Limine memory map response
 Krust prints every memory map entry to serial
-`vertexctl compile-boot-manifest` compiles `hello-generation.vertex.json`'s `krustBoot` section to `hello-generation.krustboot`
+`vertexctl compile-boot-manifest` derives `hello-generation.krustboot` from the full Vertex IR graph
 Limine loads `hello-generation.krustboot` as a boot module
 Krust parses the fixed-format KrustBoot manifest and prints its generation ID
-Krust prints the KrustBoot boot modules, processes, endpoints, and grants
+Krust prints the KrustBoot boot modules, processes, endpoints, grants, store objects, and state volumes
 Krust builds a physical frame allocator from usable memory map entries
 Krust allocates, frees, and reuses 4 KiB physical frames
 Krust walks the active x86_64 page tables through Limine's HHDM
@@ -28,26 +28,28 @@ Krust creates a runtime process table and endpoint table from the KrustBoot mani
 Krust allocates runtime process IDs and states from KrustBoot process records
 Krust grants vertex-init cap[0] read rights to the manifest module
 Krust grants vertex-init cap[1] send rights to the serial-log endpoint
-Krust grants vertex-init cap[2] process-control authority
+Krust grants vertex-init cap[2] process-control authority, readiness/store/state/timer authority, and attenuable endpoint authority
 Krust installs a minimal IDT for #UD, #GP, and #PF
 Krust enters ring 3 at the initial process entry point
 Krust tracks Declared, Ready, Running, BlockedOnEndpoint, and Exited process states
 Krust validates syscall user buffers by walking user page tables
 vertex-init reads the compact manifest through cap[0]
 vertex-init logs through cap[1]
-vertex-init starts declared services through cap[2]
+vertex-init computes a manifest-driven activation order and starts declared services through cap[2]
+logd reports readiness before echo starts
+vertex-init derives and transfers attenuated endpoint authority
 echo sends one message to logd through an explicit IPC capability
+echo drops its endpoint capability and denied authority stays rejected
+vertex-init reads an immutable store object, exercises a state-volume placeholder, and uses the timer capability
 logd receives the message and denial tests reject missing authority
 Krust halts after `Native service activation ok`
 ```
 
-No dynamic heap allocator, timer/APIC setup, preemption, user page-fault
-recovery, full interrupt handling, full JSON parsing in the kernel, full service
-ordering, filesystem, network, or device drivers are part of M13. The kernel
-consumes a compact KrustBoot manifest compiled by hosted `vertexctl`; full graph
-interpretation remains a userspace responsibility. M13 proves that native
-`vertex-init` can use process-control authority to start declared services and
-that service IPC authority is still explicit and process-local.
+No dynamic heap allocator, APIC-backed timer, preemption, user page-fault
+recovery, full interrupt handling, full JSON parsing in the kernel, filesystem,
+network, or device drivers are part of this native proof. The kernel consumes a
+compact KrustBoot manifest compiled by hosted `vertexctl`; graph interpretation
+and lifecycle policy remain a userspace responsibility.
 
 ## Prerequisites
 
@@ -128,28 +130,37 @@ Krust Kernel booted
 Limine base revision supported
 Limine memory map entries: ...
 KrustBoot manifest generation: gen:hello-0001
-KrustBoot boot modules: 3
-KrustBoot processes: 3
-KrustBoot endpoints: 2
-KrustBoot grants: 5
+KrustBoot boot modules: 9
+KrustBoot processes: 9
+KrustBoot endpoints: 3
+KrustBoot grants: 17
+KrustBoot store objects: 1
+KrustBoot state volumes: 1
   grant[0] process=vertex-init cap[1] endpoint=serial-log rights=send
-  grant[1] process=logd cap[0] endpoint=log-sink rights=receive
-  grant[3] process=echo cap[0] endpoint=log-sink rights=send
+  grant[11] process=logd cap[0] endpoint=log-sink rights=receive
+  grant[13] process=model-reader cap[0] store-object=store:hello-text rights=read
+  grant[15] process=reader-service cap[0] state-volume=state:counter rights=read|snapshot|restore
+  grant[16] process=timer-service cap[0] timer=monotonic-timer rights=control
 Physical allocator demo ok
 Virtual memory demo ok
 Capability table demo ok
-Process table entries: 3
-Endpoint table entries: 2
+Process table entries: 9
+Endpoint table entries: 3
 endpoint[0] id=1 name=serial-log
-endpoint[1] id=2 name=log-sink
+endpoint[1] id=2 name=readiness
+endpoint[2] id=3 name=log-sink
 process[0] id=1 name=vertex-init state=running
 process[1] id=2 name=logd state=declared
-process[2] id=3 name=echo state=declared
+process[2] id=3 name=netstack state=declared
+process[3] id=4 name=echo state=declared
 proc=vertex-init cap[0] boot-module=krustboot-manifest rights=read
 proc=vertex-init cap[1] endpoint=serial-log rights=send
 proc=vertex-init cap[2] process-control=process-control rights=control
+proc=vertex-init cap[4] endpoint=log-sink rights=send|receive
 proc=logd cap[0] endpoint=log-sink rights=receive
-proc=echo cap[0] endpoint=log-sink rights=send
+proc=model-reader cap[0] store-object=store:hello-text rights=read
+proc=reader-service cap[0] state-volume=state:counter rights=read|snapshot|restore
+proc=timer-service cap[0] timer=monotonic-timer rights=control
 GDT initialized
 IDT initialized: #UD #GP #PF
 Syscall path initialized
@@ -160,18 +171,37 @@ vertex-init received cap[0]=manifest-read
 vertex-init received cap[1]=serial-log
 vertex-init received cap[2]=process-control
 vertex-init manifest generation: gen:hello-0001
-vertex-init boot modules: 3
-vertex-init processes: 3
-vertex-init endpoints: 2
-vertex-init grants: 5
+vertex-init boot modules: 9
+vertex-init processes: 9
+vertex-init endpoints: 3
+vertex-init grants: 17
+vertex-init activation plan:
+  1. logd
+  2. netstack
+  3. echo
+  4. model-reader
+  5. counter-service
+  6. reader-service
+  7. timer-service
+  8. flaky-service
 vertex-init starting service: logd
 Krust process start accepted: proc=vertex-init target=logd
+logd ready
+vertex-init observed ready: logd
+vertex-init derives send-only cap for echo from stronger endpoint authority
 vertex-init starting service: echo
 Krust process start accepted: proc=vertex-init target=echo
 echo sent message to logd
 logd received: hello from echo
 negative test: echo receive rejected: bad capability
+echo send after drop rejected
 negative test: logd process-start rejected: bad capability
+Native store-object read ok
+Native state-volume access ok
+Native timer ok
+Native restart policy ok
+Native manifest-driven activation ok
+Native readiness activation ok
 Native service activation ok
 ```
 
@@ -185,7 +215,7 @@ make smoke
 ```
 
 The smoke test boots QEMU headlessly, captures serial output to
-`build/serial.log`, and passes when it sees the M13 boot transcript. The same
+`build/serial.log`, and passes when it sees the M14-M24 boot transcript. The same
 check is available from the repository root:
 
 ```sh
@@ -198,21 +228,23 @@ The expected transcript includes:
 Krust Kernel booted
 Limine memory map entries:
 KrustBoot manifest generation: gen:hello-0001
-KrustBoot boot modules: 3
-KrustBoot processes: 3
-KrustBoot endpoints: 2
-KrustBoot grants: 5
+KrustBoot boot modules: 9
+KrustBoot processes: 9
+KrustBoot endpoints: 3
+KrustBoot grants: 17
 grant[0] process=vertex-init cap[1] endpoint=serial-log rights=send
-grant[1] process=logd cap[0] endpoint=log-sink rights=receive
-grant[3] process=echo cap[0] endpoint=log-sink rights=send
+grant[11] process=logd cap[0] endpoint=log-sink rights=receive
+grant[13] process=model-reader cap[0] store-object=store:hello-text rights=read
+grant[15] process=reader-service cap[0] state-volume=state:counter rights=read|snapshot|restore
 Physical allocator demo ok
 Virtual memory demo ok
 Capability table demo ok
 IDT initialized: #UD #GP #PF
-Process table entries: 3
-Endpoint table entries: 2
+Process table entries: 9
+Endpoint table entries: 3
 endpoint[0] id=1 name=serial-log
-endpoint[1] id=2 name=log-sink
+endpoint[1] id=2 name=readiness
+endpoint[2] id=3 name=log-sink
 process[0] id=1 name=vertex-init state=running
 process[1] id=2 name=logd state=declared
 process[2] id=3 name=echo state=declared
@@ -224,25 +256,32 @@ proc=echo cap[0] endpoint=log-sink rights=send
 vertex-init started
 Boot module read accepted: proc=vertex-init module=krustboot-manifest bytes=
 vertex-init manifest generation: gen:hello-0001
+vertex-init activation plan:
+  1. logd
+  2. echo
 vertex-init starting service: logd
 Krust process start accepted: proc=vertex-init target=logd
+vertex-init observed ready: logd
 vertex-init starting service: echo
 Krust process start accepted: proc=vertex-init target=echo
 echo sent message to logd
 logd received: hello from echo
 negative test: echo receive rejected: bad capability
+echo send after drop rejected
 negative test: logd process-start rejected: bad capability
+Native manifest-driven activation ok
+Native readiness activation ok
 Native service activation ok
 ```
 
 ## Machine Notes
 
 Linux x86_64 can add KVM later with QEMU flags such as `-enable-kvm -cpu host`.
-That is not enabled by default so the M13 command stays portable:
+That is not enabled by default so the Krust smoke command stays portable:
 
 ```sh
 QEMU_EXTRA="-enable-kvm -cpu host" make smoke
 ```
 
 macOS Apple Silicon can run `qemu-system-x86_64` by emulation. It is slower than
-native AArch64 virtualization, but it is enough for the M13 serial milestone.
+native AArch64 virtualization, but it is enough for the Krust serial tests.

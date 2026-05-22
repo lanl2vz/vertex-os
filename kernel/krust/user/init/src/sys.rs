@@ -3,16 +3,24 @@ use core::arch::asm;
 pub const CAP_MANIFEST: u64 = 0;
 pub const CAP_LOG: u64 = 1;
 pub const CAP_PROCESS_CONTROL: u64 = 2;
+pub const CAP_READINESS: u64 = 3;
+pub const CAP_LOG_SINK_AUTH: u64 = 4;
+pub const CAP_DERIVED: u64 = 9;
 
 pub const STATUS_OK: u64 = 0;
 pub const STATUS_BAD_CAPABILITY: u64 = u64::MAX - 1;
 pub const STATUS_BAD_BUFFER: u64 = u64::MAX - 2;
+pub const RIGHT_SEND: u64 = 1 << 4;
 
 const SYS_EXIT: u64 = 2;
+const SYS_IPC_RECV: u64 = 4;
 const SYS_YIELD: u64 = 5;
 const SYS_BOOT_READ: u64 = 6;
 const SYS_LOG_WRITE: u64 = 7;
 const SYS_PROCESS_START: u64 = 9;
+const SYS_CAP_DERIVE: u64 = 10;
+const SYS_CAP_TRANSFER: u64 = 12;
+const SYS_PROCESS_STATUS: u64 = 17;
 
 pub fn read_manifest(buffer: &mut [u8]) -> u64 {
     syscall3(
@@ -34,6 +42,38 @@ pub fn log(message: &[u8]) -> u64 {
 
 pub fn process_start(process_index: u64) -> u64 {
     syscall3(SYS_PROCESS_START, CAP_PROCESS_CONTROL, process_index, 0)
+}
+
+pub fn process_status(process_index: u64) -> u64 {
+    syscall3(SYS_PROCESS_STATUS, CAP_PROCESS_CONTROL, process_index, 0)
+}
+
+pub fn readiness_recv(buffer: &mut [u8]) -> u64 {
+    syscall3(
+        SYS_IPC_RECV,
+        CAP_READINESS,
+        buffer.as_mut_ptr() as u64,
+        buffer.len() as u64,
+    )
+}
+
+pub fn cap_derive(parent_slot: u64, new_slot: u64, rights_mask: u64) -> u64 {
+    syscall3(SYS_CAP_DERIVE, parent_slot, new_slot, rights_mask)
+}
+
+pub fn cap_transfer(
+    target_process_index: u64,
+    cap_slot: u64,
+    target_slot: u64,
+    rights_mask: u64,
+) -> u64 {
+    let packed_transfer = (rights_mask << 32) | (target_slot << 16) | cap_slot;
+    syscall3(
+        SYS_CAP_TRANSFER,
+        CAP_PROCESS_CONTROL,
+        target_process_index,
+        packed_transfer,
+    )
 }
 
 pub fn yield_now() -> u64 {

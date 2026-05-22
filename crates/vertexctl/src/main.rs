@@ -32,6 +32,7 @@ fn run(args: Vec<String>) -> Result<(), String> {
         "why" => why_cmd(&args[1..]),
         "materialize-demo" => materialize_demo_cmd(&args[1..]),
         "compile-boot-manifest" => compile_boot_manifest_cmd(&args[1..]),
+        "explain-krustboot" => explain_krustboot_cmd(&args[1..]),
         "activate" => activate_cmd(&args[1..]),
         "switch" => switch_cmd(&args[1..]),
         "rollback" => rollback_cmd(&args[1..]),
@@ -171,6 +172,25 @@ fn compile_boot_manifest_cmd(args: &[String]) -> Result<(), String> {
         "{}",
         krustboot::summary(&manifest, output_path, bytes.len())
     );
+    Ok(())
+}
+
+fn explain_krustboot_cmd(args: &[String]) -> Result<(), String> {
+    let [manifest_path] = args else {
+        return Err("usage: vertexctl explain-krustboot <manifest>".to_owned());
+    };
+
+    let manifest = load_manifest(manifest_path).map_err(|error| error.to_string())?;
+    let report = validate_manifest(&manifest);
+    if !report.is_valid() {
+        print_report(&report);
+        return Err(format!(
+            "manifest {} is invalid; krustboot explanation suppressed",
+            manifest.generation.id
+        ));
+    }
+
+    print!("{}", krustboot::explain(&manifest)?);
     Ok(())
 }
 
@@ -432,6 +452,7 @@ fn print_usage() {
            vertexctl why <manifest> <service> <capability>\n\
            vertexctl materialize-demo <manifest> <output-dir>\n\
            vertexctl compile-boot-manifest <manifest> <output>\n\
+           vertexctl explain-krustboot <manifest>\n\
            vertexctl activate <manifest> [--state-root <dir>] [--run-once]\n\
            vertexctl switch <manifest> [--state-root <dir>] [--run-once]\n\
            vertexctl rollback [--state-root <dir>] [--run-once] [--restore-state]\n\

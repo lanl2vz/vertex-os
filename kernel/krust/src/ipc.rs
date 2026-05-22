@@ -1,4 +1,4 @@
-use core::cell::UnsafeCell;
+use core::{arch::asm, cell::UnsafeCell};
 
 use crate::{
     capability, gdt, paging, serial,
@@ -9,11 +9,17 @@ pub const BOOT_ENDPOINT_ID: u64 = 1;
 
 const MAX_MESSAGE_BYTES: usize = 128;
 const MAX_BOOT_READ_BYTES: usize = 4096;
-const MAX_OBJECTS: usize = 8;
-const MAX_PROCESSES: usize = 4;
-const MAX_CAPS: usize = 8;
+const MAX_OBJECTS: usize = 32;
+const MAX_PROCESSES: usize = 16;
+const MAX_CAPS: usize = 16;
+const MAX_BOOT_GRANTS: usize = 64;
+const MAX_STATE_VALUE_BYTES: usize = 64;
 const INITIAL_USER_RFLAGS: u64 = 0x2;
 const STATUS_BAD_BUFFER: u64 = u64::MAX - 2;
+pub const BOOT_OBJECT_ENDPOINT: u16 = 1;
+pub const BOOT_OBJECT_STORE: u16 = 2;
+pub const BOOT_OBJECT_STATE: u16 = 3;
+pub const BOOT_OBJECT_TIMER: u16 = 4;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -97,10 +103,23 @@ pub struct BootModuleConfig {
 }
 
 #[derive(Clone, Copy)]
+pub struct BootStoreObjectConfig {
+    pub id: &'static str,
+    pub base: u64,
+    pub length: u64,
+}
+
+#[derive(Clone, Copy)]
+pub struct BootStateVolumeConfig {
+    pub id: &'static str,
+}
+
+#[derive(Clone, Copy)]
 pub struct BootGrantConfig {
     pub process_index: usize,
     pub cap_slot: u64,
-    pub endpoint_index: usize,
+    pub object_kind: u16,
+    pub object_index: usize,
     pub rights: u64,
 }
 
@@ -110,7 +129,11 @@ pub struct BootRuntimeConfig {
     endpoints: [Option<BootEndpointConfig>; MAX_OBJECTS],
     endpoint_count: usize,
     manifest_module: Option<BootModuleConfig>,
-    grants: [Option<BootGrantConfig>; MAX_CAPS],
+    store_objects: [Option<BootStoreObjectConfig>; MAX_OBJECTS],
+    store_object_count: usize,
+    state_volumes: [Option<BootStateVolumeConfig>; MAX_OBJECTS],
+    state_volume_count: usize,
+    grants: [Option<BootGrantConfig>; MAX_BOOT_GRANTS],
     grant_count: usize,
 }
 
@@ -184,6 +207,8 @@ struct Process {
     caps: CapabilitySpace,
     saved_frame: SyscallFrame,
     has_saved_frame: bool,
+    exit_status: u64,
+    has_exited: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -204,6 +229,29 @@ struct BootModuleObject {
 }
 
 #[derive(Clone, Copy)]
+struct StoreObject {
+    id: KernelObjectId,
+    name: &'static str,
+    base: u64,
+    length: u64,
+}
+
+#[derive(Clone, Copy)]
+struct StateVolumeObject {
+    id: KernelObjectId,
+    name: &'static str,
+    value_ready: bool,
+    value_len: usize,
+    value: [u8; MAX_STATE_VALUE_BYTES],
+}
+
+#[derive(Clone, Copy)]
+struct TimerObject {
+    id: KernelObjectId,
+    name: &'static str,
+}
+
+#[derive(Clone, Copy)]
 struct ProcessControlObject {
     id: KernelObjectId,
     name: &'static str,
@@ -213,6 +261,9 @@ struct ProcessControlObject {
 enum KernelObject {
     IpcEndpoint(IpcEndpoint),
     BootModule(BootModuleObject),
+    StoreObject(StoreObject),
+    StateVolume(StateVolumeObject),
+    Timer(TimerObject),
     ProcessControl(ProcessControlObject),
 }
 
@@ -263,6 +314,17 @@ impl CapabilitySpace {
         let slot = usize::try_from(slot).ok()?;
         self.caps.get(slot).copied().flatten()
     }
+
+    fn drop(&mut self, slot: u64) -> Result<(), IpcError> {
+        let Ok(slot) = usize::try_from(slot) else {
+            return Err(IpcError::BadCapability);
+        };
+        if slot >= self.caps.len() || self.caps[slot].is_none() {
+            return Err(IpcError::BadCapability);
+        }
+        self.caps[slot] = None;
+        Ok(())
+    }
 }
 
 impl Process {
@@ -279,6 +341,8 @@ impl Process {
             caps: CapabilitySpace::new(),
             saved_frame: SyscallFrame::empty(),
             has_saved_frame: false,
+            exit_status: 0,
+            has_exited: false,
         }
     }
 
@@ -297,6 +361,8 @@ impl Process {
             caps,
             saved_frame: SyscallFrame::empty(),
             has_saved_frame: false,
+            exit_status: 0,
+            has_exited: false,
         }
     }
 }
@@ -324,6 +390,35 @@ impl BootModuleObject {
     }
 }
 
+impl StoreObject {
+    const fn new(id: KernelObjectId, name: &'static str, base: u64, length: u64) -> Self {
+        Self {
+            id,
+            name,
+            base,
+            length,
+        }
+    }
+}
+
+impl StateVolumeObject {
+    const fn new(id: KernelObjectId, name: &'static str) -> Self {
+        Self {
+            id,
+            name,
+            value_ready: false,
+            value_len: 0,
+            value: [0; MAX_STATE_VALUE_BYTES],
+        }
+    }
+}
+
+impl TimerObject {
+    const fn new(id: KernelObjectId, name: &'static str) -> Self {
+        Self { id, name }
+    }
+}
+
 impl ProcessControlObject {
     const fn new(id: KernelObjectId, name: &'static str) -> Self {
         Self { id, name }
@@ -336,6 +431,16 @@ impl ObjectTable {
             objects: [None; MAX_OBJECTS],
             count: 0,
             next_id: BOOT_ENDPOINT_ID,
+        }
+    }
+
+    fn reset(&mut self) {
+        self.count = 0;
+        self.next_id = BOOT_ENDPOINT_ID;
+        let mut index = 0;
+        while index < self.objects.len() {
+            self.objects[index] = None;
+            index += 1;
         }
     }
 
@@ -366,6 +471,50 @@ impl ObjectTable {
         self.objects[self.count] = Some(KernelObject::BootModule(BootModuleObject::new(
             id, name, base, length,
         )));
+        self.count += 1;
+        Ok(id)
+    }
+
+    fn add_store_object(
+        &mut self,
+        name: &'static str,
+        base: u64,
+        length: u64,
+    ) -> Result<KernelObjectId, InitError> {
+        if self.count == self.objects.len() {
+            return Err(InitError::ObjectTableFull);
+        }
+
+        let id = KernelObjectId(self.next_id);
+        self.next_id += 1;
+        self.objects[self.count] = Some(KernelObject::StoreObject(StoreObject::new(
+            id, name, base, length,
+        )));
+        self.count += 1;
+        Ok(id)
+    }
+
+    fn add_state_volume(&mut self, name: &'static str) -> Result<KernelObjectId, InitError> {
+        if self.count == self.objects.len() {
+            return Err(InitError::ObjectTableFull);
+        }
+
+        let id = KernelObjectId(self.next_id);
+        self.next_id += 1;
+        self.objects[self.count] =
+            Some(KernelObject::StateVolume(StateVolumeObject::new(id, name)));
+        self.count += 1;
+        Ok(id)
+    }
+
+    fn add_timer(&mut self, name: &'static str) -> Result<KernelObjectId, InitError> {
+        if self.count == self.objects.len() {
+            return Err(InitError::ObjectTableFull);
+        }
+
+        let id = KernelObjectId(self.next_id);
+        self.next_id += 1;
+        self.objects[self.count] = Some(KernelObject::Timer(TimerObject::new(id, name)));
         self.count += 1;
         Ok(id)
     }
@@ -429,6 +578,53 @@ impl ObjectTable {
         None
     }
 
+    fn get_store_object(&self, id: KernelObjectId) -> Option<StoreObject> {
+        let mut index = 0;
+        while index < self.count {
+            if let Some(KernelObject::StoreObject(object)) = self.objects[index]
+                && object.id == id
+            {
+                return Some(object);
+            }
+            index += 1;
+        }
+
+        None
+    }
+
+    fn get_state_volume_mut(&mut self, id: KernelObjectId) -> Option<&mut StateVolumeObject> {
+        let mut found = None;
+        let mut index = 0;
+        while index < self.count {
+            if let Some(KernelObject::StateVolume(state)) = self.objects[index]
+                && state.id == id
+            {
+                found = Some(index);
+                break;
+            }
+            index += 1;
+        }
+
+        match &mut self.objects[found?] {
+            Some(KernelObject::StateVolume(state)) => Some(state),
+            _ => None,
+        }
+    }
+
+    fn get_timer(&self, id: KernelObjectId) -> Option<TimerObject> {
+        let mut index = 0;
+        while index < self.count {
+            if let Some(KernelObject::Timer(timer)) = self.objects[index]
+                && timer.id == id
+            {
+                return Some(timer);
+            }
+            index += 1;
+        }
+
+        None
+    }
+
     fn get_process_control(&self, id: KernelObjectId) -> Option<ProcessControlObject> {
         let mut index = 0;
         while index < self.count {
@@ -451,6 +647,17 @@ impl ProcessTable {
             count: 0,
             current: None,
             next_id: 1,
+        }
+    }
+
+    fn reset(&mut self) {
+        self.count = 0;
+        self.current = None;
+        self.next_id = 1;
+        let mut index = 0;
+        while index < self.processes.len() {
+            self.processes[index] = Some(Process::empty());
+            index += 1;
         }
     }
 
@@ -555,11 +762,11 @@ impl ProcessTable {
         None
     }
 
-    fn all_exited(&self) -> bool {
+    fn all_exited_successfully(&self) -> bool {
         let mut index = 0;
         while index < self.count {
             if let Some(process) = self.processes[index]
-                && process.state != ProcessState::Exited
+                && (process.state != ProcessState::Exited || process.exit_status != 0)
             {
                 return false;
             }
@@ -587,7 +794,11 @@ impl BootRuntimeConfig {
             endpoints: [None; MAX_OBJECTS],
             endpoint_count: 0,
             manifest_module: None,
-            grants: [None; MAX_CAPS],
+            store_objects: [None; MAX_OBJECTS],
+            store_object_count: 0,
+            state_volumes: [None; MAX_OBJECTS],
+            state_volume_count: 0,
+            grants: [None; MAX_BOOT_GRANTS],
             grant_count: 0,
         }
     }
@@ -614,6 +825,24 @@ impl BootRuntimeConfig {
         self.manifest_module = Some(module);
     }
 
+    pub fn add_store_object(&mut self, object: BootStoreObjectConfig) -> Result<(), InitError> {
+        if self.store_object_count == self.store_objects.len() {
+            return Err(InitError::ObjectTableFull);
+        }
+        self.store_objects[self.store_object_count] = Some(object);
+        self.store_object_count += 1;
+        Ok(())
+    }
+
+    pub fn add_state_volume(&mut self, state: BootStateVolumeConfig) -> Result<(), InitError> {
+        if self.state_volume_count == self.state_volumes.len() {
+            return Err(InitError::ObjectTableFull);
+        }
+        self.state_volumes[self.state_volume_count] = Some(state);
+        self.state_volume_count += 1;
+        Ok(())
+    }
+
     pub fn add_grant(&mut self, grant: BootGrantConfig) -> Result<(), InitError> {
         if self.grant_count == self.grants.len() {
             return Err(InitError::CapabilityTableFull);
@@ -621,8 +850,15 @@ impl BootRuntimeConfig {
         if grant.process_index >= self.process_count {
             return Err(InitError::InvalidBootManifest);
         }
-        if grant.endpoint_index >= self.endpoint_count {
-            return Err(InitError::InvalidBootManifest);
+        match grant.object_kind {
+            BOOT_OBJECT_ENDPOINT if grant.object_index < self.endpoint_count => {}
+            BOOT_OBJECT_STORE if grant.object_index < self.store_object_count => {}
+            BOOT_OBJECT_STATE if grant.object_index < self.state_volume_count => {}
+            BOOT_OBJECT_TIMER if grant.object_index == 0 => {}
+            BOOT_OBJECT_ENDPOINT | BOOT_OBJECT_STORE | BOOT_OBJECT_STATE | BOOT_OBJECT_TIMER => {
+                return Err(InitError::InvalidBootManifest);
+            }
+            _ => return Err(InitError::InvalidBootManifest),
         }
         self.grants[self.grant_count] = Some(grant);
         self.grant_count += 1;
@@ -632,7 +868,8 @@ impl BootRuntimeConfig {
 
 pub fn init_from_boot_config(config: BootRuntimeConfig) -> Result<(), InitError> {
     let runtime = runtime();
-    *runtime = RuntimeState::new();
+    runtime.objects.reset();
+    runtime.processes.reset();
 
     let mut endpoint_ids = [None; MAX_OBJECTS];
     let mut endpoint_index = 0;
@@ -642,12 +879,45 @@ pub fn init_from_boot_config(config: BootRuntimeConfig) -> Result<(), InitError>
         endpoint_index += 1;
     }
 
+    let mut store_object_ids = [None; MAX_OBJECTS];
+    let mut store_index = 0;
+    while store_index < config.store_object_count {
+        let object = config.store_objects[store_index].ok_or(InitError::InvalidBootManifest)?;
+        store_object_ids[store_index] = Some(runtime.objects.add_store_object(
+            object.id,
+            object.base,
+            object.length,
+        )?);
+        store_index += 1;
+    }
+
+    let mut state_volume_ids = [None; MAX_OBJECTS];
+    let mut state_index = 0;
+    while state_index < config.state_volume_count {
+        let state = config.state_volumes[state_index].ok_or(InitError::InvalidBootManifest)?;
+        state_volume_ids[state_index] = Some(runtime.objects.add_state_volume(state.id)?);
+        state_index += 1;
+    }
+
+    let timer_id = runtime.objects.add_timer("monotonic-timer")?;
     let mut process_caps = [CapabilitySpace::new(); MAX_PROCESSES];
     let mut grant_index = 0;
     while grant_index < config.grant_count {
         let grant = config.grants[grant_index].ok_or(InitError::InvalidBootManifest)?;
-        let endpoint = endpoint_ids[grant.endpoint_index].ok_or(InitError::InvalidBootManifest)?;
-        process_caps[grant.process_index].grant(grant.cap_slot, endpoint, grant.rights)?;
+        let object = match grant.object_kind {
+            BOOT_OBJECT_ENDPOINT => {
+                endpoint_ids[grant.object_index].ok_or(InitError::InvalidBootManifest)?
+            }
+            BOOT_OBJECT_STORE => {
+                store_object_ids[grant.object_index].ok_or(InitError::InvalidBootManifest)?
+            }
+            BOOT_OBJECT_STATE => {
+                state_volume_ids[grant.object_index].ok_or(InitError::InvalidBootManifest)?
+            }
+            BOOT_OBJECT_TIMER if grant.object_index == 0 => timer_id,
+            _ => return Err(InitError::InvalidBootManifest),
+        };
+        process_caps[grant.process_index].grant(grant.cap_slot, object, grant.rights)?;
         grant_index += 1;
     }
 
@@ -736,16 +1006,27 @@ pub fn current_process_name() -> &'static str {
 }
 
 pub fn exit_current_process(status: u64, frame: &mut SyscallFrame) -> ScheduleResult {
+    let initial_exited = {
+        let runtime = runtime();
+        runtime
+            .processes
+            .current_process()
+            .map(|process| process.pid.raw() == 1)
+            .unwrap_or(true)
+    };
+
     {
         let runtime = runtime();
 
         if let Some(process) = runtime.processes.current_process_mut() {
             process.state = ProcessState::Exited;
             process.has_saved_frame = false;
+            process.exit_status = status;
+            process.has_exited = true;
         }
     }
 
-    if status != 0 {
+    if initial_exited && status != 0 {
         return ScheduleResult::Halt { ok: false };
     }
 
@@ -753,7 +1034,7 @@ pub fn exit_current_process(status: u64, frame: &mut SyscallFrame) -> ScheduleRe
         ScheduleResult::Switched
     } else {
         ScheduleResult::Halt {
-            ok: runtime().processes.all_exited(),
+            ok: runtime().processes.all_exited_successfully(),
         }
     }
 }
@@ -976,11 +1257,14 @@ pub fn start_process(cap_slot: u64, process_index: u64) -> Result<(), IpcError> 
             return Err(IpcError::BadCapability);
         };
 
-        if process.state != ProcessState::Declared {
+        if process.state != ProcessState::Declared && process.state != ProcessState::Exited {
             return Err(IpcError::BadCapability);
         }
 
         process.state = ProcessState::Ready;
+        process.has_saved_frame = false;
+        process.exit_status = 0;
+        process.has_exited = false;
         process.name
     };
 
@@ -990,6 +1274,229 @@ pub fn start_process(cap_slot: u64, process_index: u64) -> Result<(), IpcError> 
     serial::write_str(target);
     serial::write_str("\n");
     Ok(())
+}
+
+pub fn process_status(cap_slot: u64, process_index: u64) -> Result<u64, IpcError> {
+    let _process_control = process_control_from_cap(cap_slot, capability::RIGHT_CONTROL)?;
+    let Ok(process_index) = usize::try_from(process_index) else {
+        return Err(IpcError::BadCapability);
+    };
+
+    let runtime = runtime();
+    if process_index >= runtime.processes.count {
+        return Err(IpcError::BadCapability);
+    }
+
+    let Some(process) = runtime.processes.processes[process_index] else {
+        return Err(IpcError::BadCapability);
+    };
+
+    if process.state == ProcessState::Exited {
+        Ok(process.exit_status)
+    } else {
+        Ok(u64::MAX - 8)
+    }
+}
+
+pub fn cap_derive(parent_slot: u64, new_slot: u64, rights_mask: u64) -> Result<(), IpcError> {
+    let parent = lookup_capability(parent_slot, 0)?;
+    if rights_mask == 0 || rights_mask & !parent.rights != 0 {
+        return Err(IpcError::BadCapability);
+    }
+
+    let process_name = current_process_name();
+    let runtime = runtime();
+    let Some(process) = runtime.processes.current_process_mut() else {
+        return Err(IpcError::BadCapability);
+    };
+    process
+        .caps
+        .grant(new_slot, parent.object, rights_mask)
+        .map_err(|_| IpcError::BadCapability)?;
+
+    serial::write_str("Capability derive accepted: proc=");
+    serial::write_str(process_name);
+    serial::write_str(" parent=");
+    serial::write_u64_dec(parent_slot);
+    serial::write_str(" new=");
+    serial::write_u64_dec(new_slot);
+    serial::write_str(" rights=");
+    print_rights(rights_mask);
+    serial::write_str("\n");
+    Ok(())
+}
+
+pub fn cap_drop(slot: u64) -> Result<(), IpcError> {
+    let process_name = current_process_name();
+    let runtime = runtime();
+    let Some(process) = runtime.processes.current_process_mut() else {
+        return Err(IpcError::BadCapability);
+    };
+    process.caps.drop(slot)?;
+
+    serial::write_str("Capability drop accepted: proc=");
+    serial::write_str(process_name);
+    serial::write_str(" slot=");
+    serial::write_u64_dec(slot);
+    serial::write_str("\n");
+    Ok(())
+}
+
+pub fn cap_transfer(
+    control_slot: u64,
+    target_process_index: u64,
+    packed_transfer: u64,
+) -> Result<(), IpcError> {
+    let _process_control = process_control_from_cap(control_slot, capability::RIGHT_CONTROL)?;
+    let cap_slot = packed_transfer & 0xffff;
+    let target_slot = (packed_transfer >> 16) & 0xffff;
+    let rights_mask = packed_transfer >> 32;
+    let cap = lookup_capability(cap_slot, 0)?;
+    if rights_mask == 0 || rights_mask & !cap.rights != 0 {
+        return Err(IpcError::BadCapability);
+    }
+    let Ok(target_process_index) = usize::try_from(target_process_index) else {
+        return Err(IpcError::BadCapability);
+    };
+
+    let (caller, target) = {
+        let runtime = runtime();
+        let caller = runtime
+            .processes
+            .current_process()
+            .map(|process| process.name)
+            .unwrap_or("<none>");
+        if target_process_index >= runtime.processes.count {
+            return Err(IpcError::BadCapability);
+        }
+        let Some(target_process) = runtime.processes.processes[target_process_index].as_mut()
+        else {
+            return Err(IpcError::BadCapability);
+        };
+        target_process
+            .caps
+            .grant(target_slot, cap.object, rights_mask)
+            .map_err(|_| IpcError::BadCapability)?;
+        (caller, target_process.name)
+    };
+
+    serial::write_str("Capability transfer accepted: proc=");
+    serial::write_str(caller);
+    serial::write_str(" target=");
+    serial::write_str(target);
+    serial::write_str(" slot=");
+    serial::write_u64_dec(target_slot);
+    serial::write_str(" rights=");
+    print_rights(rights_mask);
+    serial::write_str("\n");
+    Ok(())
+}
+
+pub fn object_read(cap_slot: u64, destination: *mut u8, max_len: usize) -> Result<usize, IpcError> {
+    let object = store_object_from_cap(cap_slot, capability::RIGHT_READ)?;
+    let Ok(object_len) = usize::try_from(object.length) else {
+        return Err(IpcError::MessageTooLarge);
+    };
+    let copy_len = min(object_len, max_len);
+    let bytes = unsafe { core::slice::from_raw_parts(object.base as *const u8, copy_len) };
+    usercopy::copy_to_user(UserPtr::new(destination as u64), bytes)
+        .map_err(|_| IpcError::InvalidUserBuffer)?;
+
+    serial::write_str("Object read accepted: proc=");
+    serial::write_str(current_process_name());
+    serial::write_str(" object=");
+    serial::write_str(object.name);
+    serial::write_str(" bytes=");
+    serial::write_u64_dec(copy_len as u64);
+    serial::write_str("\n");
+    Ok(copy_len)
+}
+
+pub fn state_write(cap_slot: u64, source: *const u8, len: usize) -> Result<(), IpcError> {
+    if len > MAX_STATE_VALUE_BYTES {
+        return Err(IpcError::MessageTooLarge);
+    }
+
+    let state_id = state_volume_from_cap(cap_slot, capability::RIGHT_WRITE)?;
+    let mut value = [0u8; MAX_STATE_VALUE_BYTES];
+    usercopy::copy_from_user(&mut value, UserPtr::new(source as u64), len)
+        .map_err(|_| IpcError::InvalidUserBuffer)?;
+
+    let process_name = current_process_name();
+    let state = runtime()
+        .objects
+        .get_state_volume_mut(state_id)
+        .ok_or(IpcError::BadCapability)?;
+    state.value[..len].copy_from_slice(&value[..len]);
+    state.value_len = len;
+    state.value_ready = true;
+
+    serial::write_str("State write accepted: proc=");
+    serial::write_str(process_name);
+    serial::write_str(" state=");
+    serial::write_str(state.name);
+    serial::write_str("\n");
+    Ok(())
+}
+
+pub fn state_read(cap_slot: u64, destination: *mut u8, max_len: usize) -> Result<usize, IpcError> {
+    let state_id = state_volume_from_cap(cap_slot, capability::RIGHT_READ)?;
+    let (name, value, copy_len) = {
+        let state = runtime()
+            .objects
+            .get_state_volume_mut(state_id)
+            .ok_or(IpcError::BadCapability)?;
+        if !state.value_ready {
+            return Err(IpcError::Empty);
+        }
+        let copy_len = min(state.value_len, max_len);
+        let mut value = [0u8; MAX_STATE_VALUE_BYTES];
+        value[..copy_len].copy_from_slice(&state.value[..copy_len]);
+        (state.name, value, copy_len)
+    };
+
+    usercopy::copy_to_user(UserPtr::new(destination as u64), &value[..copy_len])
+        .map_err(|_| IpcError::InvalidUserBuffer)?;
+
+    serial::write_str("State read accepted: proc=");
+    serial::write_str(current_process_name());
+    serial::write_str(" state=");
+    serial::write_str(name);
+    serial::write_str("\n");
+    Ok(copy_len)
+}
+
+pub fn sleep_ms(cap_slot: u64, milliseconds: u64) -> Result<(), IpcError> {
+    let timer = timer_from_cap(cap_slot, capability::RIGHT_CONTROL)?;
+    serial::write_str("Timer sleep accepted: proc=");
+    serial::write_str(current_process_name());
+    serial::write_str(" timer=");
+    serial::write_str(timer.name);
+    serial::write_str(" ms=");
+    serial::write_u64_dec(milliseconds);
+    serial::write_str("\n");
+
+    let start = read_tsc();
+    let cycles = milliseconds.saturating_mul(1_000_000);
+    while read_tsc().wrapping_sub(start) < cycles {
+        core::hint::spin_loop();
+    }
+
+    Ok(())
+}
+
+fn read_tsc() -> u64 {
+    let low: u32;
+    let high: u32;
+    unsafe {
+        asm!(
+            "rdtsc",
+            out("eax") low,
+            out("edx") high,
+            options(nomem, nostack, preserves_flags)
+        );
+    }
+    ((high as u64) << 32) | low as u64
 }
 
 fn block_current_on_endpoint(
@@ -1220,6 +1727,30 @@ fn boot_module_from_cap(cap_slot: u64, required_right: u64) -> Result<BootModule
         .ok_or(IpcError::BadCapability)
 }
 
+fn store_object_from_cap(cap_slot: u64, required_right: u64) -> Result<StoreObject, IpcError> {
+    let cap = lookup_capability(cap_slot, required_right)?;
+    runtime()
+        .objects
+        .get_store_object(cap.object)
+        .ok_or(IpcError::BadCapability)
+}
+
+fn state_volume_from_cap(cap_slot: u64, required_right: u64) -> Result<KernelObjectId, IpcError> {
+    let cap = lookup_capability(cap_slot, required_right)?;
+    match runtime().objects.get_state_volume_mut(cap.object) {
+        Some(_) => Ok(cap.object),
+        None => Err(IpcError::BadCapability),
+    }
+}
+
+fn timer_from_cap(cap_slot: u64, required_right: u64) -> Result<TimerObject, IpcError> {
+    let cap = lookup_capability(cap_slot, required_right)?;
+    runtime()
+        .objects
+        .get_timer(cap.object)
+        .ok_or(IpcError::BadCapability)
+}
+
 fn process_control_from_cap(
     cap_slot: u64,
     required_right: u64,
@@ -1241,7 +1772,7 @@ fn lookup_capability(cap_slot: u64, required_right: u64) -> Result<Capability, I
         .lookup(cap_slot)
         .ok_or(IpcError::BadCapability)?;
 
-    if cap.rights & required_right == 0 {
+    if required_right != 0 && cap.rights & required_right != required_right {
         return Err(IpcError::BadCapability);
     }
 
@@ -1322,6 +1853,21 @@ fn print_capability_object(object: KernelObjectId) {
                     serial::write_str(module.name);
                     return;
                 }
+                KernelObject::StoreObject(store) if store.id == object => {
+                    serial::write_str("store-object=");
+                    serial::write_str(store.name);
+                    return;
+                }
+                KernelObject::StateVolume(state) if state.id == object => {
+                    serial::write_str("state-volume=");
+                    serial::write_str(state.name);
+                    return;
+                }
+                KernelObject::Timer(timer) if timer.id == object => {
+                    serial::write_str("timer=");
+                    serial::write_str(timer.name);
+                    return;
+                }
                 KernelObject::ProcessControl(process_control) if process_control.id == object => {
                     serial::write_str("process-control=");
                     serial::write_str(process_control.name);
@@ -1352,9 +1898,12 @@ fn print_process_state(index: usize, process: &Process) {
 fn print_rights(rights: u64) {
     let mut wrote = false;
     wrote = print_right(rights, capability::RIGHT_READ, "read", wrote);
+    wrote = print_right(rights, capability::RIGHT_WRITE, "write", wrote);
     wrote = print_right(rights, capability::RIGHT_SEND, "send", wrote);
     wrote = print_right(rights, capability::RIGHT_RECEIVE, "receive", wrote);
     wrote = print_right(rights, capability::RIGHT_CONTROL, "control", wrote);
+    wrote = print_right(rights, capability::RIGHT_SNAPSHOT, "snapshot", wrote);
+    wrote = print_right(rights, capability::RIGHT_RESTORE, "restore", wrote);
 
     if !wrote {
         serial::write_str("none");

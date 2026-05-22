@@ -6,11 +6,13 @@ IR and graph semantics; Krust is the native enforcement path.
 
 ## Status Summary
 
-Current status: M13 is implemented and smoke-tested under
+Current status: M14-M24 are implemented and smoke-tested under
 `qemu-system-x86_64` with Limine.
 
 ```sh
 scripts/krust-smoke.sh
+scripts/krust-test.sh manifest-cycle
+scripts/krust-test.sh rollback
 ```
 
 ## M0: Serial Boot
@@ -235,7 +237,7 @@ process-control authority.
 Acceptance evidence in smoke:
 
 ```text
-KrustBoot processes: 3
+KrustBoot processes: 9
 process[0] name=vertex-init module=vertex-init initial=yes
 process[1] name=logd module=logd initial=no
 process[2] name=echo module=echo initial=no
@@ -283,7 +285,7 @@ activation of a declared graph, and Krust only enforces compact authority.
 
 ## M14: Manifest-Driven Native Activation
 
-Status: planned.
+Status: done.
 
 Goal: remove the remaining demo shape from native `vertex-init`. M13 still
 knows that it should start `logd` and `echo`. M14 should make `vertex-init`
@@ -319,7 +321,7 @@ start services in topological order
 Acceptance evidence:
 
 ```text
-KrustBoot processes: 3
+KrustBoot processes: 9
 vertex-init activation plan:
   1. logd
   2. echo
@@ -342,7 +344,7 @@ vertex-init activation failed: dependency cycle
 
 ## M15: Native Readiness And Service Lifecycle
 
-Status: planned.
+Status: done.
 
 Goal: distinguish starting a service process from proving that the service is
 usable. M15 adds service lifecycle semantics above the kernel process state.
@@ -395,7 +397,7 @@ ordered process launcher.
 
 ## M16: Compile Native KrustBoot From Full Vertex IR
 
-Status: planned.
+Status: done.
 
 Goal: make the native boot manifest a compiled representation of the actual
 Vertex graph. Today the example manifest has a smaller `krustBoot` section next
@@ -449,7 +451,7 @@ both hosted and native runtimes.
 
 ## M17: Capability Derivation, Attenuation, And Transfer
 
-Status: planned.
+Status: done.
 
 Goal: move beyond static boot grants and support controlled authority flow.
 A process should be able to derive a weaker capability from a stronger one:
@@ -489,7 +491,7 @@ rather than directly from boot.
 
 ## M18: Native Supervision And Restart Policy
 
-Status: planned.
+Status: done.
 
 Goal: add the smallest Vertex-native supervisor semantics. Do not build a full
 service manager; implement only the restart policy subset needed to prove
@@ -527,7 +529,7 @@ This turns `vertex-init` from a launcher into a minimal generation supervisor.
 
 ## M19: Native Store-Object Read Capability
 
-Status: planned.
+Status: done.
 
 Goal: introduce immutable store objects without implementing a filesystem.
 Limine can load store objects as boot modules; Krust can expose them as
@@ -569,7 +571,7 @@ mounting, and path resolution remain out of scope.
 
 ## M20: Native Generation Identity And Boot Selection
 
-Status: planned.
+Status: done.
 
 Goal: introduce the native foundation for graph-level generation switch and
 rollback. For the first version, multiple generation records can be embedded in
@@ -612,9 +614,9 @@ rollback activation ok
 This is where Vertex begins to become graph-native rollback rather than only a
 capability-kernel demo.
 
-## M21: Native State-Volume Placeholder
+## M21: Native State-Volume Capabilities
 
-Status: planned.
+Status: done.
 
 Goal: introduce the mutable state object model without building a disk driver.
 State should become first-class in the manifest, services should receive state
@@ -657,7 +659,7 @@ This keeps immutable generation rollback and mutable state rollback separate.
 
 ## M22: Small Native Component Protocol
 
-Status: planned.
+Status: done.
 
 Goal: define `Vertex Native Protocol v0` so native services stop inventing
 ad hoc byte strings as the graph grows.
@@ -688,7 +690,7 @@ protocol, not a large service framework.
 
 ## M23: Minimal Timer And Sleep
 
-Status: planned.
+Status: done.
 
 Goal: add time only after graph activation, readiness, and supervision
 semantics are stable.
@@ -715,7 +717,7 @@ handling.
 
 ## M24: Hostless Native Test Runner
 
-Status: planned.
+Status: done.
 
 Goal: grow `scripts/krust-smoke.sh` into a QEMU-native test suite before adding
 drivers or persistent storage.
@@ -761,7 +763,7 @@ M17  Capability derivation, attenuation, drop, and transfer
 M18  Native supervision and restart policy
 M19  Native immutable store-object read capabilities
 M20  Native generation identity and rollback selection
-M21  Native state-volume placeholder
+M21  Native state-volume read/write capabilities
 M22  Standard native component protocol
 M23  Timer/sleep capability
 M24  QEMU native test suite

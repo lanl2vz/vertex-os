@@ -18,7 +18,7 @@ mod userspace;
 use core::arch::asm;
 use core::panic::PanicInfo;
 
-const MAX_BOOT_PROCESSES: usize = 4;
+const MAX_BOOT_PROCESSES: usize = 16;
 
 #[unsafe(link_section = ".text._start")]
 #[unsafe(no_mangle)]
@@ -512,6 +512,44 @@ fn build_boot_runtime_config(
     }
 
     index = 0;
+    while index < boot_manifest.store_object_count() {
+        let object = boot_manifest.store_object(index)?;
+        let Some(module) = find_module_by_string(object.module_string.as_bytes()) else {
+            serial::write_str("KrustBoot store module unavailable: object=");
+            serial::write_str(object.id);
+            serial::write_str(" module=");
+            serial::write_str(object.module_string);
+            serial::write_str("\n");
+            return None;
+        };
+        if config
+            .add_store_object(ipc::BootStoreObjectConfig {
+                id: object.id,
+                base: module.address as u64,
+                length: module.size,
+            })
+            .is_err()
+        {
+            serial::write_str("KrustBoot runtime plan failed: store object table\n");
+            return None;
+        }
+        index += 1;
+    }
+
+    index = 0;
+    while index < boot_manifest.state_volume_count() {
+        let state = boot_manifest.state_volume(index)?;
+        if config
+            .add_state_volume(ipc::BootStateVolumeConfig { id: state.id })
+            .is_err()
+        {
+            serial::write_str("KrustBoot runtime plan failed: state volume table\n");
+            return None;
+        }
+        index += 1;
+    }
+
+    index = 0;
     while index < boot_manifest.grant_count() {
         let grant = boot_manifest.grant(index)?;
         let rights = capability_rights_from_boot(grant.rights);
@@ -523,7 +561,8 @@ fn build_boot_runtime_config(
             .add_grant(ipc::BootGrantConfig {
                 process_index: grant.process_index,
                 cap_slot: grant.cap_slot,
-                endpoint_index: grant.endpoint_index,
+                object_kind: grant.object_kind,
+                object_index: grant.object_index,
                 rights,
             })
             .is_err()
@@ -544,6 +583,21 @@ fn capability_rights_from_boot(rights: u16) -> u64 {
     }
     if rights & boot_manifest::RIGHT_RECEIVE != 0 {
         out |= capability::RIGHT_RECEIVE;
+    }
+    if rights & boot_manifest::RIGHT_READ != 0 {
+        out |= capability::RIGHT_READ;
+    }
+    if rights & boot_manifest::RIGHT_WRITE != 0 {
+        out |= capability::RIGHT_WRITE;
+    }
+    if rights & boot_manifest::RIGHT_SNAPSHOT != 0 {
+        out |= capability::RIGHT_SNAPSHOT;
+    }
+    if rights & boot_manifest::RIGHT_RESTORE != 0 {
+        out |= capability::RIGHT_RESTORE;
+    }
+    if rights & boot_manifest::RIGHT_CONTROL != 0 {
+        out |= capability::RIGHT_CONTROL;
     }
     out
 }
@@ -682,6 +736,11 @@ fn print_boot_manifest(manifest: &boot_manifest::Manifest<'static>) {
     serial::write_str("KrustBoot manifest generation: ");
     serial::write_str(manifest.generation_id());
     serial::write_str("\n");
+    if !manifest.parent_generation_id().is_empty() {
+        serial::write_str("KrustBoot parent generation: ");
+        serial::write_str(manifest.parent_generation_id());
+        serial::write_str("\n");
+    }
 
     serial::write_str("KrustBoot boot modules: ");
     serial::write_u64_dec(manifest.boot_module_count() as u64);
@@ -714,6 +773,14 @@ fn print_boot_manifest(manifest: &boot_manifest::Manifest<'static>) {
             serial::write_str(process.module_string);
             serial::write_str(" initial=");
             serial::write_str(if process.initial { "yes" } else { "no" });
+            serial::write_str(" service=");
+            serial::write_str(process.service_id);
+            serial::write_str(" restart=");
+            serial::write_u64_dec(process.restart_policy as u64);
+            if !process.health_kind.is_empty() {
+                serial::write_str(" health=");
+                serial::write_str(process.health_kind);
+            }
             serial::write_str("\n");
         }
         index += 1;
@@ -741,20 +808,95 @@ fn print_boot_manifest(manifest: &boot_manifest::Manifest<'static>) {
     while index < manifest.grant_count() {
         if let Some(grant) = manifest.grant(index) {
             let process = manifest.process(grant.process_index);
-            let endpoint = manifest.endpoint(grant.endpoint_index);
             serial::write_str("  grant[");
             serial::write_u64_dec(index as u64);
             serial::write_str("] process=");
             serial::write_str(process.map(|process| process.name).unwrap_or("<bad>"));
             serial::write_str(" cap[");
             serial::write_u64_dec(grant.cap_slot);
-            serial::write_str("] endpoint=");
-            serial::write_str(endpoint.map(|endpoint| endpoint.name).unwrap_or("<bad>"));
+            serial::write_str("] ");
+            print_boot_grant_object(manifest, grant.object_kind, grant.object_index);
             serial::write_str(" rights=");
             print_boot_grant_rights(grant.rights);
             serial::write_str("\n");
         }
         index += 1;
+    }
+
+    serial::write_str("KrustBoot store objects: ");
+    serial::write_u64_dec(manifest.store_object_count() as u64);
+    serial::write_str("\n");
+    index = 0;
+    while index < manifest.store_object_count() {
+        if let Some(object) = manifest.store_object(index) {
+            serial::write_str("  store_object[");
+            serial::write_u64_dec(index as u64);
+            serial::write_str("] id=");
+            serial::write_str(object.id);
+            serial::write_str(" module=");
+            serial::write_str(object.module_string);
+            serial::write_str(" hash=");
+            serial::write_str(object.hash);
+            serial::write_str(" size=");
+            serial::write_u64_dec(object.size);
+            serial::write_str("\n");
+        }
+        index += 1;
+    }
+
+    serial::write_str("KrustBoot state volumes: ");
+    serial::write_u64_dec(manifest.state_volume_count() as u64);
+    serial::write_str("\n");
+    index = 0;
+    while index < manifest.state_volume_count() {
+        if let Some(state) = manifest.state_volume(index) {
+            serial::write_str("  state_volume[");
+            serial::write_u64_dec(index as u64);
+            serial::write_str("] id=");
+            serial::write_str(state.id);
+            serial::write_str("\n");
+        }
+        index += 1;
+    }
+}
+
+fn print_boot_grant_object(
+    manifest: &boot_manifest::Manifest<'static>,
+    object_kind: u16,
+    object_index: usize,
+) {
+    match object_kind {
+        boot_manifest::OBJECT_ENDPOINT => {
+            serial::write_str("endpoint=");
+            serial::write_str(
+                manifest
+                    .endpoint(object_index)
+                    .map(|endpoint| endpoint.name)
+                    .unwrap_or("<bad>"),
+            );
+        }
+        boot_manifest::OBJECT_STORE => {
+            serial::write_str("store-object=");
+            serial::write_str(
+                manifest
+                    .store_object(object_index)
+                    .map(|object| object.id)
+                    .unwrap_or("<bad>"),
+            );
+        }
+        boot_manifest::OBJECT_STATE => {
+            serial::write_str("state-volume=");
+            serial::write_str(
+                manifest
+                    .state_volume(object_index)
+                    .map(|state| state.id)
+                    .unwrap_or("<bad>"),
+            );
+        }
+        boot_manifest::OBJECT_TIMER => {
+            serial::write_str("timer=monotonic-timer");
+        }
+        _ => serial::write_str("object=<bad>"),
     }
 }
 
@@ -771,6 +913,41 @@ fn print_boot_grant_rights(rights: u16) {
         serial::write_str("receive");
         wrote = true;
     }
+    if rights & boot_manifest::RIGHT_READ != 0 {
+        if wrote {
+            serial::write_str("|");
+        }
+        serial::write_str("read");
+        wrote = true;
+    }
+    if rights & boot_manifest::RIGHT_WRITE != 0 {
+        if wrote {
+            serial::write_str("|");
+        }
+        serial::write_str("write");
+        wrote = true;
+    }
+    if rights & boot_manifest::RIGHT_SNAPSHOT != 0 {
+        if wrote {
+            serial::write_str("|");
+        }
+        serial::write_str("snapshot");
+        wrote = true;
+    }
+    if rights & boot_manifest::RIGHT_RESTORE != 0 {
+        if wrote {
+            serial::write_str("|");
+        }
+        serial::write_str("restore");
+        wrote = true;
+    }
+    if rights & boot_manifest::RIGHT_CONTROL != 0 {
+        if wrote {
+            serial::write_str("|");
+        }
+        serial::write_str("control");
+        wrote = true;
+    }
     if !wrote {
         serial::write_str("none");
     }
@@ -785,9 +962,16 @@ fn print_boot_manifest_error(error: boot_manifest::ParseError) {
         boot_manifest::ParseError::TooManyProcesses => serial::write_str("too many processes"),
         boot_manifest::ParseError::TooManyEndpoints => serial::write_str("too many endpoints"),
         boot_manifest::ParseError::TooManyGrants => serial::write_str("too many grants"),
+        boot_manifest::ParseError::TooManyStoreObjects => {
+            serial::write_str("too many store objects")
+        }
+        boot_manifest::ParseError::TooManyStateVolumes => {
+            serial::write_str("too many state volumes")
+        }
         boot_manifest::ParseError::InvalidString => serial::write_str("invalid string"),
         boot_manifest::ParseError::InvalidReference => serial::write_str("invalid reference"),
         boot_manifest::ParseError::InvalidRights => serial::write_str("invalid rights"),
+        boot_manifest::ParseError::InvalidObjectKind => serial::write_str("invalid object kind"),
         boot_manifest::ParseError::TrailingBytes => serial::write_str("trailing bytes"),
     }
 }

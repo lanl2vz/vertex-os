@@ -11,6 +11,8 @@ pub const RIGHT_SEND: u64 = 1 << 4;
 pub const RIGHT_RECEIVE: u64 = 1 << 5;
 pub const RIGHT_CONTROL: u64 = 1 << 6;
 pub const RIGHT_ALLOCATE: u64 = 1 << 7;
+pub const RIGHT_SNAPSHOT: u64 = 1 << 8;
+pub const RIGHT_RESTORE: u64 = 1 << 9;
 
 #[derive(Clone, Copy)]
 pub struct ObjectId(u64);
@@ -183,6 +185,8 @@ fn print_rights(rights: u64) {
     wrote = print_right(rights, RIGHT_RECEIVE, "receive", wrote);
     wrote = print_right(rights, RIGHT_CONTROL, "control", wrote);
     wrote = print_right(rights, RIGHT_ALLOCATE, "allocate", wrote);
+    wrote = print_right(rights, RIGHT_SNAPSHOT, "snapshot", wrote);
+    wrote = print_right(rights, RIGHT_RESTORE, "restore", wrote);
 
     if !wrote {
         serial::write_str("none");

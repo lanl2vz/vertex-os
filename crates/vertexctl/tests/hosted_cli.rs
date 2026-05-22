@@ -215,12 +215,14 @@ fn compile_boot_manifest_emits_krustboot_plan() {
         &output_arg,
     ]));
 
-    assert!(stdout.contains("format: KrustBootManifest v0"));
+    assert!(stdout.contains("format: KrustBootManifest v2"));
     assert!(stdout.contains("generation: gen:hello-0001"));
-    assert!(stdout.contains("boot_modules: 3"));
-    assert!(stdout.contains("processes: 3"));
-    assert!(stdout.contains("endpoints: 2"));
-    assert!(stdout.contains("grants: 5"));
+    assert!(stdout.contains("boot_modules: 9"));
+    assert!(stdout.contains("processes: 9"));
+    assert!(stdout.contains("endpoints: 3"));
+    assert!(stdout.contains("grants: 17"));
+    assert!(stdout.contains("store_objects: 1"));
+    assert!(stdout.contains("state_volumes: 1"));
 
     let bytes = fs::read(&output_path).expect("read krustboot output");
     assert!(bytes.starts_with(b"KRUSTBOOTV0\0\0\0\0\0"));
@@ -228,8 +230,28 @@ fn compile_boot_manifest_emits_krustboot_plan() {
     assert!(contains_bytes(&bytes, b"vertex-init"));
     assert!(contains_bytes(&bytes, b"serial-log"));
     assert!(contains_bytes(&bytes, b"logd"));
+    assert!(contains_bytes(&bytes, b"netstack"));
     assert!(contains_bytes(&bytes, b"echo"));
+    assert!(contains_bytes(&bytes, b"model-reader"));
+    assert!(contains_bytes(&bytes, b"counter-service"));
+    assert!(contains_bytes(&bytes, b"reader-service"));
+    assert!(contains_bytes(&bytes, b"timer-service"));
+    assert!(contains_bytes(&bytes, b"flaky-service"));
     assert!(contains_bytes(&bytes, b"log-sink"));
+    assert!(contains_bytes(&bytes, b"readiness"));
+    assert!(contains_bytes(&bytes, b"store:hello-text"));
+}
+
+#[test]
+fn explain_krustboot_reports_derived_authority() {
+    let stdout = assert_success(run(&[
+        "explain-krustboot",
+        "examples/hello-generation.vertex.json",
+    ]));
+
+    assert!(stdout.contains("svc:echo-server receives send authority to endpoint log-sink"));
+    assert!(stdout.contains("because it requires cap:log.sink/send"));
+    assert!(stdout.contains("and svc:logd provides cap:log.sink"));
 }
 
 #[test]
