@@ -1,6 +1,6 @@
 # Krust Kernel
 
-Krust M4 is the first native virtual memory milestone.
+Krust M5 is the first native kernel object and capability table milestone.
 
 The target is intentionally small:
 
@@ -18,11 +18,13 @@ Krust allocates, frees, and reuses 4 KiB physical frames
 Krust walks the active x86_64 page tables through Limine's HHDM
 Krust maps a small fixed kernel-heap virtual range
 Krust writes and reads through the mapped virtual pages
+Krust creates fixed kernel objects and boot capabilities
+Krust prints the boot capability table
 Krust halts forever
 ```
 
 No dynamic heap allocator, interrupts, userspace, full manifest parsing, Vertex
-IR integration, filesystem, network, or device drivers are part of M4.
+IR integration, filesystem, network, or device drivers are part of M5.
 
 ## Prerequisites
 
@@ -101,6 +103,7 @@ Limine memory map entries: ...
 Vertex manifest generation: gen:hello-0001
 Physical allocator demo ok
 Virtual memory demo ok
+Capability table demo ok
 ```
 
 QEMU runs with `-display none`, so all kernel output is written through the
@@ -121,16 +124,17 @@ Limine memory map entries:
 Vertex manifest generation: gen:hello-0001
 Physical allocator demo ok
 Virtual memory demo ok
+Capability table demo ok
 ```
 
 ## Machine Notes
 
 Linux x86_64 can add KVM later with QEMU flags such as `-enable-kvm -cpu host`.
-That is not enabled by default so the M4 command stays portable:
+That is not enabled by default so the M5 command stays portable:
 
 ```sh
 QEMU_EXTRA="-enable-kvm -cpu host" make smoke
 ```
 
 macOS Apple Silicon can run `qemu-system-x86_64` by emulation. It is slower than
-native AArch64 virtualization, but it is enough for the M4 serial milestone.
+native AArch64 virtualization, but it is enough for the M5 serial milestone.

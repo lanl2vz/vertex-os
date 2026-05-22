@@ -28,14 +28,14 @@ vertex-os/
   flake.nix              Planned root flake entrypoint
 ```
 
-## Krust M4
+## Krust M5
 
-The first native virtual memory milestone lives in `kernel/krust`. It is
-isolated from the hosted Cargo workspace and boots a Limine ISO under QEMU
-until Krust prints `Krust Kernel booted`, reads Limine's memory map, finds the
-packaged `hello-generation.vertex.json` boot module, allocates/frees 4 KiB
-physical frames, maps a small kernel-heap virtual range, verifies virtual-page
-read/write access, prints memory stats to the serial console, and halts.
+The first native kernel object and capability table milestone lives in
+`kernel/krust`. It is isolated from the hosted Cargo workspace and boots a
+Limine ISO under QEMU until Krust prints `Krust Kernel booted`, reads Limine's
+memory map, finds the packaged `hello-generation.vertex.json` boot module,
+exercises physical and virtual memory, creates boot kernel objects and compact
+capabilities, prints the capability table to the serial console, and halts.
 
 ```sh
 cd kernel/krust

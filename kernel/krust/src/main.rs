@@ -1,6 +1,7 @@
 #![no_std]
 #![no_main]
 
+mod capability;
 mod limine;
 mod memory;
 mod paging;
@@ -76,7 +77,10 @@ fn print_boot_info() {
     };
 
     run_physical_allocator_demo(&mut allocator);
-    run_virtual_memory_demo(&mut allocator);
+    let Some(heap) = run_virtual_memory_demo(&mut allocator) else {
+        return;
+    };
+    run_capability_table_demo(&allocator, heap);
 }
 
 fn init_physical_allocator(memory_map: &limine::MemoryMap) -> Option<memory::FrameAllocator> {
@@ -148,10 +152,16 @@ fn run_physical_allocator_demo(allocator: &mut memory::FrameAllocator) {
     }
 }
 
-fn run_virtual_memory_demo(allocator: &mut memory::FrameAllocator) {
+#[derive(Clone, Copy)]
+struct KernelHeapMapping {
+    base: u64,
+    length: u64,
+}
+
+fn run_virtual_memory_demo(allocator: &mut memory::FrameAllocator) -> Option<KernelHeapMapping> {
     let Some(hhdm_offset) = limine::hhdm_offset() else {
         serial::write_str("Virtual memory demo failed: HHDM unavailable\n");
-        return;
+        return None;
     };
 
     serial::write_str("Limine HHDM offset: ");
@@ -165,28 +175,28 @@ fn run_virtual_memory_demo(allocator: &mut memory::FrameAllocator) {
 
     let Some(page0) = paging::kernel_heap_page(0) else {
         serial::write_str("Virtual memory demo failed: page0\n");
-        return;
+        return None;
     };
     let Some(page1) = paging::kernel_heap_page(1) else {
         serial::write_str("Virtual memory demo failed: page1\n");
-        return;
+        return None;
     };
     let Some(frame0) = allocator.allocate() else {
         serial::write_str("Virtual memory demo failed: frame0\n");
-        return;
+        return None;
     };
     let Some(frame1) = allocator.allocate() else {
         serial::write_str("Virtual memory demo failed: frame1\n");
-        return;
+        return None;
     };
 
     if let Err(error) = mapper.map_page(page0, frame0, allocator) {
         print_map_error("Virtual memory map failed for page0", error);
-        return;
+        return None;
     }
     if let Err(error) = mapper.map_page(page1, frame1, allocator) {
         print_map_error("Virtual memory map failed for page1", error);
-        return;
+        return None;
     }
 
     serial::write_str("Virtual memory mapped heap page: virt=");
@@ -223,6 +233,131 @@ fn run_virtual_memory_demo(allocator: &mut memory::FrameAllocator) {
     }
 
     print_allocator_stats("Physical allocator after virtual memory", allocator);
+    Some(KernelHeapMapping {
+        base: paging::KERNEL_HEAP_BASE,
+        length: paging::KERNEL_HEAP_PAGES as u64 * memory::FRAME_SIZE,
+    })
+}
+
+fn run_capability_table_demo(allocator: &memory::FrameAllocator, heap: KernelHeapMapping) {
+    let mut table = capability::CapabilityTable::new();
+    let stats = allocator.stats();
+    let manifest_module = find_vertex_manifest_module();
+
+    let kernel_process =
+        match table.add_object(capability::KernelObjectKind::Process, "proc:kernel", 0, 0) {
+            Ok(id) => id,
+            Err(_) => {
+                serial::write_str("Capability table demo failed: kernel process object\n");
+                return;
+            }
+        };
+    let bootstrap_thread = match table.add_object(
+        capability::KernelObjectKind::Thread,
+        "thread:bootstrap",
+        0,
+        0,
+    ) {
+        Ok(id) => id,
+        Err(_) => {
+            serial::write_str("Capability table demo failed: bootstrap thread object\n");
+            return;
+        }
+    };
+    let serial_endpoint = match table.add_object(
+        capability::KernelObjectKind::IpcEndpoint,
+        "endpoint:serial-com1",
+        0x3f8,
+        8,
+    ) {
+        Ok(id) => id,
+        Err(_) => {
+            serial::write_str("Capability table demo failed: serial endpoint object\n");
+            return;
+        }
+    };
+    let physical_memory = match table.add_object(
+        capability::KernelObjectKind::MemoryObject,
+        "mem:usable-frames",
+        0,
+        stats.total_frames * memory::FRAME_SIZE,
+    ) {
+        Ok(id) => id,
+        Err(_) => {
+            serial::write_str("Capability table demo failed: physical memory object\n");
+            return;
+        }
+    };
+    let kernel_heap = match table.add_object(
+        capability::KernelObjectKind::MemoryObject,
+        "mem:kernel-heap",
+        heap.base,
+        heap.length,
+    ) {
+        Ok(id) => id,
+        Err(_) => {
+            serial::write_str("Capability table demo failed: kernel heap object\n");
+            return;
+        }
+    };
+    let boot_module = match table.add_object(
+        capability::KernelObjectKind::BootModule,
+        "module:vertex-manifest",
+        manifest_module
+            .map(|module| module.address as u64)
+            .unwrap_or(0),
+        manifest_module.map(|module| module.size).unwrap_or(0),
+    ) {
+        Ok(id) => id,
+        Err(_) => {
+            serial::write_str("Capability table demo failed: manifest module object\n");
+            return;
+        }
+    };
+
+    if table
+        .grant(
+            kernel_process,
+            capability::RIGHT_READ | capability::RIGHT_WRITE | capability::RIGHT_CONTROL,
+        )
+        .is_err()
+        || table
+            .grant(
+                bootstrap_thread,
+                capability::RIGHT_READ | capability::RIGHT_WRITE | capability::RIGHT_CONTROL,
+            )
+            .is_err()
+        || table
+            .grant(
+                serial_endpoint,
+                capability::RIGHT_SEND | capability::RIGHT_CONTROL,
+            )
+            .is_err()
+        || table
+            .grant(
+                physical_memory,
+                capability::RIGHT_READ | capability::RIGHT_ALLOCATE,
+            )
+            .is_err()
+        || table
+            .grant(
+                kernel_heap,
+                capability::RIGHT_READ | capability::RIGHT_WRITE | capability::RIGHT_MAP,
+            )
+            .is_err()
+        || table.grant(boot_module, capability::RIGHT_READ).is_err()
+    {
+        serial::write_str("Capability table demo failed: grant\n");
+        return;
+    }
+
+    table.print();
+
+    if table.object_count() == 6 && table.capability_count() == 6 {
+        serial::write_str("Capability table demo ok\n");
+    } else {
+        serial::write_str("Capability table demo failed: count mismatch\n");
+    }
 }
 
 fn print_map_error(label: &str, error: paging::MapError) {
@@ -283,6 +418,23 @@ fn print_manifest_module() {
 
         index += 1;
     }
+}
+
+fn find_vertex_manifest_module() -> Option<&'static limine::File> {
+    let modules = limine::modules()?;
+
+    let mut index = 0;
+    while index < modules.module_count() {
+        if let Some(module) = modules.module(index)
+            && c_string_eq(module.string, VERTEX_MANIFEST_MODULE)
+        {
+            return Some(module);
+        }
+
+        index += 1;
+    }
+
+    None
 }
 
 fn print_vertex_manifest(module: &limine::File) {

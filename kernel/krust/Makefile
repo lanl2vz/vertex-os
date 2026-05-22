@@ -52,17 +52,17 @@ smoke: iso
 	@$(QEMU) $(QEMU_EXTRA) -m 256M -serial file:$(BUILD_DIR)/serial.log -monitor none -display none -no-reboot -no-shutdown -cdrom $(ISO_IMAGE) & \
 	pid=$$!; \
 	for _ in 1 2 3 4 5; do \
-		if grep -q "Krust Kernel booted" $(BUILD_DIR)/serial.log 2>/dev/null && grep -q "Limine memory map entries:" $(BUILD_DIR)/serial.log 2>/dev/null && grep -q "Vertex manifest generation: gen:hello-0001" $(BUILD_DIR)/serial.log 2>/dev/null && grep -q "Physical allocator demo ok" $(BUILD_DIR)/serial.log 2>/dev/null && grep -q "Virtual memory demo ok" $(BUILD_DIR)/serial.log 2>/dev/null; then \
+		if grep -q "Krust Kernel booted" $(BUILD_DIR)/serial.log 2>/dev/null && grep -q "Limine memory map entries:" $(BUILD_DIR)/serial.log 2>/dev/null && grep -q "Vertex manifest generation: gen:hello-0001" $(BUILD_DIR)/serial.log 2>/dev/null && grep -q "Physical allocator demo ok" $(BUILD_DIR)/serial.log 2>/dev/null && grep -q "Virtual memory demo ok" $(BUILD_DIR)/serial.log 2>/dev/null && grep -q "Capability table demo ok" $(BUILD_DIR)/serial.log 2>/dev/null; then \
 			kill $$pid >/dev/null 2>&1 || true; \
 			wait $$pid >/dev/null 2>&1 || true; \
-			echo "smoke ok: Krust Kernel booted, found Vertex manifest module, and exercised physical/virtual memory"; \
+			echo "smoke ok: Krust Kernel booted and exercised memory plus boot capabilities"; \
 			exit 0; \
 		fi; \
 		sleep 1; \
 	done; \
 	kill $$pid >/dev/null 2>&1 || true; \
 	wait $$pid >/dev/null 2>&1 || true; \
-	echo "smoke failed: serial output did not contain Krust Kernel booted, Limine memory map entries, Vertex manifest generation, Physical allocator demo ok, and Virtual memory demo ok"; \
+	echo "smoke failed: serial output did not contain Krust Kernel booted, Limine memory map entries, Vertex manifest generation, Physical allocator demo ok, Virtual memory demo ok, and Capability table demo ok"; \
 	test ! -f $(BUILD_DIR)/serial.log || cat $(BUILD_DIR)/serial.log; \
 	exit 1
 
@@ -71,7 +71,7 @@ doctor: check-tools check-limine-dir
 	@echo "limine: $$(command -v $(LIMINE))"
 	@echo "xorriso: $$(command -v $(XORRISO))"
 	@echo "LIMINE_DIR: $(LIMINE_DIR)"
-	@echo "Krust M4 toolchain is ready."
+	@echo "Krust M5 toolchain is ready."
 
 clean:
 	rm -rf $(BUILD_DIR) target
