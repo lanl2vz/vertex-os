@@ -1,6 +1,6 @@
 use core::arch::{asm, global_asm};
 
-use crate::{gdt, serial};
+use crate::{gdt, ipc, serial, userspace::UserImage};
 
 const IA32_EFER: u32 = 0xc000_0080;
 const IA32_STAR: u32 = 0xc000_0081;
@@ -12,12 +12,23 @@ const RFLAGS_INTERRUPT_ENABLE: u64 = 1 << 9;
 
 const SYSCALL_STACK_SIZE: usize = 16 * 1024;
 const SYS_WRITE_SERIAL: u64 = 1;
+const SYS_EXIT: u64 = 2;
+const SYS_IPC_SEND: u64 = 3;
+const SYS_IPC_RECV: u64 = 4;
+
+const STATUS_OK: u64 = 0;
+const STATUS_BAD_CAPABILITY: u64 = u64::MAX - 1;
+const STATUS_BAD_BUFFER: u64 = u64::MAX - 2;
+const STATUS_TOO_LARGE: u64 = u64::MAX - 3;
+const STATUS_EMPTY: u64 = u64::MAX - 4;
 
 #[repr(C, align(16))]
 pub struct SyscallStack([u8; SYSCALL_STACK_SIZE]);
 
 #[unsafe(no_mangle)]
 static mut KRUST_SYSCALL_STACK: SyscallStack = SyscallStack([0; SYSCALL_STACK_SIZE]);
+
+static mut RECEIVER_IMAGE: Option<UserImage> = None;
 
 unsafe extern "C" {
     fn krust_syscall_entry();
@@ -27,24 +38,35 @@ global_asm!(
     r#"
     .global krust_syscall_entry
 krust_syscall_entry:
+    mov r10, rsp
     lea rsp, [rip + KRUST_SYSCALL_STACK + 16384]
+    push r11
+    push rcx
+    push r10
+    sub rsp, 8
     mov r12, rdi
     mov r13, rsi
     mov r14, rdx
+    mov r15, r8
     mov rdi, rax
     mov rsi, r12
     mov rdx, r13
     mov rcx, r14
+    mov r8, r15
     call krust_syscall_dispatch
-1:
-    hlt
-    jmp 1b
+    add rsp, 8
+    pop r10
+    pop rcx
+    pop r11
+    mov rsp, r10
+    sysretq
 "#
 );
 
 pub fn init() {
     let entry = krust_syscall_entry as *const () as usize as u64;
-    let star = (gdt::KERNEL_CODE_SELECTOR as u64) << 32;
+    let star =
+        ((gdt::USER_SELECTOR_BASE as u64) << 48) | ((gdt::KERNEL_CODE_SELECTOR as u64) << 32);
 
     unsafe {
         write_msr(IA32_STAR, star);
@@ -54,24 +76,113 @@ pub fn init() {
     }
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn krust_syscall_dispatch(number: u64, arg0: u64, arg1: u64, _arg2: u64) -> ! {
-    match number {
-        SYS_WRITE_SERIAL => {
-            serial::write_str("Userspace sys_write_serial: ");
+pub fn set_receiver_image(image: UserImage) {
+    unsafe {
+        RECEIVER_IMAGE = Some(image);
+    }
+}
 
-            let bytes = unsafe { core::slice::from_raw_parts(arg0 as *const u8, arg1 as usize) };
-            serial::write_ascii_bytes(bytes);
-            serial::write_str("\nUserspace syscall demo ok\n");
+#[unsafe(no_mangle)]
+pub extern "C" fn krust_syscall_dispatch(number: u64, arg0: u64, arg1: u64, arg2: u64) -> u64 {
+    match number {
+        SYS_WRITE_SERIAL => match user_bytes(arg0, arg1) {
+            Some(bytes) => {
+                serial::write_str("Userspace sys_write_serial: ");
+                serial::write_ascii_bytes(bytes);
+                serial::write_str("\n");
+                STATUS_OK
+            }
+            None => STATUS_BAD_BUFFER,
+        },
+        SYS_EXIT => exit_current_process(arg0),
+        SYS_IPC_SEND => match ipc::send(
+            arg0,
+            arg1 as *const u8,
+            usize::try_from(arg2).unwrap_or(usize::MAX),
+        ) {
+            Ok(()) => STATUS_OK,
+            Err(error) => ipc_error_status(error),
+        },
+        SYS_IPC_RECV => {
+            match ipc::receive(
+                arg0,
+                arg1 as *mut u8,
+                usize::try_from(arg2).unwrap_or(usize::MAX),
+            ) {
+                Ok(len) => len as u64,
+                Err(error) => ipc_error_status(error),
+            }
         }
         _ => {
             serial::write_str("Unknown userspace syscall: ");
             serial::write_u64_dec(number);
             serial::write_str("\n");
+            u64::MAX
         }
     }
+}
 
-    halt_loop()
+fn exit_current_process(status: u64) -> ! {
+    match ipc::current_process() {
+        ipc::ProcessId::Sender => {
+            serial::write_str("IPC sender exited: status=");
+            serial::write_u64_dec(status);
+            serial::write_str("\n");
+            start_receiver()
+        }
+        ipc::ProcessId::Receiver => {
+            serial::write_str("IPC receiver exited: status=");
+            serial::write_u64_dec(status);
+            serial::write_str("\nIPC demo ok\n");
+            halt_loop()
+        }
+    }
+}
+
+fn start_receiver() -> ! {
+    let Some(receiver) = (unsafe { RECEIVER_IMAGE }) else {
+        serial::write_str("IPC receiver image unavailable\n");
+        halt_loop();
+    };
+
+    ipc::set_current_process(ipc::ProcessId::Receiver);
+
+    serial::write_str("Switching to IPC receiver\n");
+    unsafe {
+        gdt::enter_user_mode(receiver.cr3, receiver.entry, receiver.stack_top);
+    }
+}
+
+fn user_bytes(pointer: u64, len: u64) -> Option<&'static [u8]> {
+    const USER_CANONICAL_LIMIT: u64 = 0x0000_8000_0000_0000;
+
+    let end = pointer.checked_add(len)?;
+    if pointer >= USER_CANONICAL_LIMIT || end > USER_CANONICAL_LIMIT {
+        return None;
+    }
+
+    Some(unsafe { core::slice::from_raw_parts(pointer as *const u8, len as usize) })
+}
+
+fn ipc_error_status(error: ipc::IpcError) -> u64 {
+    match error {
+        ipc::IpcError::BadCapability => {
+            serial::write_str("IPC syscall rejected: bad capability\n");
+            STATUS_BAD_CAPABILITY
+        }
+        ipc::IpcError::InvalidUserBuffer => {
+            serial::write_str("IPC syscall rejected: bad user buffer\n");
+            STATUS_BAD_BUFFER
+        }
+        ipc::IpcError::MessageTooLarge => {
+            serial::write_str("IPC syscall rejected: message too large\n");
+            STATUS_TOO_LARGE
+        }
+        ipc::IpcError::Empty => {
+            serial::write_str("IPC syscall rejected: endpoint empty\n");
+            STATUS_EMPTY
+        }
+    }
 }
 
 fn halt_loop() -> ! {

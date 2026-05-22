@@ -1,6 +1,7 @@
 use core::arch::asm;
 
 pub const KERNEL_CODE_SELECTOR: u16 = 0x08;
+pub const USER_SELECTOR_BASE: u16 = 0x10;
 const USER_DATA_SELECTOR: u16 = 0x18 | 3;
 const USER_CODE_SELECTOR: u16 = 0x20 | 3;
 

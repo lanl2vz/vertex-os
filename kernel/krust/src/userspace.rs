@@ -12,10 +12,11 @@ const USER_CANONICAL_LIMIT: u64 = 0x0000_8000_0000_0000;
 const USER_STACK_TOP: u64 = 0x0000_7000_0000_0000;
 const USER_STACK_PAGES: usize = 4;
 
+#[derive(Clone, Copy)]
 pub struct UserImage {
-    cr3: u64,
-    entry: u64,
-    stack_top: u64,
+    pub cr3: u64,
+    pub entry: u64,
+    pub stack_top: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -56,14 +57,9 @@ pub fn load(
     })
 }
 
+#[allow(dead_code)]
 pub fn enter(image: UserImage) -> ! {
-    serial::write_str("Krust userspace ELF loaded: entry=");
-    serial::write_u64_hex(image.entry);
-    serial::write_str(" stack=");
-    serial::write_u64_hex(image.stack_top);
-    serial::write_str(" cr3=");
-    serial::write_u64_hex(image.cr3);
-    serial::write_str("\n");
+    print_image("Krust userspace ELF loaded", image);
 
     gdt::init();
     serial::write_str("GDT initialized\n");
@@ -74,6 +70,33 @@ pub fn enter(image: UserImage) -> ! {
     unsafe {
         gdt::enter_user_mode(image.cr3, image.entry, image.stack_top);
     }
+}
+
+pub fn enter_ipc_demo(sender: UserImage, receiver: UserImage) -> ! {
+    print_image("Krust IPC sender ELF loaded", sender);
+    print_image("Krust IPC receiver ELF loaded", receiver);
+
+    gdt::init();
+    serial::write_str("GDT initialized\n");
+    syscall::init();
+    serial::write_str("Syscall path initialized\n");
+    syscall::set_receiver_image(receiver);
+
+    serial::write_str("Entering IPC sender userspace\n");
+    unsafe {
+        gdt::enter_user_mode(sender.cr3, sender.entry, sender.stack_top);
+    }
+}
+
+fn print_image(label: &str, image: UserImage) {
+    serial::write_str(label);
+    serial::write_str(": entry=");
+    serial::write_u64_hex(image.entry);
+    serial::write_str(" stack=");
+    serial::write_u64_hex(image.stack_top);
+    serial::write_str(" cr3=");
+    serial::write_u64_hex(image.cr3);
+    serial::write_str("\n");
 }
 
 pub fn print_load_error(error: LoadError) {

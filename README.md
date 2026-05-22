@@ -28,15 +28,16 @@ vertex-os/
   flake.nix              Planned root flake entrypoint
 ```
 
-## Krust M6
+## Krust M7
 
-The first native userspace milestone lives in `kernel/krust`. It is isolated
-from the hosted Cargo workspace and boots a Limine ISO under QEMU until Krust
-prints `Krust Kernel booted`, reads Limine's memory map, finds the packaged
-`hello-generation.vertex.json` boot module, exercises physical and virtual
-memory, creates boot kernel objects and compact capabilities, loads a tiny
-static userspace ELF module, enters ring 3, handles `sys_write_serial`, prints
-the userspace message to the serial console, and halts in the syscall handler.
+The first native IPC capability milestone lives in `kernel/krust`. It is
+isolated from the hosted Cargo workspace and boots a Limine ISO under QEMU until
+Krust prints `Krust Kernel booted`, reads Limine's memory map, finds the
+packaged `hello-generation.vertex.json` boot module, exercises physical and
+virtual memory, creates boot kernel objects and compact capabilities, loads two
+static userspace ELF modules, gives `ipc-sender` a send capability to endpoint
+1, gives `ipc-receiver` a receive capability to the same endpoint, enters ring
+3, transfers `Krust IPC ping`, and halts after `IPC demo ok`.
 
 ```sh
 cd kernel/krust

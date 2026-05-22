@@ -3,7 +3,9 @@ BUILD_DIR := build
 ISO_ROOT := $(BUILD_DIR)/iso-root
 ISO_IMAGE := $(BUILD_DIR)/krust.iso
 KERNEL_ELF := target/$(KRUST_TARGET)/debug/krust
-USER_ELF := user/hello/target/$(KRUST_TARGET)/debug/krust-user-hello
+IPC_USER_TARGET_DIR := user/ipc/target/$(KRUST_TARGET)/debug
+IPC_SENDER_ELF := $(IPC_USER_TARGET_DIR)/krust-ipc-sender
+IPC_RECEIVER_ELF := $(IPC_USER_TARGET_DIR)/krust-ipc-receiver
 VERTEX_MANIFEST ?= ../../examples/hello-generation.vertex.json
 
 QEMU ?= qemu-system-x86_64
@@ -20,13 +22,14 @@ kernel:
 	cargo build --target $(KRUST_TARGET)
 
 user:
-	cd user/hello && cargo build --target $(KRUST_TARGET)
+	cd user/ipc && cargo build --target $(KRUST_TARGET)
 
 iso: build check-tools check-limine-dir
 	rm -rf $(ISO_ROOT) $(ISO_IMAGE)
 	mkdir -p $(ISO_ROOT)/boot $(ISO_ROOT)/EFI/BOOT
 	cp $(KERNEL_ELF) $(ISO_ROOT)/boot/krust.elf
-	cp $(USER_ELF) $(ISO_ROOT)/boot/krust-user-hello.elf
+	cp $(IPC_SENDER_ELF) $(ISO_ROOT)/boot/krust-ipc-sender.elf
+	cp $(IPC_RECEIVER_ELF) $(ISO_ROOT)/boot/krust-ipc-receiver.elf
 	cp $(VERTEX_MANIFEST) $(ISO_ROOT)/boot/hello-generation.vertex.json
 	cp limine.conf $(ISO_ROOT)/boot/limine.conf
 	cp $(LIMINE_DIR)/limine-bios.sys $(ISO_ROOT)/boot/limine-bios.sys
@@ -59,17 +62,17 @@ smoke: iso
 	@$(QEMU) $(QEMU_EXTRA) -m 256M -serial file:$(BUILD_DIR)/serial.log -monitor none -display none -no-reboot -no-shutdown -cdrom $(ISO_IMAGE) & \
 	pid=$$!; \
 	for _ in 1 2 3 4 5 6 7 8; do \
-		if grep -q "Krust Kernel booted" $(BUILD_DIR)/serial.log 2>/dev/null && grep -q "Limine memory map entries:" $(BUILD_DIR)/serial.log 2>/dev/null && grep -q "Vertex manifest generation: gen:hello-0001" $(BUILD_DIR)/serial.log 2>/dev/null && grep -q "Physical allocator demo ok" $(BUILD_DIR)/serial.log 2>/dev/null && grep -q "Virtual memory demo ok" $(BUILD_DIR)/serial.log 2>/dev/null && grep -q "Capability table demo ok" $(BUILD_DIR)/serial.log 2>/dev/null && grep -q "Krust userspace says hello" $(BUILD_DIR)/serial.log 2>/dev/null && grep -q "Userspace syscall demo ok" $(BUILD_DIR)/serial.log 2>/dev/null; then \
+		if grep -q "Krust Kernel booted" $(BUILD_DIR)/serial.log 2>/dev/null && grep -q "Limine memory map entries:" $(BUILD_DIR)/serial.log 2>/dev/null && grep -q "Vertex manifest generation: gen:hello-0001" $(BUILD_DIR)/serial.log 2>/dev/null && grep -q "Physical allocator demo ok" $(BUILD_DIR)/serial.log 2>/dev/null && grep -q "Virtual memory demo ok" $(BUILD_DIR)/serial.log 2>/dev/null && grep -q "Capability table demo ok" $(BUILD_DIR)/serial.log 2>/dev/null && grep -q "IPC boot capability table entries: 2" $(BUILD_DIR)/serial.log 2>/dev/null && grep -q "IPC send accepted:" $(BUILD_DIR)/serial.log 2>/dev/null && grep -q "IPC receive delivered:" $(BUILD_DIR)/serial.log 2>/dev/null && grep -q "Krust IPC ping" $(BUILD_DIR)/serial.log 2>/dev/null && grep -q "IPC demo ok" $(BUILD_DIR)/serial.log 2>/dev/null; then \
 			kill $$pid >/dev/null 2>&1 || true; \
 			wait $$pid >/dev/null 2>&1 || true; \
-			echo "smoke ok: Krust Kernel booted, entered userspace, and handled sys_write_serial"; \
+			echo "smoke ok: Krust Kernel booted, ran userspace IPC, and enforced endpoint capabilities"; \
 			exit 0; \
 		fi; \
 		sleep 1; \
 	done; \
 	kill $$pid >/dev/null 2>&1 || true; \
 	wait $$pid >/dev/null 2>&1 || true; \
-	echo "smoke failed: serial output did not contain Krust Kernel booted, Limine memory map entries, Vertex manifest generation, Physical allocator demo ok, Virtual memory demo ok, Capability table demo ok, Krust userspace says hello, and Userspace syscall demo ok"; \
+	echo "smoke failed: serial output did not contain Krust Kernel booted, Limine memory map entries, Vertex manifest generation, Physical allocator demo ok, Virtual memory demo ok, Capability table demo ok, IPC boot capability table entries, IPC send accepted, IPC receive delivered, Krust IPC ping, and IPC demo ok"; \
 	test ! -f $(BUILD_DIR)/serial.log || cat $(BUILD_DIR)/serial.log; \
 	exit 1
 
@@ -78,7 +81,7 @@ doctor: check-tools check-limine-dir
 	@echo "limine: $$(command -v $(LIMINE))"
 	@echo "xorriso: $$(command -v $(XORRISO))"
 	@echo "LIMINE_DIR: $(LIMINE_DIR)"
-	@echo "Krust M6 toolchain is ready."
+	@echo "Krust M7 toolchain is ready."
 
 clean:
 	rm -rf $(BUILD_DIR) target

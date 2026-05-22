@@ -1,6 +1,6 @@
 # Krust Kernel
 
-Krust M6 is the first native userspace milestone.
+Krust M7 is the first native IPC capability milestone.
 
 The target is intentionally small:
 
@@ -20,15 +20,21 @@ Krust maps a small fixed kernel-heap virtual range
 Krust writes and reads through the mapped virtual pages
 Krust creates fixed kernel objects and boot capabilities
 Krust prints the boot capability table
-Limine loads `krust-user-hello.elf` as a boot module
-Krust loads the static user ELF into a fresh low-half address space
-Krust enters ring 3 at the user ELF entry point
-Userspace calls `sys_write_serial`
-Krust prints the userspace message and halts in the syscall handler
+Limine loads `krust-ipc-sender.elf` and `krust-ipc-receiver.elf` as boot modules
+Krust loads each static user ELF into a fresh low-half address space
+Krust gives sender cap[0] send rights to endpoint 1
+Krust gives receiver cap[0] receive rights to endpoint 1
+Krust enters ring 3 at the sender ELF entry point
+Sender calls `sys_ipc_send`
+Krust switches to the receiver after sender exit
+Receiver calls `sys_ipc_recv`
+Receiver prints the delivered IPC bytes through `sys_write_serial`
+Krust halts after `IPC demo ok`
 ```
 
-No dynamic heap allocator, scheduler, IPC, full manifest parsing, Vertex IR
-integration, filesystem, network, or device drivers are part of M6.
+No dynamic heap allocator, general scheduler, blocking IPC, full manifest
+parsing, Vertex IR integration, filesystem, network, or device drivers are part
+of M7.
 
 ## Prerequisites
 
@@ -82,8 +88,9 @@ make doctor
 make build
 ```
 
-This builds `target/x86_64-unknown-none/debug/krust` and
-`user/hello/target/x86_64-unknown-none/debug/krust-user-hello`.
+This builds `target/x86_64-unknown-none/debug/krust`,
+`user/ipc/target/x86_64-unknown-none/debug/krust-ipc-sender`, and
+`user/ipc/target/x86_64-unknown-none/debug/krust-ipc-receiver`.
 
 ## Build ISO
 
@@ -109,10 +116,12 @@ Vertex manifest generation: gen:hello-0001
 Physical allocator demo ok
 Virtual memory demo ok
 Capability table demo ok
-Krust userspace ELF loaded: entry=...
-Entering Krust userspace
-Userspace sys_write_serial: Krust userspace says hello
-Userspace syscall demo ok
+IPC boot capability table entries: 2
+Entering IPC sender userspace
+IPC send accepted: endpoint=1 bytes=14
+IPC receive delivered: endpoint=1 bytes=14
+Userspace sys_write_serial: Krust IPC ping
+IPC demo ok
 ```
 
 QEMU runs with `-display none`, so all kernel output is written through the
@@ -134,18 +143,21 @@ Vertex manifest generation: gen:hello-0001
 Physical allocator demo ok
 Virtual memory demo ok
 Capability table demo ok
-Krust userspace says hello
-Userspace syscall demo ok
+IPC boot capability table entries: 2
+IPC send accepted:
+IPC receive delivered:
+Krust IPC ping
+IPC demo ok
 ```
 
 ## Machine Notes
 
 Linux x86_64 can add KVM later with QEMU flags such as `-enable-kvm -cpu host`.
-That is not enabled by default so the M6 command stays portable:
+That is not enabled by default so the M7 command stays portable:
 
 ```sh
 QEMU_EXTRA="-enable-kvm -cpu host" make smoke
 ```
 
 macOS Apple Silicon can run `qemu-system-x86_64` by emulation. It is slower than
-native AArch64 virtualization, but it is enough for the M6 serial milestone.
+native AArch64 virtualization, but it is enough for the M7 serial milestone.
