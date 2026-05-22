@@ -1,4 +1,5 @@
 target/
+kernel/krust/build/
 
 .DS_Store
 *.swp
