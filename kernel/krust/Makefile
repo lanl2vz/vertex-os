@@ -5,10 +5,12 @@ ISO_IMAGE := $(BUILD_DIR)/krust.iso
 KERNEL_ELF := target/$(KRUST_TARGET)/debug/krust
 
 QEMU ?= qemu-system-x86_64
+QEMU_EXTRA ?=
 LIMINE ?= limine
 XORRISO ?= xorriso
+LIMINE_DIR ?= $(firstword $(wildcard /opt/homebrew/share/limine /usr/local/share/limine /usr/share/limine))
 
-.PHONY: build iso run smoke clean check-tools check-limine-dir
+.PHONY: build iso run smoke doctor clean check-tools check-limine-dir
 
 build:
 	cargo build --target $(KRUST_TARGET)
@@ -41,11 +43,11 @@ iso: build check-tools check-limine-dir
 	$(LIMINE) bios-install $(ISO_IMAGE)
 
 run: iso
-	$(QEMU) -m 256M -serial stdio -monitor none -display none -no-reboot -no-shutdown -cdrom $(ISO_IMAGE)
+	$(QEMU) $(QEMU_EXTRA) -m 256M -serial stdio -monitor none -display none -no-reboot -no-shutdown -cdrom $(ISO_IMAGE)
 
 smoke: iso
 	@rm -f $(BUILD_DIR)/serial.log
-	@$(QEMU) -m 256M -serial file:$(BUILD_DIR)/serial.log -monitor none -display none -no-reboot -no-shutdown -cdrom $(ISO_IMAGE) & \
+	@$(QEMU) $(QEMU_EXTRA) -m 256M -serial file:$(BUILD_DIR)/serial.log -monitor none -display none -no-reboot -no-shutdown -cdrom $(ISO_IMAGE) & \
 	pid=$$!; \
 	for _ in 1 2 3 4 5; do \
 		if grep -q "Krust Kernel booted" $(BUILD_DIR)/serial.log 2>/dev/null; then \
@@ -62,15 +64,23 @@ smoke: iso
 	test ! -f $(BUILD_DIR)/serial.log || cat $(BUILD_DIR)/serial.log; \
 	exit 1
 
+doctor: check-tools check-limine-dir
+	@echo "qemu: $$(command -v $(QEMU))"
+	@echo "limine: $$(command -v $(LIMINE))"
+	@echo "xorriso: $$(command -v $(XORRISO))"
+	@echo "LIMINE_DIR: $(LIMINE_DIR)"
+	@echo "Krust M0 toolchain is ready."
+
 clean:
 	rm -rf $(BUILD_DIR) target
 
 check-tools:
+	@command -v $(QEMU) >/dev/null 2>&1 || { echo "error: qemu-system-x86_64 not found. Install QEMU and/or set QEMU=/path/to/qemu-system-x86_64."; exit 1; }
 	@command -v $(LIMINE) >/dev/null 2>&1 || { echo "error: limine not found. Install Limine v12+ and/or set LIMINE=/path/to/limine."; exit 1; }
 	@command -v $(XORRISO) >/dev/null 2>&1 || { echo "error: xorriso not found. Install xorriso and/or set XORRISO=/path/to/xorriso."; exit 1; }
 
 check-limine-dir:
-	@test -n "$(LIMINE_DIR)" || { echo "error: LIMINE_DIR is required. Set it to the directory containing Limine boot files."; exit 1; }
+	@test -n "$(LIMINE_DIR)" || { echo "error: LIMINE_DIR is required. Set it to the directory containing Limine boot files. Common paths: /opt/homebrew/share/limine, /usr/local/share/limine, /usr/share/limine."; exit 1; }
 	@test -f "$(LIMINE_DIR)/limine-bios.sys" || { echo "error: LIMINE_DIR missing limine-bios.sys"; exit 1; }
 	@test -f "$(LIMINE_DIR)/limine-bios-cd.bin" || { echo "error: LIMINE_DIR missing limine-bios-cd.bin"; exit 1; }
 	@test -f "$(LIMINE_DIR)/limine-uefi-cd.bin" || { echo "error: LIMINE_DIR missing limine-uefi-cd.bin"; exit 1; }

@@ -21,7 +21,7 @@ integration, filesystem, network, or device drivers are part of M0.
 - `qemu-system-x86_64`.
 - `limine` v12 or newer.
 - `xorriso`.
-- `LIMINE_DIR` pointing at Limine boot assets containing:
+- Limine boot assets containing:
   - `limine-bios.sys`
   - `limine-bios-cd.bin`
   - `limine-uefi-cd.bin`
@@ -30,6 +30,36 @@ integration, filesystem, network, or device drivers are part of M0.
 Limine installs these files under its configured `${PREFIX}/share` directory.
 Typical package-manager locations are `/usr/share/limine`,
 `/usr/local/share/limine`, or a Homebrew prefix path.
+
+The Makefile auto-detects these Limine asset directories:
+
+```text
+/opt/homebrew/share/limine
+/usr/local/share/limine
+/usr/share/limine
+```
+
+If Limine is installed somewhere else, pass it explicitly:
+
+```sh
+LIMINE_DIR=/path/to/limine/assets make smoke
+```
+
+On macOS with Homebrew:
+
+```sh
+brew install limine xorriso qemu
+make doctor
+```
+
+On Linux, install the same tools through the host distribution package manager
+and run:
+
+```sh
+make doctor
+```
+
+`make doctor` prints the resolved QEMU, Limine, xorriso, and Limine asset paths.
 
 ## Build
 
@@ -42,7 +72,7 @@ This builds `target/x86_64-unknown-none/debug/krust`.
 ## Build ISO
 
 ```sh
-LIMINE_DIR=/path/to/limine/assets make iso
+make iso
 ```
 
 This creates `build/krust.iso`.
@@ -50,7 +80,7 @@ This creates `build/krust.iso`.
 ## Run
 
 ```sh
-LIMINE_DIR=/path/to/limine/assets make run
+make run
 ```
 
 Expected terminal output:
@@ -65,7 +95,7 @@ serial console. Interrupt QEMU with `Ctrl-C`.
 ## Smoke Test
 
 ```sh
-LIMINE_DIR=/path/to/limine/assets make smoke
+make smoke
 ```
 
 The smoke test boots QEMU headlessly, captures serial output to
@@ -78,7 +108,11 @@ Krust Kernel booted
 ## Machine Notes
 
 Linux x86_64 can add KVM later with QEMU flags such as `-enable-kvm -cpu host`.
-That is not enabled by default so the M0 command stays portable.
+That is not enabled by default so the M0 command stays portable:
+
+```sh
+QEMU_EXTRA="-enable-kvm -cpu host" make smoke
+```
 
 macOS Apple Silicon can run `qemu-system-x86_64` by emulation. It is slower than
 native AArch64 virtualization, but it is enough for the M0 serial milestone.
