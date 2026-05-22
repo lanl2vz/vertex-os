@@ -10,13 +10,18 @@ QEMU=${QEMU:-qemu-system-x86_64}
 QEMU_EXTRA=${QEMU_EXTRA:-}
 QEMU_ATTEMPTS=${QEMU_ATTEMPTS:-20}
 QEMU_POLL_SECONDS=${QEMU_POLL_SECONDS:-1}
+QEMU_STABILITY_ATTEMPTS=${QEMU_STABILITY_ATTEMPTS:-1}
+QEMU_PREEMPTION_STABILITY_ATTEMPTS=${QEMU_PREEMPTION_STABILITY_ATTEMPTS:-3}
 CASE=${1:-m14}
 FALLBACK_MANIFEST=
 KRUSTBOOT_CORRUPT=
+EXPECT_ACTIVATION_SUCCESS=0
+SUCCESS_STABILITY_ATTEMPTS=$QEMU_STABILITY_ATTEMPTS
 
 case "$CASE" in
     m13|m14|valid-activation)
         MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
+        EXPECT_ACTIVATION_SUCCESS=1
         required_lines='
 Native manifest-driven activation ok
 Native readiness activation ok
@@ -32,6 +37,7 @@ activation failed
         ;;
     bad-cap)
         MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
+        EXPECT_ACTIVATION_SUCCESS=1
         required_lines='
 negative test: echo receive rejected: bad capability
 echo read rejected: bad capability
@@ -42,6 +48,7 @@ reader-service write rejected
         ;;
     readiness)
         MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
+        EXPECT_ACTIVATION_SUCCESS=1
         required_lines='
 logd ready
 vertex-init observed ready: logd
@@ -59,6 +66,7 @@ Native service activation failed
     rollback)
         MANIFEST="$ROOT_DIR/examples/krust-rollback-bad-generation.vertex.json"
         FALLBACK_MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
+        EXPECT_ACTIVATION_SUCCESS=1
         required_lines='
 Boot generation: gen:bad-0002
 activation failed
@@ -70,6 +78,7 @@ Native service activation ok
         ;;
     store-state)
         MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
+        EXPECT_ACTIVATION_SUCCESS=1
         required_lines='
 model-reader reads bytes successfully
 Native store-object read ok
@@ -79,6 +88,7 @@ Native state-volume access ok
         ;;
     timer)
         MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
+        EXPECT_ACTIVATION_SUCCESS=1
         required_lines='
 timer-service sleeps 10 ms
 wakes
@@ -88,6 +98,8 @@ Native timer ok
         ;;
     preemption|m30)
         MANIFEST="$ROOT_DIR/examples/krust-preemption-generation.vertex.json"
+        EXPECT_ACTIVATION_SUCCESS=1
+        SUCCESS_STABILITY_ATTEMPTS=$QEMU_PREEMPTION_STABILITY_ATTEMPTS
         required_lines='
 PIT timer interrupt initialized: vector=32 hz=100
 Timer tick increments: ticks=1
@@ -99,6 +111,7 @@ logd received: hello from echo
         ;;
     user-fault|m31)
         MANIFEST="$ROOT_DIR/examples/krust-user-fault-generation.vertex.json"
+        EXPECT_ACTIVATION_SUCCESS=1
         required_lines='
 faulty-service triggers direct invalid load
 User page fault: proc=faulty-service
@@ -113,6 +126,7 @@ Native service activation ok
         ;;
     restart)
         MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
+        EXPECT_ACTIVATION_SUCCESS=1
         required_lines='
 flaky-service exits with status 1
 vertex-init observes failure
@@ -129,6 +143,7 @@ Native restart policy ok
         ;;
     manifest-v1)
         MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
+        EXPECT_ACTIVATION_SUCCESS=1
         required_lines='
 KrustBoot Manifest v1 records: 9
 proc=vertex-init cap[0] boot-module=krustboot-manifest rights=read
@@ -138,6 +153,7 @@ Native manifest-driven activation ok
         ;;
     cap-lifecycle)
         MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
+        EXPECT_ACTIVATION_SUCCESS=1
         required_lines='
 Capability inspect: proc=vertex-init
 Capability inspect: proc=echo
@@ -152,6 +168,7 @@ echo send after revoke rejected
         ;;
     typed-arenas)
         MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
+        EXPECT_ACTIVATION_SUCCESS=1
         required_lines='
 Kernel heap arena allocation ok
 Typed endpoint arena created 32 endpoints
@@ -163,6 +180,7 @@ Typed object arenas no silent overwrite ok
         ;;
     quotas)
         MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
+        EXPECT_ACTIVATION_SUCCESS=1
         required_lines='
 proc=vertex-init cap[2] process-control=process-control rights=control|allocate|delegate|revoke
 service with quota=1 endpoint can create one endpoint
@@ -226,6 +244,16 @@ activation failed
         ;;
 esac
 
+forbidden_lines='
+Krust exception
+'
+
+if [ "$EXPECT_ACTIVATION_SUCCESS" -eq 1 ]; then
+    forbidden_lines="${forbidden_lines}
+Native service activation failed
+"
+fi
+
 (cd "$KRUST_DIR" && make iso VERTEX_MANIFEST="$MANIFEST" FALLBACK_MANIFEST="$FALLBACK_MANIFEST" KRUSTBOOT_CORRUPT="$KRUSTBOOT_CORRUPT")
 
 mkdir -p "$(dirname "$SERIAL_LOG")"
@@ -251,9 +279,11 @@ trap cleanup EXIT INT TERM
 pid=$!
 
 missing_required=
+present_forbidden=
 
 check_transcript() {
     missing_required=
+    present_forbidden=
 
     while IFS= read -r line; do
         if [ -z "$line" ]; then
@@ -267,7 +297,19 @@ check_transcript() {
 $required_lines
 EOF
 
-    [ -z "$missing_required" ]
+    while IFS= read -r line; do
+        if [ -z "$line" ]; then
+            continue
+        fi
+        if grep -Fq "$line" "$SERIAL_LOG" 2>/dev/null; then
+            present_forbidden="${present_forbidden}${line}
+"
+        fi
+    done <<EOF
+$forbidden_lines
+EOF
+
+    [ -z "$missing_required" ] && [ -z "$present_forbidden" ]
 }
 
 print_lines() {
@@ -278,13 +320,31 @@ print_lines() {
     done
 }
 
+wait_for_stability() {
+    stable_attempt=0
+    while [ "$stable_attempt" -lt "$SUCCESS_STABILITY_ATTEMPTS" ]; do
+        sleep "$QEMU_POLL_SECONDS"
+        if ! check_transcript; then
+            return 1
+        fi
+        stable_attempt=$((stable_attempt + 1))
+    done
+    return 0
+}
+
 attempt=1
 while [ "$attempt" -le "$QEMU_ATTEMPTS" ]; do
     if check_transcript; then
-        cleanup
-        pid=
-        echo "krust test ok: $CASE"
-        exit 0
+        if wait_for_stability; then
+            cleanup
+            pid=
+            echo "krust test ok: $CASE"
+            exit 0
+        fi
+    fi
+
+    if [ -n "$present_forbidden" ]; then
+        break
     fi
 
     sleep "$QEMU_POLL_SECONDS"
@@ -298,6 +358,10 @@ echo "serial log: $SERIAL_LOG"
 if [ -n "$missing_required" ]; then
     echo "missing required transcript lines:"
     printf '%s' "$missing_required" | print_lines
+fi
+if [ -n "$present_forbidden" ]; then
+    echo "forbidden transcript lines were present:"
+    printf '%s' "$present_forbidden" | print_lines
 fi
 if [ -f "$SERIAL_LOG" ]; then
     cat "$SERIAL_LOG"
