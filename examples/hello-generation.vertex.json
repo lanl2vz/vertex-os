@@ -23,43 +23,28 @@
     "format": "krustboot.v0",
     "bootModules": [
       {
-        "name": "ipc-sender",
-        "moduleString": "krust-ipc-sender"
-      },
-      {
-        "name": "ipc-receiver",
-        "moduleString": "krust-ipc-receiver"
+        "name": "vertex-init",
+        "moduleString": "vertex-init"
       }
     ],
     "processes": [
       {
-        "name": "ipc-sender",
-        "moduleString": "krust-ipc-sender",
-        "initial": false
-      },
-      {
-        "name": "ipc-receiver",
-        "moduleString": "krust-ipc-receiver",
+        "name": "vertex-init",
+        "moduleString": "vertex-init",
         "initial": true
       }
     ],
     "endpoints": [
       {
-        "name": "demo-ipc"
+        "name": "serial-log"
       }
     ],
     "grants": [
       {
-        "process": "ipc-sender",
-        "endpoint": "demo-ipc",
-        "capSlot": 0,
+        "process": "vertex-init",
+        "endpoint": "serial-log",
+        "capSlot": 1,
         "rights": ["send"]
-      },
-      {
-        "process": "ipc-receiver",
-        "endpoint": "demo-ipc",
-        "capSlot": 0,
-        "rights": ["receive"]
       }
     ]
   },

@@ -6,8 +6,8 @@ IR and graph semantics; Krust is the native enforcement path.
 
 ## Status Summary
 
-Current status: M11 is implemented and smoke-tested under
-`qemu-system-x86_64` with Limine. M12 is the next milestone.
+Current status: M12 is implemented and smoke-tested under
+`qemu-system-x86_64` with Limine.
 
 ```sh
 scripts/krust-smoke.sh
@@ -149,7 +149,7 @@ IPC demo ok
 
 ## M12: Native vertex-init
 
-Status: planned.
+Status: done.
 
 Goal: replace the sender/receiver demo with a native `vertex-init` userspace
 program.
@@ -171,11 +171,26 @@ Initial `vertex-init` capability shape:
 ```text
 cap[0] = manifest module read
 cap[1] = serial/log endpoint
-cap[2] = process creation authority, temporary
+cap[2] = process-control authority, temporary
 ```
 
-M12 should prove the first native Vertex OS boot where Krust enforces authority
-and `vertex-init` activates services because the manifest says they exist.
+Acceptance evidence in smoke:
+
+```text
+KrustBoot boot modules: 1
+process[0] name=vertex-init module=vertex-init initial=yes
+proc=vertex-init cap[0] boot-module=krustboot-manifest rights=read
+proc=vertex-init cap[1] endpoint=1 rights=send
+proc=vertex-init cap[2] process-control=process-control rights=control
+vertex-init manifest generation: gen:hello-0001
+Krust process authority accepted: proc=vertex-init generation=gen:hello-0001
+vertex-init activated generation: gen:hello-0001
+Native vertex-init boot ok
+```
+
+M12 proves the first native Vertex OS boot where Krust enforces boot authority
+and native `vertex-init` activates a compact generation from the manifest. Full
+service spawning is deliberately left for the next milestone.
 
 Non-goals for M12: filesystems, networking, GPU, USB, timer preemption,
 multicore, POSIX compatibility, the Nix store, and the Haskell/typed DSL.

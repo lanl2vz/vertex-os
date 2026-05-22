@@ -5,9 +5,8 @@ ISO_ROOT := $(BUILD_DIR)/iso-root
 ISO_IMAGE := $(BUILD_DIR)/krust.iso
 BOOT_MANIFEST := $(BUILD_DIR)/hello-generation.krustboot
 KERNEL_ELF := target/$(KRUST_TARGET)/debug/krust
-IPC_USER_TARGET_DIR := user/ipc/target/$(KRUST_TARGET)/debug
-IPC_SENDER_ELF := $(IPC_USER_TARGET_DIR)/krust-ipc-sender
-IPC_RECEIVER_ELF := $(IPC_USER_TARGET_DIR)/krust-ipc-receiver
+INIT_TARGET_DIR := user/init/target/$(KRUST_TARGET)/debug
+VERTEX_INIT_ELF := $(INIT_TARGET_DIR)/vertex-init
 VERTEX_MANIFEST ?= ../../examples/hello-generation.vertex.json
 
 QEMU ?= qemu-system-x86_64
@@ -25,7 +24,7 @@ kernel:
 	cargo build --target $(KRUST_TARGET)
 
 user:
-	cd user/ipc && cargo build --target $(KRUST_TARGET)
+	cd user/init && cargo build --target $(KRUST_TARGET)
 
 boot-manifest:
 	mkdir -p $(BUILD_DIR)
@@ -35,8 +34,7 @@ iso: build boot-manifest check-tools check-limine-dir
 	rm -rf $(ISO_ROOT) $(ISO_IMAGE)
 	mkdir -p $(ISO_ROOT)/boot $(ISO_ROOT)/EFI/BOOT
 	cp $(KERNEL_ELF) $(ISO_ROOT)/boot/krust.elf
-	cp $(IPC_SENDER_ELF) $(ISO_ROOT)/boot/krust-ipc-sender.elf
-	cp $(IPC_RECEIVER_ELF) $(ISO_ROOT)/boot/krust-ipc-receiver.elf
+	cp $(VERTEX_INIT_ELF) $(ISO_ROOT)/boot/vertex-init.elf
 	cp $(BOOT_MANIFEST) $(ISO_ROOT)/boot/hello-generation.krustboot
 	cp limine.conf $(ISO_ROOT)/boot/limine.conf
 	cp $(LIMINE_DIR)/limine-bios.sys $(ISO_ROOT)/boot/limine-bios.sys
@@ -76,10 +74,10 @@ doctor: check-tools check-limine-dir
 	@echo "limine: $$(command -v $(LIMINE))"
 	@echo "xorriso: $$(command -v $(XORRISO))"
 	@echo "LIMINE_DIR: $(LIMINE_DIR)"
-	@echo "Krust M11 toolchain is ready."
+	@echo "Krust M12 toolchain is ready."
 
 clean:
-	rm -rf $(BUILD_DIR) target
+	rm -rf $(BUILD_DIR) target user/init/target
 
 check-tools:
 	@command -v $(QEMU) >/dev/null 2>&1 || { echo "error: qemu-system-x86_64 not found. Install QEMU and/or set QEMU=/path/to/qemu-system-x86_64."; exit 1; }

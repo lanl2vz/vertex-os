@@ -73,7 +73,7 @@ pub fn enter(image: UserImage) -> ! {
     }
 }
 
-pub fn enter_ipc_demo(initial_name: &str, initial: ipc::ProcessContext) -> ! {
+pub fn enter_initial_process(initial_name: &str, initial: ipc::ProcessContext) -> ! {
     gdt::init();
     serial::write_str("GDT initialized\n");
     exceptions::init();

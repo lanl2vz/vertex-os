@@ -6,7 +6,7 @@ Krust Kernel is the native Rust kernel prototype that will enforce that graph's
 runtime authority. The repository now has two active tracks: a hosted Linux
 prototype for Vertex IR, `vertexctl`, supervisor behavior, and capability
 semantics; and a bootable Krust kernel under `kernel/krust` that runs under
-QEMU/Limine and has reached the M11 cooperative-scheduler milestone.
+QEMU/Limine and has reached the M12 native `vertex-init` milestone.
 
 ## Repository Layout
 
@@ -20,30 +20,30 @@ vertex-os/
     vertexctl/           CLI for validation, graphing, boot-manifest compilation, activation, inspection, and rollback
     vertex-supervisor/   Hosted Linux graph activator prototype
   userland/
-    vertex-init/         Planned first user-space activator
+    vertex-init/         Planned hosted first user-space activator
     logd/                Demo log service
     netstack/            Demo hosted network capability provider
     echo-server/         Demo service consuming log and network capabilities
   kernel/
-    krust/               Bootable Krust kernel prototype, currently at M11 scheduler IPC
+    krust/               Bootable Krust kernel prototype, currently at M12 native vertex-init
   lang/
     vertex-lang/         Planned typed system-definition language
   nix/                   Nix support modules and builders
   flake.nix              Planned root flake entrypoint
 ```
 
-## Krust M11
+## Krust M12
 
 The current native boot-authority milestone lives in `kernel/krust`. It is
 isolated from the hosted Cargo workspace and boots a Limine ISO under QEMU. The
 ISO build first runs `vertexctl compile-boot-manifest` to turn the source
 manifest's `krustBoot` section into `hello-generation.krustboot`, a compact
-fixed-format native boot manifest. Krust parses that module, allocates runtime
-process IDs from those records, uses manifest grants to create process-local
-capabilities, loads two static userspace ELF modules, keeps the M9 IDT and safe
-user-copy checks, and now runs a tiny cooperative scheduler. The receiver blocks
-on an empty IPC endpoint, the sender wakes it with `Krust IPC ping`, unauthorized
-cross-operations are rejected, and Krust halts after `IPC demo ok`.
+fixed-format native boot manifest. Krust parses that module, allocates a
+runtime process ID for native `vertex-init`, creates process-local boot
+capabilities, loads `vertex-init.elf`, keeps the M9 IDT and safe user-copy
+checks, and enters ring 3. `vertex-init` reads the manifest through cap[0], logs
+through cap[1], invokes temporary process-control authority through cap[2], and
+Krust halts after `Native vertex-init boot ok`.
 
 ```sh
 scripts/krust-smoke.sh

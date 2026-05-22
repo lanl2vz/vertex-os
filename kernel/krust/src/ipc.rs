@@ -8,6 +8,7 @@ use crate::{
 pub const BOOT_ENDPOINT_ID: u64 = 1;
 
 const MAX_MESSAGE_BYTES: usize = 128;
+const MAX_BOOT_READ_BYTES: usize = 4096;
 const MAX_OBJECTS: usize = 8;
 const MAX_PROCESSES: usize = 4;
 const MAX_CAPS: usize = 8;
@@ -89,6 +90,13 @@ pub struct BootEndpointConfig {
 }
 
 #[derive(Clone, Copy)]
+pub struct BootModuleConfig {
+    pub name: &'static str,
+    pub base: u64,
+    pub length: u64,
+}
+
+#[derive(Clone, Copy)]
 pub struct BootGrantConfig {
     pub process_index: usize,
     pub cap_slot: u64,
@@ -101,6 +109,7 @@ pub struct BootRuntimeConfig {
     process_count: usize,
     endpoints: [Option<BootEndpointConfig>; MAX_OBJECTS],
     endpoint_count: usize,
+    manifest_module: Option<BootModuleConfig>,
     grants: [Option<BootGrantConfig>; MAX_CAPS],
     grant_count: usize,
 }
@@ -185,32 +194,24 @@ struct IpcEndpoint {
 }
 
 #[derive(Clone, Copy)]
-#[allow(dead_code)]
-struct ProcessObject {
-    pid: ProcessId,
-}
-
-#[derive(Clone, Copy)]
-#[allow(dead_code)]
-struct MemoryObject {
-    base: u64,
-    length: u64,
-}
-
-#[derive(Clone, Copy)]
-#[allow(dead_code)]
 struct BootModuleObject {
+    id: KernelObjectId,
+    name: &'static str,
     base: u64,
     length: u64,
 }
 
 #[derive(Clone, Copy)]
-#[allow(dead_code)]
+struct ProcessControlObject {
+    id: KernelObjectId,
+    name: &'static str,
+}
+
+#[derive(Clone, Copy)]
 enum KernelObject {
     IpcEndpoint(IpcEndpoint),
-    Process(ProcessObject),
-    MemoryObject(MemoryObject),
     BootModule(BootModuleObject),
+    ProcessControl(ProcessControlObject),
 }
 
 struct ObjectTable {
@@ -310,6 +311,23 @@ impl IpcEndpoint {
     }
 }
 
+impl BootModuleObject {
+    const fn new(id: KernelObjectId, name: &'static str, base: u64, length: u64) -> Self {
+        Self {
+            id,
+            name,
+            base,
+            length,
+        }
+    }
+}
+
+impl ProcessControlObject {
+    const fn new(id: KernelObjectId, name: &'static str) -> Self {
+        Self { id, name }
+    }
+}
+
 impl ObjectTable {
     const fn new() -> Self {
         Self {
@@ -327,6 +345,39 @@ impl ObjectTable {
         let id = KernelObjectId(self.next_id);
         self.next_id += 1;
         self.objects[self.count] = Some(KernelObject::IpcEndpoint(IpcEndpoint::new(id, name)));
+        self.count += 1;
+        Ok(id)
+    }
+
+    fn add_boot_module(
+        &mut self,
+        name: &'static str,
+        base: u64,
+        length: u64,
+    ) -> Result<KernelObjectId, InitError> {
+        if self.count == self.objects.len() {
+            return Err(InitError::ObjectTableFull);
+        }
+
+        let id = KernelObjectId(self.next_id);
+        self.next_id += 1;
+        self.objects[self.count] = Some(KernelObject::BootModule(BootModuleObject::new(
+            id, name, base, length,
+        )));
+        self.count += 1;
+        Ok(id)
+    }
+
+    fn add_process_control(&mut self, name: &'static str) -> Result<KernelObjectId, InitError> {
+        if self.count == self.objects.len() {
+            return Err(InitError::ObjectTableFull);
+        }
+
+        let id = KernelObjectId(self.next_id);
+        self.next_id += 1;
+        self.objects[self.count] = Some(KernelObject::ProcessControl(ProcessControlObject::new(
+            id, name,
+        )));
         self.count += 1;
         Ok(id)
     }
@@ -360,6 +411,34 @@ impl ObjectTable {
             Some(KernelObject::IpcEndpoint(endpoint)) => Some(endpoint),
             _ => None,
         }
+    }
+
+    fn get_boot_module(&self, id: KernelObjectId) -> Option<BootModuleObject> {
+        let mut index = 0;
+        while index < self.count {
+            if let Some(KernelObject::BootModule(module)) = self.objects[index]
+                && module.id == id
+            {
+                return Some(module);
+            }
+            index += 1;
+        }
+
+        None
+    }
+
+    fn get_process_control(&self, id: KernelObjectId) -> Option<ProcessControlObject> {
+        let mut index = 0;
+        while index < self.count {
+            if let Some(KernelObject::ProcessControl(process_control)) = self.objects[index]
+                && process_control.id == id
+            {
+                return Some(process_control);
+            }
+            index += 1;
+        }
+
+        None
     }
 }
 
@@ -505,6 +584,7 @@ impl BootRuntimeConfig {
             process_count: 0,
             endpoints: [None; MAX_OBJECTS],
             endpoint_count: 0,
+            manifest_module: None,
             grants: [None; MAX_CAPS],
             grant_count: 0,
         }
@@ -526,6 +606,10 @@ impl BootRuntimeConfig {
         self.endpoints[self.endpoint_count] = Some(endpoint);
         self.endpoint_count += 1;
         Ok(())
+    }
+
+    pub fn set_manifest_module(&mut self, module: BootModuleConfig) {
+        self.manifest_module = Some(module);
     }
 
     pub fn add_grant(&mut self, grant: BootGrantConfig) -> Result<(), InitError> {
@@ -565,6 +649,17 @@ pub fn init_from_boot_config(config: BootRuntimeConfig) -> Result<(), InitError>
         grant_index += 1;
     }
 
+    let initial_index = initial_process_index(&config)?;
+    if let Some(module) = config.manifest_module {
+        let module_id = runtime
+            .objects
+            .add_boot_module(module.name, module.base, module.length)?;
+        process_caps[initial_index].grant(0, module_id, capability::RIGHT_READ)?;
+    }
+
+    let process_control_id = runtime.objects.add_process_control("process-control")?;
+    process_caps[initial_index].grant(2, process_control_id, capability::RIGHT_CONTROL)?;
+
     let mut saw_initial = false;
     let mut process_index = 0;
     while process_index < config.process_count {
@@ -599,6 +694,24 @@ pub fn init_from_boot_config(config: BootRuntimeConfig) -> Result<(), InitError>
 
     print_boot_tables(runtime);
     Ok(())
+}
+
+fn initial_process_index(config: &BootRuntimeConfig) -> Result<usize, InitError> {
+    let mut found = None;
+    let mut index = 0;
+
+    while index < config.process_count {
+        let process = config.processes[index].ok_or(InitError::InvalidBootManifest)?;
+        if process.initial {
+            if found.is_some() {
+                return Err(InitError::InvalidBootManifest);
+            }
+            found = Some(index);
+        }
+        index += 1;
+    }
+
+    found.ok_or(InitError::InvalidBootManifest)
 }
 
 pub fn initial_process_context() -> Option<ProcessContext> {
@@ -773,6 +886,74 @@ pub fn receive(
     serial::write_str("\n");
 
     frame.rax = copy_len as u64;
+    Ok(())
+}
+
+pub fn read_boot_module(
+    cap_slot: u64,
+    destination: *mut u8,
+    max_len: usize,
+) -> Result<usize, IpcError> {
+    if max_len > MAX_BOOT_READ_BYTES {
+        return Err(IpcError::MessageTooLarge);
+    }
+
+    let module = boot_module_from_cap(cap_slot, capability::RIGHT_READ)?;
+    let Ok(module_len) = usize::try_from(module.length) else {
+        return Err(IpcError::MessageTooLarge);
+    };
+    let copy_len = min(module_len, max_len);
+
+    let bytes = unsafe { core::slice::from_raw_parts(module.base as *const u8, copy_len) };
+    usercopy::copy_to_user(UserPtr::new(destination as u64), bytes)
+        .map_err(|_| IpcError::InvalidUserBuffer)?;
+
+    serial::write_str("Boot module read accepted: proc=");
+    serial::write_str(current_process_name());
+    serial::write_str(" module=");
+    serial::write_str(module.name);
+    serial::write_str(" bytes=");
+    serial::write_u64_dec(copy_len as u64);
+    serial::write_str("\n");
+
+    Ok(copy_len)
+}
+
+pub fn log_write(cap_slot: u64, source: *const u8, len: usize) -> Result<(), IpcError> {
+    if len > MAX_MESSAGE_BYTES {
+        return Err(IpcError::MessageTooLarge);
+    }
+
+    let _endpoint_id = endpoint_from_cap(cap_slot, capability::RIGHT_SEND)?;
+    let mut message = [0u8; MAX_MESSAGE_BYTES];
+    usercopy::copy_from_user(&mut message, UserPtr::new(source as u64), len)
+        .map_err(|_| IpcError::InvalidUserBuffer)?;
+
+    serial::write_ascii_bytes(&message[..len]);
+    serial::write_str("\n");
+    Ok(())
+}
+
+pub fn activate_generation(
+    cap_slot: u64,
+    generation: *const u8,
+    len: usize,
+) -> Result<(), IpcError> {
+    if len > MAX_MESSAGE_BYTES {
+        return Err(IpcError::MessageTooLarge);
+    }
+
+    let _process_control = process_control_from_cap(cap_slot, capability::RIGHT_CONTROL)?;
+    let mut generation_id = [0u8; MAX_MESSAGE_BYTES];
+    usercopy::copy_from_user(&mut generation_id, UserPtr::new(generation as u64), len)
+        .map_err(|_| IpcError::InvalidUserBuffer)?;
+
+    serial::write_str("Krust process authority accepted: proc=");
+    serial::write_str(current_process_name());
+    serial::write_str(" generation=");
+    serial::write_ascii_bytes(&generation_id[..len]);
+    serial::write_str("\n");
+    serial::write_str("Krust native generation activation ok\n");
     Ok(())
 }
 
@@ -988,6 +1169,34 @@ fn schedule_next_ready(frame: &mut SyscallFrame) -> bool {
 }
 
 fn endpoint_from_cap(cap_slot: u64, required_right: u64) -> Result<KernelObjectId, IpcError> {
+    let cap = lookup_capability(cap_slot, required_right)?;
+
+    match runtime().objects.get_endpoint_mut(cap.object) {
+        Some(_) => Ok(cap.object),
+        None => Err(IpcError::BadCapability),
+    }
+}
+
+fn boot_module_from_cap(cap_slot: u64, required_right: u64) -> Result<BootModuleObject, IpcError> {
+    let cap = lookup_capability(cap_slot, required_right)?;
+    runtime()
+        .objects
+        .get_boot_module(cap.object)
+        .ok_or(IpcError::BadCapability)
+}
+
+fn process_control_from_cap(
+    cap_slot: u64,
+    required_right: u64,
+) -> Result<ProcessControlObject, IpcError> {
+    let cap = lookup_capability(cap_slot, required_right)?;
+    runtime()
+        .objects
+        .get_process_control(cap.object)
+        .ok_or(IpcError::BadCapability)
+}
+
+fn lookup_capability(cap_slot: u64, required_right: u64) -> Result<Capability, IpcError> {
     let process = runtime()
         .processes
         .current_process()
@@ -1001,10 +1210,7 @@ fn endpoint_from_cap(cap_slot: u64, required_right: u64) -> Result<KernelObjectI
         return Err(IpcError::BadCapability);
     }
 
-    match runtime().objects.get_endpoint_mut(cap.object) {
-        Some(_) => Ok(cap.object),
-        None => Err(IpcError::BadCapability),
-    }
+    Ok(cap)
 }
 
 fn print_boot_tables(runtime: &RuntimeState) {
@@ -1054,14 +1260,46 @@ fn print_process_caps(process: &Process) {
             serial::write_str(process.name);
             serial::write_str(" cap[");
             serial::write_u64_dec(slot as u64);
-            serial::write_str("] endpoint=");
-            serial::write_u64_dec(cap.object.raw());
+            serial::write_str("] ");
+            print_capability_object(cap.object);
             serial::write_str(" rights=");
             print_rights(cap.rights);
             serial::write_str("\n");
         }
         slot += 1;
     }
+}
+
+fn print_capability_object(object: KernelObjectId) {
+    let runtime = runtime();
+    let mut index = 0;
+
+    while index < runtime.objects.count {
+        if let Some(entry) = runtime.objects.objects[index] {
+            match entry {
+                KernelObject::IpcEndpoint(endpoint) if endpoint.id == object => {
+                    serial::write_str("endpoint=");
+                    serial::write_u64_dec(endpoint.id.raw());
+                    return;
+                }
+                KernelObject::BootModule(module) if module.id == object => {
+                    serial::write_str("boot-module=");
+                    serial::write_str(module.name);
+                    return;
+                }
+                KernelObject::ProcessControl(process_control) if process_control.id == object => {
+                    serial::write_str("process-control=");
+                    serial::write_str(process_control.name);
+                    return;
+                }
+                _ => {}
+            }
+        }
+        index += 1;
+    }
+
+    serial::write_str("object=");
+    serial::write_u64_dec(object.raw());
 }
 
 fn print_process_state(index: usize, process: &Process) {
@@ -1078,8 +1316,10 @@ fn print_process_state(index: usize, process: &Process) {
 
 fn print_rights(rights: u64) {
     let mut wrote = false;
+    wrote = print_right(rights, capability::RIGHT_READ, "read", wrote);
     wrote = print_right(rights, capability::RIGHT_SEND, "send", wrote);
     wrote = print_right(rights, capability::RIGHT_RECEIVE, "receive", wrote);
+    wrote = print_right(rights, capability::RIGHT_CONTROL, "control", wrote);
 
     if !wrote {
         serial::write_str("none");

@@ -217,18 +217,16 @@ fn compile_boot_manifest_emits_krustboot_plan() {
 
     assert!(stdout.contains("format: KrustBootManifest v0"));
     assert!(stdout.contains("generation: gen:hello-0001"));
-    assert!(stdout.contains("processes: 2"));
+    assert!(stdout.contains("boot_modules: 1"));
+    assert!(stdout.contains("processes: 1"));
     assert!(stdout.contains("endpoints: 1"));
-    assert!(stdout.contains("grants: 2"));
+    assert!(stdout.contains("grants: 1"));
 
     let bytes = fs::read(&output_path).expect("read krustboot output");
     assert!(bytes.starts_with(b"KRUSTBOOTV0\0\0\0\0\0"));
     assert!(contains_bytes(&bytes, b"gen:hello-0001"));
-    assert!(contains_bytes(&bytes, b"ipc-sender"));
-    assert!(contains_bytes(&bytes, b"ipc-receiver"));
-    assert!(contains_bytes(&bytes, b"krust-ipc-sender"));
-    assert!(contains_bytes(&bytes, b"krust-ipc-receiver"));
-    assert!(contains_bytes(&bytes, b"demo-ipc"));
+    assert!(contains_bytes(&bytes, b"vertex-init"));
+    assert!(contains_bytes(&bytes, b"serial-log"));
 }
 
 #[test]

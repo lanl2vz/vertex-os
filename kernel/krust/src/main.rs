@@ -90,7 +90,7 @@ fn print_boot_info() {
         return;
     };
     run_capability_table_demo(&allocator, heap);
-    run_ipc_demo(&mut allocator, &boot_manifest);
+    run_native_boot(&mut allocator, &boot_manifest);
 }
 
 fn init_physical_allocator(memory_map: &limine::MemoryMap) -> Option<memory::FrameAllocator> {
@@ -370,12 +370,12 @@ fn run_capability_table_demo(allocator: &memory::FrameAllocator, heap: KernelHea
     }
 }
 
-fn run_ipc_demo(
+fn run_native_boot(
     allocator: &mut memory::FrameAllocator,
     boot_manifest: &boot_manifest::Manifest<'static>,
 ) {
     let Some(hhdm_offset) = limine::hhdm_offset() else {
-        serial::write_str("IPC userspace load failed: HHDM unavailable\n");
+        serial::write_str("Native userspace load failed: HHDM unavailable\n");
         return;
     };
 
@@ -393,21 +393,31 @@ fn run_ipc_demo(
         index += 1;
     }
 
-    let Some(config) = build_ipc_boot_config(boot_manifest, &images) else {
+    let Some(config) = build_boot_runtime_config(boot_manifest, &images) else {
         return;
     };
+    let Some(manifest_module) = find_boot_manifest_module() else {
+        serial::write_str("KrustBoot runtime init failed: manifest module missing\n");
+        return;
+    };
+    let mut config = config;
+    config.set_manifest_module(ipc::BootModuleConfig {
+        name: "krustboot-manifest",
+        base: manifest_module.address as u64,
+        length: manifest_module.size,
+    });
 
     if ipc::init_from_boot_config(config).is_err() {
-        serial::write_str("IPC runtime init failed from KrustBoot manifest\n");
+        serial::write_str("Native runtime init failed from KrustBoot manifest\n");
         return;
     }
 
     let Some(initial) = ipc::initial_process_context() else {
-        serial::write_str("IPC runtime init failed: no initial process\n");
+        serial::write_str("Native runtime init failed: no initial process\n");
         return;
     };
 
-    userspace::enter_ipc_demo(ipc::initial_process_name(), initial);
+    userspace::enter_initial_process(ipc::initial_process_name(), initial);
 }
 
 fn load_boot_process_image(
@@ -455,7 +465,7 @@ fn load_boot_process_image(
     }
 }
 
-fn build_ipc_boot_config(
+fn build_boot_runtime_config(
     boot_manifest: &boot_manifest::Manifest<'static>,
     images: &[Option<userspace::UserImage>; MAX_BOOT_PROCESSES],
 ) -> Option<ipc::BootRuntimeConfig> {
@@ -470,7 +480,7 @@ fn build_ipc_boot_config(
             })
             .is_err()
         {
-            serial::write_str("KrustBoot IPC plan failed: endpoint table\n");
+            serial::write_str("KrustBoot runtime plan failed: endpoint table\n");
             return None;
         }
         index += 1;
@@ -480,7 +490,7 @@ fn build_ipc_boot_config(
     while index < boot_manifest.process_count() {
         let process = boot_manifest.process(index)?;
         let Some(image) = images[index] else {
-            serial::write_str("KrustBoot IPC plan failed: process image gap\n");
+            serial::write_str("KrustBoot runtime plan failed: process image gap\n");
             return None;
         };
         if config
@@ -495,7 +505,7 @@ fn build_ipc_boot_config(
             })
             .is_err()
         {
-            serial::write_str("KrustBoot IPC plan failed: process table\n");
+            serial::write_str("KrustBoot runtime plan failed: process table\n");
             return None;
         }
         index += 1;
@@ -506,7 +516,7 @@ fn build_ipc_boot_config(
         let grant = boot_manifest.grant(index)?;
         let rights = capability_rights_from_boot(grant.rights);
         if rights == 0 {
-            serial::write_str("KrustBoot IPC plan failed: empty grant rights\n");
+            serial::write_str("KrustBoot runtime plan failed: empty grant rights\n");
             return None;
         }
         if config
@@ -518,7 +528,7 @@ fn build_ipc_boot_config(
             })
             .is_err()
         {
-            serial::write_str("KrustBoot IPC plan failed: grant table\n");
+            serial::write_str("KrustBoot runtime plan failed: grant table\n");
             return None;
         }
         index += 1;

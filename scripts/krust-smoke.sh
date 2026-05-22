@@ -46,35 +46,40 @@ required_lines='
 Krust Kernel booted
 Limine memory map entries:
 KrustBoot manifest generation: gen:hello-0001
-KrustBoot processes: 2
+KrustBoot boot modules: 1
+KrustBoot processes: 1
 KrustBoot endpoints: 1
-KrustBoot grants: 2
-grant[0] process=ipc-sender cap[0] endpoint=demo-ipc rights=send
-grant[1] process=ipc-receiver cap[0] endpoint=demo-ipc rights=receive
+KrustBoot grants: 1
+boot_module[0] name=vertex-init string=vertex-init
+process[0] name=vertex-init module=vertex-init initial=yes
+endpoint[0] name=serial-log
+grant[0] process=vertex-init cap[1] endpoint=serial-log rights=send
 Physical allocator demo ok
 Virtual memory demo ok
 Capability table demo ok
 IDT initialized: #UD #GP #PF
-Process table entries: 2
+Process table entries: 1
 Endpoint table entries: 1
-endpoint[0] id=1 name=demo-ipc
-process[0] id=1 name=ipc-sender state=ready
-process[1] id=2 name=ipc-receiver state=running
-proc=ipc-sender cap[0] endpoint=1 rights=send
-proc=ipc-receiver cap[0] endpoint=1 rights=receive
-IPC receive blocked: proc=ipc-receiver endpoint=1
-Scheduler switch: from=ipc-receiver to=ipc-sender
-Scheduler switch: from=ipc-sender to=ipc-receiver
-IPC wake receiver: proc=ipc-receiver endpoint=1
-Bad pointer test: SYS_WRITE_SERIAL returned STATUS_BAD_BUFFER
-Bad pointer test: SYS_IPC_SEND returned STATUS_BAD_BUFFER
-Bad pointer test: SYS_IPC_RECV returned STATUS_BAD_BUFFER
-IPC send accepted: endpoint=1 bytes=14
-IPC receive delivered: endpoint=1 bytes=14
-IPC negative test: ipc-sender receive rejected: bad capability
-IPC negative test: ipc-receiver send rejected: bad capability
-Krust IPC ping
-IPC demo ok
+endpoint[0] id=1 name=serial-log
+process[0] id=1 name=vertex-init state=running
+proc=vertex-init cap[0] boot-module=krustboot-manifest rights=read
+proc=vertex-init cap[1] endpoint=1 rights=send
+proc=vertex-init cap[2] process-control=process-control rights=control
+Entering userspace process: vertex-init
+vertex-init started
+Boot module read accepted: proc=vertex-init module=krustboot-manifest bytes=
+vertex-init received cap[0]=manifest-read
+vertex-init received cap[1]=serial-log
+vertex-init received cap[2]=process-control
+vertex-init manifest generation: gen:hello-0001
+vertex-init boot modules: 1
+vertex-init processes: 1
+vertex-init endpoints: 1
+vertex-init grants: 1
+Krust process authority accepted: proc=vertex-init generation=gen:hello-0001
+Krust native generation activation ok
+vertex-init activated generation: gen:hello-0001
+Native vertex-init boot ok
 '
 
 for _ in 1 2 3 4 5 6 7 8; do
@@ -94,7 +99,7 @@ EOF
     if [ "$missing" -eq 0 ]; then
         cleanup
         pid=
-        echo "smoke ok: Krust Kernel booted, parsed KrustBoot manifest, installed IDT handlers, rejected bad user buffers, enforced process capability tables, blocked IPC receive, woke receiver, and ran userspace IPC"
+        echo "smoke ok: Krust Kernel booted, loaded native vertex-init, enforced boot caps, and activated the compact generation"
         exit 0
     fi
 
@@ -103,7 +108,7 @@ done
 
 cleanup
 pid=
-echo "smoke failed: serial output did not contain the full M11 boot, scheduler, IPC, and safety transcript"
+echo "smoke failed: serial output did not contain the full M12 native vertex-init boot transcript"
 if [ -f "$SERIAL_LOG" ]; then
     cat "$SERIAL_LOG"
 fi

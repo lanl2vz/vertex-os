@@ -1,9 +1,6 @@
 use core::arch::{asm, global_asm};
 
-use crate::{
-    gdt, ipc, serial,
-    usercopy::{self, UserPtr},
-};
+use crate::{gdt, ipc, serial};
 
 const IA32_EFER: u32 = 0xc000_0080;
 const IA32_STAR: u32 = 0xc000_0081;
@@ -19,13 +16,15 @@ const SYS_EXIT: u64 = 2;
 const SYS_IPC_SEND: u64 = 3;
 const SYS_IPC_RECV: u64 = 4;
 const SYS_YIELD: u64 = 5;
+const SYS_BOOT_READ: u64 = 6;
+const SYS_LOG_WRITE: u64 = 7;
+const SYS_ACTIVATE_GENERATION: u64 = 8;
 
 const STATUS_OK: u64 = 0;
 const STATUS_BAD_CAPABILITY: u64 = u64::MAX - 1;
 const STATUS_BAD_BUFFER: u64 = u64::MAX - 2;
 const STATUS_TOO_LARGE: u64 = u64::MAX - 3;
 const STATUS_EMPTY: u64 = u64::MAX - 4;
-const WRITE_SERIAL_MAX: usize = 256;
 
 #[repr(C, align(16))]
 pub struct SyscallStack([u8; SYSCALL_STACK_SIZE]);
@@ -91,26 +90,9 @@ pub extern "C" fn krust_syscall_dispatch(
 ) {
     match number {
         SYS_WRITE_SERIAL => {
-            let mut buffer = [0u8; WRITE_SERIAL_MAX];
-            let Ok(len) = usize::try_from(arg1) else {
-                frame.rax = STATUS_BAD_BUFFER;
-                return;
-            };
-
-            match usercopy::copy_from_user(&mut buffer, UserPtr::new(arg0), len) {
-                Ok(()) => {
-                    serial::write_str("Userspace sys_write_serial: ");
-                    serial::write_ascii_bytes(&buffer[..len]);
-                    serial::write_str("\n");
-                    frame.rax = STATUS_OK;
-                }
-                Err(_) => {
-                    serial::write_str(
-                        "Bad pointer test: SYS_WRITE_SERIAL returned STATUS_BAD_BUFFER\n",
-                    );
-                    frame.rax = STATUS_BAD_BUFFER;
-                }
-            }
+            let _ = (arg0, arg1);
+            serial::write_str("Legacy SYS_WRITE_SERIAL rejected: use SYS_LOG_WRITE\n");
+            frame.rax = STATUS_BAD_CAPABILITY;
         }
         SYS_EXIT => exit_current_process(arg0, frame),
         SYS_IPC_SEND => match ipc::send(
@@ -131,6 +113,30 @@ pub extern "C" fn krust_syscall_dispatch(
             Err(error) => frame.rax = ipc_error_status("SYS_IPC_RECV", error),
         },
         SYS_YIELD => schedule_yield(frame),
+        SYS_BOOT_READ => match ipc::read_boot_module(
+            arg0,
+            arg1 as *mut u8,
+            usize::try_from(arg2).unwrap_or(usize::MAX),
+        ) {
+            Ok(len) => frame.rax = len as u64,
+            Err(error) => frame.rax = ipc_error_status("SYS_BOOT_READ", error),
+        },
+        SYS_LOG_WRITE => match ipc::log_write(
+            arg0,
+            arg1 as *const u8,
+            usize::try_from(arg2).unwrap_or(usize::MAX),
+        ) {
+            Ok(()) => frame.rax = STATUS_OK,
+            Err(error) => frame.rax = ipc_error_status("SYS_LOG_WRITE", error),
+        },
+        SYS_ACTIVATE_GENERATION => match ipc::activate_generation(
+            arg0,
+            arg1 as *const u8,
+            usize::try_from(arg2).unwrap_or(usize::MAX),
+        ) {
+            Ok(()) => frame.rax = STATUS_OK,
+            Err(error) => frame.rax = ipc_error_status("SYS_ACTIVATE_GENERATION", error),
+        },
         _ => {
             serial::write_str("Unknown userspace syscall: ");
             serial::write_u64_dec(number);
@@ -151,9 +157,9 @@ fn exit_current_process(status: u64, frame: &mut ipc::SyscallFrame) {
         ipc::ScheduleResult::Continue | ipc::ScheduleResult::Switched => {}
         ipc::ScheduleResult::Halt { ok } => {
             if ok {
-                serial::write_str("IPC demo ok\n");
+                serial::write_str("Native vertex-init boot ok\n");
             } else {
-                serial::write_str("IPC demo failed\n");
+                serial::write_str("Native vertex-init boot failed\n");
             }
             halt_loop()
         }
@@ -165,9 +171,9 @@ fn schedule_yield(frame: &mut ipc::SyscallFrame) {
         ipc::ScheduleResult::Continue | ipc::ScheduleResult::Switched => {}
         ipc::ScheduleResult::Halt { ok } => {
             if ok {
-                serial::write_str("IPC demo ok\n");
+                serial::write_str("Native vertex-init boot ok\n");
             } else {
-                serial::write_str("IPC demo failed\n");
+                serial::write_str("Native vertex-init boot failed\n");
             }
             halt_loop()
         }

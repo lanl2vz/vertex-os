@@ -2,8 +2,7 @@
 
 This document describes the current experimental userspace ABI used by the
 native Krust QEMU/Limine milestone. It is intentionally small and unstable. Its
-job is to support the M11 scheduler and IPC demo, and to provide the starting
-point for M12 native `vertex-init`.
+current job is to boot native `vertex-init` with explicit boot capabilities.
 
 ## Machine ABI
 
@@ -40,11 +39,14 @@ entry into another userspace process. There is no timer preemption in ABI v0.
 
 | Number | Name | Arguments | Return |
 | --- | --- | --- | --- |
-| 1 | `SYS_WRITE_SERIAL` | `arg0 = user_ptr`, `arg1 = len` | status |
+| 1 | `SYS_WRITE_SERIAL` | legacy, rejected in M12 | `STATUS_BAD_CAPABILITY` |
 | 2 | `SYS_EXIT` | `arg0 = status` | does not return in normal use |
 | 3 | `SYS_IPC_SEND` | `arg0 = cap_slot`, `arg1 = user_ptr`, `arg2 = len` | status |
 | 4 | `SYS_IPC_RECV` | `arg0 = cap_slot`, `arg1 = user_ptr`, `arg2 = max_len` | byte count or error status |
 | 5 | `SYS_YIELD` | none | status |
+| 6 | `SYS_BOOT_READ` | `arg0 = cap_slot`, `arg1 = user_ptr`, `arg2 = max_len` | byte count or error status |
+| 7 | `SYS_LOG_WRITE` | `arg0 = cap_slot`, `arg1 = user_ptr`, `arg2 = len` | status |
+| 8 | `SYS_ACTIVATE_GENERATION` | `arg0 = cap_slot`, `arg1 = user_ptr`, `arg2 = len` | status |
 
 ## Return Status Values
 
@@ -81,14 +83,13 @@ becoming uncontrolled kernel faults.
 Capabilities are process-local. A capability slot number is meaningful only in
 the current process's capability space.
 
-Current demo layout:
+Current M12 layout:
 
 ```text
-ipc-sender:
-  cap[0] = endpoint demo-ipc, rights=send
-
-ipc-receiver:
-  cap[0] = endpoint demo-ipc, rights=receive
+vertex-init:
+  cap[0] = boot module krustboot-manifest, rights=read
+  cap[1] = endpoint serial-log, rights=send
+  cap[2] = process-control object, rights=control
 ```
 
 `SYS_IPC_SEND` requires `send` rights on the endpoint capability. `SYS_IPC_RECV`
@@ -99,16 +100,17 @@ special-case process names; it resolves:
 current process -> cap slot -> kernel object -> required rights
 ```
 
-Planned M12 `vertex-init` boot caps:
+M12 native `vertex-init` uses the same rule:
 
 ```text
-vertex-init:
-  cap[0] = manifest module read
-  cap[1] = serial/log endpoint
-  cap[2] = process creation authority, temporary
+SYS_BOOT_READ requires cap[0] read rights to the manifest boot module.
+SYS_LOG_WRITE requires cap[1] send rights to the serial-log endpoint.
+SYS_ACTIVATE_GENERATION requires cap[2] control rights to process-control.
 ```
 
-The exact M12 object types and syscall surface are still planned.
+`SYS_ACTIVATE_GENERATION` is deliberately minimal in M12: it proves that
+`vertex-init` cannot activate the compact generation without process-control
+authority. It does not yet spawn arbitrary service processes.
 
 ## Process Model
 
@@ -172,6 +174,30 @@ receiver's address space and stores the delivered byte count in the receiver's
 saved syscall frame. When that process is scheduled again, `sysretq` returns to
 the original receive call site with `rax = delivered_len`.
 
+## Native vertex-init Semantics
+
+M12 boots one initial userspace process:
+
+```text
+process[0] = vertex-init
+```
+
+`vertex-init` uses these syscalls:
+
+```text
+SYS_BOOT_READ(cap[0], buffer, len)
+  copies the compact KrustBoot manifest into userspace
+
+SYS_LOG_WRITE(cap[1], message, len)
+  writes a serial-log message if cap[1] grants send rights
+
+SYS_ACTIVATE_GENERATION(cap[2], generation_id, len)
+  proves vertex-init holds process-control authority for activation
+```
+
+This is enough to move the first graph activation step into native userspace
+without putting a JSON interpreter or full service launcher into the kernel.
+
 ## Boot ABI
 
 Limine loads:
@@ -186,7 +212,7 @@ Krust consumes the compact KrustBoot manifest rather than parsing full JSON in
 kernel space. Hosted `vertexctl compile-boot-manifest` is responsible for
 converting source Vertex JSON into the compact boot format.
 
-For M11, the compact manifest describes:
+For M12, the compact manifest describes:
 
 ```text
 generation_id
@@ -196,5 +222,10 @@ endpoints
 grants
 ```
 
-For M12, the manifest should describe `vertex-init` and the initial boot
-authority required for it to activate a tiny native generation.
+M12 also creates fixed boot caps for native `vertex-init`:
+
+```text
+cap[0] manifest module read
+cap[1] serial-log send
+cap[2] process-control control
+```
