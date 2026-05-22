@@ -1,6 +1,6 @@
 # Krust Kernel
 
-Krust M1 is the first native Vertex OS boot-information milestone.
+Krust M2 is the first native Vertex manifest module milestone.
 
 The target is intentionally small:
 
@@ -11,11 +11,13 @@ Krust enters 64-bit Rust code
 Krust writes "Krust Kernel booted" to COM1 serial
 Krust reads the Limine memory map response
 Krust prints every memory map entry to serial
+Limine loads `hello-generation.vertex.json` as a boot module
+Krust finds the manifest module and prints its generation ID
 Krust halts forever
 ```
 
-No memory manager, heap, interrupts, userspace, manifest parsing, Vertex IR
-integration, filesystem, network, or device drivers are part of M1.
+No memory manager, heap, interrupts, userspace, full manifest parsing, Vertex IR
+integration, filesystem, network, or device drivers are part of M2.
 
 ## Prerequisites
 
@@ -91,6 +93,7 @@ Expected terminal output:
 Krust Kernel booted
 Limine base revision supported
 Limine memory map entries: ...
+Vertex manifest generation: gen:hello-0001
 ```
 
 QEMU runs with `-display none`, so all kernel output is written through the
@@ -103,21 +106,22 @@ make smoke
 ```
 
 The smoke test boots QEMU headlessly, captures serial output to
-`build/serial.log`, and passes when it sees both:
+`build/serial.log`, and passes when it sees:
 
 ```text
 Krust Kernel booted
 Limine memory map entries:
+Vertex manifest generation: gen:hello-0001
 ```
 
 ## Machine Notes
 
 Linux x86_64 can add KVM later with QEMU flags such as `-enable-kvm -cpu host`.
-That is not enabled by default so the M1 command stays portable:
+That is not enabled by default so the M2 command stays portable:
 
 ```sh
 QEMU_EXTRA="-enable-kvm -cpu host" make smoke
 ```
 
 macOS Apple Silicon can run `qemu-system-x86_64` by emulation. It is slower than
-native AArch64 virtualization, but it is enough for the M1 serial milestone.
+native AArch64 virtualization, but it is enough for the M2 serial milestone.

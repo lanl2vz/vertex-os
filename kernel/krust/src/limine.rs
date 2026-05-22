@@ -18,6 +18,12 @@ const MEMMAP_REQUEST_ID: [u64; 4] = [
     0x67cf3d9d378a806f,
     0xe304acdfc50c3c62,
 ];
+const MODULE_REQUEST_ID: [u64; 4] = [
+    COMMON_MAGIC_0,
+    COMMON_MAGIC_1,
+    0x3e7e279702be32af,
+    0xca1c4f3bd1280cee,
+];
 
 pub const MEMMAP_USABLE: u64 = 0;
 pub const MEMMAP_RESERVED: u64 = 1;
@@ -40,6 +46,10 @@ static BASE_REVISION: BaseRevision = BaseRevision::new(0);
 #[used]
 #[unsafe(link_section = ".requests")]
 static MEMMAP_REQUEST: Request<MemmapResponse> = Request::new(MEMMAP_REQUEST_ID);
+
+#[used]
+#[unsafe(link_section = ".requests")]
+static MODULE_REQUEST: ModuleRequest = ModuleRequest::new();
 
 #[used]
 #[unsafe(link_section = ".requests_end_marker")]
@@ -102,6 +112,32 @@ impl<T> ResponsePtr<T> {
 }
 
 #[repr(C)]
+pub struct Uuid {
+    a: u32,
+    b: u16,
+    c: u16,
+    d: [u8; 8],
+}
+
+#[repr(C)]
+pub struct File {
+    pub revision: u64,
+    pub address: *const u8,
+    pub size: u64,
+    pub path: *const u8,
+    pub string: *const u8,
+    pub media_type: u32,
+    pub unused: u32,
+    pub tftp_ip: u32,
+    pub tftp_port: u32,
+    pub partition_index: u32,
+    pub mbr_disk_id: u32,
+    pub gpt_disk_uuid: Uuid,
+    pub gpt_part_uuid: Uuid,
+    pub part_uuid: Uuid,
+}
+
+#[repr(C)]
 pub struct MemmapEntry {
     pub base: u64,
     pub length: u64,
@@ -113,6 +149,40 @@ struct MemmapResponse {
     revision: u64,
     entry_count: u64,
     entries: *const *const MemmapEntry,
+}
+
+#[repr(C)]
+struct ModuleResponse {
+    revision: u64,
+    module_count: u64,
+    modules: *const *const File,
+}
+
+#[repr(C)]
+struct ModuleRequest {
+    id: [u64; 4],
+    revision: u64,
+    response: ResponsePtr<ModuleResponse>,
+    internal_module_count: u64,
+    internal_modules: *const *const u8,
+}
+
+unsafe impl Sync for ModuleRequest {}
+
+impl ModuleRequest {
+    const fn new() -> Self {
+        Self {
+            id: MODULE_REQUEST_ID,
+            revision: 0,
+            response: ResponsePtr::null(),
+            internal_module_count: 0,
+            internal_modules: ptr::null(),
+        }
+    }
+
+    fn response(&self) -> Option<&'static ModuleResponse> {
+        self.response.get()
+    }
 }
 
 pub struct MemoryMap {
@@ -134,6 +204,25 @@ impl MemoryMap {
     }
 }
 
+pub struct Modules {
+    response: &'static ModuleResponse,
+}
+
+impl Modules {
+    pub fn module_count(&self) -> u64 {
+        self.response.module_count
+    }
+
+    pub fn module(&self, index: u64) -> Option<&'static File> {
+        if index >= self.response.module_count {
+            return None;
+        }
+
+        let module_ptr = unsafe { self.response.modules.add(index as usize).read() };
+        unsafe { module_ptr.as_ref() }
+    }
+}
+
 pub fn base_revision_supported() -> bool {
     BASE_REVISION.is_supported()
 }
@@ -142,6 +231,12 @@ pub fn memory_map() -> Option<MemoryMap> {
     MEMMAP_REQUEST
         .response()
         .map(|response| MemoryMap { response })
+}
+
+pub fn modules() -> Option<Modules> {
+    MODULE_REQUEST
+        .response()
+        .map(|response| Modules { response })
 }
 
 pub fn memmap_type_name(entry_type: u64) -> &'static str {

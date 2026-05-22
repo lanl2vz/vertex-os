@@ -25,6 +25,41 @@ pub fn write_str(value: &str) {
     }
 }
 
+pub fn write_ascii_bytes(value: &[u8]) {
+    for byte in value {
+        if byte.is_ascii_graphic() || *byte == b' ' {
+            write_byte(*byte);
+        } else {
+            write_byte(b'.');
+        }
+    }
+}
+
+pub fn write_c_string(value: *const u8) {
+    if value.is_null() {
+        write_str("<null>");
+        return;
+    }
+
+    let mut index = 0;
+    while index < 256 {
+        let byte = unsafe { value.add(index).read() };
+        if byte == 0 {
+            return;
+        }
+
+        if byte.is_ascii_graphic() || byte == b' ' {
+            write_byte(byte);
+        } else {
+            write_byte(b'.');
+        }
+
+        index += 1;
+    }
+
+    write_str("...");
+}
+
 pub fn write_u64_dec(mut value: u64) {
     if value == 0 {
         write_byte(b'0');

@@ -28,12 +28,13 @@ vertex-os/
   flake.nix              Planned root flake entrypoint
 ```
 
-## Krust M1
+## Krust M2
 
-The first native boot-information milestone lives in `kernel/krust`. It is
-isolated from the hosted Cargo workspace and boots a Limine ISO under QEMU
-until Krust prints `Krust Kernel booted`, reads Limine's memory map, prints the
-memory map entries to the serial console, and halts.
+The first native Vertex manifest module milestone lives in `kernel/krust`. It
+is isolated from the hosted Cargo workspace and boots a Limine ISO under QEMU
+until Krust prints `Krust Kernel booted`, reads Limine's memory map, finds the
+packaged `hello-generation.vertex.json` boot module, prints its generation ID
+to the serial console, and halts.
 
 ```sh
 cd kernel/krust
