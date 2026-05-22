@@ -1594,15 +1594,12 @@ pub fn fault_current_process(
     serial::write_str(" error=");
     serial::write_u64_hex(error_code);
     serial::write_str("\n");
-    serial::write_str("direct invalid userspace load killed only process: ");
-    serial::write_str(name);
-    serial::write_str("\n");
 
     if initial_faulted {
         return ScheduleResult::Halt { ok: false };
     }
 
-    if schedule_next_ready_no_wait(frame) {
+    if schedule_next_ready(frame) {
         ScheduleResult::Switched
     } else {
         ScheduleResult::Halt {
@@ -2682,10 +2679,6 @@ fn schedule_next_ready(frame: &mut SyscallFrame) -> bool {
 
 fn schedule_next_ready_excluding_current(frame: &mut SyscallFrame) -> bool {
     schedule_next_ready_inner(frame, false, true)
-}
-
-fn schedule_next_ready_no_wait(frame: &mut SyscallFrame) -> bool {
-    schedule_next_ready_inner(frame, true, false)
 }
 
 fn schedule_next_ready_no_wait_excluding_current(frame: &mut SyscallFrame) -> bool {

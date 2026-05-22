@@ -1117,7 +1117,6 @@ Acceptance evidence:
 faulty-service triggers direct invalid load
 User page fault: proc=faulty-service
 User process fault contained: proc=faulty-service
-direct invalid userspace load killed only process: faulty-service
 vertex-init observes failure
 vertex-init restarts faulty-service once
 faulty-service exits 0 after restart

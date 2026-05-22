@@ -103,7 +103,6 @@ logd received: hello from echo
 faulty-service triggers direct invalid load
 User page fault: proc=faulty-service
 User process fault contained: proc=faulty-service
-direct invalid userspace load killed only process: faulty-service
 vertex-init observes failure
 restart policy = on-failure
 vertex-init restarts faulty-service once

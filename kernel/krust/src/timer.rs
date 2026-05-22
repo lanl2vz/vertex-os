@@ -10,6 +10,8 @@ const PIC1_DATA: u16 = 0x21;
 const PIC2_COMMAND: u16 = 0xa0;
 const PIC2_DATA: u16 = 0xa1;
 const PIC_EOI: u8 = 0x20;
+const PIC_MASTER_IRQ0_ONLY: u8 = 0xfe;
+const PIC_SLAVE_ALL_MASKED: u8 = 0xff;
 
 const PIT_CHANNEL0: u16 = 0x40;
 const PIT_COMMAND: u16 = 0x43;
@@ -48,9 +50,6 @@ pub fn wait_for_interrupt() {
 
 fn remap_pic() {
     unsafe {
-        let mask1 = inb(PIC1_DATA);
-        let mask2 = inb(PIC2_DATA);
-
         outb(PIC1_COMMAND, 0x11);
         io_wait();
         outb(PIC2_COMMAND, 0x11);
@@ -68,8 +67,8 @@ fn remap_pic() {
         outb(PIC2_DATA, 0x01);
         io_wait();
 
-        outb(PIC1_DATA, mask1 & !0x01);
-        outb(PIC2_DATA, mask2);
+        outb(PIC1_DATA, PIC_MASTER_IRQ0_ONLY);
+        outb(PIC2_DATA, PIC_SLAVE_ALL_MASKED);
     }
 }
 
@@ -79,14 +78,6 @@ fn program_pit() {
         outb(PIT_CHANNEL0, (PIT_DIVISOR & 0xff) as u8);
         outb(PIT_CHANNEL0, (PIT_DIVISOR >> 8) as u8);
     }
-}
-
-unsafe fn inb(port: u16) -> u8 {
-    let value: u8;
-    unsafe {
-        asm!("in al, dx", out("al") value, in("dx") port, options(nomem, nostack, preserves_flags));
-    }
-    value
 }
 
 unsafe fn outb(port: u16, value: u8) {
