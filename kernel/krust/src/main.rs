@@ -2,15 +2,20 @@
 #![no_main]
 
 mod capability;
+mod elf;
+mod gdt;
 mod limine;
 mod memory;
 mod paging;
 mod serial;
+mod syscall;
+mod userspace;
 
 use core::arch::asm;
 use core::panic::PanicInfo;
 
 const VERTEX_MANIFEST_MODULE: &[u8] = b"vertex-manifest";
+const KRUST_USER_MODULE: &[u8] = b"krust-user-hello";
 const GENERATION_ID_PREFIX: &[u8] = b"gen:";
 
 #[unsafe(link_section = ".text._start")]
@@ -81,6 +86,7 @@ fn print_boot_info() {
         return;
     };
     run_capability_table_demo(&allocator, heap);
+    run_userspace_demo(&mut allocator);
 }
 
 fn init_physical_allocator(memory_map: &limine::MemoryMap) -> Option<memory::FrameAllocator> {
@@ -360,6 +366,29 @@ fn run_capability_table_demo(allocator: &memory::FrameAllocator, heap: KernelHea
     }
 }
 
+fn run_userspace_demo(allocator: &mut memory::FrameAllocator) {
+    let Some(hhdm_offset) = limine::hhdm_offset() else {
+        serial::write_str("Userspace load failed: HHDM unavailable\n");
+        return;
+    };
+    let Some(module) = find_krust_user_module() else {
+        serial::write_str("Userspace load failed: krust-user-hello module unavailable\n");
+        return;
+    };
+
+    serial::write_str("Krust user module: ");
+    serial::write_c_string(module.path);
+    serial::write_str(" bytes=");
+    serial::write_u64_dec(module.size);
+    serial::write_str("\n");
+
+    let bytes = unsafe { core::slice::from_raw_parts(module.address, module.size as usize) };
+    match userspace::load(bytes, hhdm_offset, allocator) {
+        Ok(image) => userspace::enter(image),
+        Err(error) => userspace::print_load_error(error),
+    }
+}
+
 fn print_map_error(label: &str, error: paging::MapError) {
     serial::write_str(label);
     serial::write_str(": ");
@@ -421,12 +450,20 @@ fn print_manifest_module() {
 }
 
 fn find_vertex_manifest_module() -> Option<&'static limine::File> {
+    find_module_by_string(VERTEX_MANIFEST_MODULE)
+}
+
+fn find_krust_user_module() -> Option<&'static limine::File> {
+    find_module_by_string(KRUST_USER_MODULE)
+}
+
+fn find_module_by_string(expected: &[u8]) -> Option<&'static limine::File> {
     let modules = limine::modules()?;
 
     let mut index = 0;
     while index < modules.module_count() {
         if let Some(module) = modules.module(index)
-            && c_string_eq(module.string, VERTEX_MANIFEST_MODULE)
+            && c_string_eq(module.string, expected)
         {
             return Some(module);
         }
