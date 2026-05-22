@@ -211,10 +211,11 @@ Target boot flow:
 Limine
   -> Krust
   -> Krust reads KrustBootManifest
-  -> Krust loads vertex-init, logd, and echo ELFs
+  -> Krust loads vertex-init, logd, netstack, echo, and the M19-M23 service ELFs
   -> Krust marks non-initial services Declared
   -> vertex-init reads the manifest
   -> vertex-init starts logd through SYS_PROCESS_START
+  -> vertex-init starts netstack and other declared services through SYS_PROCESS_START
   -> vertex-init starts echo through SYS_PROCESS_START
   -> echo sends one message to logd
   -> denial tests prove missing authority is rejected
@@ -240,11 +241,14 @@ Acceptance evidence in smoke:
 KrustBoot processes: 9
 process[0] name=vertex-init module=vertex-init initial=yes
 process[1] name=logd module=logd initial=no
-process[2] name=echo module=echo initial=no
+process[2] name=netstack module=netstack initial=no
+process[3] name=echo module=echo initial=no
 process[1] id=2 name=logd state=declared
-process[2] id=3 name=echo state=declared
+process[2] id=3 name=netstack state=declared
+process[3] id=4 name=echo state=declared
 vertex-init starting service: logd
 Krust process start accepted: proc=vertex-init target=logd
+vertex-init starting service: netstack
 vertex-init starting service: echo
 Krust process start accepted: proc=vertex-init target=echo
 echo sent message to logd
@@ -254,16 +258,18 @@ negative test: logd process-start rejected: bad capability
 Native service activation ok
 ```
 
-M13 proves that native Krust can boot a compact generation and run a tiny
-capability-enforced service graph. Full graph ordering, readiness, filesystems,
-networking, device drivers, and native store objects remain future milestones.
+M13 proved that native Krust could boot a compact generation and run a tiny
+capability-enforced service graph. M14-M24 build on that path with graph-derived
+activation order, readiness, delegation, supervision, service-local store/state
+authority, timer sleep, rollback selection, and QEMU test cases. Filesystems,
+networking, and device drivers remain outside this proof.
 
-## Post-M13 Direction
+## M14-M24 Direction
 
-The next strategic target is native Krust boot activation of a real generation
-graph, not a hardcoded demo graph.
+The M14-M24 strategic target is native Krust boot activation of a real
+generation graph, not a hardcoded demo graph.
 
-M13 proves:
+M13 proved:
 
 - Krust can boot.
 - `vertex-init` can run natively.
@@ -271,14 +277,15 @@ M13 proves:
 - Services communicate only through granted capabilities.
 - Denied authority fails.
 
-The next milestones should prove:
+M14-M24 prove:
 
 - `vertex-init` reads service dependencies from the compact manifest.
 - Activation order is computed from the graph.
 - Readiness and failure are explicit.
 - Capabilities can be delegated and attenuated.
 - Processes are supervised.
-- Generation switch and rollback become native.
+- Generation switch and rollback metadata flow through the native manifest.
+- Store, state, and timer authority is granted to the declaring service, not to init.
 
 That keeps Vertex OS aligned with the core design: the running system is an
 activation of a declared graph, and Krust only enforces compact authority.
@@ -287,11 +294,10 @@ activation of a declared graph, and Krust only enforces compact authority.
 
 Status: done.
 
-Goal: remove the remaining demo shape from native `vertex-init`. M13 still
-knows that it should start `logd` and `echo`. M14 should make `vertex-init`
-discover declared services from the compact KrustBoot manifest, compute a valid
-activation order, and start services from manifest records without
-special-casing service names.
+Goal: make native `vertex-init` discover declared services from the compact
+KrustBoot manifest, compute a valid activation order, and start services from
+manifest records without special-casing service names. This replaces the older
+M13 assumption that init knew it should start only `logd` and `echo`.
 
 The compact manifest should extend the existing M10-M13 shape rather than
 introducing a second native format. Additional process fields should include:
@@ -324,8 +330,15 @@ Acceptance evidence:
 KrustBoot processes: 9
 vertex-init activation plan:
   1. logd
-  2. echo
+  2. netstack
+  3. echo
+  4. model-reader
+  5. counter-service
+  6. reader-service
+  7. timer-service
+  8. flaky-service
 vertex-init starting service: logd
+vertex-init starting service: netstack
 vertex-init starting service: echo
 Native manifest-driven activation ok
 ```
@@ -425,16 +438,20 @@ compiles to:
 process logd
 process echo
 endpoint log-sink
-grant echo cap[0] send log-sink
 grant logd cap[0] receive log-sink
+grant vertex-init cap[4] send|receive log-sink
 start_after echo <- logd
 ```
+
+`vertex-init` derives and transfers the echo send capability before starting
+echo, so consumers do not receive static boot grants for delegated endpoint
+authority.
 
 Acceptance evidence:
 
 ```text
 vertexctl compile-boot-manifest examples/hello-generation.vertex.json build/hello.krustboot
-vertexctl explain-krustboot build/hello.krustboot
+vertexctl explain-krustboot examples/hello-generation.vertex.json
 make smoke
 ```
 
@@ -446,7 +463,7 @@ because it requires cap:log.sink/send
 and svc:logd provides cap:log.sink
 ```
 
-This is the key bridge from a native demo to one source graph that can target
+This is the key bridge from a native proof path to one source graph that can target
 both hosted and native runtimes.
 
 ## M17: Capability Derivation, Attenuation, And Transfer
@@ -473,7 +490,7 @@ Candidate syscalls:
 ```text
 SYS_CAP_DERIVE(parent_slot, new_slot, rights_mask)
 SYS_CAP_DROP(slot)
-SYS_CAP_TRANSFER(endpoint_slot, cap_slot, rights_mask)
+SYS_CAP_TRANSFER(control_slot, target_process, packed_source_target_and_rights)
 ```
 
 Acceptance evidence:
@@ -554,7 +571,7 @@ StoreObjectRead
 Candidate syscall:
 
 ```text
-SYS_OBJECT_READ(cap_slot, offset, ptr, len)
+SYS_OBJECT_READ(cap_slot, ptr, len)
 ```
 
 Acceptance evidence:
@@ -641,8 +658,8 @@ restore
 Candidate demo syscalls:
 
 ```text
-SYS_STATE_WRITE(cap_slot, key, value)
-SYS_STATE_READ(cap_slot, key, buffer)
+SYS_STATE_WRITE(cap_slot, value)
+SYS_STATE_READ(cap_slot, buffer)
 ```
 
 Acceptance evidence:
@@ -653,6 +670,7 @@ counter-service writes value
 reader-service has read-only cap
 reader-service reads value
 reader-service write rejected
+Native state-volume access ok
 ```
 
 This keeps immutable generation rollback and mutable state rollback separate.
@@ -708,6 +726,7 @@ Acceptance evidence:
 
 ```text
 timer-service sleeps 10 ms
+Timer sleep accepted: proc=timer-service timer=monotonic-timer ms=10
 wakes
 logs "timer ok"
 ```
@@ -806,6 +825,6 @@ They matter eventually, but they distract from the next core proof:
 A native booted Vertex system should be fully determined by the generation graph.
 ```
 
-M13 proves that native services can run under explicit authority. M14-M16
-should prove that the graph itself decides which native services exist, when
-they start, what they receive, and why they are allowed to communicate.
+M13 proved that native services can run under explicit authority. M14-M24 prove
+that the graph itself decides which native services exist, when they start,
+what they receive, and why they are allowed to communicate.

@@ -22,13 +22,14 @@ Krust maps a small fixed kernel-heap virtual range
 Krust writes and reads through the mapped virtual pages
 Krust creates fixed kernel objects and boot capabilities
 Krust prints the boot capability table
-Limine loads `vertex-init.elf`, `logd.elf`, and `echo.elf` as boot modules
+Limine loads native service ELFs for vertex-init, logd, netstack, echo, model-reader, counter, state-reader, timer, and flaky-service
 Krust loads each declared process into a fresh low-half address space
 Krust creates a runtime process table and endpoint table from the KrustBoot manifest
 Krust allocates runtime process IDs and states from KrustBoot process records
 Krust grants vertex-init cap[0] read rights to the manifest module
 Krust grants vertex-init cap[1] send rights to the serial-log endpoint
-Krust grants vertex-init cap[2] process-control authority, readiness/store/state/timer authority, and attenuable endpoint authority
+Krust grants vertex-init cap[2] process-control authority, cap[3] readiness receive authority, and cap[4] attenuable endpoint authority
+Krust grants store/state/timer authority only to services that declare those capabilities
 Krust installs a minimal IDT for #UD, #GP, and #PF
 Krust enters ring 3 at the initial process entry point
 Krust tracks Declared, Ready, Running, BlockedOnEndpoint, and Exited process states
@@ -40,7 +41,10 @@ logd reports readiness before echo starts
 vertex-init derives and transfers attenuated endpoint authority
 echo sends one message to logd through an explicit IPC capability
 echo drops its endpoint capability and denied authority stays rejected
-vertex-init reads an immutable store object, exercises a state-volume placeholder, and uses the timer capability
+model-reader reads an immutable store object through its own store capability
+counter-service writes a state volume, and reader-service reads it through read-only state authority
+timer-service sleeps through its own timer capability
+flaky-service exits non-zero once and vertex-init restarts it according to restart policy
 logd receives the message and denial tests reject missing authority
 Krust halts after `Native service activation ok`
 ```
@@ -103,10 +107,10 @@ make doctor
 make build
 ```
 
-This builds `target/x86_64-unknown-none/debug/krust`,
-`user/init/target/x86_64-unknown-none/debug/vertex-init`,
-`user/logd/target/x86_64-unknown-none/debug/logd`, and
-`user/echo/target/x86_64-unknown-none/debug/echo`.
+This builds `target/x86_64-unknown-none/debug/krust` and the native user
+programs under `user/*/target/x86_64-unknown-none/debug/`: `vertex-init`,
+`logd`, `echo`, `netstack`, `model-reader`, `counter`, `state-reader`,
+`timer`, and `flaky`.
 
 ## Build ISO
 
@@ -153,6 +157,11 @@ process[0] id=1 name=vertex-init state=running
 process[1] id=2 name=logd state=declared
 process[2] id=3 name=netstack state=declared
 process[3] id=4 name=echo state=declared
+process[4] id=5 name=model-reader state=declared
+process[5] id=6 name=counter-service state=declared
+process[6] id=7 name=reader-service state=declared
+process[7] id=8 name=timer-service state=declared
+process[8] id=9 name=flaky-service state=declared
 proc=vertex-init cap[0] boot-module=krustboot-manifest rights=read
 proc=vertex-init cap[1] endpoint=serial-log rights=send
 proc=vertex-init cap[2] process-control=process-control rights=control
@@ -188,17 +197,33 @@ vertex-init starting service: logd
 Krust process start accepted: proc=vertex-init target=logd
 logd ready
 vertex-init observed ready: logd
+vertex-init starting service: netstack
+Krust process start accepted: proc=vertex-init target=netstack
 vertex-init derives send-only cap for echo from stronger endpoint authority
+Capability transfer accepted: proc=vertex-init target=echo slot=0 rights=send
 vertex-init starting service: echo
 Krust process start accepted: proc=vertex-init target=echo
+vertex-init starting service: model-reader
+vertex-init starting service: counter-service
+vertex-init starting service: reader-service
+vertex-init starting service: timer-service
+vertex-init starting service: flaky-service
 echo sent message to logd
 logd received: hello from echo
 negative test: echo receive rejected: bad capability
 echo send after drop rejected
 negative test: logd process-start rejected: bad capability
+Object read accepted: proc=model-reader object=store:hello-text bytes=22
 Native store-object read ok
+State write accepted: proc=counter-service state=state:counter
+State read accepted: proc=reader-service state=state:counter
 Native state-volume access ok
+Timer sleep accepted: proc=timer-service timer=monotonic-timer ms=10
 Native timer ok
+flaky-service exits with status 1
+vertex-init observes failure
+vertex-init restarts flaky-service once
+flaky-service exits 0
 Native restart policy ok
 Native manifest-driven activation ok
 Native readiness activation ok
@@ -236,6 +261,7 @@ grant[0] process=vertex-init cap[1] endpoint=serial-log rights=send
 grant[11] process=logd cap[0] endpoint=log-sink rights=receive
 grant[13] process=model-reader cap[0] store-object=store:hello-text rights=read
 grant[15] process=reader-service cap[0] state-volume=state:counter rights=read|snapshot|restore
+grant[16] process=timer-service cap[0] timer=monotonic-timer rights=control
 Physical allocator demo ok
 Virtual memory demo ok
 Capability table demo ok
@@ -247,21 +273,38 @@ endpoint[1] id=2 name=readiness
 endpoint[2] id=3 name=log-sink
 process[0] id=1 name=vertex-init state=running
 process[1] id=2 name=logd state=declared
-process[2] id=3 name=echo state=declared
+process[2] id=3 name=netstack state=declared
+process[3] id=4 name=echo state=declared
+process[4] id=5 name=model-reader state=declared
+process[5] id=6 name=counter-service state=declared
+process[6] id=7 name=reader-service state=declared
+process[7] id=8 name=timer-service state=declared
+process[8] id=9 name=flaky-service state=declared
 proc=vertex-init cap[0] boot-module=krustboot-manifest rights=read
 proc=vertex-init cap[1] endpoint=serial-log rights=send
 proc=vertex-init cap[2] process-control=process-control rights=control
+proc=vertex-init cap[4] endpoint=log-sink rights=send|receive
 proc=logd cap[0] endpoint=log-sink rights=receive
-proc=echo cap[0] endpoint=log-sink rights=send
+proc=model-reader cap[0] store-object=store:hello-text rights=read
+proc=counter-service cap[0] state-volume=state:counter rights=write
+proc=reader-service cap[0] state-volume=state:counter rights=read|snapshot|restore
+proc=timer-service cap[0] timer=monotonic-timer rights=control
 vertex-init started
 Boot module read accepted: proc=vertex-init module=krustboot-manifest bytes=
 vertex-init manifest generation: gen:hello-0001
 vertex-init activation plan:
   1. logd
-  2. echo
+  2. netstack
+  3. echo
+  4. model-reader
+  5. counter-service
+  6. reader-service
+  7. timer-service
+  8. flaky-service
 vertex-init starting service: logd
 Krust process start accepted: proc=vertex-init target=logd
 vertex-init observed ready: logd
+vertex-init starting service: netstack
 vertex-init starting service: echo
 Krust process start accepted: proc=vertex-init target=echo
 echo sent message to logd
@@ -269,6 +312,13 @@ logd received: hello from echo
 negative test: echo receive rejected: bad capability
 echo send after drop rejected
 negative test: logd process-start rejected: bad capability
+Object read accepted: proc=model-reader object=store:hello-text bytes=22
+State write accepted: proc=counter-service state=state:counter
+State read accepted: proc=reader-service state=state:counter
+Timer sleep accepted: proc=timer-service timer=monotonic-timer ms=10
+flaky-service exits with status 1
+vertex-init restarts flaky-service once
+flaky-service exits 0
 Native manifest-driven activation ok
 Native readiness activation ok
 Native service activation ok

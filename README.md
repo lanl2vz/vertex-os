@@ -27,42 +27,40 @@ vertex-os/
     netstack/            Demo hosted network capability provider
     echo-server/         Demo service consuming log and network capabilities
   kernel/
-    krust/               Bootable Krust kernel prototype, currently at M13 native service activation
+    krust/               Bootable Krust kernel prototype, currently covering M14-M24 native graph activation
   lang/
     vertex-lang/         Planned typed system-definition language
   nix/                   Nix support modules and builders
   flake.nix              Planned root flake entrypoint
 ```
 
-## Krust M13
+## Krust M14-M24
 
-The current native activation milestone lives in `kernel/krust`. It is isolated
+The current native activation path lives in `kernel/krust`. It is isolated
 from the hosted Cargo workspace and boots a Limine ISO under QEMU. The ISO
 build first runs `vertexctl compile-boot-manifest` to turn the source
-manifest's `krustBoot` section into `hello-generation.krustboot`, a compact
-fixed-format native boot manifest.
+generation graph into `hello-generation.krustboot`, a compact fixed-format
+native boot manifest.
 
-Krust parses that module, loads native `vertex-init`, `logd`, and `echo` ELF
-modules, creates process-local capabilities, marks non-initial services
+Krust parses that module, loads the native service ELFs declared by the compact
+manifest, creates process-local capabilities, marks non-initial services
 `declared`, and enters ring 3 at `vertex-init`. Native `vertex-init` reads the
-compact manifest through cap[0], logs through cap[1], starts declared services
-through cap[2] process-control, and the services prove explicit IPC authority:
-`echo` sends one message to `logd`, receive/send denials fail without ambient
-rights, and Krust halts after `Native service activation ok`.
+manifest through cap[0], logs through cap[1], starts declared services through
+cap[2] process-control, waits for readiness, delegates attenuated IPC authority,
+and supervises process exits. The QEMU smoke path now proves service-local
+store/state/timer access and a real restart of `flaky-service`, not
+init-owned transcript logging.
 
 ```sh
 scripts/krust-smoke.sh
 ```
 
-See [docs/krust-milestones.md](docs/krust-milestones.md) for M0 through M13,
+See [docs/krust-milestones.md](docs/krust-milestones.md) for M0 through M24,
 and [docs/krust-abi-v0.md](docs/krust-abi-v0.md) for the current syscall,
 capability, process, and IPC ABI.
 
-The post-M13 roadmap is also tracked in
-[docs/krust-milestones.md](docs/krust-milestones.md). The next strategic target
-is native activation of a real generation graph: M14 removes the hardcoded
-service graph, M15 adds readiness and lifecycle semantics, and M16 compiles
-native KrustBoot directly from full Vertex IR.
+The current Krust milestone status and deferred work are tracked in
+[docs/krust-milestones.md](docs/krust-milestones.md).
 
 ## Current Demo
 
