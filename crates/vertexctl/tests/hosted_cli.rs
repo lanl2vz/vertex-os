@@ -97,6 +97,12 @@ fn validates_both_example_manifests() {
         "examples/hello-stateful-generation.vertex.json",
     ]));
     assert!(stateful.contains("valid: gen:hello-stateful-0001"));
+
+    let deny_log = assert_success(run(&[
+        "validate",
+        "examples/deny-log-generation.vertex.json",
+    ]));
+    assert!(deny_log.contains("valid: gen:deny-log-0001"));
 }
 
 #[test]

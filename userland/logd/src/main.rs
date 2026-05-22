@@ -60,26 +60,33 @@ fn run() -> Result<(), String> {
     println!("{service_id}: listening on {path}");
 
     if env::var("VERTEX_DEMO_RUN_ONCE").as_deref() == Ok("1") {
-        accept_one(&listener, &service_id)?;
+        accept_until_message(&listener, &service_id)?;
         return Ok(());
     }
 
     for stream in listener.incoming() {
         let stream = stream.map_err(|source| format!("failed to accept log client: {source}"))?;
-        read_log_stream(stream, &service_id)?;
+        let _ = read_log_stream(stream, &service_id)?;
     }
 
     Ok(())
 }
 
-fn accept_one(listener: &UnixListener, service_id: &str) -> Result<(), String> {
-    let (stream, _) = listener
-        .accept()
-        .map_err(|source| format!("failed to accept log client: {source}"))?;
-    read_log_stream(stream, service_id)
+fn accept_until_message(listener: &UnixListener, service_id: &str) -> Result<(), String> {
+    loop {
+        let (stream, _) = listener
+            .accept()
+            .map_err(|source| format!("failed to accept log client: {source}"))?;
+        if read_log_stream(stream, service_id)? {
+            return Ok(());
+        }
+    }
 }
 
-fn read_log_stream(stream: std::os::unix::net::UnixStream, service_id: &str) -> Result<(), String> {
+fn read_log_stream(
+    stream: std::os::unix::net::UnixStream,
+    service_id: &str,
+) -> Result<bool, String> {
     let mut reader = BufReader::new(stream);
     let mut line = String::new();
     let bytes = reader
@@ -88,11 +95,11 @@ fn read_log_stream(stream: std::os::unix::net::UnixStream, service_id: &str) -> 
 
     if bytes == 0 {
         println!("{service_id}: client closed without a log message");
+        Ok(false)
     } else {
         println!("{service_id}: received {}", line.trim_end());
+        Ok(true)
     }
-
-    Ok(())
 }
 
 fn parse_caps(input: &str) -> Vec<HostedCap> {

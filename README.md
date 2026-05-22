@@ -36,6 +36,7 @@ Build and validate the example generation:
 cargo build --offline
 target/debug/vertexctl validate examples/hello-generation.vertex.json
 target/debug/vertexctl validate examples/hello-stateful-generation.vertex.json
+target/debug/vertexctl validate examples/deny-log-generation.vertex.json
 target/debug/vertexctl graph examples/hello-generation.vertex.json
 target/debug/vertexctl why examples/hello-generation.vertex.json svc:echo-server cap:log.sink
 target/debug/vertexctl who-can examples/hello-generation.vertex.json cap:log.sink --json
@@ -66,3 +67,5 @@ target/debug/vertexctl rollback --run-once
 ```
 
 Use `--state-root <dir>` with hosted activation and inspection commands to keep generation metadata somewhere other than `.vertex/`. Hosted activation records live under `<state-root>/activations/`, current and previous pointers are stored as JSON, activation history is appended to `<state-root>/history.jsonl`, and supervisor runtime events are appended to `<state-root>/runtime-events.jsonl`.
+
+The hosted supervisor now keeps typed capability and state grants internally before encoding them for child processes. Runtime events include concrete granted capabilities, provided capabilities, state volume paths, provider readiness checks, and activation failures. `examples/deny-log-generation.vertex.json` is a negative authority demo: `cap:log.sink` exists, but `svc:echo-server` does not declare it, so the supervisor does not pass the grant and the service exits. This is hosted grant enforcement; host-level process isolation remains a later milestone.

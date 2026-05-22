@@ -34,6 +34,9 @@ fn run() -> Result<(), String> {
         send_log_message(&service_id, log_sink)?;
     } else {
         println!("{service_id}: cannot send to cap:log.sink");
+        if env::var("VERTEX_REQUIRE_LOG_SINK").as_deref() == Ok("1") {
+            return Err("missing required capability cap:log.sink".to_owned());
+        }
     }
 
     if find_cap(&caps, "cap:net.tcp.8080", "listen").is_some() {
