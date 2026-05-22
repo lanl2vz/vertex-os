@@ -18,6 +18,7 @@ const SYS_WRITE_SERIAL: u64 = 1;
 const SYS_EXIT: u64 = 2;
 const SYS_IPC_SEND: u64 = 3;
 const SYS_IPC_RECV: u64 = 4;
+const SYS_YIELD: u64 = 5;
 
 const STATUS_OK: u64 = 0;
 const STATUS_BAD_CAPABILITY: u64 = u64::MAX - 1;
@@ -42,24 +43,26 @@ global_asm!(
 krust_syscall_entry:
     mov r10, rsp
     lea rsp, [rip + KRUST_SYSCALL_STACK + 16384]
-    push r11
-    push rcx
-    push r10
-    sub rsp, 8
-    mov r12, rdi
-    mov r13, rsi
-    mov r14, rdx
-    mov r15, r8
+    sub rsp, 64
+    mov [rsp + 0], r10
+    mov [rsp + 8], rcx
+    mov [rsp + 16], r11
+    mov qword ptr [rsp + 24], 0
+    mov [rsp + 32], rdi
+    mov [rsp + 40], rsi
+    mov [rsp + 48], rdx
+    mov qword ptr [rsp + 56], 0
     mov rdi, rax
-    mov rsi, r12
-    mov rdx, r13
-    mov rcx, r14
-    mov r8, r15
+    mov rsi, [rsp + 32]
+    mov rdx, [rsp + 40]
+    mov rcx, [rsp + 48]
+    mov r8, rsp
     call krust_syscall_dispatch
-    add rsp, 8
-    pop r10
-    pop rcx
-    pop r11
+    mov r10, [rsp + 0]
+    mov rcx, [rsp + 8]
+    mov r11, [rsp + 16]
+    mov rax, [rsp + 24]
+    add rsp, 64
     mov rsp, r10
     sysretq
 "#
@@ -79,12 +82,19 @@ pub fn init() {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn krust_syscall_dispatch(number: u64, arg0: u64, arg1: u64, arg2: u64) -> u64 {
+pub extern "C" fn krust_syscall_dispatch(
+    number: u64,
+    arg0: u64,
+    arg1: u64,
+    arg2: u64,
+    frame: &mut ipc::SyscallFrame,
+) {
     match number {
         SYS_WRITE_SERIAL => {
             let mut buffer = [0u8; WRITE_SERIAL_MAX];
             let Ok(len) = usize::try_from(arg1) else {
-                return STATUS_BAD_BUFFER;
+                frame.rax = STATUS_BAD_BUFFER;
+                return;
             };
 
             match usercopy::copy_from_user(&mut buffer, UserPtr::new(arg0), len) {
@@ -92,61 +102,68 @@ pub extern "C" fn krust_syscall_dispatch(number: u64, arg0: u64, arg1: u64, arg2
                     serial::write_str("Userspace sys_write_serial: ");
                     serial::write_ascii_bytes(&buffer[..len]);
                     serial::write_str("\n");
-                    STATUS_OK
+                    frame.rax = STATUS_OK;
                 }
                 Err(_) => {
                     serial::write_str(
                         "Bad pointer test: SYS_WRITE_SERIAL returned STATUS_BAD_BUFFER\n",
                     );
-                    STATUS_BAD_BUFFER
+                    frame.rax = STATUS_BAD_BUFFER;
                 }
             }
         }
-        SYS_EXIT => exit_current_process(arg0),
+        SYS_EXIT => exit_current_process(arg0, frame),
         SYS_IPC_SEND => match ipc::send(
             arg0,
             arg1 as *const u8,
             usize::try_from(arg2).unwrap_or(usize::MAX),
         ) {
-            Ok(()) => STATUS_OK,
-            Err(error) => ipc_error_status("SYS_IPC_SEND", error),
+            Ok(()) => frame.rax = STATUS_OK,
+            Err(error) => frame.rax = ipc_error_status("SYS_IPC_SEND", error),
         },
-        SYS_IPC_RECV => {
-            match ipc::receive(
-                arg0,
-                arg1 as *mut u8,
-                usize::try_from(arg2).unwrap_or(usize::MAX),
-            ) {
-                Ok(len) => len as u64,
-                Err(error) => ipc_error_status("SYS_IPC_RECV", error),
-            }
-        }
+        SYS_IPC_RECV => match ipc::receive(
+            arg0,
+            arg1 as *mut u8,
+            usize::try_from(arg2).unwrap_or(usize::MAX),
+            frame,
+        ) {
+            Ok(()) => {}
+            Err(error) => frame.rax = ipc_error_status("SYS_IPC_RECV", error),
+        },
+        SYS_YIELD => schedule_yield(frame),
         _ => {
             serial::write_str("Unknown userspace syscall: ");
             serial::write_u64_dec(number);
             serial::write_str("\n");
-            u64::MAX
+            frame.rax = u64::MAX;
         }
     }
 }
 
-fn exit_current_process(status: u64) -> ! {
+fn exit_current_process(status: u64, frame: &mut ipc::SyscallFrame) {
     serial::write_str("Process exited: proc=");
     serial::write_str(ipc::current_process_name());
     serial::write_str(" status=");
     serial::write_u64_dec(status);
     serial::write_str("\n");
 
-    match ipc::exit_current_process(status) {
-        ipc::ExitAction::Switch { name, context } => {
-            serial::write_str("Switching to process: ");
-            serial::write_str(name);
-            serial::write_str("\n");
-            unsafe {
-                gdt::enter_user_mode(context.cr3, context.entry, context.stack_top);
+    match ipc::exit_current_process(status, frame) {
+        ipc::ScheduleResult::Continue | ipc::ScheduleResult::Switched => {}
+        ipc::ScheduleResult::Halt { ok } => {
+            if ok {
+                serial::write_str("IPC demo ok\n");
+            } else {
+                serial::write_str("IPC demo failed\n");
             }
+            halt_loop()
         }
-        ipc::ExitAction::Halt { ok } => {
+    }
+}
+
+fn schedule_yield(frame: &mut ipc::SyscallFrame) {
+    match ipc::yield_current_process(frame) {
+        ipc::ScheduleResult::Continue | ipc::ScheduleResult::Switched => {}
+        ipc::ScheduleResult::Halt { ok } => {
             if ok {
                 serial::write_str("IPC demo ok\n");
             } else {

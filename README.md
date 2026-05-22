@@ -6,7 +6,7 @@ Krust Kernel is the native Rust kernel prototype that will enforce that graph's
 runtime authority. The repository now has two active tracks: a hosted Linux
 prototype for Vertex IR, `vertexctl`, supervisor behavior, and capability
 semantics; and a bootable Krust kernel under `kernel/krust` that runs under
-QEMU/Limine and has reached the M10 compiled boot-manifest milestone.
+QEMU/Limine and has reached the M11 cooperative-scheduler milestone.
 
 ## Repository Layout
 
@@ -25,26 +25,25 @@ vertex-os/
     netstack/            Demo hosted network capability provider
     echo-server/         Demo service consuming log and network capabilities
   kernel/
-    krust/               Bootable Krust kernel prototype, currently at M10 krustboot
+    krust/               Bootable Krust kernel prototype, currently at M11 scheduler IPC
   lang/
     vertex-lang/         Planned typed system-definition language
   nix/                   Nix support modules and builders
   flake.nix              Planned root flake entrypoint
 ```
 
-## Krust M10
+## Krust M11
 
 The current native boot-authority milestone lives in `kernel/krust`. It is
 isolated from the hosted Cargo workspace and boots a Limine ISO under QEMU. The
 ISO build first runs `vertexctl compile-boot-manifest` to turn the source
 manifest's `krustBoot` section into `hello-generation.krustboot`, a compact
-fixed-format native boot manifest. Krust parses that module, prints the
-generation/process/endpoint/grant records, allocates runtime process IDs from
-those records, uses the manifest grants to create the IPC endpoint and
-process-local capabilities, loads two static userspace ELF modules, keeps the M9
-IDT and safe user-copy checks, accepts the authorized send/receive path, rejects
-unauthorized cross-operations, transfers `Krust IPC ping`, and halts after
-`IPC demo ok`.
+fixed-format native boot manifest. Krust parses that module, allocates runtime
+process IDs from those records, uses manifest grants to create process-local
+capabilities, loads two static userspace ELF modules, keeps the M9 IDT and safe
+user-copy checks, and now runs a tiny cooperative scheduler. The receiver blocks
+on an empty IPC endpoint, the sender wakes it with `Krust IPC ping`, unauthorized
+cross-operations are rejected, and Krust halts after `IPC demo ok`.
 
 ```sh
 cd kernel/krust

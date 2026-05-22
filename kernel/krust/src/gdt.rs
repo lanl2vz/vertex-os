@@ -57,3 +57,13 @@ pub unsafe fn enter_user_mode(cr3: u64, entry: u64, stack_top: u64) -> ! {
         );
     }
 }
+
+pub unsafe fn switch_address_space(cr3: u64) {
+    unsafe {
+        asm!(
+            "mov cr3, {cr3}",
+            cr3 = in(reg) cr3,
+            options(nostack, preserves_flags)
+        );
+    }
+}

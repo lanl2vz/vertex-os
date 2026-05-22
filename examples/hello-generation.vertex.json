@@ -35,12 +35,12 @@
       {
         "name": "ipc-sender",
         "moduleString": "krust-ipc-sender",
-        "initial": true
+        "initial": false
       },
       {
         "name": "ipc-receiver",
         "moduleString": "krust-ipc-receiver",
-        "initial": false
+        "initial": true
       }
     ],
     "endpoints": [

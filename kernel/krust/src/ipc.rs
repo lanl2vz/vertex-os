@@ -1,7 +1,7 @@
 use core::cell::UnsafeCell;
 
 use crate::{
-    capability, paging, serial,
+    capability, gdt, paging, serial,
     usercopy::{self, UserPtr},
 };
 
@@ -11,6 +11,37 @@ const MAX_MESSAGE_BYTES: usize = 128;
 const MAX_OBJECTS: usize = 8;
 const MAX_PROCESSES: usize = 4;
 const MAX_CAPS: usize = 8;
+const INITIAL_USER_RFLAGS: u64 = 0x2;
+const STATUS_BAD_BUFFER: u64 = u64::MAX - 2;
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct SyscallFrame {
+    pub user_rsp: u64,
+    pub user_rip: u64,
+    pub user_rflags: u64,
+    pub rax: u64,
+}
+
+impl SyscallFrame {
+    const fn empty() -> Self {
+        Self {
+            user_rsp: 0,
+            user_rip: 0,
+            user_rflags: 0,
+            rax: 0,
+        }
+    }
+
+    fn from_context(context: ProcessContext) -> Self {
+        Self {
+            user_rsp: context.stack_top,
+            user_rip: context.entry,
+            user_rflags: INITIAL_USER_RFLAGS,
+            rax: 0,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ProcessId(u64);
@@ -79,6 +110,11 @@ enum ProcessState {
     Empty,
     Ready,
     Running,
+    BlockedOnEndpoint {
+        endpoint: KernelObjectId,
+        destination: u64,
+        max_len: usize,
+    },
     Exited,
 }
 
@@ -88,20 +124,17 @@ impl ProcessState {
             Self::Empty => "empty",
             Self::Ready => "ready",
             Self::Running => "running",
+            Self::BlockedOnEndpoint { .. } => "blocked",
             Self::Exited => "exited",
         }
     }
 }
 
 #[derive(Clone, Copy)]
-pub enum ExitAction {
-    Switch {
-        name: &'static str,
-        context: ProcessContext,
-    },
-    Halt {
-        ok: bool,
-    },
+pub enum ScheduleResult {
+    Continue,
+    Switched,
+    Halt { ok: bool },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -138,6 +171,8 @@ struct Process {
     context: ProcessContext,
     state: ProcessState,
     caps: CapabilitySpace,
+    saved_frame: SyscallFrame,
+    has_saved_frame: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -239,6 +274,8 @@ impl Process {
             },
             state: ProcessState::Empty,
             caps: CapabilitySpace::new(),
+            saved_frame: SyscallFrame::empty(),
+            has_saved_frame: false,
         }
     }
 
@@ -255,6 +292,8 @@ impl Process {
             context,
             state,
             caps,
+            saved_frame: SyscallFrame::empty(),
+            has_saved_frame: false,
         }
     }
 }
@@ -396,20 +435,57 @@ impl ProcessTable {
         self.processes[found?].as_mut()
     }
 
-    fn next_ready_process(&mut self) -> Option<Process> {
+    fn current_index(&self) -> Option<usize> {
+        let pid = self.current?;
         let mut index = 0;
         while index < self.count {
-            if let Some(process) = &mut self.processes[index]
-                && process.state == ProcessState::Ready
+            if let Some(process) = self.processes[index]
+                && process.pid == pid
             {
-                process.state = ProcessState::Running;
-                self.current = Some(process.pid);
-                return Some(*process);
+                return Some(index);
             }
             index += 1;
         }
 
         None
+    }
+
+    fn next_ready_index_round_robin(&self) -> Option<usize> {
+        if self.count == 0 {
+            return None;
+        }
+
+        let start = self
+            .current_index()
+            .map(|index| (index + 1) % self.count)
+            .unwrap_or(0);
+        let mut offset = 0;
+
+        while offset < self.count {
+            let index = (start + offset) % self.count;
+            if let Some(process) = self.processes[index]
+                && process.state == ProcessState::Ready
+            {
+                return Some(index);
+            }
+            offset += 1;
+        }
+
+        None
+    }
+
+    fn all_exited(&self) -> bool {
+        let mut index = 0;
+        while index < self.count {
+            if let Some(process) = self.processes[index]
+                && process.state != ProcessState::Exited
+            {
+                return false;
+            }
+            index += 1;
+        }
+
+        true
     }
 }
 
@@ -544,24 +620,54 @@ pub fn current_process_name() -> &'static str {
         .unwrap_or("<none>")
 }
 
-pub fn exit_current_process(status: u64) -> ExitAction {
-    let runtime = runtime();
+pub fn exit_current_process(status: u64, frame: &mut SyscallFrame) -> ScheduleResult {
+    {
+        let runtime = runtime();
 
-    if let Some(process) = runtime.processes.current_process_mut() {
-        process.state = ProcessState::Exited;
+        if let Some(process) = runtime.processes.current_process_mut() {
+            process.state = ProcessState::Exited;
+            process.has_saved_frame = false;
+        }
     }
 
     if status != 0 {
-        return ExitAction::Halt { ok: false };
+        return ScheduleResult::Halt { ok: false };
     }
 
-    if let Some(next) = runtime.processes.next_ready_process() {
-        ExitAction::Switch {
-            name: next.name,
-            context: next.context,
-        }
+    if schedule_next_ready(frame) {
+        ScheduleResult::Switched
     } else {
-        ExitAction::Halt { ok: true }
+        ScheduleResult::Halt {
+            ok: runtime().processes.all_exited(),
+        }
+    }
+}
+
+pub fn yield_current_process(frame: &mut SyscallFrame) -> ScheduleResult {
+    let current = {
+        let runtime = runtime();
+        let Some(process) = runtime.processes.current_process_mut() else {
+            return ScheduleResult::Halt { ok: false };
+        };
+
+        process.saved_frame = *frame;
+        process.has_saved_frame = true;
+        process.state = ProcessState::Ready;
+        process.name
+    };
+
+    if schedule_next_ready(frame) {
+        ScheduleResult::Switched
+    } else {
+        let runtime = runtime();
+        if let Some(process) = runtime.processes.current_process_mut() {
+            process.state = ProcessState::Running;
+        }
+
+        serial::write_str("Scheduler yield: proc=");
+        serial::write_str(current);
+        serial::write_str(" no other ready process\n");
+        ScheduleResult::Continue
     }
 }
 
@@ -597,10 +703,17 @@ pub fn send(cap_slot: u64, source: *const u8, len: usize) -> Result<(), IpcError
     serial::write_u64_dec(len as u64);
     serial::write_str("\n");
 
+    wake_blocked_receiver(endpoint_id);
+
     Ok(())
 }
 
-pub fn receive(cap_slot: u64, destination: *mut u8, max_len: usize) -> Result<usize, IpcError> {
+pub fn receive(
+    cap_slot: u64,
+    destination: *mut u8,
+    max_len: usize,
+    frame: &mut SyscallFrame,
+) -> Result<(), IpcError> {
     let endpoint_id = match endpoint_from_cap(cap_slot, capability::RIGHT_RECEIVE) {
         Ok(endpoint_id) => endpoint_id,
         Err(error) => {
@@ -617,15 +730,27 @@ pub fn receive(cap_slot: u64, destination: *mut u8, max_len: usize) -> Result<us
     .map_err(|_| IpcError::InvalidUserBuffer)?;
 
     let mut message = [0u8; MAX_MESSAGE_BYTES];
+    let message_ready = {
+        let endpoint = runtime()
+            .objects
+            .get_endpoint_mut(endpoint_id)
+            .ok_or(IpcError::BadCapability)?;
+        endpoint.message_ready
+    };
+
+    if !message_ready {
+        if block_current_on_endpoint(endpoint_id, destination as u64, max_len, frame) {
+            return Ok(());
+        }
+
+        return Err(IpcError::Empty);
+    }
+
     let copy_len = {
         let endpoint = runtime()
             .objects
             .get_endpoint_mut(endpoint_id)
             .ok_or(IpcError::BadCapability)?;
-
-        if !endpoint.message_ready {
-            return Err(IpcError::Empty);
-        }
 
         let copy_len = min(endpoint.message_len, max_len);
         message[..copy_len].copy_from_slice(&endpoint.message[..copy_len]);
@@ -647,7 +772,219 @@ pub fn receive(cap_slot: u64, destination: *mut u8, max_len: usize) -> Result<us
     serial::write_u64_dec(copy_len as u64);
     serial::write_str("\n");
 
-    Ok(copy_len)
+    frame.rax = copy_len as u64;
+    Ok(())
+}
+
+fn block_current_on_endpoint(
+    endpoint: KernelObjectId,
+    destination: u64,
+    max_len: usize,
+    frame: &mut SyscallFrame,
+) -> bool {
+    let current = {
+        let runtime = runtime();
+        let Some(process) = runtime.processes.current_process_mut() else {
+            return false;
+        };
+
+        process.saved_frame = *frame;
+        process.has_saved_frame = true;
+        process.state = ProcessState::BlockedOnEndpoint {
+            endpoint,
+            destination,
+            max_len,
+        };
+        process.name
+    };
+
+    serial::write_str("IPC receive blocked: proc=");
+    serial::write_str(current);
+    serial::write_str(" endpoint=");
+    serial::write_u64_dec(endpoint.raw());
+    serial::write_str("\n");
+
+    if schedule_next_ready(frame) {
+        true
+    } else {
+        let runtime = runtime();
+        if let Some(process) = runtime.processes.current_process_mut() {
+            process.state = ProcessState::Running;
+        }
+
+        serial::write_str("Scheduler blocked: proc=");
+        serial::write_str(current);
+        serial::write_str(" no ready process\n");
+        false
+    }
+}
+
+fn wake_blocked_receiver(endpoint: KernelObjectId) {
+    let mut message = [0u8; MAX_MESSAGE_BYTES];
+    let message_len = {
+        let runtime = runtime();
+        let Some(endpoint_object) = runtime.objects.get_endpoint_mut(endpoint) else {
+            return;
+        };
+        if !endpoint_object.message_ready {
+            return;
+        }
+
+        let message_len = endpoint_object.message_len;
+        message[..message_len].copy_from_slice(&endpoint_object.message[..message_len]);
+        message_len
+    };
+
+    let Some(waiter_index) = blocked_receiver_index(endpoint) else {
+        return;
+    };
+
+    let (name, receiver_cr3, destination, max_len, current_cr3) = {
+        let runtime = runtime();
+        let Some(waiter) = runtime.processes.processes[waiter_index] else {
+            return;
+        };
+        let ProcessState::BlockedOnEndpoint {
+            destination,
+            max_len,
+            ..
+        } = waiter.state
+        else {
+            return;
+        };
+
+        let current_cr3 = runtime
+            .processes
+            .current_process()
+            .map(|process| process.context.cr3)
+            .unwrap_or_else(paging::active_root_table_physical);
+
+        (
+            waiter.name,
+            waiter.context.cr3,
+            destination,
+            max_len,
+            current_cr3,
+        )
+    };
+
+    let copy_len = min(message_len, max_len);
+    let copy_result = unsafe {
+        gdt::switch_address_space(receiver_cr3);
+        let result = usercopy::copy_to_user(UserPtr::new(destination), &message[..copy_len]);
+        gdt::switch_address_space(current_cr3);
+        result
+    };
+
+    match copy_result {
+        Ok(()) => {
+            {
+                let runtime = runtime();
+                let Some(waiter) = runtime.processes.processes[waiter_index].as_mut() else {
+                    return;
+                };
+                waiter.saved_frame.rax = copy_len as u64;
+                waiter.state = ProcessState::Ready;
+            }
+
+            let runtime = runtime();
+            if let Some(endpoint_object) = runtime.objects.get_endpoint_mut(endpoint) {
+                endpoint_object.message_ready = false;
+            }
+
+            serial::write_str("IPC receive delivered: endpoint=");
+            serial::write_u64_dec(endpoint.raw());
+            serial::write_str(" bytes=");
+            serial::write_u64_dec(copy_len as u64);
+            serial::write_str("\n");
+
+            serial::write_str("IPC wake receiver: proc=");
+            serial::write_str(name);
+            serial::write_str(" endpoint=");
+            serial::write_u64_dec(endpoint.raw());
+            serial::write_str("\n");
+        }
+        Err(_) => {
+            {
+                let runtime = runtime();
+                let Some(waiter) = runtime.processes.processes[waiter_index].as_mut() else {
+                    return;
+                };
+                waiter.saved_frame.rax = STATUS_BAD_BUFFER;
+                waiter.state = ProcessState::Ready;
+            }
+            serial::write_str("IPC wake receiver failed: bad user buffer proc=");
+            serial::write_str(name);
+            serial::write_str("\n");
+        }
+    }
+}
+
+fn blocked_receiver_index(endpoint: KernelObjectId) -> Option<usize> {
+    let runtime = runtime();
+    let mut index = 0;
+
+    while index < runtime.processes.count {
+        if let Some(process) = runtime.processes.processes[index]
+            && let ProcessState::BlockedOnEndpoint {
+                endpoint: waiting_endpoint,
+                ..
+            } = process.state
+            && waiting_endpoint == endpoint
+        {
+            return Some(index);
+        }
+        index += 1;
+    }
+
+    None
+}
+
+fn schedule_next_ready(frame: &mut SyscallFrame) -> bool {
+    let (from, to, next_frame, next_cr3) = {
+        let runtime = runtime();
+        let from = runtime
+            .processes
+            .current_process()
+            .map(|process| process.name)
+            .unwrap_or("<none>");
+        let Some(next_index) = runtime.processes.next_ready_index_round_robin() else {
+            return false;
+        };
+        let (next_pid, to, next_frame, next_cr3) = {
+            let Some(next) = runtime.processes.processes[next_index].as_mut() else {
+                return false;
+            };
+
+            next.state = ProcessState::Running;
+
+            let next_frame = if next.has_saved_frame {
+                next.saved_frame
+            } else {
+                SyscallFrame::from_context(next.context)
+            };
+
+            (next.pid, next.name, next_frame, next.context.cr3)
+        };
+
+        runtime.processes.current = Some(next_pid);
+
+        (from, to, next_frame, next_cr3)
+    };
+
+    *frame = next_frame;
+
+    serial::write_str("Scheduler switch: from=");
+    serial::write_str(from);
+    serial::write_str(" to=");
+    serial::write_str(to);
+    serial::write_str("\n");
+
+    unsafe {
+        gdt::switch_address_space(next_cr3);
+    }
+
+    true
 }
 
 fn endpoint_from_cap(cap_slot: u64, required_right: u64) -> Result<KernelObjectId, IpcError> {

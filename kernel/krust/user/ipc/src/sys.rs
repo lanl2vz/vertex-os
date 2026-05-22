@@ -9,6 +9,7 @@ const SYS_WRITE_SERIAL: u64 = 1;
 const SYS_EXIT: u64 = 2;
 const SYS_IPC_SEND: u64 = 3;
 const SYS_IPC_RECV: u64 = 4;
+const SYS_YIELD: u64 = 5;
 
 pub fn write_serial(message: &[u8]) -> u64 {
     syscall3(
@@ -50,6 +51,11 @@ pub fn ipc_recv(cap_slot: u64, buffer: &mut [u8]) -> u64 {
 #[allow(dead_code)]
 pub fn ipc_recv_raw(cap_slot: u64, user_ptr: u64, len: u64) -> u64 {
     syscall3(SYS_IPC_RECV, cap_slot, user_ptr, len)
+}
+
+#[allow(dead_code)]
+pub fn yield_now() -> u64 {
+    syscall3(SYS_YIELD, 0, 0, 0)
 }
 
 pub fn exit(status: u64) -> ! {
