@@ -117,6 +117,7 @@ pub struct BootRuntimeConfig {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ProcessState {
     Empty,
+    Declared,
     Ready,
     Running,
     BlockedOnEndpoint {
@@ -131,6 +132,7 @@ impl ProcessState {
     fn label(self) -> &'static str {
         match self {
             Self::Empty => "empty",
+            Self::Declared => "declared",
             Self::Ready => "ready",
             Self::Running => "running",
             Self::BlockedOnEndpoint { .. } => "blocked",
@@ -672,7 +674,7 @@ pub fn init_from_boot_config(config: BootRuntimeConfig) -> Result<(), InitError>
             saw_initial = true;
             ProcessState::Running
         } else {
-            ProcessState::Ready
+            ProcessState::Declared
         };
 
         let pid = runtime.processes.add_process(
@@ -954,6 +956,39 @@ pub fn activate_generation(
     serial::write_ascii_bytes(&generation_id[..len]);
     serial::write_str("\n");
     serial::write_str("Krust native generation activation ok\n");
+    Ok(())
+}
+
+pub fn start_process(cap_slot: u64, process_index: u64) -> Result<(), IpcError> {
+    let _process_control = process_control_from_cap(cap_slot, capability::RIGHT_CONTROL)?;
+    let caller = current_process_name();
+    let Ok(process_index) = usize::try_from(process_index) else {
+        return Err(IpcError::BadCapability);
+    };
+
+    let target = {
+        let runtime = runtime();
+        if process_index >= runtime.processes.count {
+            return Err(IpcError::BadCapability);
+        }
+
+        let Some(process) = runtime.processes.processes[process_index].as_mut() else {
+            return Err(IpcError::BadCapability);
+        };
+
+        if process.state != ProcessState::Declared {
+            return Err(IpcError::BadCapability);
+        }
+
+        process.state = ProcessState::Ready;
+        process.name
+    };
+
+    serial::write_str("Krust process start accepted: proc=");
+    serial::write_str(caller);
+    serial::write_str(" target=");
+    serial::write_str(target);
+    serial::write_str("\n");
     Ok(())
 }
 
@@ -1279,7 +1314,7 @@ fn print_capability_object(object: KernelObjectId) {
             match entry {
                 KernelObject::IpcEndpoint(endpoint) if endpoint.id == object => {
                     serial::write_str("endpoint=");
-                    serial::write_u64_dec(endpoint.id.raw());
+                    serial::write_str(endpoint.name);
                     return;
                 }
                 KernelObject::BootModule(module) if module.id == object => {

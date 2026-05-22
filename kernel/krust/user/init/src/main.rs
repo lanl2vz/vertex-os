@@ -6,13 +6,15 @@ mod sys;
 use core::panic::PanicInfo;
 
 const KRUSTBOOT_MAGIC: &[u8; 16] = b"KRUSTBOOTV0\0\0\0\0\0";
-const MANIFEST_BUFFER_LEN: usize = 1024;
+const MANIFEST_BUFFER_LEN: usize = 2048;
 const OFFSET_BOOT_MODULES: usize = 18;
 const OFFSET_PROCESSES: usize = 20;
 const OFFSET_ENDPOINTS: usize = 22;
 const OFFSET_GRANTS: usize = 24;
 const OFFSET_GENERATION_ID: usize = 26;
 const STRING_LEN: usize = 64;
+const BOOT_MODULE_RECORD_LEN: usize = STRING_LEN * 2;
+const PROCESS_RECORD_LEN: usize = STRING_LEN * 2 + 4;
 
 #[unsafe(link_section = ".text._start")]
 #[unsafe(no_mangle)]
@@ -31,13 +33,13 @@ pub extern "C" fn _start() -> ! {
         sys::exit(1);
     };
 
-    if manifest_len < OFFSET_GENERATION_ID + STRING_LEN || !valid_magic(&manifest[..manifest_len])
-    {
+    if manifest_len < OFFSET_GENERATION_ID + STRING_LEN || !valid_magic(&manifest[..manifest_len]) {
         log(b"vertex-init manifest invalid");
         sys::exit(1);
     }
 
-    let generation = fixed_string(&manifest[OFFSET_GENERATION_ID..OFFSET_GENERATION_ID + STRING_LEN]);
+    let generation =
+        fixed_string(&manifest[OFFSET_GENERATION_ID..OFFSET_GENERATION_ID + STRING_LEN]);
 
     log(b"vertex-init received cap[0]=manifest-read");
     log(b"vertex-init received cap[1]=serial-log");
@@ -55,12 +57,27 @@ pub extern "C" fn _start() -> ! {
     log_count(b"vertex-init endpoints: ", endpoints);
     log_count(b"vertex-init grants: ", grants);
 
-    if sys::activate_generation(generation) != sys::STATUS_OK {
-        log(b"vertex-init activation syscall failed");
+    let Some(logd_index) =
+        process_index_by_name(&manifest[..manifest_len], boot_modules, processes, b"logd")
+    else {
+        log(b"vertex-init missing logd process");
         sys::exit(1);
-    }
+    };
+    let Some(echo_index) =
+        process_index_by_name(&manifest[..manifest_len], boot_modules, processes, b"echo")
+    else {
+        log(b"vertex-init missing echo process");
+        sys::exit(1);
+    };
 
-    log_prefix(b"vertex-init activated generation: ", generation);
+    start_service(b"logd", logd_index);
+    sys::yield_now();
+
+    start_service(b"echo", echo_index);
+    sys::yield_now();
+    sys::yield_now();
+
+    log(b"Native service activation ok");
     sys::exit(0)
 }
 
@@ -78,6 +95,38 @@ fn fixed_string(bytes: &[u8]) -> &[u8] {
         len += 1;
     }
     &bytes[..len]
+}
+
+fn process_index_by_name(
+    manifest: &[u8],
+    boot_modules: u16,
+    processes: u16,
+    name: &[u8],
+) -> Option<u64> {
+    let base = OFFSET_GENERATION_ID + STRING_LEN + boot_modules as usize * BOOT_MODULE_RECORD_LEN;
+    let mut index = 0;
+
+    while index < processes as usize {
+        let offset = base + index * PROCESS_RECORD_LEN;
+        if offset + PROCESS_RECORD_LEN > manifest.len() {
+            return None;
+        }
+
+        if fixed_string(&manifest[offset..offset + STRING_LEN]) == name {
+            return Some(index as u64);
+        }
+        index += 1;
+    }
+
+    None
+}
+
+fn start_service(name: &[u8], process_index: u64) {
+    log_prefix(b"vertex-init starting service: ", name);
+    if sys::process_start(process_index) != sys::STATUS_OK {
+        log_prefix(b"vertex-init service start failed: ", name);
+        sys::exit(1);
+    }
 }
 
 fn log(message: &[u8]) {

@@ -25,6 +25,14 @@
       {
         "name": "vertex-init",
         "moduleString": "vertex-init"
+      },
+      {
+        "name": "logd",
+        "moduleString": "logd"
+      },
+      {
+        "name": "echo",
+        "moduleString": "echo"
       }
     ],
     "processes": [
@@ -32,16 +40,53 @@
         "name": "vertex-init",
         "moduleString": "vertex-init",
         "initial": true
+      },
+      {
+        "name": "logd",
+        "moduleString": "logd",
+        "initial": false
+      },
+      {
+        "name": "echo",
+        "moduleString": "echo",
+        "initial": false
       }
     ],
     "endpoints": [
       {
         "name": "serial-log"
+      },
+      {
+        "name": "log-sink"
       }
     ],
     "grants": [
       {
         "process": "vertex-init",
+        "endpoint": "serial-log",
+        "capSlot": 1,
+        "rights": ["send"]
+      },
+      {
+        "process": "logd",
+        "endpoint": "log-sink",
+        "capSlot": 0,
+        "rights": ["receive"]
+      },
+      {
+        "process": "logd",
+        "endpoint": "serial-log",
+        "capSlot": 1,
+        "rights": ["send"]
+      },
+      {
+        "process": "echo",
+        "endpoint": "log-sink",
+        "capSlot": 0,
+        "rights": ["send"]
+      },
+      {
+        "process": "echo",
         "endpoint": "serial-log",
         "capSlot": 1,
         "rights": ["send"]

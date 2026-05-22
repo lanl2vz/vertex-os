@@ -19,6 +19,7 @@ const SYS_YIELD: u64 = 5;
 const SYS_BOOT_READ: u64 = 6;
 const SYS_LOG_WRITE: u64 = 7;
 const SYS_ACTIVATE_GENERATION: u64 = 8;
+const SYS_PROCESS_START: u64 = 9;
 
 const STATUS_OK: u64 = 0;
 const STATUS_BAD_CAPABILITY: u64 = u64::MAX - 1;
@@ -137,6 +138,10 @@ pub extern "C" fn krust_syscall_dispatch(
             Ok(()) => frame.rax = STATUS_OK,
             Err(error) => frame.rax = ipc_error_status("SYS_ACTIVATE_GENERATION", error),
         },
+        SYS_PROCESS_START => match ipc::start_process(arg0, arg1) {
+            Ok(()) => frame.rax = STATUS_OK,
+            Err(error) => frame.rax = ipc_error_status("SYS_PROCESS_START", error),
+        },
         _ => {
             serial::write_str("Unknown userspace syscall: ");
             serial::write_u64_dec(number);
@@ -157,9 +162,9 @@ fn exit_current_process(status: u64, frame: &mut ipc::SyscallFrame) {
         ipc::ScheduleResult::Continue | ipc::ScheduleResult::Switched => {}
         ipc::ScheduleResult::Halt { ok } => {
             if ok {
-                serial::write_str("Native vertex-init boot ok\n");
+                serial::write_str("Native service activation ok\n");
             } else {
-                serial::write_str("Native vertex-init boot failed\n");
+                serial::write_str("Native service activation failed\n");
             }
             halt_loop()
         }
@@ -171,9 +176,9 @@ fn schedule_yield(frame: &mut ipc::SyscallFrame) {
         ipc::ScheduleResult::Continue | ipc::ScheduleResult::Switched => {}
         ipc::ScheduleResult::Halt { ok } => {
             if ok {
-                serial::write_str("Native vertex-init boot ok\n");
+                serial::write_str("Native service activation ok\n");
             } else {
-                serial::write_str("Native vertex-init boot failed\n");
+                serial::write_str("Native service activation failed\n");
             }
             halt_loop()
         }

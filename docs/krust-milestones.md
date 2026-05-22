@@ -6,7 +6,7 @@ IR and graph semantics; Krust is the native enforcement path.
 
 ## Status Summary
 
-Current status: M12 is implemented and smoke-tested under
+Current status: M13 is implemented and smoke-tested under
 `qemu-system-x86_64` with Limine.
 
 ```sh
@@ -194,3 +194,64 @@ service spawning is deliberately left for the next milestone.
 
 Non-goals for M12: filesystems, networking, GPU, USB, timer preemption,
 multicore, POSIX compatibility, the Nix store, and the Haskell/typed DSL.
+
+## M13: Native Service Activation
+
+Status: done.
+
+Goal: make native `vertex-init` start declared service processes from the
+compact KrustBoot manifest instead of only proving that process-control
+authority exists.
+
+Target boot flow:
+
+```text
+Limine
+  -> Krust
+  -> Krust reads KrustBootManifest
+  -> Krust loads vertex-init, logd, and echo ELFs
+  -> Krust marks non-initial services Declared
+  -> vertex-init reads the manifest
+  -> vertex-init starts logd through SYS_PROCESS_START
+  -> vertex-init starts echo through SYS_PROCESS_START
+  -> echo sends one message to logd
+  -> denial tests prove missing authority is rejected
+```
+
+M13 extends the process states with:
+
+```text
+Declared
+Ready
+Running
+BlockedOnEndpoint
+Exited
+```
+
+Only `Ready` processes are scheduler candidates. Non-initial services loaded
+from the manifest remain `Declared` until `vertex-init` starts them with
+process-control authority.
+
+Acceptance evidence in smoke:
+
+```text
+KrustBoot processes: 3
+process[0] name=vertex-init module=vertex-init initial=yes
+process[1] name=logd module=logd initial=no
+process[2] name=echo module=echo initial=no
+process[1] id=2 name=logd state=declared
+process[2] id=3 name=echo state=declared
+vertex-init starting service: logd
+Krust process start accepted: proc=vertex-init target=logd
+vertex-init starting service: echo
+Krust process start accepted: proc=vertex-init target=echo
+echo sent message to logd
+logd received: hello from echo
+negative test: echo receive rejected: bad capability
+negative test: logd process-start rejected: bad capability
+Native service activation ok
+```
+
+M13 proves that native Krust can boot a compact generation and run a tiny
+capability-enforced service graph. Full graph ordering, readiness, filesystems,
+networking, device drivers, and native store objects remain future milestones.

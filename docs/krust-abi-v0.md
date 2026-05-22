@@ -2,7 +2,8 @@
 
 This document describes the current experimental userspace ABI used by the
 native Krust QEMU/Limine milestone. It is intentionally small and unstable. Its
-current job is to boot native `vertex-init` with explicit boot capabilities.
+current job is to boot native `vertex-init`, start a tiny declared service
+graph, and enforce explicit process-local capabilities.
 
 ## Machine ABI
 
@@ -47,6 +48,7 @@ entry into another userspace process. There is no timer preemption in ABI v0.
 | 6 | `SYS_BOOT_READ` | `arg0 = cap_slot`, `arg1 = user_ptr`, `arg2 = max_len` | byte count or error status |
 | 7 | `SYS_LOG_WRITE` | `arg0 = cap_slot`, `arg1 = user_ptr`, `arg2 = len` | status |
 | 8 | `SYS_ACTIVATE_GENERATION` | `arg0 = cap_slot`, `arg1 = user_ptr`, `arg2 = len` | status |
+| 9 | `SYS_PROCESS_START` | `arg0 = process_control_cap_slot`, `arg1 = process_index`, `arg2 = 0` | status |
 
 ## Return Status Values
 
@@ -83,13 +85,21 @@ becoming uncontrolled kernel faults.
 Capabilities are process-local. A capability slot number is meaningful only in
 the current process's capability space.
 
-Current M12 layout:
+Current M13 layout:
 
 ```text
 vertex-init:
   cap[0] = boot module krustboot-manifest, rights=read
   cap[1] = endpoint serial-log, rights=send
   cap[2] = process-control object, rights=control
+
+logd:
+  cap[0] = endpoint log-sink, rights=receive
+  cap[1] = endpoint serial-log, rights=send
+
+echo:
+  cap[0] = endpoint log-sink, rights=send
+  cap[1] = endpoint serial-log, rights=send
 ```
 
 `SYS_IPC_SEND` requires `send` rights on the endpoint capability. `SYS_IPC_RECV`
@@ -100,17 +110,18 @@ special-case process names; it resolves:
 current process -> cap slot -> kernel object -> required rights
 ```
 
-M12 native `vertex-init` uses the same rule:
+The native activation path uses the same rule:
 
 ```text
 SYS_BOOT_READ requires cap[0] read rights to the manifest boot module.
 SYS_LOG_WRITE requires cap[1] send rights to the serial-log endpoint.
 SYS_ACTIVATE_GENERATION requires cap[2] control rights to process-control.
+SYS_PROCESS_START requires cap[2] control rights to process-control.
 ```
 
-`SYS_ACTIVATE_GENERATION` is deliberately minimal in M12: it proves that
-`vertex-init` cannot activate the compact generation without process-control
-authority. It does not yet spawn arbitrary service processes.
+`SYS_ACTIVATE_GENERATION` remains the minimal M12 authority proof.
+`SYS_PROCESS_START` is the M13 activation primitive: it changes a declared
+process to ready only when the caller holds process-control authority.
 
 ## Process Model
 
@@ -119,6 +130,7 @@ ABI v0 uses a fixed-size kernel process table.
 Current states:
 
 ```text
+Declared
 Ready
 Running
 BlockedOnEndpoint
@@ -140,6 +152,20 @@ optional saved syscall frame
 
 Scheduling is cooperative and round-robin. A context switch currently happens
 only when a syscall explicitly yields, exits, or blocks on IPC.
+
+Non-initial processes loaded from the compact manifest start in `Declared`.
+They are not scheduler candidates until `SYS_PROCESS_START` changes them to
+`Ready`.
+
+`SYS_PROCESS_START` semantics:
+
+```text
+requires control rights on the process-control cap
+target process index must exist in the compact manifest process table
+target process state must be Declared
+on success: Declared -> Ready
+on failure: STATUS_BAD_CAPABILITY
+```
 
 ## IPC Semantics
 
@@ -176,10 +202,12 @@ the original receive call site with `rax = delivered_len`.
 
 ## Native vertex-init Semantics
 
-M12 boots one initial userspace process:
+M13 boots one initial userspace process and two declared service processes:
 
 ```text
 process[0] = vertex-init
+process[1] = logd
+process[2] = echo
 ```
 
 `vertex-init` uses these syscalls:
@@ -193,10 +221,16 @@ SYS_LOG_WRITE(cap[1], message, len)
 
 SYS_ACTIVATE_GENERATION(cap[2], generation_id, len)
   proves vertex-init holds process-control authority for activation
+
+SYS_PROCESS_START(cap[2], process_index, 0)
+  starts a declared process from the compact manifest
 ```
 
-This is enough to move the first graph activation step into native userspace
-without putting a JSON interpreter or full service launcher into the kernel.
+`vertex-init` reads the compact manifest, resolves the `logd` and `echo`
+process indices, starts them through `SYS_PROCESS_START`, and yields
+cooperatively. `echo` sends `hello from echo` to `logd` through the `log-sink`
+capability. Negative capability tests prove `echo` cannot receive on its
+send-only cap and `logd` cannot start processes without process-control.
 
 ## Boot ABI
 
@@ -212,7 +246,7 @@ Krust consumes the compact KrustBoot manifest rather than parsing full JSON in
 kernel space. Hosted `vertexctl compile-boot-manifest` is responsible for
 converting source Vertex JSON into the compact boot format.
 
-For M12, the compact manifest describes:
+The compact manifest describes:
 
 ```text
 generation_id
@@ -222,10 +256,15 @@ endpoints
 grants
 ```
 
-M12 also creates fixed boot caps for native `vertex-init`:
+Krust also creates fixed boot caps for native `vertex-init`:
 
 ```text
 cap[0] manifest module read
 cap[1] serial-log send
 cap[2] process-control control
 ```
+
+Endpoint grants for declared services come from the compact manifest. In the
+M13 smoke generation, `logd` receives on `log-sink`, while `echo` sends on
+`log-sink`; both may write to `serial-log` so the native transcript can show the
+service-level result and denial checks.

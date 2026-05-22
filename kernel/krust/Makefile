@@ -6,7 +6,11 @@ ISO_IMAGE := $(BUILD_DIR)/krust.iso
 BOOT_MANIFEST := $(BUILD_DIR)/hello-generation.krustboot
 KERNEL_ELF := target/$(KRUST_TARGET)/debug/krust
 INIT_TARGET_DIR := user/init/target/$(KRUST_TARGET)/debug
+LOGD_TARGET_DIR := user/logd/target/$(KRUST_TARGET)/debug
+ECHO_TARGET_DIR := user/echo/target/$(KRUST_TARGET)/debug
 VERTEX_INIT_ELF := $(INIT_TARGET_DIR)/vertex-init
+LOGD_ELF := $(LOGD_TARGET_DIR)/logd
+ECHO_ELF := $(ECHO_TARGET_DIR)/echo
 VERTEX_MANIFEST ?= ../../examples/hello-generation.vertex.json
 
 QEMU ?= qemu-system-x86_64
@@ -25,6 +29,8 @@ kernel:
 
 user:
 	cd user/init && cargo build --target $(KRUST_TARGET)
+	cd user/logd && cargo build --target $(KRUST_TARGET)
+	cd user/echo && cargo build --target $(KRUST_TARGET)
 
 boot-manifest:
 	mkdir -p $(BUILD_DIR)
@@ -35,6 +41,8 @@ iso: build boot-manifest check-tools check-limine-dir
 	mkdir -p $(ISO_ROOT)/boot $(ISO_ROOT)/EFI/BOOT
 	cp $(KERNEL_ELF) $(ISO_ROOT)/boot/krust.elf
 	cp $(VERTEX_INIT_ELF) $(ISO_ROOT)/boot/vertex-init.elf
+	cp $(LOGD_ELF) $(ISO_ROOT)/boot/logd.elf
+	cp $(ECHO_ELF) $(ISO_ROOT)/boot/echo.elf
 	cp $(BOOT_MANIFEST) $(ISO_ROOT)/boot/hello-generation.krustboot
 	cp limine.conf $(ISO_ROOT)/boot/limine.conf
 	cp $(LIMINE_DIR)/limine-bios.sys $(ISO_ROOT)/boot/limine-bios.sys
@@ -74,10 +82,10 @@ doctor: check-tools check-limine-dir
 	@echo "limine: $$(command -v $(LIMINE))"
 	@echo "xorriso: $$(command -v $(XORRISO))"
 	@echo "LIMINE_DIR: $(LIMINE_DIR)"
-	@echo "Krust M12 toolchain is ready."
+	@echo "Krust M13 toolchain is ready."
 
 clean:
-	rm -rf $(BUILD_DIR) target user/init/target
+	rm -rf $(BUILD_DIR) target user/init/target user/logd/target user/echo/target
 
 check-tools:
 	@command -v $(QEMU) >/dev/null 2>&1 || { echo "error: qemu-system-x86_64 not found. Install QEMU and/or set QEMU=/path/to/qemu-system-x86_64."; exit 1; }

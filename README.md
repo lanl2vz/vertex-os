@@ -2,11 +2,13 @@
 
 Vertex OS is a typed, reproducible, capability-secure operating-system prototype where a running machine is represented as a generation graph.
 
-Krust Kernel is the native Rust kernel prototype that will enforce that graph's
-runtime authority. The repository now has two active tracks: a hosted Linux
-prototype for Vertex IR, `vertexctl`, supervisor behavior, and capability
-semantics; and a bootable Krust kernel under `kernel/krust` that runs under
-QEMU/Limine and has reached the M12 native `vertex-init` milestone.
+The repository currently has two active paths:
+
+1. Hosted Vertex prototype on Linux: Vertex IR, `vertexctl`,
+   `vertex-supervisor`, and demo userland services.
+2. Native Krust path: QEMU/Limine boot, compact KrustBoot manifest, native
+   `vertex-init`, process-local capabilities, safe user-copy validation,
+   cooperative scheduling, and native multi-service activation.
 
 ## Repository Layout
 
@@ -25,31 +27,34 @@ vertex-os/
     netstack/            Demo hosted network capability provider
     echo-server/         Demo service consuming log and network capabilities
   kernel/
-    krust/               Bootable Krust kernel prototype, currently at M12 native vertex-init
+    krust/               Bootable Krust kernel prototype, currently at M13 native service activation
   lang/
     vertex-lang/         Planned typed system-definition language
   nix/                   Nix support modules and builders
   flake.nix              Planned root flake entrypoint
 ```
 
-## Krust M12
+## Krust M13
 
-The current native boot-authority milestone lives in `kernel/krust`. It is
-isolated from the hosted Cargo workspace and boots a Limine ISO under QEMU. The
-ISO build first runs `vertexctl compile-boot-manifest` to turn the source
+The current native activation milestone lives in `kernel/krust`. It is isolated
+from the hosted Cargo workspace and boots a Limine ISO under QEMU. The ISO
+build first runs `vertexctl compile-boot-manifest` to turn the source
 manifest's `krustBoot` section into `hello-generation.krustboot`, a compact
-fixed-format native boot manifest. Krust parses that module, allocates a
-runtime process ID for native `vertex-init`, creates process-local boot
-capabilities, loads `vertex-init.elf`, keeps the M9 IDT and safe user-copy
-checks, and enters ring 3. `vertex-init` reads the manifest through cap[0], logs
-through cap[1], invokes temporary process-control authority through cap[2], and
-Krust halts after `Native vertex-init boot ok`.
+fixed-format native boot manifest.
+
+Krust parses that module, loads native `vertex-init`, `logd`, and `echo` ELF
+modules, creates process-local capabilities, marks non-initial services
+`declared`, and enters ring 3 at `vertex-init`. Native `vertex-init` reads the
+compact manifest through cap[0], logs through cap[1], starts declared services
+through cap[2] process-control, and the services prove explicit IPC authority:
+`echo` sends one message to `logd`, receive/send denials fail without ambient
+rights, and Krust halts after `Native service activation ok`.
 
 ```sh
 scripts/krust-smoke.sh
 ```
 
-See [docs/krust-milestones.md](docs/krust-milestones.md) for M0 through M12,
+See [docs/krust-milestones.md](docs/krust-milestones.md) for M0 through M13,
 and [docs/krust-abi-v0.md](docs/krust-abi-v0.md) for the current syscall,
 capability, process, and IPC ABI.
 
