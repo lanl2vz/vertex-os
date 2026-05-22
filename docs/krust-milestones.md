@@ -6,7 +6,7 @@ IR and graph semantics; Krust is the native enforcement path.
 
 ## Status Summary
 
-Current status: M14-M25 are implemented and smoke-tested under
+Current status: M14-M29 are implemented and smoke-tested under
 `qemu-system-x86_64` with Limine.
 
 ```sh
@@ -14,10 +14,14 @@ scripts/krust-release-gate.sh
 scripts/krust-smoke.sh
 scripts/krust-test.sh manifest-cycle
 scripts/krust-test.sh rollback
+scripts/krust-test.sh manifest-v1
+scripts/krust-test.sh cap-lifecycle
+scripts/krust-test.sh typed-arenas
+scripts/krust-test.sh quotas
 ```
 
-Next direction: M26-M40 harden the M14-M24 graph-activation proof into a
-small, reliable, extensible capability microkernel substrate.
+Next direction: M30-M40 continue hardening the M14-M29 graph-activation proof
+into a small, reliable, extensible capability microkernel substrate.
 
 ## M0: Serial Boot
 
@@ -817,11 +821,11 @@ M39  Reproducible build environment
 M40  Vertex Native Runtime ABI v1
 ```
 
-M26 is the immediate priority. M39 can run in parallel with M26-M28 because
-reproducible development tooling is part of the system story, not an afterthought.
-M31 may be implemented before M30 if interrupt-driven preemption exposes too
-much shared-state risk; fault containment is a smaller robustness step than full
-scheduler preemption.
+M30 is the immediate priority. M39 can run in parallel with scheduler and fault
+work because reproducible development tooling is part of the system story, not
+an afterthought. M31 may be implemented before M30 if interrupt-driven
+preemption exposes too much shared-state risk; fault containment is a smaller
+robustness step than full scheduler preemption.
 
 ## M25: Reproducible Clean-Clone Release Gate
 
@@ -843,6 +847,7 @@ done: all release-gate scripts are shell-syntax checked, executable, and trailin
 done: Rust formatting and milestone Markdown whitespace are checked by the gate
 done: Makefile recipes are parsed by make before the gate proceeds
 done: all M14-M24 QEMU tests are run from the gate
+done: M26-M29 manifest, capability, arena, quota, and malformed-manifest QEMU tests are run from the gate
 done: all QEMU transcript checks have bounded polling windows
 done: missing and forbidden transcript lines are reported explicitly
 done: README.md, docs/krust-milestones.md, docs/krust-abi-v0.md, and kernel/krust/README.md agree
@@ -854,7 +859,7 @@ gains more moving parts.
 
 ## M26: KrustBoot Manifest v1
 
-Status: planned.
+Status: done.
 
 Goal: replace the current fixed-offset proof manifest with a versioned native
 ABI artifact that can evolve without silent parser breakage.
@@ -899,22 +904,24 @@ Policy
 Acceptance tests:
 
 ```text
-valid manifest boots
-truncated manifest rejected
-bad magic rejected
-unsupported version rejected
-out-of-bounds record rejected
-cyclic dependency rejected
-missing provider rejected
+done: valid manifest boots
+done: truncated manifest rejected
+done: bad magic rejected
+done: unwrapped compact payload rejected
+done: unsupported version rejected
+done: out-of-bounds record rejected
+done: cyclic dependency rejected
+done: missing provider rejected
 ```
 
-The parser should live behind a shared, bounds-checked layout API usable by
-hosted `vertexctl`, native `vertex-init`, and the kernel without pulling full
-JSON or graph interpretation into Krust.
+The parser now accepts only a versioned Manifest v1 wrapper around the compact
+payload, validates record bounds and checksum before exposing records, rejects
+unwrapped compact payloads at the boot-module boundary, and keeps full JSON and
+graph interpretation outside Krust.
 
 ## M27: Capability Model v1: Provenance, Revocation, And Audit
 
-Status: planned.
+Status: done.
 
 Goal: make authority lineage explicit so generation switches and supervision can
 revoke obsolete service authority.
@@ -938,6 +945,7 @@ Operations:
 SYS_CAP_REVOKE
 SYS_CAP_INSPECT
 SYS_CAP_MOVE
+SYS_CAP_COPY
 ```
 
 Semantic rule: derived capabilities must not outlive revoked parent authority
@@ -946,23 +954,22 @@ unless they are explicitly marked as independently rooted.
 Acceptance tests:
 
 ```text
-init derives send-only cap for echo
-echo can send
-init revokes parent or delegation
-echo send now fails
-cap inspect shows parent chain
-cap transfer cannot amplify rights
-cap move removes source slot
-cap copy preserves source slot
+done: init derives send-only cap for echo
+done: echo can send
+done: delegated capability revocation makes later send fail
+done: cap inspect shows parent chain
+done: cap transfer cannot amplify rights
+done: cap move removes source slot
+done: cap copy preserves source slot
 ```
 
-If revocation needs dynamic metadata that does not fit the current fixed tables,
-do the minimal M28 arena work first rather than encoding permanent complexity
-into fixed arrays.
+Capability records now carry provenance metadata, generation identity, delegate
+identity, and revocation state. Lookup rejects revoked caps and caps with
+revoked ancestors.
 
 ## M28: Kernel Heap And Typed Object Arenas
 
-Status: planned.
+Status: done.
 
 Goal: move beyond fixed proof tables without adding an unbounded general-purpose
 runtime to the kernel.
@@ -985,19 +992,19 @@ real heap, with explicit capacity and failure paths.
 Acceptance tests:
 
 ```text
-create 32 endpoints
-create 32 processes
-allocate, free, and reuse kernel objects
-allocation failure returns a controlled error
-no silent object-table overwrite
+done: create 32 endpoints
+done: create 32 processes
+done: allocate, free, and reuse kernel objects
+done: allocation failure returns a controlled error
+done: no silent object-table overwrite
 ```
 
-This milestone is the point where Krust starts moving from a fixed demo kernel
-toward a small extensible kernel substrate.
+Krust now has a small heap-backed typed arena primitive for fixed-capacity
+kernel object families, with explicit failure instead of table overwrite.
 
 ## M29: Resource Accounting And Quotas
 
-Status: planned.
+Status: done.
 
 Goal: make resource ownership as explicit as authority. A capability OS should
 not let one service consume all kernel objects by accident.
@@ -1024,15 +1031,16 @@ revoke
 Acceptance tests:
 
 ```text
-service with no allocation authority cannot create endpoint
-service with quota=1 endpoint can create one endpoint
-second endpoint creation fails
-init can delegate smaller quota
-delegated quota cannot exceed parent quota
+done: service with no allocation authority cannot create endpoint
+done: service with quota=1 endpoint can create one endpoint
+done: second endpoint creation fails
+done: init can delegate smaller quota
+done: delegated quota cannot exceed parent quota
 ```
 
-Quotas should be enforced at the same boundary as capabilities, not as advisory
-metadata in userspace.
+Quotas are enforced by the kernel syscall boundary together with capability
+rights: allocation requires explicit authority and available quota, and
+delegation cannot exceed the caller's quota.
 
 ## M30: Real Timer Interrupt And Preemptive Scheduling
 
@@ -1336,7 +1344,7 @@ documented host tool versions for Rust, qemu, limine, xorriso, and cargo tools
 locked Cargo dependencies
 kernel/krust/rust-toolchain.toml as the native Krust toolchain pin
 make doctor checks every required tool and reports actionable fixes
-single release-gate script that runs the clean-clone M14-M24 proof
+single release-gate script that runs the clean-clone M14-M29 proof
 ```
 
 Acceptance tests:
@@ -1381,16 +1389,10 @@ base for the next phase.
 Create these next:
 
 ```text
-M26.1  Define KrustBoot Manifest v1 binary layout
-M26.2  Add manifest bounds and checksum/hash validation
-M26.3  Add invalid-manifest QEMU tests
-M27.1  Add capability provenance metadata
-M27.2  Add SYS_CAP_REVOKE
-M27.3  Add revocation and attenuation tests
-M28.1  Add kernel heap and typed object arenas
-M29.1  Add resource accounting and quotas
 M30.1  Add real timer interrupt path
 M31.1  Add user page-fault-to-process-failure handling
+M32.1  Add first I/O capability substrate path
+M33.1  Move serial logging toward user space
 ```
 
 ## Deferred Work
@@ -1418,7 +1420,8 @@ A native booted Vertex system should be able to activate, switch, inspect,
 revoke, and persist declared generation graphs under explicit authority.
 ```
 
-M13 proved that native services can run under explicit authority. M14-M24 prove
+M13 proved that native services can run under explicit authority. M14-M29 prove
 that the graph itself decides which native services exist, when they start,
-what they receive, and why they are allowed to communicate. M26-M40 should make
-that model reliable enough to become the long-lived Vertex native runtime base.
+what they receive, why they are allowed to communicate, and how authority and
+resources are bounded. M30-M40 should make that model reliable enough to become
+the long-lived Vertex native runtime base.

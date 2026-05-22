@@ -3,8 +3,15 @@ use core::{cell::UnsafeCell, str};
 pub const MODULE_STRING: &[u8] = b"krustboot-manifest";
 pub const FALLBACK_MODULE_STRING: &[u8] = b"krustboot-fallback-manifest";
 
-const MAGIC: &[u8; 16] = b"KRUSTBOOTV0\0\0\0\0\0";
-const VERSION: u16 = 3;
+const COMPACT_MAGIC: &[u8; 16] = b"KRUSTBOOTV0\0\0\0\0\0";
+const COMPACT_VERSION: u16 = 3;
+const V1_MAGIC: &[u8; 16] = b"KRUSTBOOTV1\0\0\0\0\0";
+const V1_VERSION: u16 = 1;
+const V1_HEADER_SIZE: usize = 164;
+const V1_CHECKSUM_OFFSET: usize = 32;
+const V1_RECORD_SIZE: usize = 12;
+const V1_RECORD_COUNT: usize = 9;
+const V1_PAYLOAD_OFFSET: usize = V1_HEADER_SIZE + V1_RECORD_COUNT * V1_RECORD_SIZE;
 const STRING_LEN: usize = 64;
 const MAX_BOOT_MODULES: usize = 16;
 const MAX_PROCESSES: usize = 16;
@@ -89,6 +96,10 @@ pub struct NetworkPort<'a> {
 pub struct Manifest<'a> {
     generation_id: &'a str,
     parent_generation_id: &'a str,
+    source_base: u64,
+    source_len: u64,
+    layout_version: u16,
+    record_count: usize,
     boot_modules: [Option<BootModule<'a>>; MAX_BOOT_MODULES],
     boot_module_count: usize,
     processes: [Option<Process<'a>>; MAX_PROCESSES],
@@ -129,6 +140,9 @@ pub enum ParseError {
     InvalidRights,
     InvalidObjectKind,
     TrailingBytes,
+    BadChecksum,
+    BadRecordTable,
+    OutOfBoundsRecord,
 }
 
 impl<'a> Manifest<'a> {
@@ -136,6 +150,10 @@ impl<'a> Manifest<'a> {
         Self {
             generation_id: "",
             parent_generation_id: "",
+            source_base: 0,
+            source_len: 0,
+            layout_version: 0,
+            record_count: 0,
             boot_modules: [None; MAX_BOOT_MODULES],
             boot_module_count: 0,
             processes: [None; MAX_PROCESSES],
@@ -159,6 +177,22 @@ impl<'a> Manifest<'a> {
 
     pub fn parent_generation_id(&self) -> &'a str {
         self.parent_generation_id
+    }
+
+    pub fn source_base(&self) -> u64 {
+        self.source_base
+    }
+
+    pub fn source_len(&self) -> u64 {
+        self.source_len
+    }
+
+    pub fn layout_version(&self) -> u16 {
+        self.layout_version
+    }
+
+    pub fn record_count(&self) -> usize {
+        self.record_count
     }
 
     pub fn boot_module_count(&self) -> usize {
@@ -264,12 +298,92 @@ fn parse_static(
 }
 
 fn parse_into(bytes: &'static [u8], manifest: &mut Manifest<'static>) -> Result<(), ParseError> {
+    let payload = parse_v1_payload(bytes)?;
+    parse_compact_into(payload, manifest)?;
+    manifest.layout_version = V1_VERSION;
+    manifest.record_count = V1_RECORD_COUNT;
+    Ok(())
+}
+
+fn parse_v1_payload(bytes: &'static [u8]) -> Result<&'static [u8], ParseError> {
+    if bytes.len() < V1_MAGIC.len() {
+        return Err(ParseError::Truncated);
+    }
+
     let mut reader = Reader::new(bytes);
-    if reader.read_exact(MAGIC.len())? != MAGIC {
+    if reader.read_exact(V1_MAGIC.len())? != V1_MAGIC {
         return Err(ParseError::BadMagic);
     }
 
-    if reader.read_u16()? != VERSION {
+    if reader.read_u16()? != V1_VERSION {
+        return Err(ParseError::UnsupportedVersion);
+    }
+
+    let header_size = reader.read_u16()? as usize;
+    let total_size = reader.read_u32()? as usize;
+    let record_table_offset = reader.read_u32()? as usize;
+    let record_count = reader.read_u16()? as usize;
+    let _reserved = reader.read_u16()?;
+    let checksum = reader.read_u32()?;
+    let _generation_id = reader.read_fixed_str()?;
+    let _parent_generation_id = reader.read_fixed_str_allow_empty()?;
+
+    if header_size != V1_HEADER_SIZE
+        || record_table_offset != V1_HEADER_SIZE
+        || record_count != V1_RECORD_COUNT
+        || total_size != bytes.len()
+        || total_size < V1_PAYLOAD_OFFSET
+    {
+        return Err(ParseError::BadRecordTable);
+    }
+
+    if checksum != v1_checksum(bytes) {
+        return Err(ParseError::BadChecksum);
+    }
+
+    let mut seen = [false; V1_RECORD_COUNT + 1];
+    let mut record_index = 0;
+    while record_index < record_count {
+        let offset = record_table_offset + record_index * V1_RECORD_SIZE;
+        let record = Record::read(bytes, offset)?;
+        if record.kind == 0 || record.kind as usize >= seen.len() {
+            return Err(ParseError::BadRecordTable);
+        }
+        if seen[record.kind as usize] {
+            return Err(ParseError::BadRecordTable);
+        }
+        seen[record.kind as usize] = true;
+        let end = record
+            .offset
+            .checked_add(record.length)
+            .ok_or(ParseError::OutOfBoundsRecord)?;
+        if record.offset > bytes.len() || end > bytes.len() {
+            return Err(ParseError::OutOfBoundsRecord);
+        }
+        record_index += 1;
+    }
+
+    let mut kind = 1;
+    while kind <= V1_RECORD_COUNT {
+        if !seen[kind] {
+            return Err(ParseError::BadRecordTable);
+        }
+        kind += 1;
+    }
+
+    Ok(&bytes[V1_PAYLOAD_OFFSET..])
+}
+
+fn parse_compact_into(
+    bytes: &'static [u8],
+    manifest: &mut Manifest<'static>,
+) -> Result<(), ParseError> {
+    let mut reader = Reader::new(bytes);
+    if reader.read_exact(COMPACT_MAGIC.len())? != COMPACT_MAGIC {
+        return Err(ParseError::BadMagic);
+    }
+
+    if reader.read_u16()? != COMPACT_VERSION {
         return Err(ParseError::UnsupportedVersion);
     }
 
@@ -289,6 +403,8 @@ fn parse_into(bytes: &'static [u8], manifest: &mut Manifest<'static>) -> Result<
     *manifest = Manifest::empty();
     manifest.generation_id = generation_id;
     manifest.parent_generation_id = parent_generation_id;
+    manifest.source_base = bytes.as_ptr() as u64;
+    manifest.source_len = bytes.len() as u64;
     manifest.boot_module_count = boot_module_count;
     manifest.process_count = process_count;
     manifest.endpoint_count = endpoint_count;
@@ -545,6 +661,11 @@ impl<'a> Reader<'a> {
         Ok(u16::from_le_bytes([bytes[0], bytes[1]]))
     }
 
+    fn read_u32(&mut self) -> Result<u32, ParseError> {
+        let bytes = self.read_exact(4)?;
+        Ok(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+    }
+
     fn read_u64(&mut self) -> Result<u64, ParseError> {
         let bytes = self.read_exact(8)?;
         Ok(u64::from_le_bytes([
@@ -616,4 +737,58 @@ impl<'a> Reader<'a> {
     fn finished(&self) -> bool {
         self.offset == self.bytes.len()
     }
+}
+
+struct Record {
+    kind: u16,
+    offset: usize,
+    length: usize,
+}
+
+impl Record {
+    fn read(bytes: &[u8], offset: usize) -> Result<Self, ParseError> {
+        let end = offset
+            .checked_add(V1_RECORD_SIZE)
+            .ok_or(ParseError::BadRecordTable)?;
+        if end > bytes.len() {
+            return Err(ParseError::BadRecordTable);
+        }
+
+        let kind = u16::from_le_bytes([bytes[offset], bytes[offset + 1]]);
+        let _id = u16::from_le_bytes([bytes[offset + 2], bytes[offset + 3]]);
+        let raw_offset = u32::from_le_bytes([
+            bytes[offset + 4],
+            bytes[offset + 5],
+            bytes[offset + 6],
+            bytes[offset + 7],
+        ]);
+        let raw_length = u32::from_le_bytes([
+            bytes[offset + 8],
+            bytes[offset + 9],
+            bytes[offset + 10],
+            bytes[offset + 11],
+        ]);
+
+        Ok(Self {
+            kind,
+            offset: raw_offset as usize,
+            length: raw_length as usize,
+        })
+    }
+}
+
+fn v1_checksum(bytes: &[u8]) -> u32 {
+    let mut hash = 0x811c_9dc5u32;
+    let mut index = 0;
+    while index < bytes.len() {
+        let value = if index >= V1_CHECKSUM_OFFSET && index < V1_CHECKSUM_OFFSET + 4 {
+            0
+        } else {
+            bytes[index]
+        };
+        hash ^= value as u32;
+        hash = hash.wrapping_mul(16_777_619);
+        index += 1;
+    }
+    hash
 }

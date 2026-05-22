@@ -1,7 +1,7 @@
 # Krust Kernel
 
-Krust now covers the M14-M25 native graph-activation proof path and release
-gate. The planned M26-M40 substrate-hardening roadmap is tracked in
+Krust now covers the M14-M29 native graph-activation proof path and substrate
+hardening. The planned M30-M40 roadmap is tracked in
 `../../docs/krust-milestones.md`.
 
 The target is intentionally small:
@@ -15,13 +15,14 @@ Krust reads the Limine memory map response
 Krust prints every memory map entry to serial
 `vertexctl compile-boot-manifest` derives `hello-generation.krustboot` from the full Vertex IR graph
 Limine loads `hello-generation.krustboot` as a boot module
-Krust parses the fixed-format KrustBoot manifest and prints its generation ID
+Krust parses the versioned KrustBoot Manifest v1 wrapper and prints its generation ID
 Krust prints the KrustBoot boot modules, processes, endpoints, grants, store objects, state volumes, and network ports
 Krust builds a physical frame allocator from usable memory map entries
 Krust allocates, frees, and reuses 4 KiB physical frames
 Krust walks the active x86_64 page tables through Limine's HHDM
 Krust maps a small fixed kernel-heap virtual range
 Krust writes and reads through the mapped virtual pages
+Krust allocates typed endpoint and process arenas from the kernel heap and checks capacity failure paths
 Krust creates fixed kernel objects and boot capabilities
 Krust prints the boot capability table
 Limine loads native service ELFs for vertex-init, logd, netstack, echo, model-reader, counter, state-reader, timer, and flaky-service
@@ -30,7 +31,7 @@ Krust creates a runtime process table and endpoint table from the KrustBoot mani
 Krust allocates runtime process IDs and states from KrustBoot process records
 Krust grants vertex-init cap[0] read rights to the manifest module
 Krust grants vertex-init cap[1] send rights to the serial-log endpoint
-Krust grants vertex-init cap[2] process-control authority, cap[3] readiness receive authority, and per-endpoint attenuable endpoint authority starting at cap[4]
+Krust grants vertex-init cap[2] process-control authority with control, allocate, delegate, and revoke rights; cap[3] readiness receive authority; and per-endpoint attenuable endpoint authority starting at cap[4]
 Krust grants store/state/timer authority only to services that declare those capabilities
 Krust installs a minimal IDT for #UD, #GP, and #PF
 Krust enters ring 3 at the initial process entry point
@@ -39,9 +40,11 @@ Krust validates syscall user buffers by walking user page tables
 vertex-init reads the compact manifest through cap[0]
 vertex-init logs through cap[1]
 vertex-init computes a manifest-driven activation order and starts declared services through cap[2]
+vertex-init proves endpoint quota enforcement and quota delegation bounds
 logd reports readiness before echo starts
 vertex-init derives and transfers attenuated endpoint authority
 echo sends one message to logd through an explicit IPC capability
+echo inspects, copies, moves, and revokes delegated authority
 echo drops its endpoint capability and denied authority stays rejected
 model-reader reads an immutable store object through its own store capability
 counter-service writes a state volume, and reader-service reads it through read-only state authority
@@ -51,13 +54,14 @@ logd receives the message and denial tests reject missing authority
 Krust halts after `Native service activation ok`
 ```
 
-No dynamic heap allocator, APIC-backed timer, preemption, user page-fault
-recovery, full interrupt handling, full JSON parsing in the kernel, filesystem,
-network, or device drivers are part of this native proof. Timer deadlines use
-cooperative sleep states; when no process is ready, the scheduler polls TSC until
-the next deadline rather than sleeping on an interrupt. The kernel consumes a
-compact KrustBoot manifest compiled by hosted `vertexctl`; graph interpretation
-and lifecycle policy remain a userspace responsibility.
+No unbounded general-purpose allocator, APIC-backed timer, preemption, user
+page-fault recovery, full interrupt handling, full JSON parsing in the kernel,
+filesystem, network, or device drivers are part of this native proof. Timer
+deadlines use cooperative sleep states; when no process is ready, the scheduler
+polls TSC until the next deadline rather than sleeping on an interrupt. The
+kernel consumes a compact KrustBoot Manifest v1 artifact compiled by hosted
+`vertexctl`; graph interpretation and lifecycle policy remain a userspace
+responsibility.
 
 ## Prerequisites
 
@@ -142,6 +146,7 @@ Krust Kernel booted
 Limine base revision supported
 Limine memory map entries: ...
 KrustBoot manifest generation: gen:hello-0001
+KrustBoot Manifest v1 records: 9
 KrustBoot boot modules: 9
 KrustBoot processes: 9
 KrustBoot endpoints: 3
@@ -159,6 +164,9 @@ KrustBoot network ports: 1
 Physical allocator demo ok
 Virtual memory demo ok
 Capability table demo ok
+Kernel heap arena allocation ok
+Typed endpoint arena created 32 endpoints
+Typed process arena created 32 processes
 Process table entries: 9
 Endpoint table entries: 3
 endpoint[0] id=1 name=serial-log
@@ -175,7 +183,7 @@ process[7] id=8 name=timer-service state=declared
 process[8] id=9 name=flaky-service state=declared
 proc=vertex-init cap[0] boot-module=krustboot-manifest rights=read
 proc=vertex-init cap[1] endpoint=serial-log rights=send
-proc=vertex-init cap[2] process-control=process-control rights=control
+proc=vertex-init cap[2] process-control=process-control rights=control|allocate|delegate|revoke
 proc=vertex-init cap[3] endpoint=readiness rights=receive
 proc=vertex-init cap[4] endpoint=log-sink rights=send|receive
 proc=echo cap[3] network-port=cap:net.tcp.8080 rights=listen
@@ -198,6 +206,10 @@ vertex-init processes: 9
 vertex-init endpoints: 3
 vertex-init grants: 18
 vertex-init network ports: 1
+service with quota=1 endpoint can create one endpoint
+second endpoint creation fails
+init can delegate smaller quota
+delegated quota cannot exceed parent quota
 vertex-init activation plan:
   1. logd
   2. netstack
@@ -215,6 +227,7 @@ vertex-init starting service: netstack
 Krust process start accepted: proc=vertex-init target=netstack
 vertex-init derives endpoint cap for echo from endpoint[2] rights=send
 Capability derive accepted: proc=vertex-init parent=4 new=31 rights=send
+Capability inspect: proc=vertex-init
 Capability transfer accepted: proc=vertex-init target=echo slot=0 rights=send
 vertex-init starting service: echo
 Krust process start accepted: proc=vertex-init target=echo
@@ -224,6 +237,11 @@ vertex-init starting service: reader-service
 vertex-init starting service: timer-service
 vertex-init starting service: flaky-service
 echo sent message to logd
+service with no allocation authority cannot create endpoint
+cap inspect shows parent chain
+cap copy preserves source slot
+cap move removes source slot
+echo send after revoke rejected
 logd received: hello from echo
 negative test: echo receive rejected: bad capability
 echo read rejected: bad capability
@@ -266,14 +284,14 @@ make smoke
 ```
 
 The smoke test boots QEMU headlessly, captures serial output to
-`build/serial.log`, and passes when it sees the M14-M24 boot transcript. The same
+`build/serial.log`, and passes when it sees the M14-M29 boot transcript. The same
 check is available from the repository root:
 
 ```sh
 scripts/krust-smoke.sh
 ```
 
-## M25 Release Gate
+## M26-M29 Substrate Gate
 
 Run the clean-clone gate from the repository root:
 
@@ -289,12 +307,13 @@ make release-gate
 
 The gate checks script executability and shell syntax, verifies Makefile recipe
 parsing, checks Rust formatting and milestone Markdown whitespace, confirms the
-M25 documentation anchors, runs `cargo build --offline`, validates
+M14-M29 documentation anchors, runs `cargo build --offline`, validates
 `examples/hello-generation.vertex.json`, runs `make doctor`, rebuilds from
-`make clean`, runs `make smoke`, and then runs the M14-M24 QEMU cases: `m14`,
+`make clean`, runs `make smoke`, and then runs the M14-M29 QEMU cases: `m14`,
 `manifest-cycle`, `bad-cap`, `readiness-timeout`, `rollback`, `store-state`,
-`timer`, and `restart`. If the offline build fails, the gate prints the Cargo
-cache or vendoring prerequisite explicitly.
+`timer`, `restart`, `manifest-v1`, `cap-lifecycle`, `typed-arenas`, `quotas`,
+and the malformed-manifest cases. If the offline build fails, the gate prints
+the Cargo cache or vendoring prerequisite explicitly.
 
 The expected transcript includes:
 
@@ -302,6 +321,7 @@ The expected transcript includes:
 Krust Kernel booted
 Limine memory map entries:
 KrustBoot manifest generation: gen:hello-0001
+KrustBoot Manifest v1 records: 9
 KrustBoot boot modules: 9
 KrustBoot processes: 9
 KrustBoot endpoints: 3
@@ -318,6 +338,9 @@ network_port[0] id=cap:net.tcp.8080
 Physical allocator demo ok
 Virtual memory demo ok
 Capability table demo ok
+Kernel heap arena allocation ok
+Typed endpoint arena created 32 endpoints
+Typed process arena created 32 processes
 IDT initialized: #UD #GP #PF
 Process table entries: 9
 Endpoint table entries: 3
@@ -335,7 +358,7 @@ process[7] id=8 name=timer-service state=declared
 process[8] id=9 name=flaky-service state=declared
 proc=vertex-init cap[0] boot-module=krustboot-manifest rights=read
 proc=vertex-init cap[1] endpoint=serial-log rights=send
-proc=vertex-init cap[2] process-control=process-control rights=control
+proc=vertex-init cap[2] process-control=process-control rights=control|allocate|delegate|revoke
 proc=vertex-init cap[3] endpoint=readiness rights=receive
 proc=vertex-init cap[4] endpoint=log-sink rights=send|receive
 proc=echo cap[3] network-port=cap:net.tcp.8080 rights=listen
@@ -348,6 +371,13 @@ vertex-init started
 Boot module read accepted: proc=vertex-init module=krustboot-manifest bytes=
 vertex-init manifest generation: gen:hello-0001
 vertex-init network ports: 1
+service with quota=1 endpoint can create one endpoint
+second endpoint creation fails
+service with no allocation authority cannot create endpoint
+cap inspect shows parent chain
+cap copy preserves source slot
+cap move removes source slot
+echo send after revoke rejected
 vertex-init activation plan:
   1. logd
   2. netstack

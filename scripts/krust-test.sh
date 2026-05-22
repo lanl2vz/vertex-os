@@ -12,6 +12,7 @@ QEMU_ATTEMPTS=${QEMU_ATTEMPTS:-20}
 QEMU_POLL_SECONDS=${QEMU_POLL_SECONDS:-1}
 CASE=${1:-m14}
 FALLBACK_MANIFEST=
+KRUSTBOOT_CORRUPT=
 
 case "$CASE" in
     m13|m14|valid-activation)
@@ -101,13 +102,106 @@ echo restart retained delegated log cap
 Native restart policy ok
 '
         ;;
+    manifest-v1)
+        MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
+        required_lines='
+KrustBoot Manifest v1 records: 9
+proc=vertex-init cap[0] boot-module=krustboot-manifest rights=read
+Boot module read accepted: proc=vertex-init module=krustboot-manifest bytes=
+Native manifest-driven activation ok
+'
+        ;;
+    cap-lifecycle)
+        MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
+        required_lines='
+Capability inspect: proc=vertex-init
+Capability inspect: proc=echo
+cap inspect shows parent chain
+Capability copy accepted: proc=echo
+cap copy preserves source slot
+Capability move accepted: proc=echo
+cap move removes source slot
+Capability revoke accepted: proc=echo
+echo send after revoke rejected
+'
+        ;;
+    typed-arenas)
+        MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
+        required_lines='
+Kernel heap arena allocation ok
+Typed endpoint arena created 32 endpoints
+Typed process arena created 32 processes
+Typed arena free and reuse ok
+Typed arena allocation failure returned controlled error
+Typed object arenas no silent overwrite ok
+'
+        ;;
+    quotas)
+        MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
+        required_lines='
+proc=vertex-init cap[2] process-control=process-control rights=control|allocate|delegate|revoke
+service with quota=1 endpoint can create one endpoint
+second endpoint creation fails
+init can delegate smaller quota
+delegated quota cannot exceed parent quota
+service with no allocation authority cannot create endpoint
+'
+        ;;
+    manifest-truncated)
+        MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
+        KRUSTBOOT_CORRUPT=truncated
+        required_lines='
+KrustBoot manifest parse failed: truncated
+KrustBoot manifest unavailable
+'
+        ;;
+    manifest-bad-magic)
+        MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
+        KRUSTBOOT_CORRUPT=bad-magic
+        required_lines='
+KrustBoot manifest parse failed: bad magic
+KrustBoot manifest unavailable
+'
+        ;;
+    manifest-raw-compact)
+        MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
+        KRUSTBOOT_CORRUPT=raw-compact
+        required_lines='
+KrustBoot manifest parse failed: bad magic
+KrustBoot manifest unavailable
+'
+        ;;
+    manifest-unsupported-version)
+        MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
+        KRUSTBOOT_CORRUPT=unsupported-version
+        required_lines='
+KrustBoot manifest parse failed: unsupported version
+KrustBoot manifest unavailable
+'
+        ;;
+    manifest-oob-record)
+        MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
+        KRUSTBOOT_CORRUPT=out-of-bounds-record
+        required_lines='
+KrustBoot manifest parse failed: out-of-bounds record
+KrustBoot manifest unavailable
+'
+        ;;
+    manifest-missing-provider)
+        MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
+        KRUSTBOOT_CORRUPT=missing-provider
+        required_lines='
+vertex-init activation failed: missing provider
+activation failed
+'
+        ;;
     *)
-        echo "usage: scripts/krust-test.sh <m13|m14|valid-activation|manifest-cycle|bad-cap|readiness|readiness-timeout|rollback|store-state|timer|restart>" >&2
+        echo "usage: scripts/krust-test.sh <m13|m14|valid-activation|manifest-cycle|bad-cap|readiness|readiness-timeout|rollback|store-state|timer|restart|manifest-v1|cap-lifecycle|typed-arenas|quotas|manifest-truncated|manifest-bad-magic|manifest-raw-compact|manifest-unsupported-version|manifest-oob-record|manifest-missing-provider>" >&2
         exit 2
         ;;
 esac
 
-(cd "$KRUST_DIR" && make iso VERTEX_MANIFEST="$MANIFEST" FALLBACK_MANIFEST="$FALLBACK_MANIFEST")
+(cd "$KRUST_DIR" && make iso VERTEX_MANIFEST="$MANIFEST" FALLBACK_MANIFEST="$FALLBACK_MANIFEST" KRUSTBOOT_CORRUPT="$KRUSTBOOT_CORRUPT")
 
 mkdir -p "$(dirname "$SERIAL_LOG")"
 rm -f "$SERIAL_LOG"

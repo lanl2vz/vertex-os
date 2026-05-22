@@ -1,9 +1,27 @@
 use std::collections::{BTreeMap, BTreeSet};
 use vertex_ir::{GenerationManifest, Service};
 
-const MAGIC: &[u8; 16] = b"KRUSTBOOTV0\0\0\0\0\0";
-const VERSION: u16 = 3;
+const COMPACT_MAGIC: &[u8; 16] = b"KRUSTBOOTV0\0\0\0\0\0";
+const COMPACT_VERSION: u16 = 3;
+const V1_MAGIC: &[u8; 16] = b"KRUSTBOOTV1\0\0\0\0\0";
+const V1_VERSION: u16 = 1;
+const V1_HEADER_SIZE: usize = 164;
+const V1_CHECKSUM_OFFSET: usize = 32;
+const V1_RECORD_SIZE: usize = 12;
+const V1_RECORD_COUNT: usize = 9;
+const V1_PAYLOAD_OFFSET: usize = V1_HEADER_SIZE + V1_RECORD_COUNT * V1_RECORD_SIZE;
+const COMPACT_HEADER_SIZE: usize = 160;
 const STRING_LEN: usize = 64;
+const BOOT_MODULE_RECORD_LEN: usize = STRING_LEN * 2;
+const PROCESS_REF_LIST_LEN: usize = 2 + MAX_PROCESS_REFS * 2;
+const ENDPOINT_REQUIREMENT_LIST_LEN: usize = 2 + MAX_PROCESS_REFS * 4;
+const PROCESS_RECORD_LEN: usize =
+    STRING_LEN * 4 + 4 + PROCESS_REF_LIST_LEN * 2 + ENDPOINT_REQUIREMENT_LIST_LEN;
+const ENDPOINT_RECORD_LEN: usize = STRING_LEN;
+const GRANT_RECORD_LEN: usize = 12;
+const STORE_OBJECT_RECORD_LEN: usize = STRING_LEN * 3 + 8;
+const STATE_VOLUME_RECORD_LEN: usize = STRING_LEN;
+const NETWORK_PORT_RECORD_LEN: usize = STRING_LEN;
 const MAX_BOOT_MODULES: usize = 16;
 const MAX_PROCESSES: usize = 16;
 const MAX_ENDPOINTS: usize = 16;
@@ -26,6 +44,15 @@ const OBJECT_STORE: u16 = 2;
 const OBJECT_STATE: u16 = 3;
 const OBJECT_TIMER: u16 = 4;
 const OBJECT_NETWORK_PORT: u16 = 5;
+const RECORD_BOOT_MODULE: u16 = 1;
+const RECORD_PROCESS: u16 = 2;
+const RECORD_ENDPOINT: u16 = 3;
+const RECORD_GRANT: u16 = 4;
+const RECORD_STORE_OBJECT: u16 = 5;
+const RECORD_STATE_VOLUME: u16 = 6;
+const RECORD_TIMER: u16 = 7;
+const RECORD_GENERATION: u16 = 8;
+const RECORD_POLICY: u16 = 9;
 const RESTART_NEVER: u16 = 0;
 const RESTART_ON_FAILURE: u16 = 1;
 const RESTART_ALWAYS: u16 = 2;
@@ -42,68 +69,68 @@ pub fn compile(manifest: &GenerationManifest) -> Result<Vec<u8>, String> {
     let plan = derive_plan(manifest)?;
     validate_plan(&plan)?;
 
-    let mut bytes = Vec::new();
-    bytes.extend_from_slice(MAGIC);
-    push_u16(&mut bytes, VERSION);
-    push_count(&mut bytes, plan.boot_modules.len(), "boot_modules")?;
-    push_count(&mut bytes, plan.processes.len(), "processes")?;
-    push_count(&mut bytes, plan.endpoints.len(), "endpoints")?;
-    push_count(&mut bytes, plan.grants.len(), "grants")?;
-    push_count(&mut bytes, plan.store_objects.len(), "store_objects")?;
-    push_count(&mut bytes, plan.state_volumes.len(), "state_volumes")?;
-    push_count(&mut bytes, plan.network_ports.len(), "network_ports")?;
-    push_fixed_str(&mut bytes, &manifest.generation.id)?;
+    let mut body = Vec::new();
+    body.extend_from_slice(COMPACT_MAGIC);
+    push_u16(&mut body, COMPACT_VERSION);
+    push_count(&mut body, plan.boot_modules.len(), "boot_modules")?;
+    push_count(&mut body, plan.processes.len(), "processes")?;
+    push_count(&mut body, plan.endpoints.len(), "endpoints")?;
+    push_count(&mut body, plan.grants.len(), "grants")?;
+    push_count(&mut body, plan.store_objects.len(), "store_objects")?;
+    push_count(&mut body, plan.state_volumes.len(), "state_volumes")?;
+    push_count(&mut body, plan.network_ports.len(), "network_ports")?;
+    push_fixed_str(&mut body, &manifest.generation.id)?;
     push_fixed_str(
-        &mut bytes,
+        &mut body,
         manifest.generation.parent.as_deref().unwrap_or_default(),
     )?;
 
     for module in &plan.boot_modules {
-        push_fixed_str(&mut bytes, &module.name)?;
-        push_fixed_str(&mut bytes, &module.module_string)?;
+        push_fixed_str(&mut body, &module.name)?;
+        push_fixed_str(&mut body, &module.module_string)?;
     }
 
     for process in &plan.processes {
-        push_fixed_str(&mut bytes, &process.name)?;
-        push_fixed_str(&mut bytes, &process.module_string)?;
-        push_u16(&mut bytes, u16::from(process.initial));
-        push_u16(&mut bytes, process.restart);
-        push_fixed_str(&mut bytes, &process.service_id)?;
-        push_fixed_str(&mut bytes, &process.health_kind)?;
-        push_process_ref_list(&mut bytes, &process.start_after, &plan)?;
-        push_endpoint_requirement_list(&mut bytes, &process.requires_endpoints, &plan)?;
-        push_endpoint_ref_list(&mut bytes, &process.provides_endpoints, &plan)?;
+        push_fixed_str(&mut body, &process.name)?;
+        push_fixed_str(&mut body, &process.module_string)?;
+        push_u16(&mut body, u16::from(process.initial));
+        push_u16(&mut body, process.restart);
+        push_fixed_str(&mut body, &process.service_id)?;
+        push_fixed_str(&mut body, &process.health_kind)?;
+        push_process_ref_list(&mut body, &process.start_after, &plan)?;
+        push_endpoint_requirement_list(&mut body, &process.requires_endpoints, &plan)?;
+        push_endpoint_ref_list(&mut body, &process.provides_endpoints, &plan)?;
     }
 
     for endpoint in &plan.endpoints {
-        push_fixed_str(&mut bytes, &endpoint.name)?;
+        push_fixed_str(&mut body, &endpoint.name)?;
     }
 
     for grant in &plan.grants {
-        push_u16(&mut bytes, process_index(&plan, &grant.process)? as u16);
-        push_u16(&mut bytes, grant.object_kind);
-        push_u16(&mut bytes, object_index(&plan, grant)? as u16);
-        push_u16(&mut bytes, grant.cap_slot);
-        push_u16(&mut bytes, grant.rights);
-        push_u16(&mut bytes, 0);
+        push_u16(&mut body, process_index(&plan, &grant.process)? as u16);
+        push_u16(&mut body, grant.object_kind);
+        push_u16(&mut body, object_index(&plan, grant)? as u16);
+        push_u16(&mut body, grant.cap_slot);
+        push_u16(&mut body, grant.rights);
+        push_u16(&mut body, 0);
     }
 
     for object in &plan.store_objects {
-        push_fixed_str(&mut bytes, &object.id)?;
-        push_fixed_str(&mut bytes, &object.module_string)?;
-        push_fixed_str(&mut bytes, &object.hash)?;
-        push_u64(&mut bytes, object.size);
+        push_fixed_str(&mut body, &object.id)?;
+        push_fixed_str(&mut body, &object.module_string)?;
+        push_fixed_str(&mut body, &object.hash)?;
+        push_u64(&mut body, object.size);
     }
 
     for state in &plan.state_volumes {
-        push_fixed_str(&mut bytes, &state.id)?;
+        push_fixed_str(&mut body, &state.id)?;
     }
 
     for port in &plan.network_ports {
-        push_fixed_str(&mut bytes, &port.id)?;
+        push_fixed_str(&mut body, &port.id)?;
     }
 
-    Ok(bytes)
+    wrap_v1(manifest, &plan, &body)
 }
 
 pub fn summary(manifest: &GenerationManifest, output_path: &str, byte_len: usize) -> String {
@@ -111,7 +138,7 @@ pub fn summary(manifest: &GenerationManifest, output_path: &str, byte_len: usize
 
     format!(
         "wrote {output_path}\n\
-         format: KrustBootManifest v3\n\
+         format: KrustBoot Manifest v1\n\
          generation: {}\n\
          parent_generation: {}\n\
          boot_modules: {}\n\
@@ -132,6 +159,51 @@ pub fn summary(manifest: &GenerationManifest, output_path: &str, byte_len: usize
         plan.state_volumes.len(),
         plan.network_ports.len()
     )
+}
+
+pub fn corrupt(bytes: &[u8], mode: &str) -> Result<Vec<u8>, String> {
+    let mut out = bytes.to_vec();
+    match mode {
+        "truncated" => {
+            out.truncate(V1_HEADER_SIZE / 2);
+        }
+        "bad-magic" => {
+            let first = out
+                .first_mut()
+                .ok_or_else(|| "cannot corrupt empty KrustBoot manifest".to_owned())?;
+            *first = b'X';
+        }
+        "unsupported-version" => {
+            if out.len() < 18 {
+                return Err("KrustBoot manifest is too short to corrupt version".to_owned());
+            }
+            out[16..18].copy_from_slice(&u16::MAX.to_le_bytes());
+        }
+        "out-of-bounds-record" => {
+            if out.len() < V1_HEADER_SIZE + V1_RECORD_SIZE {
+                return Err("KrustBoot manifest is too short to corrupt record table".to_owned());
+            }
+            let bad_offset = (out.len() as u32).saturating_add(4096);
+            out[V1_HEADER_SIZE + 4..V1_HEADER_SIZE + 8].copy_from_slice(&bad_offset.to_le_bytes());
+            rewrite_v1_checksum(&mut out)?;
+        }
+        "raw-compact" => {
+            if out.len() < V1_PAYLOAD_OFFSET {
+                return Err("KrustBoot manifest is too short to unwrap compact payload".to_owned());
+            }
+            out = out[V1_PAYLOAD_OFFSET..].to_vec();
+        }
+        "missing-provider" => {
+            corrupt_missing_provider(&mut out)?;
+            rewrite_v1_checksum(&mut out)?;
+        }
+        other => {
+            return Err(format!(
+                "unknown KrustBoot corruption mode {other}; expected truncated, bad-magic, unsupported-version, out-of-bounds-record, raw-compact, or missing-provider"
+            ));
+        }
+    }
+    Ok(out)
 }
 
 pub fn explain(manifest: &GenerationManifest) -> Result<String, String> {
@@ -1180,6 +1252,227 @@ fn push_u16(bytes: &mut Vec<u8>, value: u16) {
 
 fn push_u64(bytes: &mut Vec<u8>, value: u64) {
     bytes.extend_from_slice(&value.to_le_bytes());
+}
+
+struct BodySections {
+    generation: (usize, usize),
+    boot_modules: (usize, usize),
+    processes: (usize, usize),
+    endpoints: (usize, usize),
+    grants: (usize, usize),
+    store_objects: (usize, usize),
+    state_volumes: (usize, usize),
+    network_ports: (usize, usize),
+}
+
+fn wrap_v1(manifest: &GenerationManifest, plan: &BootPlan, body: &[u8]) -> Result<Vec<u8>, String> {
+    let sections = BodySections::new(plan);
+    let record_table_offset = V1_HEADER_SIZE;
+    let payload_offset = V1_HEADER_SIZE + V1_RECORD_COUNT * V1_RECORD_SIZE;
+    let total_size = payload_offset
+        .checked_add(body.len())
+        .ok_or_else(|| "KrustBoot v1 manifest size overflow".to_owned())?;
+    let total_size_u32 = u32::try_from(total_size)
+        .map_err(|_| "KrustBoot v1 manifest is too large for u32 total_size".to_owned())?;
+
+    let mut bytes = Vec::with_capacity(total_size);
+    bytes.extend_from_slice(V1_MAGIC);
+    push_u16(&mut bytes, V1_VERSION);
+    push_u16(&mut bytes, V1_HEADER_SIZE as u16);
+    push_u32(&mut bytes, total_size_u32);
+    push_u32(&mut bytes, record_table_offset as u32);
+    push_u16(&mut bytes, V1_RECORD_COUNT as u16);
+    push_u16(&mut bytes, 0);
+    push_u32(&mut bytes, 0);
+    push_fixed_str(&mut bytes, &manifest.generation.id)?;
+    push_fixed_str(
+        &mut bytes,
+        manifest.generation.parent.as_deref().unwrap_or_default(),
+    )?;
+    debug_assert_eq!(bytes.len(), V1_HEADER_SIZE);
+
+    push_record(
+        &mut bytes,
+        RECORD_BOOT_MODULE,
+        0,
+        payload_offset + sections.boot_modules.0,
+        sections.boot_modules.1,
+    )?;
+    push_record(
+        &mut bytes,
+        RECORD_PROCESS,
+        0,
+        payload_offset + sections.processes.0,
+        sections.processes.1,
+    )?;
+    push_record(
+        &mut bytes,
+        RECORD_ENDPOINT,
+        0,
+        payload_offset + sections.endpoints.0,
+        sections.endpoints.1,
+    )?;
+    push_record(
+        &mut bytes,
+        RECORD_GRANT,
+        0,
+        payload_offset + sections.grants.0,
+        sections.grants.1,
+    )?;
+    push_record(
+        &mut bytes,
+        RECORD_STORE_OBJECT,
+        0,
+        payload_offset + sections.store_objects.0,
+        sections.store_objects.1,
+    )?;
+    push_record(
+        &mut bytes,
+        RECORD_STATE_VOLUME,
+        0,
+        payload_offset + sections.state_volumes.0,
+        sections.state_volumes.1,
+    )?;
+    push_record(&mut bytes, RECORD_TIMER, 0, payload_offset, 0)?;
+    push_record(
+        &mut bytes,
+        RECORD_GENERATION,
+        0,
+        payload_offset + sections.generation.0,
+        sections.generation.1,
+    )?;
+    push_record(
+        &mut bytes,
+        RECORD_POLICY,
+        0,
+        payload_offset + sections.network_ports.0,
+        sections.network_ports.1,
+    )?;
+    debug_assert_eq!(bytes.len(), payload_offset);
+
+    bytes.extend_from_slice(body);
+    rewrite_v1_checksum(&mut bytes)?;
+    Ok(bytes)
+}
+
+impl BodySections {
+    fn new(plan: &BootPlan) -> Self {
+        let generation = (32, STRING_LEN * 2);
+        let boot_modules = (
+            COMPACT_HEADER_SIZE,
+            plan.boot_modules.len() * BOOT_MODULE_RECORD_LEN,
+        );
+        let processes = (
+            boot_modules.0 + boot_modules.1,
+            plan.processes.len() * PROCESS_RECORD_LEN,
+        );
+        let endpoints = (
+            processes.0 + processes.1,
+            plan.endpoints.len() * ENDPOINT_RECORD_LEN,
+        );
+        let grants = (
+            endpoints.0 + endpoints.1,
+            plan.grants.len() * GRANT_RECORD_LEN,
+        );
+        let store_objects = (
+            grants.0 + grants.1,
+            plan.store_objects.len() * STORE_OBJECT_RECORD_LEN,
+        );
+        let state_volumes = (
+            store_objects.0 + store_objects.1,
+            plan.state_volumes.len() * STATE_VOLUME_RECORD_LEN,
+        );
+        let network_ports = (
+            state_volumes.0 + state_volumes.1,
+            plan.network_ports.len() * NETWORK_PORT_RECORD_LEN,
+        );
+
+        Self {
+            generation,
+            boot_modules,
+            processes,
+            endpoints,
+            grants,
+            store_objects,
+            state_volumes,
+            network_ports,
+        }
+    }
+}
+
+fn push_record(
+    bytes: &mut Vec<u8>,
+    kind: u16,
+    id: u16,
+    offset: usize,
+    length: usize,
+) -> Result<(), String> {
+    let offset = u32::try_from(offset)
+        .map_err(|_| "KrustBoot v1 record offset does not fit in u32".to_owned())?;
+    let length = u32::try_from(length)
+        .map_err(|_| "KrustBoot v1 record length does not fit in u32".to_owned())?;
+    push_u16(bytes, kind);
+    push_u16(bytes, id);
+    push_u32(bytes, offset);
+    push_u32(bytes, length);
+    Ok(())
+}
+
+fn push_u32(bytes: &mut Vec<u8>, value: u32) {
+    bytes.extend_from_slice(&value.to_le_bytes());
+}
+
+fn rewrite_v1_checksum(bytes: &mut [u8]) -> Result<(), String> {
+    if bytes.len() < V1_CHECKSUM_OFFSET + 4 {
+        return Err("KrustBoot v1 manifest is too short for checksum".to_owned());
+    }
+    bytes[V1_CHECKSUM_OFFSET..V1_CHECKSUM_OFFSET + 4].copy_from_slice(&0u32.to_le_bytes());
+    let checksum = v1_checksum(bytes);
+    bytes[V1_CHECKSUM_OFFSET..V1_CHECKSUM_OFFSET + 4].copy_from_slice(&checksum.to_le_bytes());
+    Ok(())
+}
+
+fn corrupt_missing_provider(bytes: &mut [u8]) -> Result<(), String> {
+    if bytes.len() < V1_PAYLOAD_OFFSET + COMPACT_HEADER_SIZE {
+        return Err("KrustBoot manifest is too short to remove providers".to_owned());
+    }
+    let payload = V1_PAYLOAD_OFFSET;
+    let boot_modules = read_u16_at(bytes, payload + 18)? as usize;
+    let processes = read_u16_at(bytes, payload + 20)? as usize;
+    let process_base = payload + COMPACT_HEADER_SIZE + boot_modules * BOOT_MODULE_RECORD_LEN;
+    let provides_count_offset =
+        STRING_LEN * 4 + 4 + PROCESS_REF_LIST_LEN + ENDPOINT_REQUIREMENT_LIST_LEN;
+    let mut index = 0;
+    while index < processes {
+        let offset = process_base + index * PROCESS_RECORD_LEN + provides_count_offset;
+        if offset + 2 > bytes.len() {
+            return Err("KrustBoot process record is out of bounds".to_owned());
+        }
+        bytes[offset..offset + 2].copy_from_slice(&0u16.to_le_bytes());
+        index += 1;
+    }
+    Ok(())
+}
+
+fn read_u16_at(bytes: &[u8], offset: usize) -> Result<u16, String> {
+    if offset + 2 > bytes.len() {
+        return Err("KrustBoot manifest is too short for u16 read".to_owned());
+    }
+    Ok(u16::from_le_bytes([bytes[offset], bytes[offset + 1]]))
+}
+
+fn v1_checksum(bytes: &[u8]) -> u32 {
+    let mut hash = 0x811c_9dc5u32;
+    for (index, byte) in bytes.iter().copied().enumerate() {
+        let value = if (V1_CHECKSUM_OFFSET..V1_CHECKSUM_OFFSET + 4).contains(&index) {
+            0
+        } else {
+            byte
+        };
+        hash ^= value as u32;
+        hash = hash.wrapping_mul(16_777_619);
+    }
+    hash
 }
 
 fn push_fixed_str(bytes: &mut Vec<u8>, value: &str) -> Result<(), String> {

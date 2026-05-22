@@ -1,6 +1,7 @@
 #![no_std]
 #![no_main]
 
+mod arena;
 mod boot_manifest;
 mod capability;
 mod elf;
@@ -104,6 +105,7 @@ fn print_boot_info() {
         return;
     };
     run_capability_table_demo(&allocator, heap);
+    run_typed_arena_demo(heap);
     run_native_boot(&mut allocator, &boot_manifests);
 }
 
@@ -384,6 +386,99 @@ fn run_capability_table_demo(allocator: &memory::FrameAllocator, heap: KernelHea
     }
 }
 
+#[derive(Clone, Copy)]
+struct DemoEndpoint {
+    _id: u64,
+}
+
+#[derive(Clone, Copy)]
+struct DemoProcess {
+    _id: u64,
+}
+
+fn run_typed_arena_demo(heap: KernelHeapMapping) {
+    let mut kernel_heap = arena::KernelHeap::new(heap.base, heap.length);
+    let endpoint_arena_mem = kernel_heap.alloc(4096, 4096);
+    let process_arena_mem = kernel_heap.alloc(4096, 4096);
+    if endpoint_arena_mem.is_none() || process_arena_mem.is_none() {
+        serial::write_str("Kernel heap arena allocation failed\n");
+        return;
+    }
+
+    let mut endpoints = arena::TypedArena::<DemoEndpoint, 32>::new();
+    let mut processes = arena::TypedArena::<DemoProcess, 32>::new();
+    let mut endpoint_handles = [None; 32];
+    let mut process_handles = [None; 32];
+
+    let mut index = 0;
+    while index < 32 {
+        endpoint_handles[index] = match endpoints.alloc(DemoEndpoint { _id: index as u64 }) {
+            Ok(handle) => Some(handle),
+            Err(_) => {
+                serial::write_str("Typed endpoint arena failed before 32 allocations\n");
+                return;
+            }
+        };
+        process_handles[index] = match processes.alloc(DemoProcess { _id: index as u64 }) {
+            Ok(handle) => Some(handle),
+            Err(_) => {
+                serial::write_str("Typed process arena failed before 32 allocations\n");
+                return;
+            }
+        };
+        index += 1;
+    }
+
+    if endpoints.alloc(DemoEndpoint { _id: 99 }).is_ok()
+        || processes.alloc(DemoProcess { _id: 99 }).is_ok()
+    {
+        serial::write_str("Typed arena capacity failure test failed\n");
+        return;
+    }
+
+    let Some(freed_endpoint) = endpoint_handles[7] else {
+        serial::write_str("Typed endpoint arena missing handle\n");
+        return;
+    };
+    let Some(freed_process) = process_handles[7] else {
+        serial::write_str("Typed process arena missing handle\n");
+        return;
+    };
+    if endpoints.free(freed_endpoint).is_err() || processes.free(freed_process).is_err() {
+        serial::write_str("Typed arena free failed\n");
+        return;
+    }
+    let reused_endpoint = match endpoints.alloc(DemoEndpoint { _id: 77 }) {
+        Ok(handle) => handle,
+        Err(_) => {
+            serial::write_str("Typed endpoint arena reuse failed\n");
+            return;
+        }
+    };
+    let reused_process = match processes.alloc(DemoProcess { _id: 77 }) {
+        Ok(handle) => handle,
+        Err(_) => {
+            serial::write_str("Typed process arena reuse failed\n");
+            return;
+        }
+    };
+
+    if reused_endpoint.index() == freed_endpoint.index()
+        && reused_process.index() == freed_process.index()
+        && endpoints.live() == 32
+        && processes.live() == 32
+    {
+        serial::write_str("Kernel heap arena allocation ok\n");
+        serial::write_str("Typed endpoint arena created 32 endpoints\n");
+        serial::write_str("Typed process arena created 32 processes\n");
+        serial::write_str("Typed arena free and reuse ok\n");
+        serial::write_str("Typed arena allocation failure returned controlled error\n");
+        serial::write_str("Typed object arenas no silent overwrite ok\n");
+    } else {
+        serial::write_str("Typed arena reuse mismatch\n");
+    }
+}
+
 fn run_native_boot(allocator: &mut memory::FrameAllocator, boot_manifests: &BootManifests) {
     let Some(config) = prepare_native_boot_config(
         allocator,
@@ -463,15 +558,16 @@ fn prepare_native_boot_config(
 
     let config = unsafe { &mut *config_slot.0.get() };
     *config = ipc::BootRuntimeConfig::new();
+    config.set_generation_id(boot_manifest.generation_id());
     build_boot_runtime_config(boot_manifest, &images, &restart_images, config)?;
-    let Some(manifest_module) = find_module_by_string(manifest_module_string) else {
+    let Some(_manifest_module) = find_module_by_string(manifest_module_string) else {
         serial::write_str("KrustBoot runtime init failed: manifest module missing\n");
         return None;
     };
     config.set_manifest_module(ipc::BootModuleConfig {
         name: manifest_module_name,
-        base: manifest_module.address as u64,
-        length: manifest_module.size,
+        base: boot_manifest.source_base(),
+        length: boot_manifest.source_len(),
     });
     Some(unsafe { &*config_slot.0.get() })
 }
@@ -834,6 +930,13 @@ fn print_boot_manifest(manifest: &boot_manifest::Manifest<'static>) {
     serial::write_str("KrustBoot manifest generation: ");
     serial::write_str(manifest.generation_id());
     serial::write_str("\n");
+    if manifest.layout_version() != 0 {
+        serial::write_str("KrustBoot Manifest v");
+        serial::write_u64_dec(manifest.layout_version() as u64);
+        serial::write_str(" records: ");
+        serial::write_u64_dec(manifest.record_count() as u64);
+        serial::write_str("\n");
+    }
     if !manifest.parent_generation_id().is_empty() {
         serial::write_str("KrustBoot parent generation: ");
         serial::write_str(manifest.parent_generation_id());
@@ -1112,5 +1215,8 @@ fn print_boot_manifest_error(error: boot_manifest::ParseError) {
         boot_manifest::ParseError::InvalidRights => serial::write_str("invalid rights"),
         boot_manifest::ParseError::InvalidObjectKind => serial::write_str("invalid object kind"),
         boot_manifest::ParseError::TrailingBytes => serial::write_str("trailing bytes"),
+        boot_manifest::ParseError::BadChecksum => serial::write_str("bad checksum"),
+        boot_manifest::ParseError::BadRecordTable => serial::write_str("bad record table"),
+        boot_manifest::ParseError::OutOfBoundsRecord => serial::write_str("out-of-bounds record"),
     }
 }

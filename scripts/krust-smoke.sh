@@ -48,6 +48,7 @@ required_lines='
 Krust Kernel booted
 Limine memory map entries:
 KrustBoot manifest generation: gen:hello-0001
+KrustBoot Manifest v1 records: 9
 KrustBoot boot modules: 9
 KrustBoot processes: 9
 KrustBoot endpoints: 3
@@ -91,6 +92,12 @@ network_port[0] id=cap:net.tcp.8080
 Physical allocator demo ok
 Virtual memory demo ok
 Capability table demo ok
+Kernel heap arena allocation ok
+Typed endpoint arena created 32 endpoints
+Typed process arena created 32 processes
+Typed arena free and reuse ok
+Typed arena allocation failure returned controlled error
+Typed object arenas no silent overwrite ok
 IDT initialized: #UD #GP #PF
 Process table entries: 9
 Endpoint table entries: 3
@@ -109,6 +116,7 @@ process[8] id=9 name=flaky-service state=declared
 proc=vertex-init cap[0] boot-module=krustboot-manifest rights=read
 proc=vertex-init cap[1] endpoint=serial-log rights=send
 proc=vertex-init cap[2] process-control=process-control rights=control
+proc=vertex-init cap[2] process-control=process-control rights=control|allocate|delegate|revoke
 proc=vertex-init cap[3] endpoint=readiness rights=receive
 proc=vertex-init cap[4] endpoint=log-sink rights=send|receive
 proc=echo cap[3] network-port=cap:net.tcp.8080 rights=listen
@@ -135,6 +143,10 @@ vertex-init grants: 18
 vertex-init network ports: 1
 vertex-init store objects: 1
 vertex-init state volumes: 1
+service with quota=1 endpoint can create one endpoint
+second endpoint creation fails
+init can delegate smaller quota
+delegated quota cannot exceed parent quota
 vertex-init activation plan:
   1. logd
   2. netstack
@@ -152,10 +164,20 @@ vertex-init starting service: netstack
 Krust process start accepted: proc=vertex-init target=netstack
 vertex-init derives endpoint cap for echo from endpoint[2] rights=send
 Capability derive accepted: proc=vertex-init parent=4 new=31 rights=send
+Capability inspect: proc=vertex-init
 Capability transfer accepted: proc=vertex-init target=echo slot=0 rights=send
 vertex-init starting service: echo
 Krust process start accepted: proc=vertex-init target=echo
 echo sent message to logd
+service with no allocation authority cannot create endpoint
+Capability inspect: proc=echo
+cap inspect shows parent chain
+Capability copy accepted: proc=echo
+cap copy preserves source slot
+Capability move accepted: proc=echo
+cap move removes source slot
+Capability revoke accepted: proc=echo
+echo send after revoke rejected
 logd received: hello from echo
 negative test: echo receive rejected: bad capability
 echo read rejected: bad capability
@@ -255,7 +277,7 @@ while [ "$attempt" -le "$QEMU_ATTEMPTS" ]; do
     if check_transcript; then
         cleanup
         pid=
-        echo "smoke ok: Krust completed manifest-driven activation, readiness, cap flow, service-local store/state/timer access, restart, and native service activation"
+        echo "smoke ok: Krust completed manifest v1, typed arenas, cap lifecycle, quotas, service-local store/state/timer access, restart, and native service activation"
         exit 0
     fi
 
@@ -265,7 +287,7 @@ done
 
 cleanup
 pid=
-echo "smoke failed: serial output did not contain the full M14-M24 native activation transcript after $QEMU_ATTEMPTS checks"
+echo "smoke failed: serial output did not contain the full M14-M29 native activation transcript after $QEMU_ATTEMPTS checks"
 echo "serial log: $SERIAL_LOG"
 if [ -n "$missing_required" ]; then
     echo "missing required transcript lines:"

@@ -32,6 +32,7 @@ fn run(args: Vec<String>) -> Result<(), String> {
         "why" => why_cmd(&args[1..]),
         "materialize-demo" => materialize_demo_cmd(&args[1..]),
         "compile-boot-manifest" => compile_boot_manifest_cmd(&args[1..]),
+        "corrupt-boot-manifest" => corrupt_boot_manifest_cmd(&args[1..]),
         "explain-krustboot" => explain_krustboot_cmd(&args[1..]),
         "activate" => activate_cmd(&args[1..]),
         "switch" => switch_cmd(&args[1..]),
@@ -171,6 +172,22 @@ fn compile_boot_manifest_cmd(args: &[String]) -> Result<(), String> {
     println!(
         "{}",
         krustboot::summary(&manifest, output_path, bytes.len())
+    );
+    Ok(())
+}
+
+fn corrupt_boot_manifest_cmd(args: &[String]) -> Result<(), String> {
+    let [mode, input_path, output_path] = args else {
+        return Err("usage: vertexctl corrupt-boot-manifest <mode> <input> <output>".to_owned());
+    };
+
+    let bytes =
+        fs::read(input_path).map_err(|source| format!("failed to read {input_path}: {source}"))?;
+    let corrupted = krustboot::corrupt(&bytes, mode)?;
+    fs::write(output_path, &corrupted)
+        .map_err(|source| format!("failed to write {output_path}: {source}"))?;
+    println!(
+        "wrote corrupted KrustBoot manifest: mode={mode} input={input_path} output={output_path}"
     );
     Ok(())
 }

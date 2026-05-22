@@ -5,9 +5,11 @@ native Krust QEMU/Limine milestone. It is intentionally small and unstable. Its
 current job is to boot native `vertex-init`, start a tiny declared service
 graph, and enforce explicit process-local capabilities.
 
-Milestone status: ABI v0 is the M14-M24 native activation ABI. M25 adds the
-release gate, tool checks, and test wrapper around that proof; it does not add
-or freeze syscall, capability, process, or IPC ABI surface.
+Milestone status: ABI v0 now covers the M14-M29 native activation and substrate
+proof. M25 adds the release gate. M26-M29 add Manifest v1 parsing, capability
+provenance/revocation, typed arena allocation checks, and resource quotas. This
+is still experimental and does not freeze syscall, capability, process, or IPC
+ABI surface.
 
 ## Machine ABI
 
@@ -64,6 +66,12 @@ entry into another userspace process. There is no timer preemption in ABI v0.
 | 18 | `SYS_ROLLBACK_GENERATION` | `arg0 = process_control_cap_slot`, `arg1 = generation_ptr`, `arg2 = len` | switches to the prepared fallback generation or returns error |
 | 19 | `SYS_IPC_RECV_TIMEOUT` | `arg0 = cap_slot`, `arg1 = user_ptr`, `arg2 = timeout_ms << 32 \| max_len` | byte count, `STATUS_TIMEOUT`, or error status |
 | 20 | `SYS_PROCESS_ATTEMPT` | none | current process start attempt count |
+| 21 | `SYS_CAP_REVOKE` | `arg0 = cap_slot` | status |
+| 22 | `SYS_CAP_INSPECT` | `arg0 = cap_slot` | parent capability id or error status |
+| 23 | `SYS_CAP_MOVE` | `arg0 = source_cap_slot`, `arg1 = target_cap_slot` | status |
+| 24 | `SYS_CAP_COPY` | `arg0 = source_cap_slot`, `arg1 = target_cap_slot`, `arg2 = rights_mask` | status |
+| 25 | `SYS_ENDPOINT_CREATE` | `arg0 = process_control_cap_slot`, `arg1 = target_cap_slot` | status |
+| 26 | `SYS_QUOTA_DELEGATE` | `arg0 = process_control_cap_slot`, `arg1 = target_process_index`, `arg2 = max_endpoints` | status |
 
 ## Return Status Values
 
@@ -102,13 +110,13 @@ becoming uncontrolled kernel faults.
 Capabilities are process-local. A capability slot number is meaningful only in
 the current process's capability space.
 
-Current M14-M24 layout:
+Current M14-M29 layout:
 
 ```text
 vertex-init:
   cap[0] = boot module krustboot-manifest, rights=read
   cap[1] = endpoint serial-log, rights=send
-  cap[2] = process-control object, rights=control
+  cap[2] = process-control object, rights=control|allocate|delegate|revoke
   cap[3] = endpoint readiness, rights=receive
   cap[4] = endpoint log-sink, rights=send|receive
   cap[5+] = additional delegated endpoint authorities, if the graph needs them
@@ -158,6 +166,8 @@ SYS_PROCESS_START requires cap[2] control rights to process-control.
 SYS_PROCESS_STATUS requires cap[2] control rights to process-control.
 SYS_ROLLBACK_GENERATION requires cap[2] control rights to process-control.
 SYS_CAP_TRANSFER requires a caller-supplied process-control cap slot and applies the packed rights mask.
+SYS_ENDPOINT_CREATE requires allocate rights on process-control and available endpoint quota.
+SYS_QUOTA_DELEGATE requires delegate rights on process-control and cannot exceed the caller quota.
 SYS_OBJECT_READ requires read rights on a store-object cap.
 SYS_STATE_WRITE requires write rights on a state-volume cap.
 SYS_STATE_READ requires read rights on a state-volume cap.
@@ -167,6 +177,40 @@ SYS_SLEEP_MS requires control rights on a timer cap.
 Native network-port objects currently grant bind/listen authority to declared
 services; the proof path records and enforces the capability object, but does
 not yet include a network driver syscall that consumes it.
+
+Capability records carry kernel-owned metadata:
+
+```text
+cap_id
+object_id
+rights
+owner_process
+parent_cap_id
+generation_id
+delegated_by
+revoked
+```
+
+`SYS_CAP_DERIVE`, `SYS_CAP_TRANSFER`, and `SYS_CAP_COPY` create child
+capabilities with attenuated rights and a parent id. `SYS_CAP_MOVE` preserves the
+capability id while clearing the source slot. `SYS_CAP_REVOKE` marks a cap id and
+its descendants revoked; later lookup rejects revoked caps and caps with revoked
+ancestors. `SYS_CAP_INSPECT` prints the current metadata to the serial transcript
+and returns the parent capability id.
+
+Process-control authority now distinguishes resource rights:
+
+```text
+control
+allocate
+delegate
+revoke
+```
+
+The initial process starts with endpoint quota `1`. Services start with endpoint
+quota `0` unless delegated a smaller quota through `SYS_QUOTA_DELEGATE`.
+`SYS_ENDPOINT_CREATE` consumes endpoint quota and installs a send/receive cap in
+the caller's requested slot.
 
 `SYS_ACTIVATE_GENERATION` remains the minimal M12 authority proof. The current
 native path uses `SYS_PROCESS_START`, `SYS_PROCESS_STATUS`, and
@@ -198,6 +242,7 @@ stack_top
 state
 capability space
 optional saved syscall frame
+resource quota counters
 ```
 
 Scheduling is cooperative and round-robin. A context switch currently happens
@@ -304,6 +349,15 @@ SYS_CAP_DERIVE(cap[4], cap[31], send)
 SYS_CAP_TRANSFER(cap[2], echo_process_index, packed(cap[31], target_cap[0], send))
   transfers the attenuated endpoint authority before echo starts
 
+SYS_CAP_INSPECT(cap[31])
+  prints provenance metadata for the derived capability
+
+SYS_ENDPOINT_CREATE(cap[2], cap[29])
+  creates one dynamic endpoint when endpoint quota is available
+
+SYS_QUOTA_DELEGATE(cap[2], target_process_index, max_endpoints)
+  delegates a bounded endpoint quota to a target process
+
 SYS_PROCESS_STATUS(cap[2], process_index, 0)
   observes exits for supervision and restart policy
 
@@ -333,9 +387,10 @@ fallback-generation.krustboot
 userspace ELF modules
 ```
 
-Krust consumes the compact KrustBoot manifest rather than parsing full JSON in
-kernel space. Hosted `vertexctl compile-boot-manifest` is responsible for
-converting source Vertex JSON into the compact boot format.
+Krust consumes a KrustBoot Manifest v1 wrapper around the compact payload rather
+than parsing full JSON in kernel space. Hosted `vertexctl compile-boot-manifest`
+is responsible for converting source Vertex JSON into the versioned boot
+artifact.
 
 The compact manifest describes:
 
@@ -351,12 +406,20 @@ state_volumes
 network_ports
 ```
 
+Manifest v1 adds a fixed header, record table, checksum, and record bounds
+validation. The current record kinds are boot modules, processes, endpoints,
+grants, store objects, state volumes, timer, generation, and policy. The kernel
+requires the v1 wrapper at the boot-module boundary and rejects an unwrapped
+compact payload. After validating the wrapper, the kernel exposes the compact
+payload to `vertex-init` through cap[0] so existing userspace parsing stays
+small.
+
 Krust also creates fixed boot caps for native `vertex-init`:
 
 ```text
 cap[0] manifest module read
 cap[1] serial-log send
-cap[2] process-control control
+cap[2] process-control control|allocate|delegate|revoke
 cap[3] readiness receive
 cap[4+] endpoint authority for graph-delegated endpoints, one authority cap per
 declared endpoint beyond the fixed serial-log/readiness endpoints

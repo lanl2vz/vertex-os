@@ -5,6 +5,7 @@ pub const CAP_LOG: u64 = 1;
 pub const CAP_PROCESS_CONTROL: u64 = 2;
 pub const CAP_READINESS: u64 = 3;
 pub const CAP_ENDPOINT_AUTH_BASE: u64 = 4;
+pub const CAP_CREATED_ENDPOINT: u64 = 29;
 pub const CAP_DERIVED: u64 = 31;
 
 pub const STATUS_OK: u64 = 0;
@@ -26,6 +27,9 @@ const SYS_CAP_TRANSFER: u64 = 12;
 const SYS_PROCESS_STATUS: u64 = 17;
 const SYS_ROLLBACK_GENERATION: u64 = 18;
 const SYS_IPC_RECV_TIMEOUT: u64 = 19;
+const SYS_CAP_INSPECT: u64 = 22;
+const SYS_ENDPOINT_CREATE: u64 = 25;
+const SYS_QUOTA_DELEGATE: u64 = 26;
 
 pub fn read_manifest(buffer: &mut [u8]) -> u64 {
     syscall3(
@@ -92,6 +96,23 @@ pub fn cap_transfer(
         CAP_PROCESS_CONTROL,
         target_process_index,
         packed_transfer,
+    )
+}
+
+pub fn cap_inspect(slot: u64) -> u64 {
+    syscall3(SYS_CAP_INSPECT, slot, 0, 0)
+}
+
+pub fn endpoint_create(cap_slot: u64) -> u64 {
+    syscall3(SYS_ENDPOINT_CREATE, CAP_PROCESS_CONTROL, cap_slot, 0)
+}
+
+pub fn quota_delegate(target_process_index: u64, max_endpoints: u64) -> u64 {
+    syscall3(
+        SYS_QUOTA_DELEGATE,
+        CAP_PROCESS_CONTROL,
+        target_process_index,
+        max_endpoints,
     )
 }
 

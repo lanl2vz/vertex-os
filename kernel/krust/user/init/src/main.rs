@@ -91,6 +91,7 @@ pub extern "C" fn _start() -> ! {
     log_count(b"vertex-init store objects: ", store_objects);
     log_count(b"vertex-init state volumes: ", state_volumes);
     log_count(b"vertex-init network ports: ", network_ports);
+    run_resource_quota_tests(processes, parent_generation);
 
     let mut order = [0u16; MAX_PROCESSES];
     let Some(order_len) = activation_plan(
@@ -413,6 +414,10 @@ fn transfer_endpoint_requirements(
             log(b"vertex-init cap derive failed");
             activation_failed(parent_generation);
         }
+        if sys::cap_inspect(sys::CAP_DERIVED) == sys::STATUS_BAD_CAPABILITY {
+            log(b"vertex-init cap inspect failed");
+            activation_failed(parent_generation);
+        }
         if sys::cap_transfer(
             process_index as u64,
             sys::CAP_DERIVED,
@@ -428,6 +433,35 @@ fn transfer_endpoint_requirements(
             activation_failed(parent_generation);
         }
         requirement_index += 1;
+    }
+}
+
+fn run_resource_quota_tests(processes: u16, parent_generation: &[u8]) {
+    if sys::endpoint_create(sys::CAP_CREATED_ENDPOINT) != sys::STATUS_OK {
+        log(b"vertex-init endpoint quota create failed");
+        activation_failed(parent_generation);
+    }
+    log(b"service with quota=1 endpoint can create one endpoint");
+
+    if sys::endpoint_create(sys::CAP_CREATED_ENDPOINT - 1) == sys::STATUS_BAD_CAPABILITY {
+        log(b"second endpoint creation fails");
+    } else {
+        log(b"vertex-init endpoint quota second create failed");
+        activation_failed(parent_generation);
+    }
+
+    if processes > 1 && sys::quota_delegate(1, 1) == sys::STATUS_OK {
+        log(b"init can delegate smaller quota");
+    } else {
+        log(b"vertex-init quota delegate failed");
+        activation_failed(parent_generation);
+    }
+
+    if processes > 1 && sys::quota_delegate(1, 2) == sys::STATUS_BAD_CAPABILITY {
+        log(b"delegated quota cannot exceed parent quota");
+    } else {
+        log(b"vertex-init quota over-delegate failed");
+        activation_failed(parent_generation);
     }
 }
 

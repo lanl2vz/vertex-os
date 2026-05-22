@@ -26,6 +26,7 @@ TIMER_ELF := $(TIMER_TARGET_DIR)/timer
 FLAKY_ELF := $(FLAKY_TARGET_DIR)/flaky
 VERTEX_MANIFEST ?= ../../examples/hello-generation.vertex.json
 FALLBACK_MANIFEST ?=
+KRUSTBOOT_CORRUPT ?=
 
 QEMU ?= qemu-system-x86_64
 QEMU_EXTRA ?=
@@ -55,6 +56,9 @@ user:
 boot-manifest:
 	mkdir -p $(BUILD_DIR)
 	$(VERTEXCTL) compile-boot-manifest $(VERTEX_MANIFEST) $(BOOT_MANIFEST)
+	@if [ -n "$(KRUSTBOOT_CORRUPT)" ]; then \
+		$(VERTEXCTL) corrupt-boot-manifest $(KRUSTBOOT_CORRUPT) $(BOOT_MANIFEST) $(BOOT_MANIFEST); \
+	fi
 	@if [ -n "$(FALLBACK_MANIFEST)" ]; then \
 		$(VERTEXCTL) compile-boot-manifest $(FALLBACK_MANIFEST) $(FALLBACK_BOOT_MANIFEST); \
 	else \
@@ -117,7 +121,7 @@ doctor: check-tools check-rust-target check-limine-dir
 	@echo "limine: $$(command -v $(LIMINE))"
 	@echo "xorriso: $$(command -v $(XORRISO))"
 	@echo "LIMINE_DIR: $(LIMINE_DIR)"
-	@echo "Krust M14-M25 toolchain is ready."
+	@echo "Krust M14-M29 toolchain is ready."
 
 release-gate:
 	../../scripts/krust-release-gate.sh

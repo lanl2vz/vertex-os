@@ -7,6 +7,8 @@ use core::panic::PanicInfo;
 
 const CAP_LOG_SINK: u64 = 0;
 const CAP_SERIAL_LOG: u64 = 1;
+const CAP_COPY: u64 = 28;
+const CAP_MOVED: u64 = 27;
 
 #[unsafe(link_section = ".text._start")]
 #[unsafe(no_mangle)]
@@ -19,6 +21,50 @@ pub extern "C" fn _start() -> ! {
         log(b"echo restart retained delegated log cap");
     } else {
         log(b"echo sent message to logd");
+    }
+
+    if sys::endpoint_create(CAP_LOG_SINK, 26) == sys::STATUS_BAD_CAPABILITY {
+        log(b"service with no allocation authority cannot create endpoint");
+    } else {
+        log(b"echo endpoint create denial failed");
+        sys::exit(1);
+    }
+
+    if sys::cap_inspect(CAP_LOG_SINK) == sys::STATUS_BAD_CAPABILITY {
+        log(b"echo cap inspect failed");
+        sys::exit(1);
+    }
+    log(b"cap inspect shows parent chain");
+
+    if sys::cap_copy(CAP_LOG_SINK, CAP_COPY, sys::RIGHT_SEND) != sys::STATUS_OK {
+        log(b"echo cap copy failed");
+        sys::exit(1);
+    }
+    if sys::cap_inspect(CAP_LOG_SINK) == sys::STATUS_BAD_CAPABILITY {
+        log(b"echo cap copy did not preserve source");
+        sys::exit(1);
+    }
+    log(b"cap copy preserves source slot");
+
+    if sys::cap_move(CAP_COPY, CAP_MOVED) != sys::STATUS_OK {
+        log(b"echo cap move failed");
+        sys::exit(1);
+    }
+    if sys::cap_inspect(CAP_COPY) == sys::STATUS_BAD_CAPABILITY {
+        log(b"cap move removes source slot");
+    } else {
+        log(b"echo cap move source still valid");
+        sys::exit(1);
+    }
+    if sys::cap_revoke(CAP_MOVED) != sys::STATUS_OK {
+        log(b"echo cap revoke failed");
+        sys::exit(1);
+    }
+    if sys::ipc_send(CAP_MOVED, b"after revoke") == sys::STATUS_BAD_CAPABILITY {
+        log(b"echo send after revoke rejected");
+    } else {
+        log(b"echo send after revoke failed");
+        sys::exit(1);
     }
 
     let mut denied = [0u8; 8];

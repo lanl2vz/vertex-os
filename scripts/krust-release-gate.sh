@@ -4,7 +4,7 @@ set -eu
 ROOT_DIR=$(CDPATH= cd "$(dirname "$0")/.." && pwd)
 KRUST_DIR=${KRUST_DIR:-"$ROOT_DIR/kernel/krust"}
 LOG_DIR=${LOG_DIR:-"$KRUST_DIR/build/release-gate"}
-M25_CASES=${M25_CASES:-"m14 manifest-cycle bad-cap readiness-timeout rollback store-state timer restart"}
+KRUST_CASES=${KRUST_CASES:-"m14 manifest-cycle bad-cap readiness-timeout rollback store-state timer restart manifest-v1 cap-lifecycle typed-arenas quotas manifest-truncated manifest-bad-magic manifest-raw-compact manifest-unsupported-version manifest-oob-record manifest-missing-provider"}
 
 fail() {
     echo "error: $*" >&2
@@ -47,7 +47,7 @@ check_no_trailing_whitespace() {
 mkdir -p "$LOG_DIR"
 cd "$ROOT_DIR"
 
-step "checking M25 script and Makefile hygiene"
+step "checking Krust script and Makefile hygiene"
 check_script scripts/krust-smoke.sh
 check_script scripts/krust-test.sh
 check_script scripts/krust-release-gate.sh
@@ -57,7 +57,7 @@ check_no_trailing_whitespace scripts/krust-test.sh
 check_no_trailing_whitespace scripts/krust-release-gate.sh
 check_no_trailing_whitespace kernel/krust/Makefile
 
-step "checking M25 Rust and Markdown formatting"
+step "checking Krust Rust and Markdown formatting"
 run cargo fmt --all -- --check
 for manifest in "$KRUST_DIR"/Cargo.toml "$KRUST_DIR"/user/*/Cargo.toml; do
     run cargo fmt --manifest-path "$manifest" -- --check
@@ -67,14 +67,17 @@ check_no_trailing_whitespace docs/krust-milestones.md
 check_no_trailing_whitespace docs/krust-abi-v0.md
 check_no_trailing_whitespace kernel/krust/README.md
 
-step "checking M25 status documentation"
-require_doc_line README.md "M14-M25"
+step "checking Krust status documentation"
+require_doc_line README.md "M14-M29"
 require_doc_line README.md "scripts/krust-release-gate.sh"
-require_doc_line docs/krust-milestones.md "Current status: M14-M25"
+require_doc_line docs/krust-milestones.md "Current status: M14-M29"
 require_doc_line docs/krust-milestones.md "## M25: Reproducible Clean-Clone Release Gate"
 require_doc_line docs/krust-milestones.md "done: all M14-M24 QEMU tests are run from the gate"
-require_doc_line docs/krust-abi-v0.md "M25 adds the"
-require_doc_line kernel/krust/README.md "M25 Release Gate"
+require_doc_line docs/krust-milestones.md "done: M26-M29 manifest, capability, arena, quota, and malformed-manifest QEMU tests are run from the gate"
+require_doc_line docs/krust-milestones.md "done: unwrapped compact payload rejected"
+require_doc_line docs/krust-milestones.md "## M29: Resource Accounting And Quotas"
+require_doc_line docs/krust-abi-v0.md "M26-M29 add"
+require_doc_line kernel/krust/README.md "M26-M29 Substrate"
 require_doc_line kernel/krust/README.md "scripts/krust-release-gate.sh"
 
 step "cargo build --offline"
@@ -90,9 +93,9 @@ run make -C "$KRUST_DIR" doctor
 run make -C "$KRUST_DIR" clean
 run make -C "$KRUST_DIR" smoke
 
-for case_name in $M25_CASES; do
+for case_name in $KRUST_CASES; do
     run "$ROOT_DIR/scripts/krust-test.sh" "$case_name"
 done
 
 echo
-echo "M25 release gate ok: clean-clone Krust M14-M24 proof is repeatable."
+echo "Krust release gate ok: clean-clone M14-M29 proof is repeatable."

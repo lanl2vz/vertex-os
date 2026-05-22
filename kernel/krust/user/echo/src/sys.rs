@@ -2,6 +2,7 @@ use core::arch::asm;
 
 pub const STATUS_OK: u64 = 0;
 pub const STATUS_BAD_CAPABILITY: u64 = u64::MAX - 1;
+pub const RIGHT_SEND: u64 = 1 << 4;
 
 const SYS_EXIT: u64 = 2;
 const SYS_IPC_SEND: u64 = 3;
@@ -10,6 +11,11 @@ const SYS_LOG_WRITE: u64 = 7;
 const SYS_CAP_DROP: u64 = 11;
 const SYS_OBJECT_READ: u64 = 13;
 const SYS_PROCESS_ATTEMPT: u64 = 20;
+const SYS_CAP_REVOKE: u64 = 21;
+const SYS_CAP_INSPECT: u64 = 22;
+const SYS_CAP_MOVE: u64 = 23;
+const SYS_CAP_COPY: u64 = 24;
+const SYS_ENDPOINT_CREATE: u64 = 25;
 
 pub fn ipc_send(cap_slot: u64, message: &[u8]) -> u64 {
     syscall3(
@@ -40,6 +46,26 @@ pub fn log(cap_slot: u64, message: &[u8]) -> u64 {
 
 pub fn cap_drop(cap_slot: u64) -> u64 {
     syscall3(SYS_CAP_DROP, cap_slot, 0, 0)
+}
+
+pub fn cap_revoke(cap_slot: u64) -> u64 {
+    syscall3(SYS_CAP_REVOKE, cap_slot, 0, 0)
+}
+
+pub fn cap_inspect(cap_slot: u64) -> u64 {
+    syscall3(SYS_CAP_INSPECT, cap_slot, 0, 0)
+}
+
+pub fn cap_move(source_slot: u64, target_slot: u64) -> u64 {
+    syscall3(SYS_CAP_MOVE, source_slot, target_slot, 0)
+}
+
+pub fn cap_copy(source_slot: u64, target_slot: u64, rights: u64) -> u64 {
+    syscall3(SYS_CAP_COPY, source_slot, target_slot, rights)
+}
+
+pub fn endpoint_create(control_slot: u64, cap_slot: u64) -> u64 {
+    syscall3(SYS_ENDPOINT_CREATE, control_slot, cap_slot, 0)
 }
 
 pub fn object_read(cap_slot: u64, buffer: &mut [u8]) -> u64 {

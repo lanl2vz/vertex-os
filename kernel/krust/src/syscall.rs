@@ -31,6 +31,12 @@ const SYS_PROCESS_STATUS: u64 = 17;
 const SYS_ROLLBACK_GENERATION: u64 = 18;
 const SYS_IPC_RECV_TIMEOUT: u64 = 19;
 const SYS_PROCESS_ATTEMPT: u64 = 20;
+const SYS_CAP_REVOKE: u64 = 21;
+const SYS_CAP_INSPECT: u64 = 22;
+const SYS_CAP_MOVE: u64 = 23;
+const SYS_CAP_COPY: u64 = 24;
+const SYS_ENDPOINT_CREATE: u64 = 25;
+const SYS_QUOTA_DELEGATE: u64 = 26;
 
 const STATUS_OK: u64 = 0;
 const STATUS_BAD_CAPABILITY: u64 = u64::MAX - 1;
@@ -218,6 +224,30 @@ pub extern "C" fn krust_syscall_dispatch(
         SYS_PROCESS_ATTEMPT => match ipc::process_attempt() {
             Ok(attempt) => frame.rax = attempt,
             Err(error) => frame.rax = ipc_error_status("SYS_PROCESS_ATTEMPT", error),
+        },
+        SYS_CAP_REVOKE => match ipc::cap_revoke(arg0) {
+            Ok(()) => frame.rax = STATUS_OK,
+            Err(error) => frame.rax = ipc_error_status("SYS_CAP_REVOKE", error),
+        },
+        SYS_CAP_INSPECT => match ipc::cap_inspect(arg0) {
+            Ok(parent_cap_id) => frame.rax = parent_cap_id,
+            Err(error) => frame.rax = ipc_error_status("SYS_CAP_INSPECT", error),
+        },
+        SYS_CAP_MOVE => match ipc::cap_move(arg0, arg1) {
+            Ok(()) => frame.rax = STATUS_OK,
+            Err(error) => frame.rax = ipc_error_status("SYS_CAP_MOVE", error),
+        },
+        SYS_CAP_COPY => match ipc::cap_copy(arg0, arg1, arg2) {
+            Ok(()) => frame.rax = STATUS_OK,
+            Err(error) => frame.rax = ipc_error_status("SYS_CAP_COPY", error),
+        },
+        SYS_ENDPOINT_CREATE => match ipc::endpoint_create(arg0, arg1) {
+            Ok(()) => frame.rax = STATUS_OK,
+            Err(error) => frame.rax = ipc_error_status("SYS_ENDPOINT_CREATE", error),
+        },
+        SYS_QUOTA_DELEGATE => match ipc::quota_delegate(arg0, arg1, arg2) {
+            Ok(()) => frame.rax = STATUS_OK,
+            Err(error) => frame.rax = ipc_error_status("SYS_QUOTA_DELEGATE", error),
         },
         _ => {
             serial::write_str("Unknown userspace syscall: ");
