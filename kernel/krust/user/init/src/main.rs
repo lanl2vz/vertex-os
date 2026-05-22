@@ -23,7 +23,8 @@ const BOOT_MODULE_RECORD_LEN: usize = STRING_LEN * 2;
 const PROCESS_REF_COUNT: usize = 4;
 const REF_LIST_LEN: usize = 2 + PROCESS_REF_COUNT * 2;
 const ENDPOINT_REQUIREMENT_LIST_LEN: usize = 2 + PROCESS_REF_COUNT * 4;
-const PROCESS_RECORD_LEN: usize = STRING_LEN * 4 + 4 + REF_LIST_LEN * 2 + ENDPOINT_REQUIREMENT_LIST_LEN;
+const PROCESS_RECORD_LEN: usize =
+    STRING_LEN * 4 + 4 + REF_LIST_LEN * 2 + ENDPOINT_REQUIREMENT_LIST_LEN;
 const PROTOCOL_HEALTH_V0: u16 = 2;
 const MESSAGE_READY: u16 = 1;
 const ENVELOPE_LEN: usize = 16;
@@ -395,7 +396,8 @@ fn transfer_endpoint_requirements(
 ) {
     let offset = requires_offset(boot_modules, process_index);
     let count = ref_count(manifest, offset);
-    let has_provided_endpoint = ref_count(manifest, provides_offset(boot_modules, process_index)) > 0;
+    let has_provided_endpoint =
+        ref_count(manifest, provides_offset(boot_modules, process_index)) > 0;
     let mut requirement_index = 0;
     while requirement_index < count {
         let endpoint_index = endpoint_requirement_value(manifest, offset, requirement_index);
@@ -411,8 +413,12 @@ fn transfer_endpoint_requirements(
             log(b"vertex-init cap derive failed");
             activation_failed(parent_generation);
         }
-        if sys::cap_transfer(process_index as u64, sys::CAP_DERIVED, target_slot, sys_rights)
-            != sys::STATUS_OK
+        if sys::cap_transfer(
+            process_index as u64,
+            sys::CAP_DERIVED,
+            target_slot,
+            sys_rights,
+        ) != sys::STATUS_OK
         {
             log(b"vertex-init cap transfer failed");
             activation_failed(parent_generation);

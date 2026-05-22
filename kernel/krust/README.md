@@ -1,7 +1,7 @@
 # Krust Kernel
 
-Krust now covers the M14-M24 native graph-activation proof path. The planned
-M25-M40 substrate-hardening roadmap is tracked in
+Krust now covers the M14-M25 native graph-activation proof path and release
+gate. The planned M26-M40 substrate-hardening roadmap is tracked in
 `../../docs/krust-milestones.md`.
 
 The target is intentionally small:
@@ -103,7 +103,8 @@ and run:
 make doctor
 ```
 
-`make doctor` prints the resolved QEMU, Limine, xorriso, and Limine asset paths.
+`make doctor` prints the resolved Rust, QEMU, Limine, xorriso, and Limine asset
+paths, and checks that the `x86_64-unknown-none` Rust target is installed.
 
 ## Build
 
@@ -271,6 +272,29 @@ check is available from the repository root:
 ```sh
 scripts/krust-smoke.sh
 ```
+
+## M25 Release Gate
+
+Run the clean-clone gate from the repository root:
+
+```sh
+scripts/krust-release-gate.sh
+```
+
+Or from this directory:
+
+```sh
+make release-gate
+```
+
+The gate checks script executability and shell syntax, verifies Makefile recipe
+parsing, checks Rust formatting and milestone Markdown whitespace, confirms the
+M25 documentation anchors, runs `cargo build --offline`, validates
+`examples/hello-generation.vertex.json`, runs `make doctor`, rebuilds from
+`make clean`, runs `make smoke`, and then runs the M14-M24 QEMU cases: `m14`,
+`manifest-cycle`, `bad-cap`, `readiness-timeout`, `rollback`, `store-state`,
+`timer`, and `restart`. If the offline build fails, the gate prints the Cargo
+cache or vendoring prerequisite explicitly.
 
 The expected transcript includes:
 

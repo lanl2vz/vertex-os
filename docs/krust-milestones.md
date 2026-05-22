@@ -6,16 +6,17 @@ IR and graph semantics; Krust is the native enforcement path.
 
 ## Status Summary
 
-Current status: M14-M24 are implemented and smoke-tested under
+Current status: M14-M25 are implemented and smoke-tested under
 `qemu-system-x86_64` with Limine.
 
 ```sh
+scripts/krust-release-gate.sh
 scripts/krust-smoke.sh
 scripts/krust-test.sh manifest-cycle
 scripts/krust-test.sh rollback
 ```
 
-Next direction: M25-M40 harden the M14-M24 graph-activation proof into a
+Next direction: M26-M40 harden the M14-M24 graph-activation proof into a
 small, reliable, extensible capability microkernel substrate.
 
 ## M0: Serial Boot
@@ -816,7 +817,7 @@ M39  Reproducible build environment
 M40  Vertex Native Runtime ABI v1
 ```
 
-M25 is the immediate priority. M39 can run in parallel with M25-M28 because
+M26 is the immediate priority. M39 can run in parallel with M26-M28 because
 reproducible development tooling is part of the system story, not an afterthought.
 M31 may be implemented before M30 if interrupt-driven preemption exposes too
 much shared-state risk; fault containment is a smaller robustness step than full
@@ -824,41 +825,28 @@ scheduler preemption.
 
 ## M25: Reproducible Clean-Clone Release Gate
 
-Status: planned.
+Status: done.
 
 Goal: make the current M14-M24 proof boring and repeatable from a clean clone
 before adding new kernel mechanisms.
 
-The release gate should cover:
+The release gate covers:
 
 ```sh
-cargo build --offline
-target/debug/vertexctl validate examples/hello-generation.vertex.json
-cd kernel/krust
-make doctor
-make clean
-make smoke
-cd ../..
-scripts/krust-test.sh m14
-scripts/krust-test.sh manifest-cycle
-scripts/krust-test.sh bad-cap
-scripts/krust-test.sh readiness-timeout
-scripts/krust-test.sh rollback
-scripts/krust-test.sh store-state
-scripts/krust-test.sh timer
-scripts/krust-test.sh restart
+scripts/krust-release-gate.sh
 ```
 
 Acceptance criteria:
 
 ```text
-all scripts are formatted and executable
-all Makefile recipes are correctly tab-indented
-all M14-M24 QEMU tests pass from a clean clone
-all QEMU tests have bounded timeouts
-missing transcript lines produce clear failures
-README.md, docs/krust-milestones.md, docs/krust-abi-v0.md, and kernel/krust/README.md agree
-offline build either works from documented inputs or fails with an explicit cache/vendor prerequisite
+done: all release-gate scripts are shell-syntax checked, executable, and trailing-whitespace checked
+done: Rust formatting and milestone Markdown whitespace are checked by the gate
+done: Makefile recipes are parsed by make before the gate proceeds
+done: all M14-M24 QEMU tests are run from the gate
+done: all QEMU transcript checks have bounded polling windows
+done: missing and forbidden transcript lines are reported explicitly
+done: README.md, docs/krust-milestones.md, docs/krust-abi-v0.md, and kernel/krust/README.md agree
+done: offline build failure reports the Cargo cache/vendor prerequisite
 ```
 
 This milestone protects the current proof from becoming fragile as the kernel
@@ -1390,12 +1378,9 @@ base for the next phase.
 
 ## Immediate Issue List
 
-Create these first:
+Create these next:
 
 ```text
-M25.1  Fix and verify shell, Makefile, Rust, and Markdown formatting
-M25.2  Clean-clone test gate for all M14-M24 scripts
-M25.3  Add CI-style smoke/test wrapper
 M26.1  Define KrustBoot Manifest v1 binary layout
 M26.2  Add manifest bounds and checksum/hash validation
 M26.3  Add invalid-manifest QEMU tests
@@ -1435,5 +1420,5 @@ revoke, and persist declared generation graphs under explicit authority.
 
 M13 proved that native services can run under explicit authority. M14-M24 prove
 that the graph itself decides which native services exist, when they start,
-what they receive, and why they are allowed to communicate. M25-M40 should make
+what they receive, and why they are allowed to communicate. M26-M40 should make
 that model reliable enough to become the long-lived Vertex native runtime base.

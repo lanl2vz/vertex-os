@@ -8,6 +8,8 @@ ISO_IMAGE=${ISO_IMAGE:-"$BUILD_DIR/krust.iso"}
 SERIAL_LOG=${SERIAL_LOG:-"$BUILD_DIR/serial.log"}
 QEMU=${QEMU:-qemu-system-x86_64}
 QEMU_EXTRA=${QEMU_EXTRA:-}
+QEMU_ATTEMPTS=${QEMU_ATTEMPTS:-20}
+QEMU_POLL_SECONDS=${QEMU_POLL_SECONDS:-1}
 SKIP_BUILD=0
 
 if [ "${1:-}" = "--no-build" ]; then
@@ -206,47 +208,73 @@ State write accepted: proc=vertex-init
 Timer sleep accepted: proc=vertex-init
 '
 
-for _ in 1 2 3 4 5 6 7 8; do
-    missing=0
+missing_required=
+present_forbidden=
+
+check_transcript() {
+    missing_required=
+    present_forbidden=
+
     while IFS= read -r line; do
         if [ -z "$line" ]; then
             continue
         fi
         if ! grep -Fq "$line" "$SERIAL_LOG" 2>/dev/null; then
-            missing=1
-            break
+            missing_required="${missing_required}${line}
+"
         fi
     done <<EOF
 $required_lines
 EOF
 
-    if [ "$missing" -eq 0 ]; then
-        while IFS= read -r line; do
-            if [ -z "$line" ]; then
-                continue
-            fi
-            if grep -Fq "$line" "$SERIAL_LOG" 2>/dev/null; then
-                missing=1
-                break
-            fi
-        done <<EOF
+    while IFS= read -r line; do
+        if [ -z "$line" ]; then
+            continue
+        fi
+        if grep -Fq "$line" "$SERIAL_LOG" 2>/dev/null; then
+            present_forbidden="${present_forbidden}${line}
+"
+        fi
+    done <<EOF
 $forbidden_lines
 EOF
-    fi
 
-    if [ "$missing" -eq 0 ]; then
+    [ -z "$missing_required" ] && [ -z "$present_forbidden" ]
+}
+
+print_lines() {
+    while IFS= read -r line; do
+        if [ -n "$line" ]; then
+            echo "  - $line"
+        fi
+    done
+}
+
+attempt=1
+while [ "$attempt" -le "$QEMU_ATTEMPTS" ]; do
+    if check_transcript; then
         cleanup
         pid=
         echo "smoke ok: Krust completed manifest-driven activation, readiness, cap flow, service-local store/state/timer access, restart, and native service activation"
         exit 0
     fi
 
-    sleep 1
+    sleep "$QEMU_POLL_SECONDS"
+    attempt=$((attempt + 1))
 done
 
 cleanup
 pid=
-echo "smoke failed: serial output did not contain the full M14-M24 native activation transcript"
+echo "smoke failed: serial output did not contain the full M14-M24 native activation transcript after $QEMU_ATTEMPTS checks"
+echo "serial log: $SERIAL_LOG"
+if [ -n "$missing_required" ]; then
+    echo "missing required transcript lines:"
+    printf '%s' "$missing_required" | print_lines
+fi
+if [ -n "$present_forbidden" ]; then
+    echo "forbidden transcript lines were present:"
+    printf '%s' "$present_forbidden" | print_lines
+fi
 if [ -f "$SERIAL_LOG" ]; then
     cat "$SERIAL_LOG"
 fi

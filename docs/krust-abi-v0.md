@@ -5,6 +5,10 @@ native Krust QEMU/Limine milestone. It is intentionally small and unstable. Its
 current job is to boot native `vertex-init`, start a tiny declared service
 graph, and enforce explicit process-local capabilities.
 
+Milestone status: ABI v0 is the M14-M24 native activation ABI. M25 adds the
+release gate, tool checks, and test wrapper around that proof; it does not add
+or freeze syscall, capability, process, or IPC ABI surface.
+
 ## Machine ABI
 
 Architecture: `x86_64`.

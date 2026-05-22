@@ -27,12 +27,12 @@ vertex-os/
     netstack/            Demo hosted network capability provider
     echo-server/         Demo service consuming log and network capabilities
   kernel/
-    krust/               Bootable Krust kernel prototype, currently covering M14-M24 native graph activation
+    krust/               Bootable Krust kernel prototype, currently covering M14-M25 native graph activation and release gating
   lang/
     vertex-lang/         Planned typed system-definition language
 ```
 
-## Krust M14-M24
+## Krust M14-M25
 
 The current native activation path lives in `kernel/krust`. It is isolated
 from the hosted Cargo workspace and boots a Limine ISO under QEMU. The ISO
@@ -53,8 +53,16 @@ init-owned transcript logging.
 scripts/krust-smoke.sh
 ```
 
-See [docs/krust-milestones.md](docs/krust-milestones.md) for M0 through M24
-completion status and the planned M25-M40 substrate-hardening roadmap,
+M25 adds a clean-clone release gate that validates the hosted build, checks the
+Krust toolchain, rebuilds the ISO from clean kernel artifacts, and runs the
+M14-M24 QEMU test matrix:
+
+```sh
+scripts/krust-release-gate.sh
+```
+
+See [docs/krust-milestones.md](docs/krust-milestones.md) for M0 through M25
+completion status and the planned M26-M40 substrate-hardening roadmap,
 and [docs/krust-abi-v0.md](docs/krust-abi-v0.md) for the current syscall,
 capability, process, and IPC ABI.
 

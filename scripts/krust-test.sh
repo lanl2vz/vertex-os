@@ -8,6 +8,8 @@ ISO_IMAGE=${ISO_IMAGE:-"$BUILD_DIR/krust.iso"}
 SERIAL_LOG=${SERIAL_LOG:-"$BUILD_DIR/serial-test.log"}
 QEMU=${QEMU:-qemu-system-x86_64}
 QEMU_EXTRA=${QEMU_EXTRA:-}
+QEMU_ATTEMPTS=${QEMU_ATTEMPTS:-20}
+QEMU_POLL_SECONDS=${QEMU_POLL_SECONDS:-1}
 CASE=${1:-m14}
 FALLBACK_MANIFEST=
 
@@ -129,33 +131,55 @@ trap cleanup EXIT INT TERM
     -cdrom "$ISO_IMAGE" &
 pid=$!
 
-for _ in 1 2 3 4 5 6 7 8; do
-    missing=0
+missing_required=
+
+check_transcript() {
+    missing_required=
+
     while IFS= read -r line; do
         if [ -z "$line" ]; then
             continue
         fi
         if ! grep -Fq "$line" "$SERIAL_LOG" 2>/dev/null; then
-            missing=1
-            break
+            missing_required="${missing_required}${line}
+"
         fi
     done <<EOF
 $required_lines
 EOF
 
-    if [ "$missing" -eq 0 ]; then
+    [ -z "$missing_required" ]
+}
+
+print_lines() {
+    while IFS= read -r line; do
+        if [ -n "$line" ]; then
+            echo "  - $line"
+        fi
+    done
+}
+
+attempt=1
+while [ "$attempt" -le "$QEMU_ATTEMPTS" ]; do
+    if check_transcript; then
         cleanup
         pid=
         echo "krust test ok: $CASE"
         exit 0
     fi
 
-    sleep 1
+    sleep "$QEMU_POLL_SECONDS"
+    attempt=$((attempt + 1))
 done
 
 cleanup
 pid=
-echo "krust test failed: $CASE"
+echo "krust test failed: $CASE after $QEMU_ATTEMPTS checks"
+echo "serial log: $SERIAL_LOG"
+if [ -n "$missing_required" ]; then
+    echo "missing required transcript lines:"
+    printf '%s' "$missing_required" | print_lines
+fi
 if [ -f "$SERIAL_LOG" ]; then
     cat "$SERIAL_LOG"
 fi
