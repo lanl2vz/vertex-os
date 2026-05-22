@@ -29,7 +29,7 @@ pub extern "C" fn _start() -> ! {
     }
     log(b"model-reader reads bytes");
     log(b"model-reader reads bytes successfully");
-    log(b"Native store-object read ok");
+    log(b"Native immutable store client ok");
     sys::exit(0)
 }
 

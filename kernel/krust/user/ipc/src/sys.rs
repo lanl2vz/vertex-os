@@ -1,28 +1,29 @@
 use core::arch::asm;
 
 pub const ENDPOINT_CAP_SLOT: u64 = 0;
+pub const SERIAL_LOG_CAP_SLOT: u64 = 1;
 pub const STATUS_BAD_CAPABILITY: u64 = u64::MAX - 1;
 pub const STATUS_BAD_BUFFER: u64 = u64::MAX - 2;
 pub const BAD_USER_PTR: u64 = 0x0000_6000_0000_0000;
 
-const SYS_WRITE_SERIAL: u64 = 1;
 const SYS_EXIT: u64 = 2;
 const SYS_IPC_SEND: u64 = 3;
 const SYS_IPC_RECV: u64 = 4;
 const SYS_YIELD: u64 = 5;
+const SYS_LOG_WRITE: u64 = 7;
 
-pub fn write_serial(message: &[u8]) -> u64 {
+pub fn log_write(message: &[u8]) -> u64 {
     syscall3(
-        SYS_WRITE_SERIAL,
+        SYS_LOG_WRITE,
+        SERIAL_LOG_CAP_SLOT,
         message.as_ptr() as u64,
         message.len() as u64,
-        0,
     )
 }
 
 #[allow(dead_code)]
-pub fn write_serial_raw(user_ptr: u64, len: u64) -> u64 {
-    syscall3(SYS_WRITE_SERIAL, user_ptr, len, 0)
+pub fn log_write_raw(user_ptr: u64, len: u64) -> u64 {
+    syscall3(SYS_LOG_WRITE, SERIAL_LOG_CAP_SLOT, user_ptr, len)
 }
 
 pub fn ipc_send(cap_slot: u64, message: &[u8]) -> u64 {

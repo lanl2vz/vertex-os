@@ -76,14 +76,14 @@ Boot generation: gen:hello-0001
 Native service activation ok
 '
         ;;
-    store-state)
+    store-state-services)
         MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
         EXPECT_ACTIVATION_SUCCESS=1
         required_lines='
 model-reader reads bytes successfully
-Native store-object read ok
+Native immutable store client ok
 reader-service write rejected
-Native state-volume access ok
+Native state service client ok
 '
         ;;
     timer)
@@ -295,7 +295,7 @@ activation failed
 '
         ;;
     *)
-        echo "usage: scripts/krust-test.sh <m13|m14|valid-activation|manifest-cycle|bad-cap|readiness|readiness-timeout|rollback|store-state|timer|preemption|m30|user-fault|m31|restart|manifest-v1|cap-lifecycle|typed-arenas|quotas|m32|io-substrate|m33|serial-driver|m34|block-driver|m35|store-service|m36|state-service|manifest-truncated|manifest-bad-magic|manifest-raw-compact|manifest-unsupported-version|manifest-oob-record|manifest-missing-provider>" >&2
+        echo "usage: scripts/krust-test.sh <m13|m14|valid-activation|manifest-cycle|bad-cap|readiness|readiness-timeout|rollback|store-state-services|timer|preemption|m30|user-fault|m31|restart|manifest-v1|cap-lifecycle|typed-arenas|quotas|m32|io-substrate|m33|serial-driver|m34|block-driver|m35|store-service|m36|state-service|manifest-truncated|manifest-bad-magic|manifest-raw-compact|manifest-unsupported-version|manifest-oob-record|manifest-missing-provider>" >&2
         exit 2
         ;;
 esac

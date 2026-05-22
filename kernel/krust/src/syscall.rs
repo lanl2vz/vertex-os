@@ -11,7 +11,6 @@ const EFER_SYSCALL_ENABLE: u64 = 1;
 const RFLAGS_INTERRUPT_ENABLE: u64 = 1 << 9;
 
 const SYSCALL_STACK_SIZE: usize = 256 * 1024;
-const SYS_WRITE_SERIAL: u64 = 1;
 const SYS_EXIT: u64 = 2;
 const SYS_IPC_SEND: u64 = 3;
 const SYS_IPC_RECV: u64 = 4;
@@ -159,11 +158,6 @@ pub extern "C" fn krust_syscall_dispatch(
     frame: &mut ipc::SyscallFrame,
 ) {
     match number {
-        SYS_WRITE_SERIAL => {
-            let _ = (arg0, arg1);
-            serial::write_str("Legacy SYS_WRITE_SERIAL rejected: use SYS_LOG_WRITE\n");
-            frame.rax = STATUS_BAD_CAPABILITY;
-        }
         SYS_EXIT => exit_current_process(arg0, frame),
         SYS_IPC_SEND => match ipc::send(
             arg0,

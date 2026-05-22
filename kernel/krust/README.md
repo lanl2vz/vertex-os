@@ -276,13 +276,13 @@ block-driver ready
 store-service requests block read
 block-driver returns bytes
 vertex-store verifies hash
-Native store-object read ok
+Native immutable store client ok
 counter-service writes state
 reader-service reads state
 reader-service write rejected
 snapshot created
 state restored
-Native state-volume access ok
+Native state service client ok
 Timer sleep accepted: proc=timer-service timer=monotonic-timer ms=10
 Timer sleep blocked: proc=timer-service
 Timer wake: proc=timer-service
@@ -340,7 +340,7 @@ parsing, checks Rust formatting and milestone Markdown whitespace, confirms the
 M14-M36 documentation anchors, runs `cargo build --offline`, validates
 `examples/hello-generation.vertex.json`, runs `make doctor`, rebuilds from
 `make clean`, runs `make smoke`, and then runs the M14-M36 QEMU cases: `m14`,
-`manifest-cycle`, `bad-cap`, `readiness-timeout`, `rollback`, `store-state`,
+`manifest-cycle`, `bad-cap`, `readiness-timeout`, `rollback`, `store-state-services`,
 `timer`, `preemption`, `user-fault`, `restart`, `manifest-v1`, `cap-lifecycle`,
 `typed-arenas`, `quotas`, `m32`, `m33`, `m34`, `m35`, `m36`, and the
 malformed-manifest cases. If the offline build

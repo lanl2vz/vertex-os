@@ -51,6 +51,16 @@
       "references": []
     },
     {
+      "id": "store:serial-driver-demo",
+      "name": "serial-driver-demo",
+      "kind": "executable",
+      "path": "/vertex/store/serial-driver",
+      "hashAlgorithm": "blake3",
+      "hash": "demo-not-a-real-hash-serial-driver",
+      "sizeBytes": 65536,
+      "references": []
+    },
+    {
       "id": "store:echo-demo",
       "name": "echo-demo",
       "kind": "executable",
@@ -87,6 +97,13 @@
       "argsDefault": []
     },
     {
+      "id": "exe:serial-driver",
+      "storeObject": "store:serial-driver-demo",
+      "entrypoint": "bin/serial-driver",
+      "abi": "hosted-linux-process.v0",
+      "argsDefault": []
+    },
+    {
       "id": "exe:echo",
       "storeObject": "store:echo-demo",
       "entrypoint": "bin/echo",
@@ -101,7 +118,18 @@
       "argsDefault": []
     }
   ],
-  "devices": [],
+  "devices": [
+    {
+      "id": "device:serial-com1",
+      "name": "serial-com1",
+      "kind": "io-port-range",
+      "selector": {
+        "base": "0x3f8",
+        "length": 8
+      },
+      "driver": "svc:serial-driver"
+    }
+  ],
   "stateVolumes": [],
   "secrets": [],
   "capabilities": [
@@ -112,6 +140,25 @@
       "rights": ["send"],
       "properties": {
         "protocol": "vertex.log.v0"
+      }
+    },
+    {
+      "id": "cap:io.com1",
+      "kind": "io-port",
+      "provider": "device:serial-com1",
+      "rights": ["read", "write"],
+      "properties": {
+        "base": "0x3f8",
+        "length": 8
+      }
+    },
+    {
+      "id": "cap:serial.console",
+      "kind": "ipc-endpoint",
+      "provider": "svc:serial-driver",
+      "rights": ["send"],
+      "properties": {
+        "protocol": "vertex.serial.v0"
       }
     }
   ],
@@ -143,7 +190,9 @@
       "executable": "exe:logd",
       "args": [],
       "env": {},
-      "requires": [],
+      "requires": [
+        { "capability": "cap:serial.console", "rights": ["send"] }
+      ],
       "provides": ["cap:log.sink"],
       "state": [],
       "secrets": [],
@@ -156,6 +205,29 @@
         "kind": "ipc-ping",
         "target": "cap:log.sink"
       },
+      "lifecycle": {
+        "startAfter": ["svc:serial-driver"],
+        "stopBefore": []
+      }
+    },
+    {
+      "id": "svc:serial-driver",
+      "name": "serial-driver",
+      "executable": "exe:serial-driver",
+      "args": [],
+      "env": {},
+      "requires": [
+        { "capability": "cap:io.com1", "rights": ["read", "write"] }
+      ],
+      "provides": ["cap:serial.console"],
+      "state": [],
+      "secrets": [],
+      "restart": "never",
+      "resources": {
+        "memoryMaxBytes": 33554432,
+        "cpuShares": 50
+      },
+      "health": null,
       "lifecycle": {
         "startAfter": ["svc:vertex-supervisor"],
         "stopBefore": []
@@ -210,6 +282,7 @@
     "rootService": "svc:vertex-supervisor",
     "startOrder": [
       "svc:vertex-supervisor",
+      "svc:serial-driver",
       "svc:logd",
       "svc:cpu-hog",
       "svc:echo-server"

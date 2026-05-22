@@ -260,23 +260,23 @@ vertex-store verifies hash
 modified object fails hash check
 model-reader reads bytes
 model-reader reads bytes successfully
-Native store-object read ok
-counter-service has write cap to state:counter
-counter-service writes value
+Native immutable store client ok
+counter-service has state API cap
+counter-service sends state write
 State write accepted: proc=vertex-state state=state:counter
 counter-service writes state
-reader-service has read-only cap
+reader-service has state API cap
 State read accepted: proc=vertex-state state=state:counter
 snapshot created
 reader-service reads state
-reader-service reads value
+reader-service receives state value
 reader-service write denied
 reader-service write rejected
 state restored
 system generation rollback does not automatically roll back state unless policy says so
 Native immutable store service ok
 Native state-volume service ok
-Native state-volume access ok
+Native state service client ok
 timer-service sleeps 10 ms
 Timer sleep accepted: proc=timer-service timer=monotonic-timer ms=10
 Timer sleep blocked: proc=timer-service

@@ -12,7 +12,7 @@ const CAP_SERIAL_LOG: u64 = 1;
 #[unsafe(no_mangle)]
 pub extern "C" fn _start() -> ! {
     let mut buffer = [0u8; 8];
-    log(b"reader-service has read-only cap");
+    log(b"reader-service has state API cap");
     if sys::ipc_send(CAP_STATE, b"R") != sys::STATUS_OK {
         log(b"reader-service state read request failed");
         sys::exit(1);
@@ -32,7 +32,7 @@ pub extern "C" fn _start() -> ! {
         sys::exit(1);
     }
     log(b"reader-service reads state");
-    log(b"reader-service reads value");
+    log(b"reader-service receives state value");
 
     if sys::ipc_send(CAP_STATE, b"W2") != sys::STATUS_OK {
         log(b"reader-service write request failed");
@@ -46,7 +46,7 @@ pub extern "C" fn _start() -> ! {
         log(b"reader-service write denial failed");
         sys::exit(1);
     }
-    log(b"Native state-volume access ok");
+    log(b"Native state service client ok");
     sys::exit(0)
 }
 

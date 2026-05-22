@@ -145,7 +145,7 @@ doctor: check-tools check-rust-target check-limine-dir
 	@echo "limine: $$(command -v $(LIMINE))"
 	@echo "xorriso: $$(command -v $(XORRISO))"
 	@echo "LIMINE_DIR: $(LIMINE_DIR)"
-	@echo "Krust M14-M31 toolchain is ready."
+	@echo "Krust M14-M36 toolchain is ready."
 
 release-gate:
 	../../scripts/krust-release-gate.sh

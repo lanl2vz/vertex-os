@@ -345,6 +345,13 @@ fn warn_for_unreachable_store_objects(
     for executable in &manifest.executables {
         queue.push_back(executable.store_object.as_str());
     }
+    for capability in &manifest.capabilities {
+        if let Some(object) = capability.properties.get("object").and_then(Value::as_str)
+            && manifest.store_object(object).is_some()
+        {
+            queue.push_back(object);
+        }
+    }
 
     while let Some(id) = queue.pop_front() {
         if !reachable.insert(id.to_owned()) {

@@ -53,7 +53,7 @@ process frame, switch CR3, and return into another userspace process through
 
 | Number | Name | Arguments | Return |
 | --- | --- | --- | --- |
-| 1 | `SYS_WRITE_SERIAL` | legacy, rejected in M12 | `STATUS_BAD_CAPABILITY` |
+| 1 | reserved | invalid syscall slot | `u64::MAX` |
 | 2 | `SYS_EXIT` | `arg0 = status` | does not return in normal use |
 | 3 | `SYS_IPC_SEND` | `arg0 = cap_slot`, `arg1 = user_ptr`, `arg2 = len` | status |
 | 4 | `SYS_IPC_RECV` | `arg0 = cap_slot`, `arg1 = user_ptr`, `arg2 = max_len` | byte count or error status |

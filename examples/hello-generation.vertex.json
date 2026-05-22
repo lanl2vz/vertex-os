@@ -414,13 +414,6 @@
       }
     },
     {
-      "id": "cap:store.hello-text",
-      "kind": "store-object",
-      "provider": "store:hello-text",
-      "rights": ["read"],
-      "properties": {}
-    },
-    {
       "id": "cap:state.counter.api",
       "kind": "ipc-endpoint",
       "provider": "svc:vertex-state",
@@ -435,20 +428,6 @@
       "kind": "state-volume",
       "provider": "state:counter",
       "rights": ["read", "write", "snapshot", "restore"],
-      "properties": {}
-    },
-    {
-      "id": "cap:state.counter.write",
-      "kind": "state-volume",
-      "provider": "state:counter",
-      "rights": ["write"],
-      "properties": {}
-    },
-    {
-      "id": "cap:state.counter.read",
-      "kind": "state-volume",
-      "provider": "state:counter",
-      "rights": ["read", "snapshot", "restore"],
       "properties": {}
     },
     {

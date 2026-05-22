@@ -86,7 +86,8 @@ This established the kernel-side vocabulary for explicit authority.
 Status: done.
 
 Goal: load a tiny static ELF from a boot module, create a userspace address
-space, enter ring 3, and let userspace call `sys_write_serial`.
+space, enter ring 3, and let userspace call `SYS_LOG_WRITE` with an explicit log
+capability.
 
 ## M7: First IPC Capability Demo
 
@@ -124,7 +125,7 @@ Acceptance evidence in smoke:
 
 ```text
 IDT initialized: #UD #GP #PF IRQ0
-Legacy SYS_WRITE_SERIAL rejected: use SYS_LOG_WRITE
+Unknown userspace syscall: 1
 Bad pointer test: SYS_IPC_SEND returned STATUS_BAD_BUFFER
 Bad pointer test: SYS_IPC_RECV returned STATUS_BAD_BUFFER
 ```
@@ -689,12 +690,12 @@ SYS_STATE_READ(cap_slot, buffer)
 Acceptance evidence:
 
 ```text
-counter-service has write cap to state:counter
-counter-service writes value
-reader-service has read-only cap
-reader-service reads value
+counter-service has state API cap
+counter-service sends state write
+reader-service has state API cap
+reader-service receives state value
 reader-service write rejected
-Native state-volume access ok
+Native state service client ok
 ```
 
 This keeps immutable generation rollback and mutable state rollback separate.
@@ -1409,7 +1410,7 @@ target/debug/vertexctl validate examples/hello-generation.vertex.json
 cd kernel/krust && make doctor && make smoke
 scripts/krust-test.sh restart
 scripts/krust-test.sh timer
-scripts/krust-test.sh store-state
+scripts/krust-test.sh store-state-services
 ```
 
 This can land earlier than M39 as a parallel track. The milestone number marks

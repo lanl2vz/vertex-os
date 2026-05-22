@@ -24,8 +24,9 @@ pub extern "C" fn _start() -> ! {
     }
     log(b"logd ready");
 
-    if sys::ipc_send(CAP_SERIAL_DRIVER, b"logd sends log message") == sys::STATUS_BAD_CAPABILITY {
-        log(b"logd serial-driver unavailable");
+    if sys::ipc_send(CAP_SERIAL_DRIVER, b"logd sends log message") != sys::STATUS_OK {
+        log(b"logd serial-driver send failed");
+        sys::exit(1);
     }
     if sys::io_write(CAP_SERIAL_DRIVER, 0x3f8, b'!') == sys::STATUS_BAD_CAPABILITY {
         log(b"logd cannot write COM1 directly");
