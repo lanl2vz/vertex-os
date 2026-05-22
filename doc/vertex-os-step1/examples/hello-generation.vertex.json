@@ -1,0 +1,266 @@
+{
+  "schema": "vertex.ir.v0",
+  "generation": {
+    "id": "gen:hello-0001",
+    "createdUtc": "2026-05-22T00:00:00Z",
+    "description": "Minimal Vertex OS hosted demo generation",
+    "parent": null,
+    "manifestHash": null
+  },
+  "kernel": {
+    "id": "kernel:hosted-linux-placeholder",
+    "kind": "hosted-linux",
+    "storeObject": "store:hosted-kernel-placeholder",
+    "abi": "hosted-linux.v0",
+    "target": "x86_64-linux"
+  },
+  "init": {
+    "id": "init:vertex-init",
+    "executable": "exe:vertex-init",
+    "mode": "hosted-linux"
+  },
+  "store": [
+    {
+      "id": "store:hosted-kernel-placeholder",
+      "name": "hosted-kernel-placeholder",
+      "kind": "kernel-image",
+      "path": "/vertex/store/demo-hosted-kernel-placeholder",
+      "hashAlgorithm": "blake3",
+      "hash": "demo-not-a-real-hash-hosted-kernel",
+      "sizeBytes": 0,
+      "references": []
+    },
+    {
+      "id": "store:vertex-init-demo",
+      "name": "vertex-init-demo",
+      "kind": "executable",
+      "path": "/vertex/store/demo-vertex-init",
+      "hashAlgorithm": "blake3",
+      "hash": "demo-not-a-real-hash-vertex-init",
+      "sizeBytes": 65536,
+      "references": []
+    },
+    {
+      "id": "store:logd-demo",
+      "name": "logd-demo",
+      "kind": "executable",
+      "path": "/vertex/store/demo-logd",
+      "hashAlgorithm": "blake3",
+      "hash": "demo-not-a-real-hash-logd",
+      "sizeBytes": 65536,
+      "references": []
+    },
+    {
+      "id": "store:netstack-demo",
+      "name": "netstack-demo",
+      "kind": "executable",
+      "path": "/vertex/store/demo-netstack",
+      "hashAlgorithm": "blake3",
+      "hash": "demo-not-a-real-hash-netstack",
+      "sizeBytes": 131072,
+      "references": []
+    },
+    {
+      "id": "store:echo-server-demo",
+      "name": "echo-server-demo",
+      "kind": "executable",
+      "path": "/vertex/store/demo-echo-server",
+      "hashAlgorithm": "blake3",
+      "hash": "demo-not-a-real-hash-echo-server",
+      "sizeBytes": 65536,
+      "references": []
+    }
+  ],
+  "executables": [
+    {
+      "id": "exe:vertex-init",
+      "storeObject": "store:vertex-init-demo",
+      "entrypoint": "bin/vertex-init",
+      "abi": "hosted-linux-process.v0",
+      "argsDefault": []
+    },
+    {
+      "id": "exe:logd",
+      "storeObject": "store:logd-demo",
+      "entrypoint": "bin/logd",
+      "abi": "hosted-linux-process.v0",
+      "argsDefault": []
+    },
+    {
+      "id": "exe:netstack",
+      "storeObject": "store:netstack-demo",
+      "entrypoint": "bin/netstack",
+      "abi": "hosted-linux-process.v0",
+      "argsDefault": []
+    },
+    {
+      "id": "exe:echo-server",
+      "storeObject": "store:echo-server-demo",
+      "entrypoint": "bin/echo-server",
+      "abi": "hosted-linux-process.v0",
+      "argsDefault": []
+    }
+  ],
+  "devices": [],
+  "stateVolumes": [],
+  "secrets": [],
+  "capabilities": [
+    {
+      "id": "cap:clock.monotonic",
+      "kind": "clock",
+      "provider": "kernel:hosted-linux-placeholder",
+      "rights": ["read"],
+      "properties": {
+        "clock": "monotonic"
+      }
+    },
+    {
+      "id": "cap:log.sink",
+      "kind": "ipc-endpoint",
+      "provider": "svc:logd",
+      "rights": ["send"],
+      "properties": {
+        "protocol": "vertex.log.v0"
+      }
+    },
+    {
+      "id": "cap:net.tcp.8080",
+      "kind": "network-port",
+      "provider": "svc:netstack",
+      "rights": ["listen", "bind"],
+      "properties": {
+        "protocol": "tcp",
+        "port": 8080,
+        "hostedSimulation": "supervisor-passes-listening-fd"
+      }
+    },
+    {
+      "id": "cap:echo.api",
+      "kind": "ipc-endpoint",
+      "provider": "svc:echo-server",
+      "rights": ["sendrecv"],
+      "properties": {
+        "protocol": "vertex.echo.v0"
+      }
+    }
+  ],
+  "services": [
+    {
+      "id": "svc:vertex-supervisor",
+      "name": "vertex-supervisor",
+      "executable": "exe:vertex-init",
+      "args": ["--supervisor-mode"],
+      "env": {},
+      "requires": [
+        { "capability": "cap:clock.monotonic", "rights": ["read"] }
+      ],
+      "provides": [],
+      "state": [],
+      "secrets": [],
+      "restart": "never",
+      "resources": {
+        "memoryMaxBytes": 134217728,
+        "cpuShares": 100
+      },
+      "health": null,
+      "lifecycle": {
+        "startAfter": [],
+        "stopBefore": []
+      }
+    },
+    {
+      "id": "svc:logd",
+      "name": "logd",
+      "executable": "exe:logd",
+      "args": [],
+      "env": {},
+      "requires": [
+        { "capability": "cap:clock.monotonic", "rights": ["read"] }
+      ],
+      "provides": ["cap:log.sink"],
+      "state": [],
+      "secrets": [],
+      "restart": "on-failure",
+      "resources": {
+        "memoryMaxBytes": 33554432,
+        "cpuShares": 50
+      },
+      "health": {
+        "kind": "ipc-ping",
+        "target": "cap:log.sink"
+      },
+      "lifecycle": {
+        "startAfter": ["svc:vertex-supervisor"],
+        "stopBefore": []
+      }
+    },
+    {
+      "id": "svc:netstack",
+      "name": "netstack",
+      "executable": "exe:netstack",
+      "args": [],
+      "env": {},
+      "requires": [
+        { "capability": "cap:clock.monotonic", "rights": ["read"] }
+      ],
+      "provides": ["cap:net.tcp.8080"],
+      "state": [],
+      "secrets": [],
+      "restart": "on-failure",
+      "resources": {
+        "memoryMaxBytes": 67108864,
+        "cpuShares": 100
+      },
+      "health": null,
+      "lifecycle": {
+        "startAfter": ["svc:vertex-supervisor"],
+        "stopBefore": []
+      }
+    },
+    {
+      "id": "svc:echo-server",
+      "name": "echo-server",
+      "executable": "exe:echo-server",
+      "args": ["--listen", "cap:net.tcp.8080"],
+      "env": {},
+      "requires": [
+        { "capability": "cap:clock.monotonic", "rights": ["read"] },
+        { "capability": "cap:log.sink", "rights": ["send"] },
+        { "capability": "cap:net.tcp.8080", "rights": ["listen"] }
+      ],
+      "provides": ["cap:echo.api"],
+      "state": [],
+      "secrets": [],
+      "restart": "on-failure",
+      "resources": {
+        "memoryMaxBytes": 67108864,
+        "cpuShares": 100
+      },
+      "health": {
+        "kind": "ipc-ping",
+        "target": "cap:echo.api"
+      },
+      "lifecycle": {
+        "startAfter": ["svc:logd", "svc:netstack"],
+        "stopBefore": []
+      }
+    }
+  ],
+  "activation": {
+    "rootService": "svc:vertex-supervisor",
+    "startOrder": ["svc:vertex-supervisor", "svc:logd", "svc:netstack", "svc:echo-server"],
+    "rollbackPolicy": {
+      "default": "system-only",
+      "state": "preserve-unless-explicit"
+    },
+    "onFailure": "stop-activation"
+  },
+  "policies": {
+    "defaultAuthority": "deny",
+    "allowAmbientFilesystem": false,
+    "allowAmbientNetwork": false,
+    "allowAmbientDevices": false,
+    "capabilityDelegation": "explicit-only",
+    "unknownReferences": "reject"
+  }
+}

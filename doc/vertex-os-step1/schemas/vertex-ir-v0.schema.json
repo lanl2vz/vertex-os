@@ -1,0 +1,335 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://vertex-os.example/schemas/vertex-ir-v0.schema.json",
+  "title": "Vertex IR v0 Generation Manifest",
+  "description": "Early, intentionally incomplete JSON Schema for Vertex OS generation manifests.",
+  "type": "object",
+  "required": [
+    "schema",
+    "generation",
+    "kernel",
+    "init",
+    "store",
+    "executables",
+    "capabilities",
+    "services",
+    "activation",
+    "policies"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema": {
+      "const": "vertex.ir.v0"
+    },
+    "generation": {
+      "type": "object",
+      "required": ["id", "createdUtc", "description"],
+      "additionalProperties": true,
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "createdUtc": { "type": "string", "format": "date-time" },
+        "description": { "type": "string" },
+        "parent": { "type": ["string", "null"] },
+        "manifestHash": { "type": ["string", "null"] }
+      }
+    },
+    "kernel": {
+      "type": "object",
+      "required": ["id", "kind", "storeObject", "abi", "target"],
+      "additionalProperties": true,
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "kind": { "type": "string" },
+        "storeObject": { "$ref": "#/$defs/id" },
+        "abi": { "type": "string" },
+        "target": { "type": "string" }
+      }
+    },
+    "init": {
+      "type": "object",
+      "required": ["id", "executable", "mode"],
+      "additionalProperties": true,
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "executable": { "$ref": "#/$defs/id" },
+        "mode": { "enum": ["hosted-linux", "krust-native"] }
+      }
+    },
+    "store": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/storeObject" }
+    },
+    "executables": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/executable" }
+    },
+    "devices": {
+      "type": "array",
+      "default": [],
+      "items": { "$ref": "#/$defs/device" }
+    },
+    "stateVolumes": {
+      "type": "array",
+      "default": [],
+      "items": { "$ref": "#/$defs/stateVolume" }
+    },
+    "secrets": {
+      "type": "array",
+      "default": [],
+      "items": { "$ref": "#/$defs/secret" }
+    },
+    "capabilities": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/capability" }
+    },
+    "services": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/service" }
+    },
+    "activation": {
+      "type": "object",
+      "required": ["rootService", "startOrder", "rollbackPolicy", "onFailure"],
+      "additionalProperties": true,
+      "properties": {
+        "rootService": { "$ref": "#/$defs/id" },
+        "startOrder": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/id" }
+        },
+        "rollbackPolicy": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "onFailure": {
+          "enum": ["stop-activation", "continue", "rollback"]
+        }
+      }
+    },
+    "policies": {
+      "type": "object",
+      "required": [
+        "defaultAuthority",
+        "allowAmbientFilesystem",
+        "allowAmbientNetwork",
+        "allowAmbientDevices",
+        "capabilityDelegation",
+        "unknownReferences"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "defaultAuthority": { "enum": ["deny"] },
+        "allowAmbientFilesystem": { "type": "boolean" },
+        "allowAmbientNetwork": { "type": "boolean" },
+        "allowAmbientDevices": { "type": "boolean" },
+        "capabilityDelegation": { "enum": ["explicit-only"] },
+        "unknownReferences": { "enum": ["reject", "warn"] }
+      }
+    }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_-]*:[A-Za-z0-9._@/+*-]+$"
+    },
+    "storeObject": {
+      "type": "object",
+      "required": ["id", "name", "kind", "path", "hashAlgorithm", "hash", "sizeBytes", "references"],
+      "additionalProperties": true,
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "name": { "type": "string" },
+        "kind": {
+          "enum": ["kernel-image", "executable", "library", "data", "manifest", "source", "debug-symbols"]
+        },
+        "path": { "type": "string" },
+        "hashAlgorithm": { "type": "string" },
+        "hash": { "type": "string" },
+        "sizeBytes": { "type": "integer", "minimum": 0 },
+        "references": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/id" }
+        }
+      }
+    },
+    "executable": {
+      "type": "object",
+      "required": ["id", "storeObject", "entrypoint", "abi", "argsDefault"],
+      "additionalProperties": true,
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "storeObject": { "$ref": "#/$defs/id" },
+        "entrypoint": { "type": "string" },
+        "abi": { "type": "string" },
+        "argsDefault": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "capability": {
+      "type": "object",
+      "required": ["id", "kind", "provider", "rights", "properties"],
+      "additionalProperties": true,
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "kind": {
+          "enum": [
+            "ipc-endpoint",
+            "clock",
+            "log-sink",
+            "network-port",
+            "store-read",
+            "state-volume",
+            "secret-read",
+            "device-control",
+            "process-control"
+          ]
+        },
+        "provider": { "$ref": "#/$defs/id" },
+        "rights": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "enum": [
+              "read",
+              "write",
+              "send",
+              "receive",
+              "sendrecv",
+              "bind",
+              "listen",
+              "connect",
+              "map",
+              "execute",
+              "control",
+              "snapshot",
+              "restore",
+              "delegate",
+              "revoke"
+            ]
+          }
+        },
+        "properties": { "type": "object" }
+      }
+    },
+    "service": {
+      "type": "object",
+      "required": [
+        "id",
+        "name",
+        "executable",
+        "args",
+        "env",
+        "requires",
+        "provides",
+        "state",
+        "secrets",
+        "restart",
+        "resources",
+        "health",
+        "lifecycle"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "name": { "type": "string" },
+        "executable": { "$ref": "#/$defs/id" },
+        "args": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "env": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "requires": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/capRequirement" }
+        },
+        "provides": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/id" }
+        },
+        "state": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/id" }
+        },
+        "secrets": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/id" }
+        },
+        "restart": {
+          "enum": ["never", "on-failure", "always"]
+        },
+        "resources": { "type": "object" },
+        "health": { "type": ["object", "null"] },
+        "lifecycle": {
+          "type": "object",
+          "required": ["startAfter", "stopBefore"],
+          "additionalProperties": true,
+          "properties": {
+            "startAfter": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/id" }
+            },
+            "stopBefore": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/id" }
+            }
+          }
+        }
+      }
+    },
+    "capRequirement": {
+      "type": "object",
+      "required": ["capability", "rights"],
+      "additionalProperties": true,
+      "properties": {
+        "capability": { "$ref": "#/$defs/id" },
+        "rights": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "stateVolume": {
+      "type": "object",
+      "required": ["id", "name", "kind", "owner", "mountIntent", "snapshotPolicy", "backupPolicy"],
+      "additionalProperties": true,
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "name": { "type": "string" },
+        "kind": { "type": "string" },
+        "owner": { "$ref": "#/$defs/id" },
+        "mountIntent": { "type": "string" },
+        "snapshotPolicy": { "type": "object" },
+        "backupPolicy": { "type": "object" }
+      }
+    },
+    "secret": {
+      "type": "object",
+      "required": ["id", "name", "provider", "requiredAt", "rotationPolicy"],
+      "additionalProperties": true,
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "name": { "type": "string" },
+        "provider": { "type": "string" },
+        "requiredAt": { "type": "string" },
+        "rotationPolicy": { "type": "string" }
+      }
+    },
+    "device": {
+      "type": "object",
+      "required": ["id", "kind", "selector", "driver", "properties"],
+      "additionalProperties": true,
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "kind": { "type": "string" },
+        "selector": { "type": "object" },
+        "driver": { "$ref": "#/$defs/id" },
+        "properties": { "type": "object" }
+      }
+    }
+  }
+}
