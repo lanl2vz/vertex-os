@@ -1,0 +1,277 @@
+use serde_json::Value;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Output};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+
+fn vertexctl() -> PathBuf {
+    PathBuf::from(env!("CARGO_BIN_EXE_vertexctl"))
+}
+
+fn repo_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .expect("vertexctl crate should be under crates/")
+        .to_path_buf()
+}
+
+fn temp_dir(name: &str) -> PathBuf {
+    let mut path = std::env::temp_dir();
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock should be monotonic enough for tests")
+        .as_millis();
+    path.push(format!(
+        "vertexctl-test-{name}-{now}-{}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&path).expect("create temp test dir");
+    path
+}
+
+fn fake_supervisor(dir: &Path) -> PathBuf {
+    let path = dir.join("fake-supervisor.sh");
+    fs::write(&path, "#!/bin/sh\nexit 0\n").expect("write fake supervisor");
+    #[cfg(unix)]
+    {
+        let mut permissions = fs::metadata(&path)
+            .expect("stat fake supervisor")
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&path, permissions).expect("chmod fake supervisor");
+    }
+    path
+}
+
+fn run(args: &[&str]) -> Output {
+    Command::new(vertexctl())
+        .args(args)
+        .current_dir(repo_root())
+        .output()
+        .expect("run vertexctl")
+}
+
+fn run_with_fake_supervisor(args: &[&str], fake: &Path) -> Output {
+    Command::new(vertexctl())
+        .args(args)
+        .env("VERTEX_SUPERVISOR_BIN", fake)
+        .current_dir(repo_root())
+        .output()
+        .expect("run vertexctl")
+}
+
+fn assert_success(output: Output) -> String {
+    if !output.status.success() {
+        panic!(
+            "command failed\nstatus: {}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    String::from_utf8(output.stdout).expect("stdout should be utf-8")
+}
+
+fn assert_failure(output: Output) -> String {
+    if output.status.success() {
+        panic!(
+            "command unexpectedly succeeded\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    String::from_utf8_lossy(&output.stderr).to_string()
+}
+
+#[test]
+fn validates_both_example_manifests() {
+    let hello = assert_success(run(&["validate", "examples/hello-generation.vertex.json"]));
+    assert!(hello.contains("valid: gen:hello-0001"));
+
+    let stateful = assert_success(run(&[
+        "validate",
+        "examples/hello-stateful-generation.vertex.json",
+    ]));
+    assert!(stateful.contains("valid: gen:hello-stateful-0001"));
+}
+
+#[test]
+fn status_and_inspect_json_report_activation_metadata() {
+    let dir = temp_dir("status-inspect");
+    let state_root = dir.join("state");
+    let fake = fake_supervisor(&dir);
+    let state_root_arg = state_root.to_string_lossy().to_string();
+
+    assert_success(run_with_fake_supervisor(
+        &[
+            "activate",
+            "examples/hello-stateful-generation.vertex.json",
+            "--state-root",
+            &state_root_arg,
+            "--run-once",
+        ],
+        &fake,
+    ));
+
+    assert!(state_root.join("current.json").exists());
+    assert!(state_root.join("history.jsonl").exists());
+    let activation_dirs = fs::read_dir(state_root.join("activations"))
+        .expect("read activations")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("activation entries");
+    assert_eq!(activation_dirs.len(), 1);
+    let activation_dir = activation_dirs[0].path();
+    assert!(activation_dir.join("manifest.vertex.json").exists());
+    assert!(activation_dir.join("activation.json").exists());
+
+    let status_stdout = assert_success(run(&["status", "--state-root", &state_root_arg, "--json"]));
+    let status: Value = serde_json::from_str(&status_stdout).expect("status should be json");
+    assert_eq!(status["activationCount"], 1);
+    assert_eq!(status["current"]["generationId"], "gen:hello-stateful-0001");
+
+    let inspect_stdout = assert_success(run(&[
+        "inspect",
+        "current",
+        "--state-root",
+        &state_root_arg,
+        "--json",
+    ]));
+    let inspect: Value = serde_json::from_str(&inspect_stdout).expect("inspect should be json");
+    assert_eq!(
+        inspect["activation"]["generationId"],
+        "gen:hello-stateful-0001"
+    );
+    assert!(
+        inspect["activation"]["sourceManifestPath"]
+            .as_str()
+            .expect("source manifest path")
+            .ends_with("examples/hello-stateful-generation.vertex.json")
+    );
+    assert!(
+        inspect["activation"]["storedManifestPath"]
+            .as_str()
+            .expect("stored manifest path")
+            .ends_with("manifest.vertex.json")
+    );
+    assert_eq!(
+        inspect["activation"]["stateSnapshots"]
+            .as_array()
+            .expect("state snapshots")
+            .len(),
+        1
+    );
+    assert!(
+        inspect["services"]
+            .as_array()
+            .expect("services array")
+            .len()
+            >= 4
+    );
+    assert!(
+        inspect["capabilities"]
+            .as_array()
+            .expect("capabilities array")
+            .iter()
+            .any(|capability| capability["id"] == "cap:log.sink")
+    );
+}
+
+#[test]
+fn who_can_json_reports_capability_authority() {
+    let stdout = assert_success(run(&[
+        "who-can",
+        "examples/hello-generation.vertex.json",
+        "cap:log.sink",
+        "--json",
+    ]));
+    let output: Value = serde_json::from_str(&stdout).expect("who-can should be json");
+    assert_eq!(output["capability"], "cap:log.sink");
+    assert_eq!(output["provider"], "svc:logd");
+    let services = output["services"].as_array().expect("services array");
+    assert_eq!(services.len(), 1);
+    assert_eq!(services[0]["service"], "svc:echo-server");
+    assert_eq!(services[0]["fullyGranted"], true);
+}
+
+#[test]
+fn state_snapshot_restore_round_trip() {
+    let dir = temp_dir("restore");
+    let state_root = dir.join("state");
+    let fake = fake_supervisor(&dir);
+    let state_root_arg = state_root.to_string_lossy().to_string();
+
+    let state_current = state_root
+        .join("state-volumes")
+        .join("state-echo-data")
+        .join("current");
+    fs::create_dir_all(&state_current).expect("create state dir");
+    fs::write(state_current.join("message.txt"), "original\n").expect("write original state");
+
+    assert_success(run_with_fake_supervisor(
+        &[
+            "activate",
+            "examples/hello-stateful-generation.vertex.json",
+            "--state-root",
+            &state_root_arg,
+            "--run-once",
+        ],
+        &fake,
+    ));
+    fs::write(state_current.join("message.txt"), "mutated\n").expect("mutate state");
+    assert_success(run_with_fake_supervisor(
+        &[
+            "switch",
+            "examples/hello-generation.vertex.json",
+            "--state-root",
+            &state_root_arg,
+            "--run-once",
+        ],
+        &fake,
+    ));
+    assert_success(run_with_fake_supervisor(
+        &[
+            "rollback",
+            "--state-root",
+            &state_root_arg,
+            "--run-once",
+            "--restore-state",
+        ],
+        &fake,
+    ));
+
+    let restored = fs::read_to_string(state_current.join("message.txt")).expect("read restored");
+    assert_eq!(restored, "original\n");
+}
+
+#[cfg(unix)]
+#[test]
+fn state_snapshot_rejects_symlinks() {
+    let dir = temp_dir("symlink");
+    let state_root = dir.join("state");
+    let fake = fake_supervisor(&dir);
+    let state_current = state_root
+        .join("state-volumes")
+        .join("state-echo-data")
+        .join("current");
+    fs::create_dir_all(&state_current).expect("create state dir");
+    fs::write(dir.join("target.txt"), "target\n").expect("write target");
+    std::os::unix::fs::symlink(dir.join("target.txt"), state_current.join("link.txt"))
+        .expect("create symlink");
+
+    let stderr = assert_failure(run_with_fake_supervisor(
+        &[
+            "activate",
+            "examples/hello-stateful-generation.vertex.json",
+            "--state-root",
+            &state_root.to_string_lossy(),
+            "--run-once",
+        ],
+        &fake,
+    ));
+
+    assert!(stderr.contains("state snapshot rejects symlink"));
+}

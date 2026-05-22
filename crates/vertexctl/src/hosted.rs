@@ -25,6 +25,19 @@ pub struct GenerationsArgs {
     pub state_root: PathBuf,
 }
 
+#[derive(Debug, Clone)]
+pub struct StatusArgs {
+    pub state_root: PathBuf,
+    pub json: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct InspectArgs {
+    pub selector: String,
+    pub state_root: PathBuf,
+    pub json: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ActivationPointer {
@@ -53,6 +66,33 @@ struct StateSnapshotRecord {
     state_id: String,
     current_path: String,
     snapshot_path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ServiceSummary {
+    id: String,
+    executable: String,
+    requires: usize,
+    provides: usize,
+    state: Vec<String>,
+    health: Option<HealthSummary>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct HealthSummary {
+    kind: String,
+    target: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CapabilitySummary {
+    id: String,
+    kind: String,
+    provider: String,
+    rights: Vec<String>,
 }
 
 pub fn default_state_root() -> PathBuf {
@@ -145,6 +185,70 @@ pub fn parse_generations_args(args: &[String]) -> Result<GenerationsArgs, String
     }
 
     Ok(GenerationsArgs { state_root })
+}
+
+pub fn parse_status_args(args: &[String]) -> Result<StatusArgs, String> {
+    let mut state_root = default_state_root();
+    let mut json = false;
+    let mut idx = 0;
+
+    while idx < args.len() {
+        match args[idx].as_str() {
+            "--state-root" => {
+                idx += 1;
+                let Some(path) = args.get(idx) else {
+                    return Err("--state-root requires a directory".to_owned());
+                };
+                state_root = PathBuf::from(path);
+            }
+            "--json" => json = true,
+            other => return Err(format!("unknown status option {other}")),
+        }
+        idx += 1;
+    }
+
+    Ok(StatusArgs { state_root, json })
+}
+
+pub fn parse_inspect_args(args: &[String]) -> Result<InspectArgs, String> {
+    let mut state_root = default_state_root();
+    let mut json = false;
+    let mut selector = None;
+    let mut idx = 0;
+
+    while idx < args.len() {
+        match args[idx].as_str() {
+            "--state-root" => {
+                idx += 1;
+                let Some(path) = args.get(idx) else {
+                    return Err("--state-root requires a directory".to_owned());
+                };
+                state_root = PathBuf::from(path);
+            }
+            "--json" => json = true,
+            other if other.starts_with('-') => {
+                return Err(format!("unknown inspect option {other}"));
+            }
+            _ => {
+                if selector.replace(args[idx].clone()).is_some() {
+                    return Err(
+                        "usage: vertexctl inspect <current|previous|activation-id> [--state-root <dir>] [--json]"
+                            .to_owned(),
+                    );
+                }
+            }
+        }
+        idx += 1;
+    }
+
+    Ok(InspectArgs {
+        selector: selector.ok_or_else(|| {
+            "usage: vertexctl inspect <current|previous|activation-id> [--state-root <dir>] [--json]"
+                .to_owned()
+        })?,
+        state_root,
+        json,
+    })
 }
 
 pub fn activate(args: ActivationArgs, command_name: &str) -> Result<(), String> {
@@ -275,6 +379,114 @@ pub fn generations(args: GenerationsArgs) -> Result<(), String> {
                 entry.file_name().to_string_lossy(),
                 error
             ),
+        }
+    }
+
+    Ok(())
+}
+
+pub fn status(args: StatusArgs) -> Result<(), String> {
+    let state_root = canonicalize_state_root(&args.state_root)?;
+    let current = read_pointer(&current_path(&state_root))?;
+    let previous = read_pointer(&previous_path(&state_root))?;
+    let activation_count = activation_count(&state_root)?;
+    let last_event = match read_last_jsonl_event(&runtime_events_path(&state_root))? {
+        Some(event) => Some(event),
+        None => read_last_jsonl_event(&history_path(&state_root))?,
+    };
+
+    if args.json {
+        print_json(&serde_json::json!({
+            "stateRoot": state_root,
+            "current": current,
+            "previous": previous,
+            "activationCount": activation_count,
+            "lastEvent": last_event
+        }))?;
+    } else {
+        println!("state root: {}", state_root.display());
+        print_pointer("current", current.as_ref());
+        print_pointer("previous", previous.as_ref());
+        println!("activation count: {activation_count}");
+        match last_event {
+            Some(event) => println!("last event: {event}"),
+            None => println!("last event: none"),
+        }
+    }
+
+    Ok(())
+}
+
+pub fn inspect(args: InspectArgs) -> Result<(), String> {
+    let state_root = canonicalize_state_root(&args.state_root)?;
+    let pointer = resolve_activation_selector(&state_root, &args.selector)?;
+    let activation_dir = activation_dir(&state_root, &pointer.activation_id);
+    let record_path = activation_dir.join("activation.json");
+    let record = read_activation_record(&record_path)?.ok_or_else(|| {
+        format!(
+            "activation {} is missing {}",
+            pointer.activation_id,
+            record_path.display()
+        )
+    })?;
+    let manifest =
+        load_manifest(&record.stored_manifest_path).map_err(|error| error.to_string())?;
+    let services = service_summaries(&manifest);
+    let capabilities = capability_summaries(&manifest);
+
+    if args.json {
+        print_json(&serde_json::json!({
+            "activation": record,
+            "services": services,
+            "capabilities": capabilities
+        }))?;
+    } else {
+        println!("activation: {}", record.activation_id);
+        println!("generation: {}", record.generation_id);
+        println!("command: {}", record.command);
+        println!("source manifest: {}", record.source_manifest_path);
+        println!("stored manifest: {}", record.stored_manifest_path);
+        println!("state root: {}", record.state_root);
+        println!("state snapshots:");
+        if record.state_snapshots.is_empty() {
+            println!("  none");
+        } else {
+            for snapshot in &record.state_snapshots {
+                println!(
+                    "  {} {} -> {}",
+                    snapshot.state_id, snapshot.current_path, snapshot.snapshot_path
+                );
+            }
+        }
+        println!("services:");
+        for service in &services {
+            let health = service
+                .health
+                .as_ref()
+                .map(|health| match &health.target {
+                    Some(target) => format!(" health={}:{}", health.kind, target),
+                    None => format!(" health={}", health.kind),
+                })
+                .unwrap_or_default();
+            println!(
+                "  {} executable={} requires={} provides={} state=[{}]{}",
+                service.id,
+                service.executable,
+                service.requires,
+                service.provides,
+                service.state.join(", "),
+                health
+            );
+        }
+        println!("capabilities:");
+        for capability in &capabilities {
+            println!(
+                "  {} kind={} provider={} rights=[{}]",
+                capability.id,
+                capability.kind,
+                capability.provider,
+                capability.rights.join(", ")
+            );
         }
     }
 
@@ -419,7 +631,10 @@ fn commit_activation(state_root: &Path, record: &ActivationRecord) -> Result<(),
 }
 
 fn run_supervisor(manifest_path: &Path, state_root: &Path, run_once: bool) -> Result<(), String> {
-    let supervisor = sibling_binary("vertex-supervisor")?;
+    let supervisor = match env::var_os("VERTEX_SUPERVISOR_BIN") {
+        Some(path) => PathBuf::from(path),
+        None => sibling_binary("vertex-supervisor")?,
+    };
     let mut command = Command::new(&supervisor);
     if run_once {
         command.arg("--run-once");
@@ -553,6 +768,115 @@ fn append_history_event(state_root: &Path, value: serde_json::Value) -> Result<(
         .map_err(|source| format!("failed to append {}: {source}", history.display()))
 }
 
+fn activation_count(state_root: &Path) -> Result<usize, String> {
+    let activations = state_root.join("activations");
+    if !activations.exists() {
+        return Ok(0);
+    }
+    let mut count = 0;
+    for entry in fs::read_dir(&activations)
+        .map_err(|source| format!("failed to read {}: {source}", activations.display()))?
+    {
+        let entry = entry
+            .map_err(|source| format!("failed to read {}: {source}", activations.display()))?;
+        if entry
+            .file_type()
+            .map_err(|source| format!("failed to inspect {}: {source}", entry.path().display()))?
+            .is_dir()
+        {
+            count += 1;
+        }
+    }
+    Ok(count)
+}
+
+fn resolve_activation_selector(
+    state_root: &Path,
+    selector: &str,
+) -> Result<ActivationPointer, String> {
+    match selector {
+        "current" => read_pointer(&current_path(state_root))?.ok_or_else(|| {
+            format!(
+                "no current generation recorded under {}",
+                state_root.display()
+            )
+        }),
+        "previous" => read_pointer(&previous_path(state_root))?.ok_or_else(|| {
+            format!(
+                "no previous generation recorded under {}",
+                state_root.display()
+            )
+        }),
+        activation_id => {
+            let activation_path = activation_dir(state_root, activation_id).join("activation.json");
+            let record = read_activation_record(&activation_path)?.ok_or_else(|| {
+                format!(
+                    "activation {} does not exist under {}",
+                    activation_id,
+                    state_root.display()
+                )
+            })?;
+            Ok(ActivationPointer {
+                activation_id: record.activation_id,
+                generation_id: record.generation_id,
+                manifest_path: record.stored_manifest_path,
+                activated_utc_ms: record.activated_utc_ms,
+            })
+        }
+    }
+}
+
+fn service_summaries(manifest: &GenerationManifest) -> Vec<ServiceSummary> {
+    manifest
+        .services
+        .iter()
+        .map(|service| ServiceSummary {
+            id: service.id.clone(),
+            executable: service.executable.clone(),
+            requires: service.requires.len(),
+            provides: service.provides.len(),
+            state: service.state.clone(),
+            health: service.health.as_ref().map(|health| HealthSummary {
+                kind: health.kind.clone(),
+                target: health.target.clone(),
+            }),
+        })
+        .collect()
+}
+
+fn capability_summaries(manifest: &GenerationManifest) -> Vec<CapabilitySummary> {
+    manifest
+        .capabilities
+        .iter()
+        .map(|capability| CapabilitySummary {
+            id: capability.id.clone(),
+            kind: capability.kind.clone(),
+            provider: capability.provider.clone(),
+            rights: capability.rights.clone(),
+        })
+        .collect()
+}
+
+fn read_last_jsonl_event(path: &Path) -> Result<Option<serde_json::Value>, String> {
+    if !path.exists() {
+        return Ok(None);
+    }
+    let input = fs::read_to_string(path)
+        .map_err(|source| format!("failed to read {}: {source}", path.display()))?;
+    let Some(line) = input.lines().rev().find(|line| !line.trim().is_empty()) else {
+        return Ok(None);
+    };
+    serde_json::from_str(line)
+        .map(Some)
+        .map_err(|source| format!("failed to parse last event in {}: {source}", path.display()))
+}
+
+fn print_json(value: &serde_json::Value) -> Result<(), String> {
+    let json = serde_json::to_string_pretty(value).map_err(|source| source.to_string())?;
+    println!("{json}");
+    Ok(())
+}
+
 fn state_current_path(state_root: &Path, state: &StateVolume) -> PathBuf {
     state_volume_root(state_root, state).join("current")
 }
@@ -573,6 +897,14 @@ fn current_path(state_root: &Path) -> PathBuf {
 
 fn previous_path(state_root: &Path) -> PathBuf {
     state_root.join("previous.json")
+}
+
+fn history_path(state_root: &Path) -> PathBuf {
+    state_root.join("history.jsonl")
+}
+
+fn runtime_events_path(state_root: &Path) -> PathBuf {
+    state_root.join("runtime-events.jsonl")
 }
 
 fn canonicalize_state_root(path: &Path) -> Result<PathBuf, String> {

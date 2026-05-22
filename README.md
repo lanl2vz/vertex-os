@@ -13,7 +13,7 @@ vertex-os/
   examples/              Example generation manifests
   crates/
     vertex-ir/           Vertex IR model, loader, validation, graph helpers
-    vertexctl/           CLI for validate, graph, why, and demo materialization
+    vertexctl/           CLI for validation, graphing, activation, inspection, and rollback
     vertex-supervisor/   Hosted Linux graph activator prototype
   userland/
     vertex-init/         Planned first user-space activator
@@ -38,6 +38,7 @@ target/debug/vertexctl validate examples/hello-generation.vertex.json
 target/debug/vertexctl validate examples/hello-stateful-generation.vertex.json
 target/debug/vertexctl graph examples/hello-generation.vertex.json
 target/debug/vertexctl why examples/hello-generation.vertex.json svc:echo-server cap:log.sink
+target/debug/vertexctl who-can examples/hello-generation.vertex.json cap:log.sink --json
 ```
 
 Materialize the hosted demo into a local store tree:
@@ -59,5 +60,9 @@ Track hosted generation activation state under `.vertex/`:
 ```sh
 target/debug/vertexctl activate /private/tmp/vertex-os-demo/hello-generation.hosted.vertex.json --run-once
 target/debug/vertexctl generations
+target/debug/vertexctl status --json
+target/debug/vertexctl inspect current --json
 target/debug/vertexctl rollback --run-once
 ```
+
+Use `--state-root <dir>` with hosted activation and inspection commands to keep generation metadata somewhere other than `.vertex/`. Hosted activation records live under `<state-root>/activations/`, current and previous pointers are stored as JSON, activation history is appended to `<state-root>/history.jsonl`, and supervisor runtime events are appended to `<state-root>/runtime-events.jsonl`.

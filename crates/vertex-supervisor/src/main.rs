@@ -22,6 +22,11 @@ struct HostedCapability {
     endpoint: String,
 }
 
+struct ChildInfo {
+    service_id: String,
+    child: Child,
+}
+
 fn main() -> ExitCode {
     match run(env::args().skip(1).collect()) {
         Ok(()) => ExitCode::SUCCESS,
@@ -70,6 +75,51 @@ fn activate(manifest: &GenerationManifest, args: &Args) -> Result<(), String> {
     println!("runtime dir {}", runtime_dir.display());
     println!("state root {}", state_root.display());
 
+    if !args.dry_run {
+        append_runtime_event(
+            &state_root,
+            serde_json::json!({
+                "event": "activationStart",
+                "generationId": manifest.generation.id,
+                "rootService": manifest.activation.root_service,
+                "utcMs": unix_millis()?
+            }),
+        )?;
+    }
+
+    let result = activate_services(manifest, args, &state_root, &runtime_dir, &capabilities);
+    if !args.dry_run {
+        match &result {
+            Ok(()) => append_runtime_event(
+                &state_root,
+                serde_json::json!({
+                    "event": "activationSuccess",
+                    "generationId": manifest.generation.id,
+                    "utcMs": unix_millis()?
+                }),
+            )?,
+            Err(error) => append_runtime_event(
+                &state_root,
+                serde_json::json!({
+                    "event": "activationFailure",
+                    "generationId": manifest.generation.id,
+                    "error": error,
+                    "utcMs": unix_millis()?
+                }),
+            )?,
+        }
+    }
+
+    result
+}
+
+fn activate_services(
+    manifest: &GenerationManifest,
+    args: &Args,
+    state_root: &Path,
+    runtime_dir: &Path,
+    capabilities: &BTreeMap<String, HostedCapability>,
+) -> Result<(), String> {
     let mut children = Vec::new();
     for service_id in &manifest.activation.start_order {
         let service = manifest
@@ -81,6 +131,17 @@ fn activate(manifest: &GenerationManifest, args: &Args) -> Result<(), String> {
                 "root service {} is represented by this supervisor process",
                 service.id
             );
+            if !args.dry_run {
+                append_runtime_event(
+                    state_root,
+                    serde_json::json!({
+                        "event": "serviceSkippedRoot",
+                        "serviceId": service.id,
+                        "health": service_health_json(service),
+                        "utcMs": unix_millis()?
+                    }),
+                )?;
+            }
             continue;
         }
 
@@ -117,7 +178,20 @@ fn activate(manifest: &GenerationManifest, args: &Args) -> Result<(), String> {
         let child = command
             .spawn()
             .map_err(|source| format!("failed to start {}: {source}", service.id))?;
-        children.push((service.id.clone(), child));
+        append_runtime_event(
+            state_root,
+            serde_json::json!({
+                "event": "serviceStart",
+                "serviceId": service.id,
+                "executable": executable,
+                "health": service_health_json(service),
+                "utcMs": unix_millis()?
+            }),
+        )?;
+        children.push(ChildInfo {
+            service_id: service.id.clone(),
+            child,
+        });
     }
 
     if args.dry_run {
@@ -125,7 +199,7 @@ fn activate(manifest: &GenerationManifest, args: &Args) -> Result<(), String> {
         return Ok(());
     }
 
-    wait_for_children(children)
+    wait_for_children(children, state_root)
 }
 
 fn resolve_service_executable(
@@ -347,15 +421,26 @@ fn sanitize_id(id: &str) -> String {
         .collect()
 }
 
-fn wait_for_children(mut children: Vec<(String, Child)>) -> Result<(), String> {
+fn wait_for_children(mut children: Vec<ChildInfo>, state_root: &Path) -> Result<(), String> {
     let mut failed = Vec::new();
 
-    for (service_id, child) in &mut children {
-        let status = child
+    for child_info in &mut children {
+        let status = child_info
+            .child
             .wait()
-            .map_err(|source| format!("failed to wait for {service_id}: {source}"))?;
+            .map_err(|source| format!("failed to wait for {}: {source}", child_info.service_id))?;
+        append_runtime_event(
+            state_root,
+            serde_json::json!({
+                "event": "serviceExit",
+                "serviceId": child_info.service_id,
+                "success": status.success(),
+                "status": status.to_string(),
+                "utcMs": unix_millis()?
+            }),
+        )?;
         if !status.success() {
-            failed.push(format!("{service_id} exited with {status}"));
+            failed.push(format!("{} exited with {status}", child_info.service_id));
         }
     }
 
@@ -364,6 +449,43 @@ fn wait_for_children(mut children: Vec<(String, Child)>) -> Result<(), String> {
     } else {
         Err(failed.join("; "))
     }
+}
+
+fn service_health_json(service: &Service) -> serde_json::Value {
+    match &service.health {
+        Some(health) => serde_json::json!({
+            "kind": health.kind,
+            "target": health.target
+        }),
+        None => serde_json::Value::Null,
+    }
+}
+
+fn append_runtime_event(state_root: &Path, value: serde_json::Value) -> Result<(), String> {
+    use std::io::Write;
+
+    fs::create_dir_all(state_root).map_err(|source| {
+        format!(
+            "failed to create state root {}: {source}",
+            state_root.display()
+        )
+    })?;
+    let path = state_root.join("runtime-events.jsonl");
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .map_err(|source| format!("failed to open {}: {source}", path.display()))?;
+    let line = serde_json::to_string(&value).map_err(|source| source.to_string())?;
+    writeln!(file, "{line}")
+        .map_err(|source| format!("failed to append {}: {source}", path.display()))
+}
+
+fn unix_millis() -> Result<u128, String> {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .map_err(|source| format!("host clock moved backwards: {source}"))
 }
 
 fn parse_args(args: Vec<String>) -> Result<Args, String> {

@@ -34,6 +34,9 @@ fn run(args: Vec<String>) -> Result<(), String> {
         "switch" => switch_cmd(&args[1..]),
         "rollback" => rollback_cmd(&args[1..]),
         "generations" => generations_cmd(&args[1..]),
+        "status" => status_cmd(&args[1..]),
+        "inspect" => inspect_cmd(&args[1..]),
+        "who-can" => who_can_cmd(&args[1..]),
         "-h" | "--help" | "help" => {
             print_usage();
             Ok(())
@@ -158,6 +161,119 @@ fn rollback_cmd(args: &[String]) -> Result<(), String> {
 
 fn generations_cmd(args: &[String]) -> Result<(), String> {
     hosted::generations(hosted::parse_generations_args(args)?)
+}
+
+fn status_cmd(args: &[String]) -> Result<(), String> {
+    hosted::status(hosted::parse_status_args(args)?)
+}
+
+fn inspect_cmd(args: &[String]) -> Result<(), String> {
+    hosted::inspect(hosted::parse_inspect_args(args)?)
+}
+
+fn who_can_cmd(args: &[String]) -> Result<(), String> {
+    let mut json = false;
+    let mut positional = Vec::new();
+    for arg in args {
+        match arg.as_str() {
+            "--json" => json = true,
+            other if other.starts_with('-') => {
+                return Err(format!("unknown who-can option {other}"));
+            }
+            _ => positional.push(arg.clone()),
+        }
+    }
+
+    let [manifest_path, capability_id] = positional.as_slice() else {
+        return Err("usage: vertexctl who-can <manifest> <capability> [--json]".to_owned());
+    };
+
+    let manifest = load_manifest(manifest_path).map_err(|error| error.to_string())?;
+    let report = validate_manifest(&manifest);
+    if !report.is_valid() {
+        print_report(&report);
+        return Err(format!(
+            "manifest {} is invalid; who-can output suppressed",
+            manifest.generation.id
+        ));
+    }
+
+    let capability = manifest
+        .capability(capability_id)
+        .ok_or_else(|| format!("capability {capability_id} does not exist"))?;
+    let granted: std::collections::BTreeSet<&str> =
+        capability.rights.iter().map(String::as_str).collect();
+    let entries = manifest
+        .services
+        .iter()
+        .filter_map(|service| {
+            service
+                .requires
+                .iter()
+                .find(|requirement| requirement.capability == *capability_id)
+                .map(|requirement| {
+                    let fully_granted = requirement
+                        .rights
+                        .iter()
+                        .all(|right| granted.contains(right.as_str()));
+                    serde_json::json!({
+                        "service": service.id,
+                        "requestedRights": requirement.rights,
+                        "fullyGranted": fully_granted
+                    })
+                })
+        })
+        .collect::<Vec<_>>();
+
+    if json {
+        let output = serde_json::json!({
+            "capability": capability.id,
+            "kind": capability.kind,
+            "provider": capability.provider,
+            "rights": capability.rights,
+            "services": entries
+        });
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&output).map_err(|source| source.to_string())?
+        );
+    } else {
+        println!(
+            "{} kind={} provider={} rights=[{}]",
+            capability.id,
+            capability.kind,
+            capability.provider,
+            capability.rights.join(", ")
+        );
+        if entries.is_empty() {
+            println!("no services require {}", capability.id);
+        } else {
+            for entry in entries {
+                let service = entry
+                    .get("service")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("<unknown>");
+                let rights = entry
+                    .get("requestedRights")
+                    .and_then(|value| value.as_array())
+                    .map(|rights| {
+                        rights
+                            .iter()
+                            .filter_map(|right| right.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    })
+                    .unwrap_or_default();
+                let fully_granted = entry
+                    .get("fullyGranted")
+                    .and_then(|value| value.as_bool())
+                    .unwrap_or(false);
+                println!("  {service} rights=[{rights}] fully_granted={fully_granted}");
+            }
+        }
+    }
+
+    Ok(())
 }
 
 fn materialize_demo_store(
@@ -291,6 +407,9 @@ fn print_usage() {
            vertexctl activate <manifest> [--state-root <dir>] [--run-once]\n\
            vertexctl switch <manifest> [--state-root <dir>] [--run-once]\n\
            vertexctl rollback [--state-root <dir>] [--run-once] [--restore-state]\n\
-           vertexctl generations [--state-root <dir>]"
+           vertexctl generations [--state-root <dir>]\n\
+           vertexctl status [--state-root <dir>] [--json]\n\
+           vertexctl inspect <current|previous|activation-id> [--state-root <dir>] [--json]\n\
+           vertexctl who-can <manifest> <capability> [--json]"
     );
 }
