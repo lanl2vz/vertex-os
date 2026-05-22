@@ -1,5 +1,5 @@
 [package]
-name = "vertex-demo-services"
+name = "echo-server"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

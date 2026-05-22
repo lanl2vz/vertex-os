@@ -62,8 +62,7 @@ pub fn to_pretty_json(manifest: &GenerationManifest) -> Result<String, serde_jso
 mod tests {
     use super::*;
 
-    const HELLO: &str =
-        include_str!("../../../doc/vertex-os-step1/examples/hello-generation.vertex.json");
+    const HELLO: &str = include_str!("../../../examples/hello-generation.vertex.json");
 
     #[test]
     fn hello_manifest_validates_without_errors() {

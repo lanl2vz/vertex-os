@@ -1,9 +1,11 @@
 [workspace]
 members = [
-    "crates/vertex-demo-services",
     "crates/vertex-ir",
     "crates/vertex-supervisor",
     "crates/vertexctl",
+    "userland/echo-server",
+    "userland/logd",
+    "userland/netstack",
 ]
 resolver = "3"
 
