@@ -9,6 +9,8 @@ const CAP_STORE_API: u64 = 0;
 const CAP_SERIAL_LOG: u64 = 1;
 const CAP_BLOCK: u64 = 3;
 const STORE_ID: &[u8] = b"store:hello-text";
+const GENERATION_B_MANIFEST_ID: &[u8] = b"store:generation-b-manifest";
+const GENERATION_B_MANIFEST: &[u8] = b"krustboot:gen:switch-b-0002";
 const HELLO_OBJECT: &[u8] = b"hello from Krust store\n";
 
 #[unsafe(link_section = ".text._start")]
@@ -16,13 +18,37 @@ const HELLO_OBJECT: &[u8] = b"hello from Krust store\n";
 pub extern "C" fn _start() -> ! {
     log(b"vertex-store ready");
 
-    let mut request = [0u8; 64];
-    let received = sys::ipc_recv(CAP_STORE_API, &mut request);
-    if received > request.len() as u64 || !starts_with(&request[..received as usize], STORE_ID) {
+    loop {
+        let mut request = [0u8; 64];
+        let received = sys::ipc_recv(CAP_STORE_API, &mut request);
+        if received > request.len() as u64 {
+            log(b"vertex-store request invalid");
+            sys::exit(1);
+        }
+
+        let request = &request[..received as usize];
+        if starts_with(request, GENERATION_B_MANIFEST_ID) {
+            serve_generation_b_manifest();
+            continue;
+        }
+        if starts_with(request, STORE_ID) {
+            serve_hello_object();
+        }
+
         log(b"vertex-store request invalid");
         sys::exit(1);
     }
+}
 
+fn serve_generation_b_manifest() {
+    log(b"vertex-store exposes generation B manifest");
+    if sys::ipc_send(CAP_STORE_API, GENERATION_B_MANIFEST) != sys::STATUS_OK {
+        log(b"vertex-store generation manifest response failed");
+        sys::exit(1);
+    }
+}
+
+fn serve_hello_object() -> ! {
     log(b"store-service requests block read");
     if sys::ipc_send(CAP_BLOCK, b"read store:hello-text") != sys::STATUS_OK {
         log(b"vertex-store block request failed");

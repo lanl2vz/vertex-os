@@ -6,7 +6,7 @@ IR and graph semantics; Krust is the native enforcement path.
 
 ## Status Summary
 
-Current status: M14-M36 are implemented and smoke-tested under
+Current status: M14-M37 are implemented and smoke-tested under
 `qemu-system-x86_64` with Limine.
 
 ```sh
@@ -25,9 +25,10 @@ scripts/krust-test.sh m33
 scripts/krust-test.sh m34
 scripts/krust-test.sh m35
 scripts/krust-test.sh m36
+scripts/krust-test.sh m37
 ```
 
-Next direction: M37-M40 continue hardening the M14-M36 graph-activation proof
+Next direction: M38-M40 continue hardening the M14-M37 graph-activation proof
 into a small, reliable, extensible capability microkernel substrate.
 
 ## M0: Serial Boot
@@ -201,9 +202,8 @@ proc=vertex-init cap[0] boot-module=krustboot-manifest rights=read
 proc=vertex-init cap[1] endpoint=1 rights=send
 proc=vertex-init cap[2] process-control=process-control rights=control
 vertex-init manifest generation: gen:hello-0001
-Krust process authority accepted: proc=vertex-init generation=gen:hello-0001
-vertex-init activated generation: gen:hello-0001
-Native vertex-init boot ok
+Native manifest-driven activation ok
+Native service activation ok
 ```
 
 M12 proves the first native Vertex OS boot where Krust enforces boot authority
@@ -855,7 +855,7 @@ done: Makefile recipes are parsed by make before the gate proceeds
 done: all M14-M24 QEMU tests are run from the gate
 done: M26-M29 manifest, capability, arena, quota, and malformed-manifest QEMU tests are run from the gate
 done: M30-M31 timer-preemption and user-fault containment QEMU tests are run from the gate
-done: M32-M36 I/O, serial-driver, block-driver, store-service, and state-service QEMU tests are run from the gate
+done: M32-M37 I/O, serial-driver, block-driver, store-service, state-service, and generation-switch QEMU tests are run from the gate
 done: all QEMU transcript checks have bounded polling windows
 done: missing and forbidden transcript lines are reported explicitly
 done: README.md, docs/krust-milestones.md, docs/krust-abi-v0.md, and kernel/krust/README.md agree
@@ -1319,7 +1319,7 @@ explicit snapshot and restore policy separation.
 
 ## M37: Native Generation Switch
 
-Status: planned.
+Status: done.
 
 Goal: make generation switching real instead of only boot-time generation
 selection and rollback metadata.
@@ -1338,16 +1338,22 @@ if B fails, rollback to A
 Acceptance tests:
 
 ```text
-boot generation A
-switch to generation B
-service from A loses old capability
-service from B runs
-bad generation C fails
-rollback to B
+done: boot generation A
+done: switch to generation B
+done: service from A loses old capability
+done: service from B runs
+done: bad generation C fails
+done: rollback to B
 ```
 
-This milestone depends on manifest v1, revocation, resource accounting, and
-store service work.
+`SYS_ACTIVATE_GENERATION` now resolves the requested generation ID against the
+registered native KrustBoot runtime configs, records the previous generation as
+the rollback target, rebuilds the process/object/capability tables for the new
+generation, and enters the new `vertex-init`. The M37 QEMU case boots
+`gen:switch-a-0001`, has `vertex-init` obtain the generation-B marker from
+`vertex-store` over the declared store IPC endpoint, switches to
+`gen:switch-b-0002`, proves old authority was discarded with the old runtime
+tables, then rejects an unavailable bad generation C and remains on B.
 
 ## M38: Native Vertexctl-Like Introspection Service
 
@@ -1399,7 +1405,7 @@ documented host tool versions for Rust, qemu, limine, xorriso, and cargo tools
 locked Cargo dependencies
 kernel/krust/rust-toolchain.toml as the native Krust toolchain pin
 make doctor checks every required tool and reports actionable fixes
-single release-gate script that runs the clean-clone M14-M36 proof
+single release-gate script that runs the clean-clone M14-M37 proof
 ```
 
 Acceptance tests:
@@ -1473,9 +1479,9 @@ A native booted Vertex system should be able to activate, switch, inspect,
 revoke, and persist declared generation graphs under explicit authority.
 ```
 
-M13 proved that native services can run under explicit authority. M14-M36 prove
+M13 proved that native services can run under explicit authority. M14-M37 prove
 that the graph itself decides which native services exist, when they start,
 what they receive, why they are allowed to communicate, and how authority and
 resources are bounded, while timer preemption and user fault containment keep
-the kernel in control. M37-M40 should make that model reliable enough to become
+the kernel in control. M38-M40 should make that model reliable enough to become
 the long-lived Vertex native runtime base.

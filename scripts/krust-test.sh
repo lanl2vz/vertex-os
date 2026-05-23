@@ -246,6 +246,27 @@ state restored
 system generation rollback does not automatically roll back state unless policy says so
 '
         ;;
+    m37|generation-switch)
+        MANIFEST="$ROOT_DIR/examples/krust-switch-a-generation.vertex.json"
+        FALLBACK_MANIFEST="$ROOT_DIR/examples/krust-switch-b-generation.vertex.json"
+        EXPECT_ACTIVATION_SUCCESS=1
+        required_lines='
+Boot generation: gen:switch-a-0001
+vertex-store exposes generation B manifest
+vertex-init validates generation B
+Krust generation switch accepted: from=gen:switch-a-0001 to=gen:switch-b-0002
+Krust generation switch revoked old generation authority: generation=gen:switch-a-0001
+old generation service loses old capability
+Krust generation switch entering generation: gen:switch-b-0002
+Boot generation: gen:switch-b-0002
+service from B runs
+vertex-init validates generation C
+Krust generation switch rejected: requested=gen:switch-c-bad-0003
+bad generation C fails
+rollback to B
+Native service activation ok
+'
+        ;;
     manifest-truncated)
         MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
         KRUSTBOOT_CORRUPT=truncated
@@ -295,7 +316,7 @@ activation failed
 '
         ;;
     *)
-        echo "usage: scripts/krust-test.sh <m13|m14|valid-activation|manifest-cycle|bad-cap|readiness|readiness-timeout|rollback|store-state-services|timer|preemption|m30|user-fault|m31|restart|manifest-v1|cap-lifecycle|typed-arenas|quotas|m32|io-substrate|m33|serial-driver|m34|block-driver|m35|store-service|m36|state-service|manifest-truncated|manifest-bad-magic|manifest-raw-compact|manifest-unsupported-version|manifest-oob-record|manifest-missing-provider>" >&2
+        echo "usage: scripts/krust-test.sh <m13|m14|valid-activation|manifest-cycle|bad-cap|readiness|readiness-timeout|rollback|store-state-services|timer|preemption|m30|user-fault|m31|restart|manifest-v1|cap-lifecycle|typed-arenas|quotas|m32|io-substrate|m33|serial-driver|m34|block-driver|m35|store-service|m36|state-service|m37|generation-switch|manifest-truncated|manifest-bad-magic|manifest-raw-compact|manifest-unsupported-version|manifest-oob-record|manifest-missing-provider>" >&2
         exit 2
         ;;
 esac

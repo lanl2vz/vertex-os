@@ -17,6 +17,7 @@ const MAX_PROCESSES: usize = 16;
 const MAX_CAPS: usize = 32;
 const MAX_BOOT_GRANTS: usize = 128;
 const MAX_REVOKED_CAPS: usize = 128;
+const MAX_GENERATION_CONFIGS: usize = 4;
 const MAX_STATE_VALUE_BYTES: usize = 64;
 const INITIAL_USER_RFLAGS: u64 = 0x202;
 const STATUS_BAD_BUFFER: u64 = u64::MAX - 2;
@@ -466,15 +467,21 @@ struct RuntimeState {
     objects: ObjectTable,
     processes: ProcessTable,
     generation_id: &'static str,
+    active_config: Option<&'static BootRuntimeConfig>,
     next_cap_id: u64,
     revoked_caps: [u64; MAX_REVOKED_CAPS],
     revoked_cap_count: usize,
 }
 
 #[derive(Clone, Copy)]
-struct FallbackRuntime {
+struct GenerationRuntime {
     generation_id: &'static str,
     config: &'static BootRuntimeConfig,
+}
+
+struct GenerationRuntimeTable {
+    entries: [Option<GenerationRuntime>; MAX_GENERATION_CONFIGS],
+    count: usize,
 }
 
 struct Global<T>(UnsafeCell<T>);
@@ -482,7 +489,9 @@ struct Global<T>(UnsafeCell<T>);
 unsafe impl<T> Sync for Global<T> {}
 
 static RUNTIME: Global<RuntimeState> = Global(UnsafeCell::new(RuntimeState::new()));
-static FALLBACK_RUNTIME: Global<Option<FallbackRuntime>> = Global(UnsafeCell::new(None));
+static GENERATION_RUNTIMES: Global<GenerationRuntimeTable> =
+    Global(UnsafeCell::new(GenerationRuntimeTable::new()));
+static ROLLBACK_RUNTIME: Global<Option<GenerationRuntime>> = Global(UnsafeCell::new(None));
 
 impl CapabilitySpace {
     const fn new() -> Self {
@@ -1238,14 +1247,16 @@ impl RuntimeState {
             objects: ObjectTable::new(),
             processes: ProcessTable::new(),
             generation_id: "",
+            active_config: None,
             next_cap_id: 1,
             revoked_caps: [0; MAX_REVOKED_CAPS],
             revoked_cap_count: 0,
         }
     }
 
-    fn reset_capability_lifecycle(&mut self, generation_id: &'static str) {
-        self.generation_id = generation_id;
+    fn reset_capability_lifecycle(&mut self, config: &'static BootRuntimeConfig) {
+        self.generation_id = config.generation_id;
+        self.active_config = Some(config);
         self.next_cap_id = 1;
         self.revoked_cap_count = 0;
         let mut index = 0;
@@ -1253,6 +1264,19 @@ impl RuntimeState {
             self.revoked_caps[index] = 0;
             index += 1;
         }
+    }
+
+    fn generation_cap_count(&self, generation_id: &'static str) -> u64 {
+        let mut count = 0;
+        let mut process_index = 0;
+        while process_index < self.processes.count {
+            if let Some(process) = self.processes.processes[process_index] {
+                count += generation_cap_count_in_space(process.caps, generation_id);
+                count += generation_cap_count_in_space(process.initial_caps, generation_id);
+            }
+            process_index += 1;
+        }
+        count
     }
 
     fn new_capability(
@@ -1499,6 +1523,64 @@ impl BootRuntimeConfig {
     }
 }
 
+impl GenerationRuntimeTable {
+    const fn new() -> Self {
+        Self {
+            entries: [None; MAX_GENERATION_CONFIGS],
+            count: 0,
+        }
+    }
+
+    fn register(&mut self, runtime: GenerationRuntime) -> Result<(), InitError> {
+        let mut index = 0;
+        while index < self.count {
+            if let Some(existing) = self.entries[index]
+                && existing.generation_id == runtime.generation_id
+            {
+                self.entries[index] = Some(runtime);
+                return Ok(());
+            }
+            index += 1;
+        }
+
+        if self.count == self.entries.len() {
+            return Err(InitError::ObjectTableFull);
+        }
+
+        self.entries[self.count] = Some(runtime);
+        self.count += 1;
+        Ok(())
+    }
+
+    fn find(&self, generation_id: &[u8]) -> Option<GenerationRuntime> {
+        let mut index = 0;
+        while index < self.count {
+            if let Some(runtime) = self.entries[index]
+                && runtime.generation_id.as_bytes() == generation_id
+            {
+                return Some(runtime);
+            }
+            index += 1;
+        }
+        None
+    }
+}
+
+fn generation_cap_count_in_space(space: CapabilitySpace, generation_id: &'static str) -> u64 {
+    let mut count = 0;
+    let mut slot = 0;
+    while slot < MAX_CAPS {
+        if let Some(cap) = space.caps[slot]
+            && cap.generation_id == generation_id
+            && !cap.revoked
+        {
+            count += 1;
+        }
+        slot += 1;
+    }
+    count
+}
+
 fn revoke_descendants_in_space(
     space: &mut CapabilitySpace,
     parent_cap_id: u64,
@@ -1539,11 +1621,11 @@ fn revoked_contains(revoked_caps: &[u64; MAX_REVOKED_CAPS], count: usize, cap_id
     false
 }
 
-pub fn init_from_boot_config(config: &BootRuntimeConfig) -> Result<(), InitError> {
+pub fn init_from_boot_config(config: &'static BootRuntimeConfig) -> Result<(), InitError> {
     let runtime = runtime();
     runtime.objects.reset();
     runtime.processes.reset();
-    runtime.reset_capability_lifecycle(config.generation_id);
+    runtime.reset_capability_lifecycle(config);
 
     let mut endpoint_ids = [None; MAX_OBJECTS];
     let mut endpoint_index = 0;
@@ -1731,6 +1813,21 @@ pub fn init_from_boot_config(config: &BootRuntimeConfig) -> Result<(), InitError
 
     print_boot_tables(runtime);
     Ok(())
+}
+
+pub fn register_generation_config(config: &'static BootRuntimeConfig) -> Result<(), InitError> {
+    let table = generation_runtimes();
+    table.register(GenerationRuntime {
+        generation_id: config.generation_id,
+        config,
+    })
+}
+
+pub fn set_rollback_boot_config(config: &'static BootRuntimeConfig) {
+    set_rollback_runtime(GenerationRuntime {
+        generation_id: config.generation_id,
+        config,
+    });
 }
 
 fn process_pid_at(runtime: &RuntimeState, process_index: usize) -> Result<ProcessId, InitError> {
@@ -2144,31 +2241,74 @@ pub fn activate_generation(
     cap_slot: u64,
     generation: *const u8,
     len: usize,
+    frame: &mut SyscallFrame,
 ) -> Result<(), IpcError> {
     if len > MAX_MESSAGE_BYTES {
         return Err(IpcError::MessageTooLarge);
     }
 
-    let _process_control = process_control_from_cap(cap_slot, capability::RIGHT_CONTROL)?;
+    let _process_control = process_control_from_cap(
+        cap_slot,
+        capability::RIGHT_CONTROL | capability::RIGHT_REVOKE,
+    )?;
     let mut generation_id = [0u8; MAX_MESSAGE_BYTES];
     usercopy::copy_from_user(&mut generation_id, UserPtr::new(generation as u64), len)
         .map_err(|_| IpcError::InvalidUserBuffer)?;
 
-    serial::write_str("Krust process authority accepted: proc=");
-    serial::write_str(current_process_name());
-    serial::write_str(" generation=");
-    serial::write_ascii_bytes(&generation_id[..len]);
-    serial::write_str("\n");
-    serial::write_str("Krust native generation activation ok\n");
-    Ok(())
-}
+    let requested = &generation_id[..len];
+    let target = match generation_runtimes().find(requested) {
+        Some(target) => target,
+        None => {
+            serial::write_str("Krust generation switch rejected: requested=");
+            serial::write_ascii_bytes(requested);
+            serial::write_str("\n");
+            return Err(IpcError::BadCapability);
+        }
+    };
 
-pub fn set_fallback_boot_config(generation_id: &'static str, config: &'static BootRuntimeConfig) {
-    unsafe {
-        *FALLBACK_RUNTIME.0.get() = Some(FallbackRuntime {
-            generation_id,
-            config,
+    let (previous_generation, previous_config, old_cap_count) = {
+        let runtime = runtime();
+        (
+            runtime.generation_id,
+            runtime.active_config,
+            runtime.generation_cap_count(runtime.generation_id),
+        )
+    };
+
+    if previous_generation == target.generation_id {
+        serial::write_str("Krust generation switch already active: ");
+        serial::write_str(target.generation_id);
+        serial::write_str("\n");
+        return Ok(());
+    }
+
+    if let Some(previous_config) = previous_config {
+        set_rollback_runtime(GenerationRuntime {
+            generation_id: previous_generation,
+            config: previous_config,
         });
+    }
+
+    serial::write_str("Krust generation switch accepted: from=");
+    serial::write_str(previous_generation);
+    serial::write_str(" to=");
+    serial::write_str(target.generation_id);
+    serial::write_str("\n");
+    serial::write_str("Krust generation switch revoked old generation authority: generation=");
+    serial::write_str(previous_generation);
+    serial::write_str(" caps=");
+    serial::write_u64_dec(old_cap_count);
+    serial::write_str("\n");
+    serial::write_str("old generation service loses old capability\n");
+
+    init_from_boot_config(target.config).map_err(|_| IpcError::BadCapability)?;
+    let context = initial_process_context().ok_or(IpcError::BadCapability)?;
+    serial::write_str("Krust generation switch entering generation: ");
+    serial::write_str(target.generation_id);
+    serial::write_str("\n");
+    let _ = frame;
+    unsafe {
+        gdt::enter_user_mode(context.cr3, context.entry, context.stack_top);
     }
 }
 
@@ -2181,36 +2321,59 @@ pub fn rollback_generation(
     if len > MAX_MESSAGE_BYTES {
         return Err(IpcError::MessageTooLarge);
     }
-    let _process_control = process_control_from_cap(cap_slot, capability::RIGHT_CONTROL)?;
+    let _process_control = process_control_from_cap(
+        cap_slot,
+        capability::RIGHT_CONTROL | capability::RIGHT_REVOKE,
+    )?;
 
     let mut requested = [0u8; MAX_MESSAGE_BYTES];
     usercopy::copy_from_user(&mut requested, UserPtr::new(generation as u64), len)
         .map_err(|_| IpcError::InvalidUserBuffer)?;
 
-    let fallback = match unsafe { *FALLBACK_RUNTIME.0.get() } {
-        Some(fallback) => fallback,
+    let rollback = match unsafe { *ROLLBACK_RUNTIME.0.get() } {
+        Some(rollback) => rollback,
         None => {
-            serial::write_str("Krust rollback rejected: no fallback runtime\n");
+            serial::write_str("Krust rollback rejected: no rollback runtime\n");
             return Err(IpcError::BadCapability);
         }
     };
-    if fallback.generation_id.as_bytes() != &requested[..len] {
+    if rollback.generation_id.as_bytes() != &requested[..len] {
         serial::write_str("Krust rollback rejected: requested=");
         serial::write_ascii_bytes(&requested[..len]);
         serial::write_str(" available=");
-        serial::write_str(fallback.generation_id);
+        serial::write_str(rollback.generation_id);
         serial::write_str("\n");
         return Err(IpcError::BadCapability);
     }
 
+    let (previous_generation, previous_config, old_cap_count) = {
+        let runtime = runtime();
+        (
+            runtime.generation_id,
+            runtime.active_config,
+            runtime.generation_cap_count(runtime.generation_id),
+        )
+    };
+    if let Some(previous_config) = previous_config {
+        set_rollback_runtime(GenerationRuntime {
+            generation_id: previous_generation,
+            config: previous_config,
+        });
+    }
+
     serial::write_str("Krust rollback generation accepted: target=");
-    serial::write_str(fallback.generation_id);
+    serial::write_str(rollback.generation_id);
+    serial::write_str("\n");
+    serial::write_str("Krust rollback revoked failed generation authority: generation=");
+    serial::write_str(previous_generation);
+    serial::write_str(" caps=");
+    serial::write_u64_dec(old_cap_count);
     serial::write_str("\n");
 
-    init_from_boot_config(fallback.config).map_err(|_| IpcError::BadCapability)?;
+    init_from_boot_config(rollback.config).map_err(|_| IpcError::BadCapability)?;
     let context = initial_process_context().ok_or(IpcError::BadCapability)?;
     serial::write_str("Krust rollback entering generation: ");
-    serial::write_str(fallback.generation_id);
+    serial::write_str(rollback.generation_id);
     serial::write_str("\n");
     let _ = frame;
     unsafe {
@@ -3516,6 +3679,16 @@ fn current_process_label() -> &'static str {
         .current_process()
         .map(|process| process.name)
         .unwrap_or("<none>")
+}
+
+fn generation_runtimes() -> &'static mut GenerationRuntimeTable {
+    unsafe { &mut *GENERATION_RUNTIMES.0.get() }
+}
+
+fn set_rollback_runtime(runtime: GenerationRuntime) {
+    unsafe {
+        *ROLLBACK_RUNTIME.0.get() = Some(runtime);
+    }
 }
 
 fn runtime() -> &'static mut RuntimeState {

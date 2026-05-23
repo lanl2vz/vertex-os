@@ -197,6 +197,7 @@ pub extern "C" fn krust_syscall_dispatch(
             arg0,
             arg1 as *const u8,
             usize::try_from(arg2).unwrap_or(usize::MAX),
+            frame,
         ) {
             Ok(()) => frame.rax = STATUS_OK,
             Err(error) => frame.rax = ipc_error_status("SYS_ACTIVATE_GENERATION", error),

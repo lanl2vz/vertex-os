@@ -38,6 +38,12 @@ const RESTART_ALWAYS: u16 = 2;
 const MAX_NATIVE_RESTARTS: u16 = 1;
 const STATUS_RUNNING: u64 = u64::MAX - 8;
 const READINESS_TIMEOUT_MS: u64 = 50;
+const M37_GENERATION_A: &[u8] = b"gen:switch-a-0001";
+const M37_GENERATION_B: &[u8] = b"gen:switch-b-0002";
+const M37_GENERATION_C_BAD: &[u8] = b"gen:switch-c-bad-0003";
+const M37_STORE_ENDPOINT: &[u8] = b"store-hello-text-api";
+const M37_GENERATION_B_STORE_REQUEST: &[u8] = b"store:generation-b-manifest";
+const M37_GENERATION_B_STORE_RESPONSE: &[u8] = b"krustboot:gen:switch-b-0002";
 
 #[unsafe(link_section = ".text._start")]
 #[unsafe(no_mangle)]
@@ -139,6 +145,15 @@ pub extern "C" fn _start() -> ! {
         }
 
         start_service(name, process_index as u64, parent_generation);
+        if bytes_eq(generation, M37_GENERATION_A) && bytes_eq(name, b"vertex-store") {
+            fetch_generation_b_manifest(
+                &manifest[..manifest_len],
+                boot_modules,
+                processes,
+                endpoints,
+                parent_generation,
+            );
+        }
         if process_has_health(&manifest[..manifest_len], boot_modules, process_index) {
             wait_ready(name, parent_generation);
         }
@@ -156,6 +171,7 @@ pub extern "C" fn _start() -> ! {
     log(b"Native manifest-driven activation ok");
     log(b"Native readiness activation ok");
     log(b"Native service activation ok");
+    maybe_switch_generation(generation);
     sys::exit(0)
 }
 
@@ -192,8 +208,22 @@ fn process_base(boot_modules: u16) -> usize {
     boot_modules_base() + boot_modules as usize * BOOT_MODULE_RECORD_LEN
 }
 
+fn endpoint_base(boot_modules: u16, processes: u16) -> usize {
+    process_base(boot_modules) + processes as usize * PROCESS_RECORD_LEN
+}
+
 fn process_offset(boot_modules: u16, process_index: usize) -> usize {
     process_base(boot_modules) + process_index * PROCESS_RECORD_LEN
+}
+
+fn endpoint_name(
+    manifest: &[u8],
+    boot_modules: u16,
+    processes: u16,
+    endpoint_index: usize,
+) -> &[u8] {
+    let offset = endpoint_base(boot_modules, processes) + endpoint_index * STRING_LEN;
+    fixed_string(&manifest[offset..offset + STRING_LEN])
 }
 
 fn process_name(manifest: &[u8], boot_modules: u16, process_index: usize) -> &[u8] {
@@ -613,6 +643,101 @@ fn activation_failed(parent_generation: &[u8]) -> ! {
         }
     }
     sys::exit(1);
+}
+
+fn maybe_switch_generation(generation: &[u8]) {
+    if bytes_eq(generation, M37_GENERATION_A) {
+        let status = sys::activate_generation(M37_GENERATION_B);
+        if status != sys::STATUS_OK {
+            log(b"generation switch to B failed");
+            sys::exit(1);
+        }
+        loop {
+            sys::pause();
+        }
+    }
+
+    if bytes_eq(generation, M37_GENERATION_B) {
+        log(b"service from B runs");
+        log(b"vertex-init validates generation C");
+        let status = sys::activate_generation(M37_GENERATION_C_BAD);
+        if status == sys::STATUS_BAD_CAPABILITY {
+            log(b"bad generation C fails");
+            log(b"rollback to B");
+            return;
+        }
+        log(b"bad generation C unexpectedly switched");
+        sys::exit(1);
+    }
+}
+
+fn fetch_generation_b_manifest(
+    manifest: &[u8],
+    boot_modules: u16,
+    processes: u16,
+    endpoints: u16,
+    parent_generation: &[u8],
+) {
+    let Some(store_endpoint) = endpoint_index_by_name(
+        manifest,
+        boot_modules,
+        processes,
+        endpoints,
+        M37_STORE_ENDPOINT,
+    ) else {
+        log(b"vertex-init generation B store endpoint missing");
+        activation_failed(parent_generation);
+    };
+    let store_cap = endpoint_auth_slot(store_endpoint);
+    if store_cap == u64::MAX {
+        log(b"vertex-init generation B store endpoint unauthorized");
+        activation_failed(parent_generation);
+    }
+
+    if sys::ipc_send(store_cap, M37_GENERATION_B_STORE_REQUEST) != sys::STATUS_OK {
+        log(b"vertex-init generation B manifest request failed");
+        activation_failed(parent_generation);
+    }
+
+    let mut buffer = [0u8; 64];
+    let received = sys::ipc_recv(store_cap, &mut buffer);
+    if received == sys::STATUS_BAD_CAPABILITY || received == sys::STATUS_BAD_BUFFER {
+        log(b"vertex-init generation B manifest read failed");
+        activation_failed(parent_generation);
+    }
+
+    if received > buffer.len() as u64 {
+        log(b"vertex-init generation B manifest response too large");
+        activation_failed(parent_generation);
+    }
+
+    let received = received as usize;
+    if !bytes_eq(&buffer[..received], M37_GENERATION_B_STORE_RESPONSE) {
+        log(b"vertex-init generation B manifest invalid");
+        activation_failed(parent_generation);
+    }
+
+    log(b"vertex-init validates generation B");
+}
+
+fn endpoint_index_by_name(
+    manifest: &[u8],
+    boot_modules: u16,
+    processes: u16,
+    endpoints: u16,
+    name: &[u8],
+) -> Option<u16> {
+    let mut index = 0;
+    while index < endpoints {
+        if bytes_eq(
+            endpoint_name(manifest, boot_modules, processes, index as usize),
+            name,
+        ) {
+            return Some(index);
+        }
+        index += 1;
+    }
+    None
 }
 
 fn log_restart_once(value: &[u8]) {

@@ -549,6 +549,10 @@ fn run_native_boot(allocator: &mut memory::FrameAllocator, boot_manifests: &Boot
     ) else {
         return;
     };
+    if ipc::register_generation_config(config).is_err() {
+        serial::write_str("KrustBoot selected generation registration failed\n");
+        return;
+    }
 
     if let Some(fallback_manifest) = boot_manifests.fallback {
         if fallback_manifest.generation_id() == boot_manifests.selected.generation_id() {
@@ -562,7 +566,11 @@ fn run_native_boot(allocator: &mut memory::FrameAllocator, boot_manifests: &Boot
             "krustboot-fallback-manifest",
             &FALLBACK_BOOT_CONFIG,
         ) {
-            ipc::set_fallback_boot_config(fallback_manifest.generation_id(), fallback_config);
+            if ipc::register_generation_config(fallback_config).is_err() {
+                serial::write_str("KrustBoot fallback generation registration failed\n");
+                return;
+            }
+            ipc::set_rollback_boot_config(fallback_config);
             serial::write_str("KrustBoot fallback generation ready: ");
             serial::write_str(fallback_manifest.generation_id());
             serial::write_str("\n");

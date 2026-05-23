@@ -5,12 +5,13 @@ native Krust QEMU/Limine milestone. It is intentionally small and unstable. Its
 current job is to boot native `vertex-init`, start a tiny declared service
 graph, and enforce explicit process-local capabilities.
 
-Milestone status: ABI v0 now covers the M14-M36 native activation and substrate
+Milestone status: ABI v0 now covers the M14-M37 native activation and substrate
 proof. M25 adds the release gate. M26-M29 add Manifest v1 parsing, capability
 provenance/revocation, typed arena allocation checks, and resource quotas.
 M30-M31 add PIT-backed preemption and user page-fault containment. M32-M36 add
 I/O capability objects, user-space serial and block-driver proof paths, and
-native store/state services. This is
+native store/state services. M37 upgrades generation activation into a real
+runtime switch between registered native KrustBoot configs. This is
 still experimental and does not freeze syscall, capability, process, or IPC ABI
 surface.
 
@@ -60,7 +61,7 @@ process frame, switch CR3, and return into another userspace process through
 | 5 | `SYS_YIELD` | none | status |
 | 6 | `SYS_BOOT_READ` | `arg0 = cap_slot`, `arg1 = user_ptr`, `arg2 = max_len` | byte count or error status |
 | 7 | `SYS_LOG_WRITE` | `arg0 = cap_slot`, `arg1 = user_ptr`, `arg2 = len` | status |
-| 8 | `SYS_ACTIVATE_GENERATION` | `arg0 = cap_slot`, `arg1 = user_ptr`, `arg2 = len` | status |
+| 8 | `SYS_ACTIVATE_GENERATION` | `arg0 = cap_slot`, `arg1 = user_ptr`, `arg2 = len` | does not return on switch success; status on rejection |
 | 9 | `SYS_PROCESS_START` | `arg0 = process_control_cap_slot`, `arg1 = process_index`, `arg2 = 0` | status |
 | 10 | `SYS_CAP_DERIVE` | `arg0 = parent_cap_slot`, `arg1 = new_cap_slot`, `arg2 = rights_mask` | status |
 | 11 | `SYS_CAP_DROP` | `arg0 = cap_slot` | status |
@@ -122,7 +123,7 @@ becoming uncontrolled kernel faults.
 Capabilities are process-local. A capability slot number is meaningful only in
 the current process's capability space.
 
-Current M14-M36 layout:
+Current M14-M37 layout:
 
 ```text
 vertex-init:
@@ -196,10 +197,10 @@ The native activation path uses the same rule:
 ```text
 SYS_BOOT_READ requires cap[0] read rights to the manifest boot module.
 SYS_LOG_WRITE requires cap[1] send rights to the serial-log endpoint.
-SYS_ACTIVATE_GENERATION requires cap[2] control rights to process-control.
+SYS_ACTIVATE_GENERATION requires cap[2] control and revoke rights to process-control.
 SYS_PROCESS_START requires cap[2] control rights to process-control.
 SYS_PROCESS_STATUS requires cap[2] control rights to process-control.
-SYS_ROLLBACK_GENERATION requires cap[2] control rights to process-control.
+SYS_ROLLBACK_GENERATION requires cap[2] control and revoke rights to process-control.
 SYS_CAP_TRANSFER requires a caller-supplied process-control cap slot and applies the packed rights mask.
 SYS_ENDPOINT_CREATE requires allocate rights on process-control and available endpoint quota.
 SYS_QUOTA_DELEGATE requires delegate rights on process-control and cannot exceed the caller quota.
@@ -256,9 +257,11 @@ quota `0` unless delegated a smaller quota through `SYS_QUOTA_DELEGATE`.
 `SYS_ENDPOINT_CREATE` consumes endpoint quota and installs a send/receive cap in
 the caller's requested slot.
 
-`SYS_ACTIVATE_GENERATION` remains the minimal M12 authority proof. The current
-native path uses `SYS_PROCESS_START`, `SYS_PROCESS_STATUS`, and
-`SYS_ROLLBACK_GENERATION` for activation, supervision, and fallback.
+`SYS_ACTIVATE_GENERATION` now performs a native generation switch. It requires
+process-control and revoke authority, resolves the requested generation ID
+against the kernel-registered KrustBoot runtime configs, records the previous
+generation as the rollback target, replaces the runtime process/object/capability
+tables, and enters the new generation's `vertex-init`.
 
 ## Process Model
 
@@ -392,7 +395,7 @@ SYS_LOG_WRITE(cap[1], message, len)
   writes a serial-log message if cap[1] grants send rights
 
 SYS_ACTIVATE_GENERATION(cap[2], generation_id, len)
-  proves vertex-init holds process-control authority for activation
+  switches to a registered native generation and enters its vertex-init
 
 SYS_PROCESS_START(cap[2], process_index, 0)
   starts a declared process from the compact manifest
