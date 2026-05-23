@@ -19,6 +19,7 @@ const MAX_BOOT_GRANTS: usize = 128;
 const MAX_REVOKED_CAPS: usize = 128;
 const MAX_GENERATION_CONFIGS: usize = 4;
 const MAX_STATE_VALUE_BYTES: usize = 64;
+const MAX_INSPECT_REPORT_BYTES: usize = 32 * 1024;
 const INITIAL_USER_RFLAGS: u64 = 0x202;
 const STATUS_BAD_BUFFER: u64 = u64::MAX - 2;
 const STATUS_OK: u64 = 0;
@@ -435,6 +436,12 @@ struct ProcessControlObject {
     name: &'static str,
 }
 
+struct InspectReport {
+    bytes: [u8; MAX_INSPECT_REPORT_BYTES],
+    len: usize,
+    truncated: bool,
+}
+
 #[derive(Clone, Copy)]
 enum KernelObject {
     IpcEndpoint(IpcEndpoint),
@@ -743,6 +750,60 @@ impl DmaRegionObject {
 impl ProcessControlObject {
     const fn new(id: KernelObjectId, name: &'static str) -> Self {
         Self { id, name }
+    }
+}
+
+impl InspectReport {
+    const fn new() -> Self {
+        Self {
+            bytes: [0; MAX_INSPECT_REPORT_BYTES],
+            len: 0,
+            truncated: false,
+        }
+    }
+
+    fn push_byte(&mut self, byte: u8) {
+        if self.len == self.bytes.len() {
+            self.truncated = true;
+            return;
+        }
+        self.bytes[self.len] = byte;
+        self.len += 1;
+    }
+
+    fn push_str(&mut self, value: &str) {
+        self.push_bytes(value.as_bytes());
+    }
+
+    fn push_bytes(&mut self, value: &[u8]) {
+        let mut index = 0;
+        while index < value.len() {
+            self.push_byte(value[index]);
+            index += 1;
+        }
+    }
+
+    fn push_u64_dec(&mut self, mut value: u64) {
+        if value == 0 {
+            self.push_byte(b'0');
+            return;
+        }
+
+        let mut digits = [0u8; 20];
+        let mut len = 0;
+        while value > 0 {
+            digits[len] = b'0' + (value % 10) as u8;
+            value /= 10;
+            len += 1;
+        }
+        while len > 0 {
+            len -= 1;
+            self.push_byte(digits[len]);
+        }
+    }
+
+    fn as_slice(&self) -> &[u8] {
+        &self.bytes[..self.len]
     }
 }
 
@@ -1801,7 +1862,8 @@ pub fn init_from_boot_config(config: &'static BootRuntimeConfig) -> Result<(), I
     let process_control_rights = capability::RIGHT_CONTROL
         | capability::RIGHT_ALLOCATE
         | capability::RIGHT_DELEGATE
-        | capability::RIGHT_REVOKE;
+        | capability::RIGHT_REVOKE
+        | capability::RIGHT_INSPECT;
     let cap = runtime.new_capability(
         process_control_id,
         process_control_rights,
@@ -2905,6 +2967,35 @@ pub fn mmio_map(cap_slot: u64) -> Result<u64, IpcError> {
     Ok(region.base)
 }
 
+pub fn runtime_inspect(
+    cap_slot: u64,
+    destination: *mut u8,
+    max_len: usize,
+) -> Result<usize, IpcError> {
+    let _process_control = process_control_from_cap(cap_slot, capability::RIGHT_INSPECT)?;
+    let mut report = InspectReport::new();
+    let caller = current_process_name();
+
+    {
+        let runtime = runtime();
+        build_inspect_report(runtime, &mut report);
+    }
+
+    if report.truncated || report.len > max_len {
+        return Err(IpcError::MessageTooLarge);
+    }
+
+    usercopy::copy_to_user(UserPtr::new(destination as u64), report.as_slice())
+        .map_err(|_| IpcError::InvalidUserBuffer)?;
+
+    serial::write_str("Runtime inspect accepted: proc=");
+    serial::write_str(caller);
+    serial::write_str(" bytes=");
+    serial::write_u64_dec(report.len as u64);
+    serial::write_str("\n");
+    Ok(report.len)
+}
+
 pub fn sleep_ms(
     cap_slot: u64,
     milliseconds: u64,
@@ -3477,6 +3568,216 @@ fn find_cap_parent_in_space(space: CapabilitySpace, cap_id: u64) -> Option<u64> 
     None
 }
 
+fn build_inspect_report(runtime: &RuntimeState, report: &mut InspectReport) {
+    report.push_str("native-runtime-report v=1\n");
+    report.push_str("generation=");
+    report.push_str(runtime.generation_id);
+    report.push_byte(b'\n');
+    report.push_str("processes=");
+    report.push_u64_dec(runtime.processes.count as u64);
+    report.push_byte(b'\n');
+    report.push_str("objects=");
+    report.push_u64_dec(runtime.objects.count as u64);
+    report.push_byte(b'\n');
+
+    let mut index = 0;
+    while index < runtime.processes.count {
+        if let Some(process) = runtime.processes.processes[index] {
+            report.push_str("process[");
+            report.push_u64_dec(index as u64);
+            report.push_str("] name=");
+            report.push_str(process.name);
+            report.push_str(" pid=");
+            report.push_u64_dec(process.pid.raw());
+            report.push_str(" state=");
+            report.push_str(process.state.label());
+            report.push_str(" generation=");
+            report.push_str(runtime.generation_id);
+            report.push_byte(b'\n');
+
+            write_capability_space_report(runtime, report, process, "current", process.caps);
+            write_capability_space_report(
+                runtime,
+                report,
+                process,
+                "initial",
+                process.initial_caps,
+            );
+        }
+        index += 1;
+    }
+}
+
+fn write_capability_space_report(
+    runtime: &RuntimeState,
+    report: &mut InspectReport,
+    process: Process,
+    space_name: &str,
+    space: CapabilitySpace,
+) {
+    let mut slot = 0;
+    while slot < MAX_CAPS {
+        if let Some(cap) = space.caps[slot] {
+            report.push_str("space=");
+            report.push_str(space_name);
+            report.push_str(" proc=");
+            report.push_str(process.name);
+            report.push_str(" cap[");
+            report.push_u64_dec(slot as u64);
+            report.push_str("] ");
+            write_capability_object_report(runtime, report, cap.object);
+            report.push_str(" rights=");
+            write_rights_report(report, cap.rights);
+            report.push_str(" cap_id=");
+            report.push_u64_dec(cap.id);
+            report.push_str(" parent_cap_id=");
+            report.push_u64_dec(cap.parent_cap_id);
+            report.push_str(" generation=");
+            report.push_str(cap.generation_id);
+            report.push_str(" revoked=");
+            report.push_str(if cap.revoked || runtime.cap_id_revoked(cap.id) {
+                "yes"
+            } else {
+                "no"
+            });
+            report.push_byte(b'\n');
+        }
+        slot += 1;
+    }
+}
+
+fn write_capability_object_report(
+    runtime: &RuntimeState,
+    report: &mut InspectReport,
+    object: KernelObjectId,
+) {
+    let mut index = 0;
+    while index < runtime.objects.count {
+        if let Some(entry) = runtime.objects.objects[index] {
+            match entry {
+                KernelObject::IpcEndpoint(endpoint) if endpoint.id == object => {
+                    report.push_str("endpoint=");
+                    report.push_str(endpoint.name);
+                    return;
+                }
+                KernelObject::BootModule(module) if module.id == object => {
+                    report.push_str("boot-module=");
+                    report.push_str(module.name);
+                    return;
+                }
+                KernelObject::StoreObject(store) if store.id == object => {
+                    report.push_str("store-object=");
+                    report.push_str(store.name);
+                    return;
+                }
+                KernelObject::StateVolume(state) if state.id == object => {
+                    report.push_str("state-volume=");
+                    report.push_str(state.name);
+                    return;
+                }
+                KernelObject::Timer(timer) if timer.id == object => {
+                    report.push_str("timer=");
+                    report.push_str(timer.name);
+                    return;
+                }
+                KernelObject::NetworkPort(port) if port.id == object => {
+                    report.push_str("network-port=");
+                    report.push_str(port.name);
+                    return;
+                }
+                KernelObject::IoPortRange(port) if port.id == object => {
+                    report.push_str("io-port=");
+                    report.push_str(port.name);
+                    return;
+                }
+                KernelObject::MmioRegion(region) if region.id == object => {
+                    report.push_str("mmio-region=");
+                    report.push_str(region.name);
+                    return;
+                }
+                KernelObject::InterruptLine(line) if line.id == object => {
+                    report.push_str("interrupt-line=");
+                    report.push_str(line.name);
+                    return;
+                }
+                KernelObject::DmaRegion(region) if region.id == object => {
+                    report.push_str("dma-region=");
+                    report.push_str(region.name);
+                    return;
+                }
+                KernelObject::ProcessControl(process_control) if process_control.id == object => {
+                    report.push_str("process-control=");
+                    report.push_str(process_control.name);
+                    return;
+                }
+                _ => {}
+            }
+        }
+        index += 1;
+    }
+
+    report.push_str("object=");
+    report.push_u64_dec(object.raw());
+}
+
+fn write_rights_report(report: &mut InspectReport, rights: u64) {
+    let mut wrote = false;
+    wrote = write_right_report(report, rights, capability::RIGHT_READ, "read", wrote);
+    wrote = write_right_report(report, rights, capability::RIGHT_WRITE, "write", wrote);
+    wrote = write_right_report(report, rights, capability::RIGHT_SEND, "send", wrote);
+    wrote = write_right_report(report, rights, capability::RIGHT_RECEIVE, "receive", wrote);
+    wrote = write_right_report(report, rights, capability::RIGHT_CONTROL, "control", wrote);
+    wrote = write_right_report(
+        report,
+        rights,
+        capability::RIGHT_SNAPSHOT,
+        "snapshot",
+        wrote,
+    );
+    wrote = write_right_report(report, rights, capability::RIGHT_RESTORE, "restore", wrote);
+    wrote = write_right_report(report, rights, capability::RIGHT_MAP, "map", wrote);
+    wrote = write_right_report(report, rights, capability::RIGHT_BIND, "bind", wrote);
+    wrote = write_right_report(report, rights, capability::RIGHT_LISTEN, "listen", wrote);
+    wrote = write_right_report(
+        report,
+        rights,
+        capability::RIGHT_ALLOCATE,
+        "allocate",
+        wrote,
+    );
+    wrote = write_right_report(
+        report,
+        rights,
+        capability::RIGHT_DELEGATE,
+        "delegate",
+        wrote,
+    );
+    wrote = write_right_report(report, rights, capability::RIGHT_REVOKE, "revoke", wrote);
+    wrote = write_right_report(report, rights, capability::RIGHT_INSPECT, "inspect", wrote);
+
+    if !wrote {
+        report.push_str("none");
+    }
+}
+
+fn write_right_report(
+    report: &mut InspectReport,
+    rights: u64,
+    right: u64,
+    label: &str,
+    wrote: bool,
+) -> bool {
+    if rights & right == 0 {
+        return wrote;
+    }
+
+    if wrote {
+        report.push_byte(b'|');
+    }
+    report.push_str(label);
+    true
+}
+
 fn print_boot_tables(runtime: &RuntimeState) {
     serial::write_str("Process table entries: ");
     serial::write_u64_dec(runtime.processes.count as u64);
@@ -3647,6 +3948,7 @@ fn print_rights(rights: u64) {
     wrote = print_right(rights, capability::RIGHT_ALLOCATE, "allocate", wrote);
     wrote = print_right(rights, capability::RIGHT_DELEGATE, "delegate", wrote);
     wrote = print_right(rights, capability::RIGHT_REVOKE, "revoke", wrote);
+    wrote = print_right(rights, capability::RIGHT_INSPECT, "inspect", wrote);
 
     if !wrote {
         serial::write_str("none");

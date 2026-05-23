@@ -146,7 +146,7 @@ process[11] id=12 name=timer-service state=declared
 process[12] id=13 name=flaky-service state=declared
 proc=vertex-init cap[0] boot-module=krustboot-manifest rights=read
 proc=vertex-init cap[1] endpoint=serial-log rights=send
-proc=vertex-init cap[2] process-control=process-control rights=control|allocate|delegate|revoke
+proc=vertex-init cap[2] process-control=process-control rights=control|allocate|delegate|revoke|inspect
 proc=vertex-init cap[3] endpoint=readiness rights=receive
 proc=vertex-init cap[4] endpoint=serial-console rights=send|receive
 proc=vertex-init cap[5] endpoint=log-sink rights=send|receive

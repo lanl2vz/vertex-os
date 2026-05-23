@@ -5,13 +5,15 @@ native Krust QEMU/Limine milestone. It is intentionally small and unstable. Its
 current job is to boot native `vertex-init`, start a tiny declared service
 graph, and enforce explicit process-local capabilities.
 
-Milestone status: ABI v0 now covers the M14-M37 native activation and substrate
+Milestone status: ABI v0 now covers the M14-M38 native activation and substrate
 proof. M25 adds the release gate. M26-M29 add Manifest v1 parsing, capability
 provenance/revocation, typed arena allocation checks, and resource quotas.
 M30-M31 add PIT-backed preemption and user page-fault containment. M32-M36 add
 I/O capability objects, user-space serial and block-driver proof paths, and
 native store/state services. M37 upgrades generation activation into a real
-runtime switch between registered native KrustBoot configs. This is
+runtime switch between registered native KrustBoot configs.
+M38 adds native runtime introspection through an inspect-only process-control
+right. This is
 still experimental and does not freeze syscall, capability, process, or IPC ABI
 surface.
 
@@ -84,6 +86,7 @@ process frame, switch CR3, and return into another userspace process through
 | 28 | `SYS_IO_WRITE` | `arg0 = io_port_cap_slot`, `arg1 = port`, `arg2 = byte value` | status |
 | 29 | `SYS_IRQ_WAIT` | `arg0 = interrupt_line_cap_slot`, `arg1 = timeout_ms`, `arg2 = 0` | status |
 | 30 | `SYS_MMIO_MAP` | `arg0 = mmio_region_cap_slot` | mapped base proof value or error status |
+| 31 | `SYS_RUNTIME_INSPECT` | `arg0 = process_control_cap_slot`, `arg1 = user_ptr`, `arg2 = max_len` | byte count or error status |
 
 ## Return Status Values
 
@@ -123,13 +126,13 @@ becoming uncontrolled kernel faults.
 Capabilities are process-local. A capability slot number is meaningful only in
 the current process's capability space.
 
-Current M14-M37 layout:
+Current M14-M38 layout:
 
 ```text
 vertex-init:
   cap[0] = boot module krustboot-manifest, rights=read
   cap[1] = endpoint serial-log, rights=send
-  cap[2] = process-control object, rights=control|allocate|delegate|revoke
+  cap[2] = process-control object, rights=control|allocate|delegate|revoke|inspect
   cap[3] = endpoint readiness, rights=receive
   cap[4] = endpoint log-sink, rights=send|receive
   cap[5+] = additional delegated endpoint authorities, if the graph needs them
@@ -161,6 +164,11 @@ vertex-state:
   cap[0] = endpoint state-counter-api, rights=send|receive
   cap[1] = endpoint serial-log, rights=send
   cap[3] = state-volume state:counter, rights=read|write|snapshot|restore
+
+vertex-inspect:
+  cap[0] = process-control object, rights=inspect after vertex-init transfers it
+  cap[1] = endpoint serial-log, rights=send
+  cap[3] = boot module krustboot-manifest, rights=read after vertex-init transfers it
 
 echo:
   cap[1] = endpoint serial-log, rights=send
@@ -201,6 +209,7 @@ SYS_ACTIVATE_GENERATION requires cap[2] control and revoke rights to process-con
 SYS_PROCESS_START requires cap[2] control rights to process-control.
 SYS_PROCESS_STATUS requires cap[2] control rights to process-control.
 SYS_ROLLBACK_GENERATION requires cap[2] control and revoke rights to process-control.
+SYS_RUNTIME_INSPECT requires inspect rights on process-control.
 SYS_CAP_TRANSFER requires a caller-supplied process-control cap slot and applies the packed rights mask.
 SYS_ENDPOINT_CREATE requires allocate rights on process-control and available endpoint quota.
 SYS_QUOTA_DELEGATE requires delegate rights on process-control and cannot exceed the caller quota.
@@ -250,6 +259,7 @@ control
 allocate
 delegate
 revoke
+inspect
 ```
 
 The initial process starts with endpoint quota `1`. Services start with endpoint

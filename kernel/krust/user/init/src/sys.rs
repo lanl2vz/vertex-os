@@ -13,8 +13,10 @@ pub const STATUS_BAD_CAPABILITY: u64 = u64::MAX - 1;
 pub const STATUS_BAD_BUFFER: u64 = u64::MAX - 2;
 pub const STATUS_TOO_LARGE: u64 = u64::MAX - 3;
 pub const STATUS_TIMEOUT: u64 = u64::MAX - 9;
+pub const RIGHT_READ: u64 = 1 << 0;
 pub const RIGHT_SEND: u64 = 1 << 4;
 pub const RIGHT_RECEIVE: u64 = 1 << 5;
+pub const RIGHT_INSPECT: u64 = 1 << 14;
 
 const SYS_EXIT: u64 = 2;
 const SYS_IPC_SEND: u64 = 3;

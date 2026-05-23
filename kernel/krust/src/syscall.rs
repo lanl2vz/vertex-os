@@ -40,6 +40,7 @@ const SYS_IO_READ: u64 = 27;
 const SYS_IO_WRITE: u64 = 28;
 const SYS_IRQ_WAIT: u64 = 29;
 const SYS_MMIO_MAP: u64 = 30;
+const SYS_RUNTIME_INSPECT: u64 = 31;
 
 const STATUS_OK: u64 = 0;
 const STATUS_BAD_CAPABILITY: u64 = u64::MAX - 1;
@@ -310,6 +311,14 @@ pub extern "C" fn krust_syscall_dispatch(
         SYS_MMIO_MAP => match ipc::mmio_map(arg0) {
             Ok(base) => frame.rax = base,
             Err(error) => frame.rax = ipc_error_status("SYS_MMIO_MAP", error),
+        },
+        SYS_RUNTIME_INSPECT => match ipc::runtime_inspect(
+            arg0,
+            arg1 as *mut u8,
+            usize::try_from(arg2).unwrap_or(usize::MAX),
+        ) {
+            Ok(len) => frame.rax = len as u64,
+            Err(error) => frame.rax = ipc_error_status("SYS_RUNTIME_INSPECT", error),
         },
         _ => {
             serial::write_str("Unknown userspace syscall: ");

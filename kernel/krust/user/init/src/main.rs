@@ -44,6 +44,9 @@ const M37_GENERATION_C_BAD: &[u8] = b"gen:switch-c-bad-0003";
 const M37_STORE_ENDPOINT: &[u8] = b"store-hello-text-api";
 const M37_GENERATION_B_STORE_REQUEST: &[u8] = b"store:generation-b-manifest";
 const M37_GENERATION_B_STORE_RESPONSE: &[u8] = b"krustboot:gen:switch-b-0002";
+const M38_PROCESS_NAME: &[u8] = b"vertex-inspect";
+const M38_INSPECT_CAP_SLOT: u64 = 0;
+const M38_MANIFEST_CAP_SLOT: u64 = 3;
 
 #[unsafe(link_section = ".text._start")]
 #[unsafe(no_mangle)]
@@ -144,6 +147,9 @@ pub extern "C" fn _start() -> ! {
             );
         }
 
+        if bytes_eq(name, M38_PROCESS_NAME) {
+            grant_introspection_authority(process_index as u64, parent_generation);
+        }
         start_service(name, process_index as u64, parent_generation);
         if bytes_eq(generation, M37_GENERATION_A) && bytes_eq(name, b"vertex-store") {
             fetch_generation_b_manifest(
@@ -738,6 +744,31 @@ fn endpoint_index_by_name(
         index += 1;
     }
     None
+}
+
+fn grant_introspection_authority(process_index: u64, parent_generation: &[u8]) {
+    log(b"vertex-init delegates inspect authority to vertex-inspect");
+    if sys::cap_transfer(
+        process_index,
+        sys::CAP_PROCESS_CONTROL,
+        M38_INSPECT_CAP_SLOT,
+        sys::RIGHT_INSPECT,
+    ) != sys::STATUS_OK
+    {
+        log(b"vertex-init inspect cap transfer failed");
+        activation_failed(parent_generation);
+    }
+
+    if sys::cap_transfer(
+        process_index,
+        sys::CAP_MANIFEST,
+        M38_MANIFEST_CAP_SLOT,
+        sys::RIGHT_READ,
+    ) != sys::STATUS_OK
+    {
+        log(b"vertex-init manifest cap transfer failed");
+        activation_failed(parent_generation);
+    }
 }
 
 fn log_restart_once(value: &[u8]) {

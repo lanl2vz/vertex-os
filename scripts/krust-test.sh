@@ -182,7 +182,7 @@ Typed object arenas no silent overwrite ok
         MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
         EXPECT_ACTIVATION_SUCCESS=1
         required_lines='
-proc=vertex-init cap[2] process-control=process-control rights=control|allocate|delegate|revoke
+proc=vertex-init cap[2] process-control=process-control rights=control|allocate|delegate|revoke|inspect
 service with quota=1 endpoint can create one endpoint
 second endpoint creation fails
 init can delegate smaller quota
@@ -267,6 +267,25 @@ rollback to B
 Native service activation ok
 '
         ;;
+    m38|introspection)
+        MANIFEST="$ROOT_DIR/examples/krust-inspect-generation.vertex.json"
+        EXPECT_ACTIVATION_SUCCESS=1
+        required_lines='
+Boot generation: gen:inspect-0001
+vertex-init delegates inspect authority to vertex-inspect
+Runtime inspect accepted: proc=vertex-inspect
+vertex-inspect started
+vertex-inspect generation graph: gen:inspect-0001
+native why echo log-sink
+why: echo can send to log-sink because delegated endpoint authority has send rights
+native who-can state:counter
+who-can: vertex-state owns state:counter with rights=read|write|snapshot|restore
+native cap provenance report
+cap provenance: echo log-sink cap is derived from vertex-init endpoint authority
+Native introspection service ok
+Native service activation ok
+'
+        ;;
     manifest-truncated)
         MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
         KRUSTBOOT_CORRUPT=truncated
@@ -316,7 +335,7 @@ activation failed
 '
         ;;
     *)
-        echo "usage: scripts/krust-test.sh <m13|m14|valid-activation|manifest-cycle|bad-cap|readiness|readiness-timeout|rollback|store-state-services|timer|preemption|m30|user-fault|m31|restart|manifest-v1|cap-lifecycle|typed-arenas|quotas|m32|io-substrate|m33|serial-driver|m34|block-driver|m35|store-service|m36|state-service|m37|generation-switch|manifest-truncated|manifest-bad-magic|manifest-raw-compact|manifest-unsupported-version|manifest-oob-record|manifest-missing-provider>" >&2
+        echo "usage: scripts/krust-test.sh <m13|m14|valid-activation|manifest-cycle|bad-cap|readiness|readiness-timeout|rollback|store-state-services|timer|preemption|m30|user-fault|m31|restart|manifest-v1|cap-lifecycle|typed-arenas|quotas|m32|io-substrate|m33|serial-driver|m34|block-driver|m35|store-service|m36|state-service|m37|generation-switch|m38|introspection|manifest-truncated|manifest-bad-magic|manifest-raw-compact|manifest-unsupported-version|manifest-oob-record|manifest-missing-provider>" >&2
         exit 2
         ;;
 esac

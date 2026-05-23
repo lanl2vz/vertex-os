@@ -14,6 +14,7 @@ NETSTACK_TARGET_DIR := user/netstack/target/$(KRUST_TARGET)/debug
 BLOCK_DRIVER_TARGET_DIR := user/block-driver/target/$(KRUST_TARGET)/debug
 VERTEX_STORE_TARGET_DIR := user/vertex-store/target/$(KRUST_TARGET)/debug
 VERTEX_STATE_TARGET_DIR := user/vertex-state/target/$(KRUST_TARGET)/debug
+VERTEX_INSPECT_TARGET_DIR := user/vertex-inspect/target/$(KRUST_TARGET)/debug
 MODEL_READER_TARGET_DIR := user/model-reader/target/$(KRUST_TARGET)/debug
 COUNTER_TARGET_DIR := user/counter/target/$(KRUST_TARGET)/debug
 STATE_READER_TARGET_DIR := user/state-reader/target/$(KRUST_TARGET)/debug
@@ -29,6 +30,7 @@ NETSTACK_ELF := $(NETSTACK_TARGET_DIR)/netstack
 BLOCK_DRIVER_ELF := $(BLOCK_DRIVER_TARGET_DIR)/block-driver
 VERTEX_STORE_ELF := $(VERTEX_STORE_TARGET_DIR)/vertex-store
 VERTEX_STATE_ELF := $(VERTEX_STATE_TARGET_DIR)/vertex-state
+VERTEX_INSPECT_ELF := $(VERTEX_INSPECT_TARGET_DIR)/vertex-inspect
 MODEL_READER_ELF := $(MODEL_READER_TARGET_DIR)/model-reader
 COUNTER_ELF := $(COUNTER_TARGET_DIR)/counter
 STATE_READER_ELF := $(STATE_READER_TARGET_DIR)/state-reader
@@ -63,6 +65,7 @@ user:
 	cd user/block-driver && cargo build --target $(KRUST_TARGET)
 	cd user/vertex-store && cargo build --target $(KRUST_TARGET)
 	cd user/vertex-state && cargo build --target $(KRUST_TARGET)
+	cd user/vertex-inspect && cargo build --target $(KRUST_TARGET)
 	cd user/model-reader && cargo build --target $(KRUST_TARGET)
 	cd user/counter && cargo build --target $(KRUST_TARGET)
 	cd user/state-reader && cargo build --target $(KRUST_TARGET)
@@ -95,6 +98,7 @@ iso: build boot-manifest check-tools check-limine-dir
 	cp $(BLOCK_DRIVER_ELF) $(ISO_ROOT)/boot/block-driver.elf
 	cp $(VERTEX_STORE_ELF) $(ISO_ROOT)/boot/vertex-store.elf
 	cp $(VERTEX_STATE_ELF) $(ISO_ROOT)/boot/vertex-state.elf
+	cp $(VERTEX_INSPECT_ELF) $(ISO_ROOT)/boot/vertex-inspect.elf
 	cp $(MODEL_READER_ELF) $(ISO_ROOT)/boot/model-reader.elf
 	cp $(COUNTER_ELF) $(ISO_ROOT)/boot/counter.elf
 	cp $(STATE_READER_ELF) $(ISO_ROOT)/boot/state-reader.elf
@@ -145,13 +149,13 @@ doctor: check-tools check-rust-target check-limine-dir
 	@echo "limine: $$(command -v $(LIMINE))"
 	@echo "xorriso: $$(command -v $(XORRISO))"
 	@echo "LIMINE_DIR: $(LIMINE_DIR)"
-	@echo "Krust M14-M37 toolchain is ready."
+	@echo "Krust M14-M38 toolchain is ready."
 
 release-gate:
 	../../scripts/krust-release-gate.sh
 
 clean:
-	rm -rf $(BUILD_DIR) target user/init/target user/serial-driver/target user/logd/target user/echo/target user/netstack/target user/block-driver/target user/vertex-store/target user/vertex-state/target user/model-reader/target user/counter/target user/state-reader/target user/timer/target user/flaky/target user/hog/target user/faulty/target
+	rm -rf $(BUILD_DIR) target user/init/target user/serial-driver/target user/logd/target user/echo/target user/netstack/target user/block-driver/target user/vertex-store/target user/vertex-state/target user/vertex-inspect/target user/model-reader/target user/counter/target user/state-reader/target user/timer/target user/flaky/target user/hog/target user/faulty/target
 
 check-tools:
 	@command -v rustc >/dev/null 2>&1 || { echo "error: rustc not found. Install Rust stable."; exit 1; }

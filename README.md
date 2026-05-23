@@ -28,12 +28,12 @@ vertex-os/
     netstack/            Demo hosted network capability provider
     echo-server/         Demo service consuming log and network capabilities
   kernel/
-    krust/               Bootable Krust kernel prototype, currently covering M14-M37 native graph activation and substrate hardening
+    krust/               Bootable Krust kernel prototype, currently covering M14-M38 native graph activation and substrate hardening
   lang/
     vertex-lang/         Planned typed system-definition language
 ```
 
-## Krust M14-M37
+## Krust M14-M38
 
 The current native activation path lives in `kernel/krust`. It is isolated
 from the hosted Cargo workspace and boots a Limine ISO under QEMU. The ISO
@@ -50,7 +50,8 @@ and supervises process exits. The QEMU test path now proves Manifest v1 bounds
 checks, capability provenance/revocation, typed arena allocation, resource
 quotas, PIT timer preemption, user page-fault containment, explicit I/O
 capabilities, user-space serial and block drivers, native store/state services,
-native generation switching, and a real restart of `flaky-service`, not
+native generation switching, native runtime introspection, and a real restart
+of `flaky-service`, not
 init-owned transcript logging.
 
 ```sh
@@ -58,15 +59,15 @@ scripts/krust-smoke.sh
 ```
 
 The clean-clone release gate validates the hosted build, checks the Krust
-toolchain, rebuilds the ISO from clean kernel artifacts, and runs the M14-M37
+toolchain, rebuilds the ISO from clean kernel artifacts, and runs the M14-M38
 QEMU test matrix:
 
 ```sh
 scripts/krust-release-gate.sh
 ```
 
-See [docs/krust-milestones.md](docs/krust-milestones.md) for M0 through M37
-completion status and the planned M38-M40 substrate-hardening roadmap,
+See [docs/krust-milestones.md](docs/krust-milestones.md) for M0 through M38
+completion status and the planned M39-M40 substrate-hardening roadmap,
 and [docs/krust-abi-v0.md](docs/krust-abi-v0.md) for the current syscall,
 capability, process, and IPC ABI.
 

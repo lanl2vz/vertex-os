@@ -1,7 +1,7 @@
 # Krust Kernel
 
-Krust now covers the M14-M37 native graph-activation proof path and substrate
-hardening. The planned M38-M40 roadmap is tracked in
+Krust now covers the M14-M38 native graph-activation proof path and substrate
+hardening. The planned M39-M40 roadmap is tracked in
 `../../docs/krust-milestones.md`.
 
 The target is intentionally small:
@@ -25,13 +25,13 @@ Krust writes and reads through the mapped virtual pages
 Krust allocates typed endpoint and process arenas from the kernel heap and checks capacity failure paths
 Krust creates fixed kernel objects and boot capabilities
 Krust prints the boot capability table
-Limine loads native service ELFs for vertex-init, serial-driver, logd, netstack, block-driver, vertex-store, vertex-state, echo, model-reader, counter, state-reader, timer, flaky-service, cpu-hog, and faulty-service
+Limine loads native service ELFs for vertex-init, serial-driver, logd, netstack, block-driver, vertex-store, vertex-state, vertex-inspect, echo, model-reader, counter, state-reader, timer, flaky-service, cpu-hog, and faulty-service
 Krust loads each declared process into a fresh low-half address space
 Krust creates a runtime process table and endpoint table from the KrustBoot manifest
 Krust allocates runtime process IDs and states from KrustBoot process records
 Krust grants vertex-init cap[0] read rights to the manifest module
 Krust grants vertex-init cap[1] send rights to the serial-log endpoint
-Krust grants vertex-init cap[2] process-control authority with control, allocate, delegate, and revoke rights; cap[3] readiness receive authority; and per-endpoint attenuable endpoint authority starting at cap[4]
+Krust grants vertex-init cap[2] process-control authority with control, allocate, delegate, revoke, and inspect rights; cap[3] readiness receive authority; and per-endpoint attenuable endpoint authority starting at cap[4]
 Krust grants I/O, MMIO, IRQ, DMA, store/state backend, and timer authority only to services that declare those capabilities
 Krust installs a minimal IDT for #UD, #GP, #PF, and PIT IRQ0
 Krust installs a TSS-backed ring-0 interrupt stack for user traps
@@ -52,6 +52,7 @@ serial-driver writes COM1 through its own I/O port capability
 block-driver owns virtio-blk shaped MMIO, IRQ, and DMA authority and serves block-read IPC
 model-reader reads an immutable object through vertex-store and block-driver
 counter-service and reader-service access mutable state through vertex-state
+vertex-inspect reads the generation graph and asks the kernel for a process/capability graph through inspect-only authority
 timer-service sleeps through its own timer capability without monopolizing the scheduler
 cpu-hog proves a CPU-bound userspace loop cannot starve logd
 faulty-service proves a direct userspace page fault kills only that process and can be restarted
@@ -193,7 +194,7 @@ process[5] id=6 name=vertex-store state=declared
 process[6] id=7 name=vertex-state state=declared
 proc=vertex-init cap[0] boot-module=krustboot-manifest rights=read
 proc=vertex-init cap[1] endpoint=serial-log rights=send
-proc=vertex-init cap[2] process-control=process-control rights=control|allocate|delegate|revoke
+proc=vertex-init cap[2] process-control=process-control rights=control|allocate|delegate|revoke|inspect
 proc=vertex-init cap[3] endpoint=readiness rights=receive
 proc=vertex-init cap[4] endpoint=log-sink rights=send|receive
 proc=serial-driver cap[3] io-port=cap:io.com1 rights=read|write
@@ -321,7 +322,7 @@ check is available from the repository root:
 scripts/krust-smoke.sh
 ```
 
-## M26-M37 Substrate Gate
+## M26-M38 Substrate Gate
 
 Run the clean-clone gate from the repository root:
 
@@ -337,12 +338,12 @@ make release-gate
 
 The gate checks script executability and shell syntax, verifies Makefile recipe
 parsing, checks Rust formatting and milestone Markdown whitespace, confirms the
-M14-M37 documentation anchors, runs `cargo build --offline`, validates
+M14-M38 documentation anchors, runs `cargo build --offline`, validates
 `examples/hello-generation.vertex.json`, runs `make doctor`, rebuilds from
-`make clean`, runs `make smoke`, and then runs the M14-M37 QEMU cases: `m14`,
+`make clean`, runs `make smoke`, and then runs the M14-M38 QEMU cases: `m14`,
 `manifest-cycle`, `bad-cap`, `readiness-timeout`, `rollback`, `store-state-services`,
 `timer`, `preemption`, `user-fault`, `restart`, `manifest-v1`, `cap-lifecycle`,
-`typed-arenas`, `quotas`, `m32`, `m33`, `m34`, `m35`, `m36`, `m37`, and the
+`typed-arenas`, `quotas`, `m32`, `m33`, `m34`, `m35`, `m36`, `m37`, `m38`, and the
 malformed-manifest cases. If the offline build
 fails, the gate prints the Cargo cache or vendoring prerequisite explicitly.
 
@@ -392,7 +393,7 @@ process[...] name=vertex-store state=declared
 process[...] name=vertex-state state=declared
 proc=vertex-init cap[0] boot-module=krustboot-manifest rights=read
 proc=vertex-init cap[1] endpoint=serial-log rights=send
-proc=vertex-init cap[2] process-control=process-control rights=control|allocate|delegate|revoke
+proc=vertex-init cap[2] process-control=process-control rights=control|allocate|delegate|revoke|inspect
 proc=vertex-init cap[3] endpoint=readiness rights=receive
 proc=vertex-init cap[4] endpoint=log-sink rights=send|receive
 proc=logd cap[0] endpoint=log-sink rights=receive
