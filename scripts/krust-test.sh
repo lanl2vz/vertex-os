@@ -5,9 +5,12 @@ ROOT_DIR=$(CDPATH= cd "$(dirname "$0")/.." && pwd)
 KRUST_DIR=${KRUST_DIR:-"$ROOT_DIR/kernel/krust"}
 BUILD_DIR=${BUILD_DIR:-"$KRUST_DIR/build"}
 ISO_IMAGE=${ISO_IMAGE:-"$BUILD_DIR/krust.iso"}
+BLOCK_IMAGE=${BLOCK_IMAGE:-"$BUILD_DIR/krust-block.img"}
 SERIAL_LOG=${SERIAL_LOG:-"$BUILD_DIR/serial-test.log"}
 QEMU=${QEMU:-qemu-system-x86_64}
 QEMU_EXTRA=${QEMU_EXTRA:-}
+QEMU_MACHINE=${QEMU_MACHINE:-}
+QEMU_BLOCK=${QEMU_BLOCK:-"-drive if=none,id=vertexblk,file=$BLOCK_IMAGE,format=raw -device virtio-blk-pci,drive=vertexblk,disable-modern=on,queue-size=8"}
 QEMU_ATTEMPTS=${QEMU_ATTEMPTS:-20}
 QEMU_POLL_SECONDS=${QEMU_POLL_SECONDS:-1}
 QEMU_STABILITY_ATTEMPTS=${QEMU_STABILITY_ATTEMPTS:-1}
@@ -219,11 +222,41 @@ Krust Kernel booted
         MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
         EXPECT_ACTIVATION_SUCCESS=1
         required_lines='
-block-driver ready
+virtio-blk driver ready
+block-driver reads sector 0
+block-driver writes test sector
+readback matches
 store-service requests block read
 block-driver returns bytes
 unauthorized service cannot talk to block-driver
-unauthorized service cannot access MMIO, IRQ, or DMA capabilities
+unauthorized service cannot access PCI I/O, IRQ, or DMA capabilities
+'
+        ;;
+    m42|virtio-block)
+        MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
+        EXPECT_ACTIVATION_SUCCESS=1
+        required_lines='
+KrustBoot grants: 43
+KrustBoot io port ranges: 3
+KrustBoot mmio regions: 0
+io_port[1] id=cap:io.pci-config base=0x0000000000000cf8 length=0x0000000000000008
+io_port[2] id=cap:io.virtio-blk0 base=0x000000000000c000 length=0x0000000000001000
+interrupt_line[0] id=cap:irq.virtio-blk0 line=11
+dma_region[0] id=cap:dma.virtio-blk0 base=
+proc=block-driver cap[4] io-port=cap:io.pci-config rights=read|write
+proc=block-driver cap[7] io-port=cap:io.virtio-blk0 rights=read|write
+virtio-blk PCI device discovered
+DMA map accepted: proc=block-driver dma-region=cap:dma.virtio-blk0
+virtio-blk driver ready
+block-driver reads sector 0
+block-driver writes test sector
+readback matches
+block-driver received block-read request
+block-driver returns bytes
+vertex-store verifies hash
+unauthorized service cannot talk to block-driver
+unauthorized service cannot access PCI I/O, IRQ, or DMA capabilities
+Native service activation ok
 '
         ;;
     m35|store-service)
@@ -285,7 +318,7 @@ Native service activation ok
         EXPECT_ACTIVATION_SUCCESS=1
         required_lines='
 KrustBoot endpoints: 10
-KrustBoot grants: 42
+KrustBoot grants: 43
 IPC FIFO regression: queued sends preserve FIFO order
 IPC FIFO regression: queue-full send rejected
 IPC FIFO regression: receiver-specific dequeue preserves eligible ordering
@@ -332,7 +365,7 @@ Boot generation: gen:console-0001
 KrustBoot boot modules: 15
 KrustBoot processes: 15
 KrustBoot endpoints: 12
-KrustBoot grants: 49
+KrustBoot grants: 50
 proc=console-driver cap[0] endpoint=console-output rights=receive
 proc=console-driver cap[3] endpoint=console-driver-control rights=receive
 proc=console-shell cap[0] endpoint=console-shell-request rights=receive
@@ -435,7 +468,7 @@ activation failed
 '
         ;;
     *)
-        echo "usage: scripts/krust-test.sh <m13|m14|valid-activation|manifest-cycle|bad-cap|readiness|readiness-timeout|rollback|store-state-services|timer|preemption|m30|user-fault|m31|restart|manifest-v1|cap-lifecycle|typed-arenas|quotas|m32|io-substrate|m33|serial-driver|m34|block-driver|m35|store-service|m36|state-service|m37|generation-switch|m38|introspection|m40|directed-ipc|m41|console-shell|manifest-truncated|manifest-bad-magic|manifest-raw-compact|manifest-unsupported-version|manifest-oob-record|manifest-missing-provider>" >&2
+        echo "usage: scripts/krust-test.sh <m13|m14|valid-activation|manifest-cycle|bad-cap|readiness|readiness-timeout|rollback|store-state-services|timer|preemption|m30|user-fault|m31|restart|manifest-v1|cap-lifecycle|typed-arenas|quotas|m32|io-substrate|m33|serial-driver|m34|block-driver|m35|store-service|m36|state-service|m37|generation-switch|m38|introspection|m40|directed-ipc|m41|console-shell|m42|virtio-block|manifest-truncated|manifest-bad-magic|manifest-raw-compact|manifest-unsupported-version|manifest-oob-record|manifest-missing-provider>" >&2
         exit 2
         ;;
 esac
@@ -489,6 +522,8 @@ if [ "$USE_SERIAL_PIPE" -eq 1 ]; then
 fi
 
 "$QEMU" $QEMU_EXTRA \
+    $QEMU_MACHINE \
+    $QEMU_BLOCK \
     -m 256M \
     -serial "$serial_arg" \
     -monitor none \

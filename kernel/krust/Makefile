@@ -9,6 +9,7 @@ REQUIRED_XORRISO := 1.5.8.pl01
 BUILD_DIR := build
 ISO_ROOT := $(BUILD_DIR)/iso-root
 ISO_IMAGE := $(BUILD_DIR)/krust.iso
+BLOCK_IMAGE := $(BUILD_DIR)/krust-block.img
 BOOT_MANIFEST := $(BUILD_DIR)/hello-generation.krustboot
 FALLBACK_BOOT_MANIFEST := $(BUILD_DIR)/fallback-generation.krustboot
 BAD_GENERATION_BOOT_MANIFEST := $(BUILD_DIR)/bad-generation.krustboot
@@ -56,6 +57,8 @@ KRUSTBOOT_CORRUPT ?=
 
 QEMU ?= qemu-system-x86_64
 QEMU_EXTRA ?=
+QEMU_MACHINE ?=
+QEMU_BLOCK ?= -drive if=none,id=vertexblk,file=$(BLOCK_IMAGE),format=raw -device virtio-blk-pci,drive=vertexblk,disable-modern=on,queue-size=8
 LIMINE ?= limine
 XORRISO ?= xorriso
 CARGO ?= cargo
@@ -64,7 +67,7 @@ RUSTFMT ?= rustfmt
 VERTEXCTL ?= $(CARGO) run --locked --quiet --manifest-path ../../crates/vertexctl/Cargo.toml --target $(HOST_TARGET) --
 LIMINE_DIR ?= $(firstword $(wildcard /opt/homebrew/share/limine /usr/local/share/limine /usr/share/limine))
 
-.PHONY: build kernel user boot-manifest iso run smoke doctor release-gate clean check-tools check-tool-versions check-cargo-locks check-rust-target check-limine-dir
+.PHONY: build kernel user boot-manifest block-image iso run smoke doctor release-gate clean check-tools check-tool-versions check-cargo-locks check-rust-target check-limine-dir
 
 build: kernel user
 
@@ -108,7 +111,11 @@ boot-manifest:
 		cp $(BOOT_MANIFEST) $(BAD_GENERATION_BOOT_MANIFEST); \
 	fi
 
-iso: build boot-manifest check-tools check-limine-dir
+block-image:
+	mkdir -p $(BUILD_DIR)
+	$(VERTEXCTL) create-block-image $(BLOCK_IMAGE)
+
+iso: build boot-manifest block-image check-tools check-limine-dir
 	rm -rf $(ISO_ROOT) $(ISO_IMAGE)
 	mkdir -p $(ISO_ROOT)/boot $(ISO_ROOT)/EFI/BOOT
 	cp $(KERNEL_ELF) $(ISO_ROOT)/boot/krust.elf
@@ -158,12 +165,15 @@ iso: build boot-manifest check-tools check-limine-dir
 	$(LIMINE) bios-install $(ISO_IMAGE)
 
 run: iso
-	$(QEMU) $(QEMU_EXTRA) -m 256M -serial stdio -monitor none -display none -no-reboot -no-shutdown -cdrom $(ISO_IMAGE)
+	$(QEMU) $(QEMU_MACHINE) $(QEMU_EXTRA) $(QEMU_BLOCK) -m 256M -serial stdio -monitor none -display none -no-reboot -no-shutdown -cdrom $(ISO_IMAGE)
 
 smoke: iso
 	@QEMU="$(QEMU)" \
+		QEMU_MACHINE="$(QEMU_MACHINE)" \
 		QEMU_EXTRA="$(QEMU_EXTRA)" \
+		QEMU_BLOCK="$(QEMU_BLOCK)" \
 		ISO_IMAGE="$(CURDIR)/$(ISO_IMAGE)" \
+		BLOCK_IMAGE="$(CURDIR)/$(BLOCK_IMAGE)" \
 		SERIAL_LOG="$(CURDIR)/$(BUILD_DIR)/serial.log" \
 		../../scripts/krust-smoke.sh --no-build
 
@@ -175,7 +185,7 @@ doctor: check-tools check-tool-versions check-cargo-locks check-rust-target chec
 	@echo "limine: $$(command -v $(LIMINE)) ($$($(LIMINE) --version | sed -n '1p'))"
 	@echo "xorriso: $$(command -v $(XORRISO)) ($$($(XORRISO) --version 2>/dev/null | sed -n '1p'))"
 	@echo "LIMINE_DIR: $(LIMINE_DIR)"
-	@echo "Krust M14-M41 toolchain is ready."
+	@echo "Krust M14-M42 toolchain is ready."
 
 release-gate:
 	../../scripts/krust-release-gate.sh

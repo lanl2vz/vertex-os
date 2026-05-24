@@ -5,9 +5,12 @@ ROOT_DIR=$(CDPATH= cd "$(dirname "$0")/.." && pwd)
 KRUST_DIR=${KRUST_DIR:-"$ROOT_DIR/kernel/krust"}
 BUILD_DIR=${BUILD_DIR:-"$KRUST_DIR/build"}
 ISO_IMAGE=${ISO_IMAGE:-"$BUILD_DIR/krust.iso"}
+BLOCK_IMAGE=${BLOCK_IMAGE:-"$BUILD_DIR/krust-block.img"}
 SERIAL_LOG=${SERIAL_LOG:-"$BUILD_DIR/serial.log"}
 QEMU=${QEMU:-qemu-system-x86_64}
 QEMU_EXTRA=${QEMU_EXTRA:-}
+QEMU_MACHINE=${QEMU_MACHINE:-}
+QEMU_BLOCK=${QEMU_BLOCK:-"-drive if=none,id=vertexblk,file=$BLOCK_IMAGE,format=raw -device virtio-blk-pci,drive=vertexblk,disable-modern=on,queue-size=8"}
 QEMU_ATTEMPTS=${QEMU_ATTEMPTS:-20}
 QEMU_POLL_SECONDS=${QEMU_POLL_SECONDS:-1}
 SKIP_BUILD=0
@@ -35,6 +38,8 @@ trap cleanup EXIT INT TERM
 # QEMU_EXTRA is intentionally word-split so callers can pass flags like
 # QEMU_EXTRA="-enable-kvm -cpu host".
 "$QEMU" $QEMU_EXTRA \
+    $QEMU_MACHINE \
+    $QEMU_BLOCK \
     -m 256M \
     -serial "file:$SERIAL_LOG" \
     -monitor none \
@@ -52,12 +57,12 @@ KrustBoot Manifest v1 records: 9
 KrustBoot boot modules: 13
 KrustBoot processes: 13
 KrustBoot endpoints: 10
-KrustBoot grants: 42
+KrustBoot grants: 43
 KrustBoot store objects: 0
 KrustBoot state volumes: 1
 KrustBoot network ports: 1
-KrustBoot io port ranges: 1
-KrustBoot mmio regions: 1
+KrustBoot io port ranges: 3
+KrustBoot mmio regions: 0
 KrustBoot interrupt lines: 1
 KrustBoot dma regions: 1
 boot_module[0] name=vertex-init string=vertex-init
@@ -107,18 +112,20 @@ grant[29] process=model-reader cap[0] endpoint=model-reader-store-reply rights=r
 grant[31] process=vertex-state cap[0] endpoint=state-counter-request rights=receive
 grant[33] process=reader-service cap[0] endpoint=state-reader-state-reply rights=receive
 grant[35] process=serial-driver cap[3] io-port=cap:io.com1 rights=read|write
-grant[36] process=block-driver cap[4] mmio-region=cap:mmio.virtio-blk0 rights=map
+grant[36] process=block-driver cap[4] io-port=cap:io.pci-config rights=read|write
 grant[37] process=block-driver cap[5] interrupt-line=cap:irq.virtio-blk0 rights=listen
 grant[38] process=block-driver cap[6] dma-region=cap:dma.virtio-blk0 rights=read|write|map
-grant[39] process=vertex-state cap[4] state-volume=state:counter rights=read|write|snapshot|restore
-grant[40] process=echo cap[3] network-port=cap:net.tcp.8080 rights=listen
-grant[41] process=timer-service cap[0] timer=monotonic-timer rights=control
+grant[39] process=block-driver cap[7] io-port=cap:io.virtio-blk0 rights=read|write
+grant[40] process=vertex-state cap[4] state-volume=state:counter rights=read|write|snapshot|restore
+grant[41] process=echo cap[3] network-port=cap:net.tcp.8080 rights=listen
+grant[42] process=timer-service cap[0] timer=monotonic-timer rights=control
 state_volume[0] id=state:counter
 network_port[0] id=cap:net.tcp.8080
 io_port[0] id=cap:io.com1 base=0x00000000000003f8 length=0x0000000000000008
-mmio_region[0] id=cap:mmio.virtio-blk0 base=0x0000000010001000 length=0x0000000000001000
-interrupt_line[0] id=cap:irq.virtio-blk0 line=5
-dma_region[0] id=cap:dma.virtio-blk0 base=0x0000000000000000 length=0x0000000000001000
+io_port[1] id=cap:io.pci-config base=0x0000000000000cf8 length=0x0000000000000008
+io_port[2] id=cap:io.virtio-blk0 base=0x000000000000c000 length=0x0000000000001000
+interrupt_line[0] id=cap:irq.virtio-blk0 line=11
+dma_region[0] id=cap:dma.virtio-blk0 base=
 Physical allocator demo ok
 Virtual memory demo ok
 Capability table demo ok
@@ -173,9 +180,10 @@ proc=vertex-init cap[10] endpoint=state-counter-request rights=send
 proc=vertex-init cap[11] endpoint=state-reader-state-reply rights=send
 proc=serial-driver cap[3] io-port=cap:io.com1 rights=read|write
 proc=block-driver cap[0] endpoint=block-read-request rights=receive
-proc=block-driver cap[4] mmio-region=cap:mmio.virtio-blk0 rights=map
+proc=block-driver cap[4] io-port=cap:io.pci-config rights=read|write
 proc=block-driver cap[5] interrupt-line=cap:irq.virtio-blk0 rights=listen
-proc=block-driver cap[6] dma-region=cap:dma.virtio-blk0 base=0x0000000000000000 length=0x0000000000001000 rights=read|write|map
+proc=block-driver cap[6] dma-region=cap:dma.virtio-blk0 base=
+proc=block-driver cap[7] io-port=cap:io.virtio-blk0 rights=read|write
 proc=vertex-store cap[0] endpoint=store-hello-text-request rights=receive
 proc=vertex-store cap[3] endpoint=vertex-store-block-reply rights=receive
 proc=vertex-state cap[0] endpoint=state-counter-request rights=receive
@@ -198,12 +206,12 @@ vertex-init manifest generation: gen:hello-0001
 vertex-init boot modules: 13
 vertex-init processes: 13
 vertex-init endpoints: 10
-vertex-init grants: 42
+vertex-init grants: 43
 vertex-init network ports: 1
 vertex-init store objects: 0
 vertex-init state volumes: 1
-vertex-init io ports: 1
-vertex-init mmio regions: 1
+vertex-init io ports: 3
+vertex-init mmio regions: 0
 vertex-init interrupt lines: 1
 vertex-init dma regions: 1
 service with quota=1 endpoint can create one endpoint
@@ -265,7 +273,7 @@ echo I/O write rejected
 echo cannot write COM1 directly
 logd cannot write COM1 directly
 unauthorized service cannot talk to block-driver
-unauthorized service cannot access MMIO, IRQ, or DMA capabilities
+unauthorized service cannot access PCI I/O, IRQ, or DMA capabilities
 Capability inspect: proc=echo
 cap inspect shows parent chain
 Capability copy accepted: proc=echo
@@ -281,10 +289,13 @@ echo drops cap
 echo send after drop rejected
 negative test: logd process-start rejected: bad capability
 netstack ready
-block-driver ready
-MMIO map accepted: proc=block-driver mmio-region=cap:mmio.virtio-blk0
+virtio-blk driver ready
+virtio-blk PCI device discovered
 IRQ wait accepted: proc=block-driver interrupt-line=cap:irq.virtio-blk0
-block-driver DMA is distinct from MMIO authority
+DMA map accepted: proc=block-driver dma-region=cap:dma.virtio-blk0
+block-driver reads sector 0
+block-driver writes test sector
+readback matches
 vertex-store ready
 vertex-state ready
 model-reader asks for store:hello-text

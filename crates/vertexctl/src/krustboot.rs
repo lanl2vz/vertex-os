@@ -1012,11 +1012,22 @@ fn push_unique_dma_region(
                 capability.id, capability.provider
             )
         })?;
+    let kernel_allocated = value_str(&capability.properties, "allocation") == Some("kernel-dma");
+    let base = if kernel_allocated {
+        0
+    } else {
+        value_u64(&capability.properties, "base")
+            .or_else(|| value_u64(&device.selector, "base"))
+            .ok_or_else(|| {
+                format!(
+                    "dma-region capability {} must set allocation=kernel-dma or provide base",
+                    capability.id
+                )
+            })?
+    };
     regions.push(DmaRegion {
         id: capability.id.clone(),
-        base: value_u64(&capability.properties, "base")
-            .or_else(|| value_u64(&device.selector, "base"))
-            .unwrap_or(0),
+        base,
         length: value_u64(&capability.properties, "length")
             .or_else(|| value_u64(&device.selector, "length"))
             .unwrap_or(4096),

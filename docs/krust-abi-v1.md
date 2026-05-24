@@ -5,17 +5,19 @@ native Krust QEMU/Limine milestone. It is intentionally small and unstable. Its
 current job is to boot native `vertex-init`, start a tiny declared service
 graph, and enforce explicit process-local capabilities.
 
-Milestone status: ABI v1 now covers the M14-M40 native activation and substrate
+Milestone status: ABI v1 now covers the M14-M42 native activation and substrate
 proof. M25 adds the release gate. M26-M29 add Manifest v1 parsing, capability
 provenance/revocation, typed arena allocation checks, and resource quotas.
 M30-M31 add PIT-backed preemption and user page-fault containment. M32-M36 add
-I/O capability objects, user-space serial and block-driver proof paths, and
+I/O capability objects, user-space serial, a native block-driver path, and
 native store/state services. M37 upgrades generation activation into a real
 runtime switch between registered native KrustBoot configs.
 M38 adds native runtime introspection through an inspect-only process-control
 right. M39 pins the reproducible native build environment and release gate.
-M40 freezes ABI v1 with directed request/reply IPC. The ABI is still
-intentionally small, but this subset is the current native contract.
+M40 freezes ABI v1 with directed request/reply IPC. M41 adds the console shell
+path, and M42 adds minimal virtio-blk sector I/O over PCI I/O and DMA
+capabilities. The ABI is still intentionally small, but this subset is the
+current native contract.
 
 ## Machine ABI
 
@@ -85,8 +87,13 @@ process frame, switch CR3, and return into another userspace process through
 | 27 | `SYS_IO_READ` | `arg0 = io_port_cap_slot`, `arg1 = port`, `arg2 = 0` | byte value or error status |
 | 28 | `SYS_IO_WRITE` | `arg0 = io_port_cap_slot`, `arg1 = port`, `arg2 = byte value` | status |
 | 29 | `SYS_IRQ_WAIT` | `arg0 = interrupt_line_cap_slot`, `arg1 = timeout_ms`, `arg2 = 0` | status |
-| 30 | `SYS_MMIO_MAP` | `arg0 = mmio_region_cap_slot` | mapped base proof value or error status |
+| 30 | `SYS_MMIO_MAP` | `arg0 = mmio_region_cap_slot` | mapped base address or error status |
 | 31 | `SYS_RUNTIME_INSPECT` | `arg0 = process_control_cap_slot`, `arg1 = user_ptr`, `arg2 = max_len` | byte count or error status |
+| 32 | `SYS_DMA_MAP` | `arg0 = dma_region_cap_slot`, `arg1 = mapping_info_ptr`, `arg2 = mapping_info_len` | status |
+| 33 | `SYS_IO_READ16` | `arg0 = io_port_cap_slot`, `arg1 = port`, `arg2 = 0` | 16-bit value or error status |
+| 34 | `SYS_IO_WRITE16` | `arg0 = io_port_cap_slot`, `arg1 = port`, `arg2 = 16-bit value` | status |
+| 35 | `SYS_IO_READ32` | `arg0 = io_port_cap_slot`, `arg1 = port`, `arg2 = 0` | 32-bit value or error status |
+| 36 | `SYS_IO_WRITE32` | `arg0 = io_port_cap_slot`, `arg1 = port`, `arg2 = 32-bit value` | status |
 
 ## Return Status Values
 
@@ -126,7 +133,7 @@ becoming uncontrolled kernel faults.
 Capabilities are process-local. A capability slot number is meaningful only in
 the current process's capability space.
 
-Current M14-M40 layout:
+Current M14-M42 layout:
 
 ```text
 vertex-init:
@@ -154,9 +161,10 @@ block-driver:
   cap[1] = endpoint serial-log, rights=send
   cap[2] = endpoint readiness, rights=send
   cap[3] = endpoint vertex-store-block-reply, rights=send after vertex-init derives and transfers it
-  cap[4] = mmio-region cap:mmio.virtio-blk0, rights=map
+  cap[4] = io-port cap:io.pci-config, rights=read|write
   cap[5] = interrupt-line cap:irq.virtio-blk0, rights=listen
   cap[6] = dma-region cap:dma.virtio-blk0, rights=read|write|map
+  cap[7] = io-port cap:io.virtio-blk0, rights=read|write
 
 vertex-store:
   cap[0] = endpoint store-hello-text-request, rights=receive
@@ -237,10 +245,11 @@ SYS_OBJECT_READ requires read rights on a store-object cap.
 SYS_STATE_WRITE requires write rights on a state-volume cap.
 SYS_STATE_READ requires read rights on a state-volume cap.
 SYS_SLEEP_MS requires control rights on a timer cap.
-SYS_IO_READ requires read rights on an io-port cap and a port inside the granted range.
-SYS_IO_WRITE requires write rights on an io-port cap and a port inside the granted range.
+SYS_IO_READ, SYS_IO_READ16, and SYS_IO_READ32 require read rights on an io-port cap and a fully covered port span inside the granted range.
+SYS_IO_WRITE, SYS_IO_WRITE16, and SYS_IO_WRITE32 require write rights on an io-port cap and a fully covered port span inside the granted range.
 SYS_IRQ_WAIT requires listen rights on an interrupt-line cap.
 SYS_MMIO_MAP requires map rights on an mmio-region cap.
+SYS_DMA_MAP requires read, write, and map rights on a dma-region cap.
 ```
 
 Native network-port objects currently grant bind/listen authority to declared
@@ -249,8 +258,9 @@ not yet include a network driver syscall that consumes it.
 
 Native I/O objects now cover the first hardware authority substrate:
 `IoPortRange`, `MmioRegion`, `InterruptLine`, and `DmaRegion`. `DmaRegion`
-authority is represented and granted to `block-driver`; real DMA mapping is not
-implemented in ABI v1.
+authority is represented and granted to `block-driver`; `SYS_DMA_MAP` maps the
+region into the calling driver and returns `{ virtual_base, physical_base,
+length }`.
 
 Capability records carry kernel-owned metadata:
 
@@ -363,9 +373,10 @@ keeps the kernel running. Kernel faults still stop the kernel.
 
 ## IPC Semantics
 
-Endpoints hold a fixed four-message FIFO. The FIFO is safe for request
-endpoints because only providers receive from request queues and only clients
-receive from their private reply queues.
+Endpoints hold a fixed four-message FIFO. Each message is capped at 512 bytes,
+which is large enough for M42 fixed-sector block replies. The FIFO is safe for
+request endpoints because only providers receive from request queues and only
+clients receive from their private reply queues.
 
 Send path:
 

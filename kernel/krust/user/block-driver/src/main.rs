@@ -3,53 +3,520 @@
 
 mod sys;
 
-use core::panic::PanicInfo;
+use core::{
+    panic::PanicInfo,
+    sync::atomic::{Ordering, compiler_fence},
+};
 
 const CAP_BLOCK_REQUEST: u64 = 0;
 const CAP_SERIAL_LOG: u64 = 1;
 const CAP_READINESS: u64 = 2;
 const CAP_BLOCK_REPLY: u64 = 3;
-const CAP_MMIO: u64 = 4;
+const CAP_PCI_CONFIG: u64 = 4;
 const CAP_IRQ: u64 = 5;
 const CAP_DMA: u64 = 6;
-const HELLO_OBJECT: &[u8] = b"hello from Krust store\n";
+const CAP_VIRTIO_IO: u64 = 7;
+
 const PROTOCOL_HEALTH_V0: u16 = 2;
 const MESSAGE_READY: u16 = 1;
 const ENVELOPE_LEN: usize = 16;
 
+const BLOCK_PROTOCOL_V1: u16 = 1;
+const BLOCK_OP_READ_SECTOR: u16 = 1;
+const BLOCK_REQUEST_LEN: usize = 16;
+const SECTOR_SIZE: usize = 512;
+const HELLO_OBJECT: &[u8] = b"hello from Krust store\n";
+const WRITEBACK_PATTERN: &[u8] = b"M42 virtio block writeback\n";
+
+const PCI_CONFIG_ADDRESS: u16 = 0x0cf8;
+const PCI_CONFIG_DATA: u16 = 0x0cfc;
+const PCI_VENDOR_VIRTIO: u16 = 0x1af4;
+const PCI_DEVICE_VIRTIO_BLK_LEGACY: u16 = 0x1001;
+const PCI_COMMAND: u8 = 0x04;
+const PCI_BAR0: u8 = 0x10;
+const PCI_COMMAND_IO: u16 = 1 << 0;
+const PCI_COMMAND_BUS_MASTER: u16 = 1 << 2;
+
+const VIRTIO_PCI_HOST_FEATURES: u16 = 0x00;
+const VIRTIO_PCI_GUEST_FEATURES: u16 = 0x04;
+const VIRTIO_PCI_QUEUE_PFN: u16 = 0x08;
+const VIRTIO_PCI_QUEUE_NUM: u16 = 0x0c;
+const VIRTIO_PCI_QUEUE_SEL: u16 = 0x0e;
+const VIRTIO_PCI_QUEUE_NOTIFY: u16 = 0x10;
+const VIRTIO_PCI_STATUS: u16 = 0x12;
+const VIRTIO_PCI_ISR: u16 = 0x13;
+
+const VIRTIO_STATUS_ACKNOWLEDGE: u8 = 1;
+const VIRTIO_STATUS_DRIVER: u8 = 2;
+const VIRTIO_STATUS_DRIVER_OK: u8 = 4;
+const VIRTIO_STATUS_FAILED: u8 = 0x80;
+
+const QUEUE_SIZE: u16 = 8;
+const QUEUE_DESC_OFFSET: usize = 0;
+const QUEUE_AVAIL_OFFSET: usize = QUEUE_DESC_OFFSET + QUEUE_SIZE as usize * 16;
+const QUEUE_USED_OFFSET: usize = 4096;
+const REQUEST_OFFSET: usize = 8192;
+const STATUS_OFFSET: usize = REQUEST_OFFSET + 16;
+const DATA_OFFSET: usize = REQUEST_OFFSET + 512;
+const DMA_REQUIRED_LEN: u64 = (DATA_OFFSET + SECTOR_SIZE) as u64;
+
+const DESC_F_NEXT: u16 = 1;
+const DESC_F_WRITE: u16 = 2;
+const AVAIL_F_NO_INTERRUPT: u16 = 1;
+const VIRTIO_BLK_T_IN: u32 = 0;
+const VIRTIO_BLK_T_OUT: u32 = 1;
+const VIRTIO_BLK_S_OK: u8 = 0;
+
 #[unsafe(link_section = ".text._start")]
 #[unsafe(no_mangle)]
 pub extern "C" fn _start() -> ! {
-    log(b"block-driver ready");
-
-    if sys::mmio_map(CAP_MMIO) == sys::STATUS_BAD_CAPABILITY {
-        log(b"block-driver MMIO authority failed");
+    let Some(mut device) = VirtioBlock::init() else {
+        log(b"virtio-blk driver init failed");
         sys::exit(1);
-    }
-    if sys::irq_wait(CAP_IRQ, 0) != sys::STATUS_OK {
-        log(b"block-driver IRQ authority failed");
-        sys::exit(1);
-    }
-    if sys::mmio_map(CAP_DMA) == sys::STATUS_BAD_CAPABILITY {
-        log(b"block-driver DMA is distinct from MMIO authority");
-    }
+    };
 
+    log(b"virtio-blk driver ready");
+    run_self_test(&mut device);
     send_ready();
 
-    let mut request = [0u8; 32];
+    let mut request = [0u8; BLOCK_REQUEST_LEN];
     let received = sys::ipc_recv(CAP_BLOCK_REQUEST, &mut request);
-    if received > request.len() as u64 {
+    if received != BLOCK_REQUEST_LEN as u64 {
         log(b"block-driver request receive failed");
         sys::exit(1);
     }
     log(b"block-driver received block-read request");
 
-    if sys::ipc_send(CAP_BLOCK_REPLY, HELLO_OBJECT) != sys::STATUS_OK {
+    let Some(sector) = parse_read_request(&request) else {
+        log(b"block-driver rejected malformed request");
+        sys::exit(1);
+    };
+
+    let mut sector_bytes = [0u8; SECTOR_SIZE];
+    if !device.read_sector(sector, &mut sector_bytes) {
+        log(b"block-driver sector read failed");
+        sys::exit(1);
+    }
+
+    if sys::ipc_send(CAP_BLOCK_REPLY, &sector_bytes) != sys::STATUS_OK {
         log(b"block-driver response failed");
         sys::exit(1);
     }
     log(b"block-driver returns bytes");
     sys::exit(0)
+}
+
+struct VirtioBlock {
+    io_base: u16,
+    dma_virtual: u64,
+    dma_physical: u64,
+    avail_idx: u16,
+    used_idx: u16,
+}
+
+impl VirtioBlock {
+    fn init() -> Option<Self> {
+        let io_base = discover_virtio_blk()?;
+        if sys::irq_wait(CAP_IRQ, 0) != sys::STATUS_OK {
+            log(b"block-driver IRQ authority failed");
+            return None;
+        }
+
+        let mut dma = sys::DmaMapping {
+            virtual_base: 0,
+            physical_base: 0,
+            length: 0,
+        };
+        if sys::dma_map(CAP_DMA, &mut dma) != sys::STATUS_OK || dma.length < DMA_REQUIRED_LEN {
+            log(b"block-driver DMA map failed");
+            return None;
+        }
+
+        let mut device = Self {
+            io_base,
+            dma_virtual: dma.virtual_base,
+            dma_physical: dma.physical_base,
+            avail_idx: 0,
+            used_idx: 0,
+        };
+        if !device.setup_legacy_queue() {
+            return None;
+        }
+        Some(device)
+    }
+
+    fn setup_legacy_queue(&mut self) -> bool {
+        self.write_status(0);
+        self.write_status(VIRTIO_STATUS_ACKNOWLEDGE);
+        self.write_status(VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER);
+        let _features = self.read32(VIRTIO_PCI_HOST_FEATURES);
+        self.write32(VIRTIO_PCI_GUEST_FEATURES, 0);
+        self.write16(VIRTIO_PCI_QUEUE_SEL, 0);
+
+        if self.read16(VIRTIO_PCI_QUEUE_NUM) < QUEUE_SIZE {
+            log(b"virtio-blk queue too small");
+            self.write_status(VIRTIO_STATUS_FAILED);
+            return false;
+        }
+
+        zero_dma(self.dma_virtual, DMA_REQUIRED_LEN as usize);
+        write_dma_u16(self.dma_virtual, QUEUE_AVAIL_OFFSET, AVAIL_F_NO_INTERRUPT);
+        self.write32(
+            VIRTIO_PCI_QUEUE_PFN,
+            ((self.dma_physical + QUEUE_DESC_OFFSET as u64) >> 12) as u32,
+        );
+        self.write_status(
+            VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_DRIVER_OK,
+        );
+        true
+    }
+
+    fn read_sector(&mut self, sector: u64, out: &mut [u8; SECTOR_SIZE]) -> bool {
+        write_dma_bytes(self.dma_virtual, DATA_OFFSET, &[0; SECTOR_SIZE]);
+        if !self.submit(VIRTIO_BLK_T_IN, sector, true) {
+            return false;
+        }
+        read_dma_bytes(self.dma_virtual, DATA_OFFSET, out);
+        true
+    }
+
+    fn write_sector(&mut self, sector: u64, data: &[u8; SECTOR_SIZE]) -> bool {
+        write_dma_bytes(self.dma_virtual, DATA_OFFSET, data);
+        self.submit(VIRTIO_BLK_T_OUT, sector, false)
+    }
+
+    fn submit(&mut self, request_type: u32, sector: u64, data_write_for_device: bool) -> bool {
+        write_dma_u32(self.dma_virtual, REQUEST_OFFSET, request_type);
+        write_dma_u32(self.dma_virtual, REQUEST_OFFSET + 4, 0);
+        write_dma_u64(self.dma_virtual, REQUEST_OFFSET + 8, sector);
+        write_dma_u8(self.dma_virtual, STATUS_OFFSET, 0xff);
+
+        self.write_desc(
+            0,
+            self.dma_physical + REQUEST_OFFSET as u64,
+            16,
+            DESC_F_NEXT,
+            1,
+        );
+        let data_flags = if data_write_for_device {
+            DESC_F_WRITE | DESC_F_NEXT
+        } else {
+            DESC_F_NEXT
+        };
+        self.write_desc(
+            1,
+            self.dma_physical + DATA_OFFSET as u64,
+            SECTOR_SIZE as u32,
+            data_flags,
+            2,
+        );
+        self.write_desc(
+            2,
+            self.dma_physical + STATUS_OFFSET as u64,
+            1,
+            DESC_F_WRITE,
+            0,
+        );
+
+        let ring_offset = QUEUE_AVAIL_OFFSET + 4 + ((self.avail_idx % QUEUE_SIZE) as usize * 2);
+        write_dma_u16(self.dma_virtual, ring_offset, 0);
+        self.avail_idx = self.avail_idx.wrapping_add(1);
+        compiler_fence(Ordering::SeqCst);
+        write_dma_u16(self.dma_virtual, QUEUE_AVAIL_OFFSET + 2, self.avail_idx);
+        compiler_fence(Ordering::SeqCst);
+        self.write16(VIRTIO_PCI_QUEUE_NOTIFY, 0);
+
+        let target_used = self.used_idx.wrapping_add(1);
+        let mut spins = 0u64;
+        while read_dma_u16(self.dma_virtual, QUEUE_USED_OFFSET + 2) != target_used {
+            spins += 1;
+            if spins & 0xffff == 0 {
+                sys::yield_now();
+            }
+            if spins > 20_000_000 {
+                log(b"virtio-blk request timeout");
+                return false;
+            }
+        }
+        compiler_fence(Ordering::SeqCst);
+        self.used_idx = target_used;
+        let _isr = self.read8(VIRTIO_PCI_ISR);
+
+        read_dma_u8(self.dma_virtual, STATUS_OFFSET) == VIRTIO_BLK_S_OK
+    }
+
+    fn write_desc(&self, index: usize, addr: u64, len: u32, flags: u16, next: u16) {
+        let offset = QUEUE_DESC_OFFSET + index * 16;
+        write_dma_u64(self.dma_virtual, offset, addr);
+        write_dma_u32(self.dma_virtual, offset + 8, len);
+        write_dma_u16(self.dma_virtual, offset + 12, flags);
+        write_dma_u16(self.dma_virtual, offset + 14, next);
+    }
+
+    fn read8(&self, offset: u16) -> u8 {
+        io_read8(CAP_VIRTIO_IO, self.io_base + offset).unwrap_or(0xff)
+    }
+
+    fn read16(&self, offset: u16) -> u16 {
+        io_read16(CAP_VIRTIO_IO, self.io_base + offset).unwrap_or(u16::MAX)
+    }
+
+    fn read32(&self, offset: u16) -> u32 {
+        io_read32(CAP_VIRTIO_IO, self.io_base + offset).unwrap_or(u32::MAX)
+    }
+
+    fn write16(&self, offset: u16, value: u16) {
+        let _ = io_write16(CAP_VIRTIO_IO, self.io_base + offset, value);
+    }
+
+    fn write32(&self, offset: u16, value: u32) {
+        let _ = io_write32(CAP_VIRTIO_IO, self.io_base + offset, value);
+    }
+
+    fn write_status(&self, value: u8) {
+        let _ = io_write8(CAP_VIRTIO_IO, self.io_base + VIRTIO_PCI_STATUS, value);
+    }
+}
+
+fn discover_virtio_blk() -> Option<u16> {
+    let mut slot = 0u8;
+    while slot < 32 {
+        let vendor = pci_read_u16(0, slot, 0, 0x00)?;
+        let device = pci_read_u16(0, slot, 0, 0x02)?;
+        if vendor == PCI_VENDOR_VIRTIO && device == PCI_DEVICE_VIRTIO_BLK_LEGACY {
+            let command = pci_read_u16(0, slot, 0, PCI_COMMAND)?;
+            pci_write_u16(
+                0,
+                slot,
+                0,
+                PCI_COMMAND,
+                command | PCI_COMMAND_IO | PCI_COMMAND_BUS_MASTER,
+            )?;
+            let bar0 = pci_read_u32(0, slot, 0, PCI_BAR0)?;
+            if bar0 & 1 == 0 {
+                log(b"virtio-blk PCI BAR0 is not I/O");
+                return None;
+            }
+            let io_base = (bar0 & !0x3) as u16;
+            if io_read8(CAP_VIRTIO_IO, io_base + VIRTIO_PCI_STATUS).is_none() {
+                log(b"block-driver PCI I/O authority failed");
+                return None;
+            }
+            log(b"virtio-blk PCI device discovered");
+            return Some(io_base);
+        }
+        slot += 1;
+    }
+    log(b"virtio-blk PCI device missing");
+    None
+}
+
+fn pci_address(bus: u8, slot: u8, function: u8, offset: u8) -> u32 {
+    0x8000_0000
+        | ((bus as u32) << 16)
+        | ((slot as u32) << 11)
+        | ((function as u32) << 8)
+        | ((offset as u32) & 0xfc)
+}
+
+fn pci_select(bus: u8, slot: u8, function: u8, offset: u8) -> Option<u16> {
+    io_write32(
+        CAP_PCI_CONFIG,
+        PCI_CONFIG_ADDRESS,
+        pci_address(bus, slot, function, offset),
+    )?;
+    Some(PCI_CONFIG_DATA + ((offset as u16) & 0x3))
+}
+
+fn pci_read_u16(bus: u8, slot: u8, function: u8, offset: u8) -> Option<u16> {
+    let port = pci_select(bus, slot, function, offset)?;
+    io_read16(CAP_PCI_CONFIG, port)
+}
+
+fn pci_read_u32(bus: u8, slot: u8, function: u8, offset: u8) -> Option<u32> {
+    let port = pci_select(bus, slot, function, offset)?;
+    io_read32(CAP_PCI_CONFIG, port)
+}
+
+fn pci_write_u16(bus: u8, slot: u8, function: u8, offset: u8, value: u16) -> Option<()> {
+    let port = pci_select(bus, slot, function, offset)?;
+    io_write16(CAP_PCI_CONFIG, port, value)
+}
+
+fn io_read8(cap_slot: u64, port: u16) -> Option<u8> {
+    let value = sys::io_read(cap_slot, port as u64);
+    if value <= u8::MAX as u64 {
+        Some(value as u8)
+    } else {
+        None
+    }
+}
+
+fn io_read16(cap_slot: u64, port: u16) -> Option<u16> {
+    let value = sys::io_read16(cap_slot, port as u64);
+    if value <= u16::MAX as u64 {
+        Some(value as u16)
+    } else {
+        None
+    }
+}
+
+fn io_read32(cap_slot: u64, port: u16) -> Option<u32> {
+    let value = sys::io_read32(cap_slot, port as u64);
+    if value <= u32::MAX as u64 {
+        Some(value as u32)
+    } else {
+        None
+    }
+}
+
+fn io_write8(cap_slot: u64, port: u16, value: u8) -> Option<()> {
+    if sys::io_write(cap_slot, port as u64, value) == sys::STATUS_OK {
+        Some(())
+    } else {
+        None
+    }
+}
+
+fn io_write16(cap_slot: u64, port: u16, value: u16) -> Option<()> {
+    if sys::io_write16(cap_slot, port as u64, value) == sys::STATUS_OK {
+        Some(())
+    } else {
+        None
+    }
+}
+
+fn io_write32(cap_slot: u64, port: u16, value: u32) -> Option<()> {
+    if sys::io_write32(cap_slot, port as u64, value) == sys::STATUS_OK {
+        Some(())
+    } else {
+        None
+    }
+}
+
+fn run_self_test(device: &mut VirtioBlock) {
+    let mut sector0 = [0u8; SECTOR_SIZE];
+    if !device.read_sector(0, &mut sector0) || !starts_with(&sector0, HELLO_OBJECT) {
+        log(b"block-driver sector 0 read failed");
+        sys::exit(1);
+    }
+    log(b"block-driver reads sector 0");
+
+    let mut sector1 = [0u8; SECTOR_SIZE];
+    let mut index = 0;
+    while index < WRITEBACK_PATTERN.len() {
+        sector1[index] = WRITEBACK_PATTERN[index];
+        index += 1;
+    }
+    if !device.write_sector(1, &sector1) {
+        log(b"block-driver sector write failed");
+        sys::exit(1);
+    }
+    log(b"block-driver writes test sector");
+
+    let mut readback = [0u8; SECTOR_SIZE];
+    if !device.read_sector(1, &mut readback) || !bytes_eq(&readback, &sector1) {
+        log(b"block-driver readback failed");
+        sys::exit(1);
+    }
+    log(b"readback matches");
+}
+
+fn parse_read_request(request: &[u8; BLOCK_REQUEST_LEN]) -> Option<u64> {
+    if read_request_u16(request, 0) != BLOCK_PROTOCOL_V1
+        || read_request_u16(request, 2) != BLOCK_OP_READ_SECTOR
+    {
+        return None;
+    }
+    Some(read_request_u64(request, 8))
+}
+
+fn read_request_u16(buffer: &[u8], offset: usize) -> u16 {
+    u16::from_le_bytes([buffer[offset], buffer[offset + 1]])
+}
+
+fn read_request_u64(buffer: &[u8], offset: usize) -> u64 {
+    u64::from_le_bytes([
+        buffer[offset],
+        buffer[offset + 1],
+        buffer[offset + 2],
+        buffer[offset + 3],
+        buffer[offset + 4],
+        buffer[offset + 5],
+        buffer[offset + 6],
+        buffer[offset + 7],
+    ])
+}
+
+fn zero_dma(base: u64, len: usize) {
+    let mut index = 0;
+    while index < len {
+        write_dma_u8(base, index, 0);
+        index += 1;
+    }
+}
+
+fn write_dma_bytes(base: u64, offset: usize, value: &[u8]) {
+    let mut index = 0;
+    while index < value.len() {
+        write_dma_u8(base, offset + index, value[index]);
+        index += 1;
+    }
+}
+
+fn read_dma_bytes(base: u64, offset: usize, out: &mut [u8]) {
+    let mut index = 0;
+    while index < out.len() {
+        out[index] = read_dma_u8(base, offset + index);
+        index += 1;
+    }
+}
+
+fn write_dma_u8(base: u64, offset: usize, value: u8) {
+    unsafe {
+        ((base + offset as u64) as *mut u8).write_volatile(value);
+    }
+}
+
+fn read_dma_u8(base: u64, offset: usize) -> u8 {
+    unsafe { ((base + offset as u64) as *const u8).read_volatile() }
+}
+
+fn write_dma_u16(base: u64, offset: usize, value: u16) {
+    write_dma_bytes(base, offset, &value.to_le_bytes());
+}
+
+fn read_dma_u16(base: u64, offset: usize) -> u16 {
+    u16::from_le_bytes([read_dma_u8(base, offset), read_dma_u8(base, offset + 1)])
+}
+
+fn write_dma_u32(base: u64, offset: usize, value: u32) {
+    write_dma_bytes(base, offset, &value.to_le_bytes());
+}
+
+fn write_dma_u64(base: u64, offset: usize, value: u64) {
+    write_dma_bytes(base, offset, &value.to_le_bytes());
+}
+
+fn starts_with(value: &[u8], prefix: &[u8]) -> bool {
+    if value.len() < prefix.len() {
+        return false;
+    }
+    bytes_eq(&value[..prefix.len()], prefix)
+}
+
+fn bytes_eq(left: &[u8], right: &[u8]) -> bool {
+    if left.len() != right.len() {
+        return false;
+    }
+    let mut index = 0;
+    while index < left.len() {
+        if left[index] != right[index] {
+            return false;
+        }
+        index += 1;
+    }
+    true
 }
 
 fn log(message: &[u8]) {

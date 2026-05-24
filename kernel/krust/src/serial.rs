@@ -130,6 +130,54 @@ pub unsafe fn inb_raw(port: u16) -> u8 {
     value
 }
 
+pub unsafe fn outw_raw(port: u16, value: u16) {
+    unsafe {
+        asm!(
+            "out dx, ax",
+            in("dx") port,
+            in("ax") value,
+            options(nomem, nostack, preserves_flags)
+        );
+    }
+}
+
+pub unsafe fn inw_raw(port: u16) -> u16 {
+    let value: u16;
+    unsafe {
+        asm!(
+            "in ax, dx",
+            in("dx") port,
+            out("ax") value,
+            options(nomem, nostack, preserves_flags)
+        );
+    }
+    value
+}
+
+pub unsafe fn outl_raw(port: u16, value: u32) {
+    unsafe {
+        asm!(
+            "out dx, eax",
+            in("dx") port,
+            in("eax") value,
+            options(nomem, nostack, preserves_flags)
+        );
+    }
+}
+
+pub unsafe fn inl_raw(port: u16) -> u32 {
+    let value: u32;
+    unsafe {
+        asm!(
+            "in eax, dx",
+            in("dx") port,
+            out("eax") value,
+            options(nomem, nostack, preserves_flags)
+        );
+    }
+    value
+}
+
 unsafe fn outb(port: u16, value: u8) {
     unsafe {
         outb_raw(port, value);

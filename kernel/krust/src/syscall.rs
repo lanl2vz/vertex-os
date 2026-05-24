@@ -41,6 +41,11 @@ const SYS_IO_WRITE: u64 = 28;
 const SYS_IRQ_WAIT: u64 = 29;
 const SYS_MMIO_MAP: u64 = 30;
 const SYS_RUNTIME_INSPECT: u64 = 31;
+const SYS_DMA_MAP: u64 = 32;
+const SYS_IO_READ16: u64 = 33;
+const SYS_IO_WRITE16: u64 = 34;
+const SYS_IO_READ32: u64 = 35;
+const SYS_IO_WRITE32: u64 = 36;
 
 const STATUS_OK: u64 = 0;
 const STATUS_BAD_CAPABILITY: u64 = u64::MAX - 1;
@@ -304,6 +309,22 @@ pub extern "C" fn krust_syscall_dispatch(
             Ok(()) => frame.rax = STATUS_OK,
             Err(error) => frame.rax = ipc_error_status("SYS_IO_WRITE", error),
         },
+        SYS_IO_READ16 => match ipc::io_read16(arg0, arg1) {
+            Ok(value) => frame.rax = value,
+            Err(error) => frame.rax = ipc_error_status("SYS_IO_READ16", error),
+        },
+        SYS_IO_WRITE16 => match ipc::io_write16(arg0, arg1, arg2) {
+            Ok(()) => frame.rax = STATUS_OK,
+            Err(error) => frame.rax = ipc_error_status("SYS_IO_WRITE16", error),
+        },
+        SYS_IO_READ32 => match ipc::io_read32(arg0, arg1) {
+            Ok(value) => frame.rax = value,
+            Err(error) => frame.rax = ipc_error_status("SYS_IO_READ32", error),
+        },
+        SYS_IO_WRITE32 => match ipc::io_write32(arg0, arg1, arg2) {
+            Ok(()) => frame.rax = STATUS_OK,
+            Err(error) => frame.rax = ipc_error_status("SYS_IO_WRITE32", error),
+        },
         SYS_IRQ_WAIT => match ipc::irq_wait(arg0, arg1) {
             Ok(()) => frame.rax = STATUS_OK,
             Err(error) => frame.rax = ipc_error_status("SYS_IRQ_WAIT", error),
@@ -319,6 +340,14 @@ pub extern "C" fn krust_syscall_dispatch(
         ) {
             Ok(len) => frame.rax = len as u64,
             Err(error) => frame.rax = ipc_error_status("SYS_RUNTIME_INSPECT", error),
+        },
+        SYS_DMA_MAP => match ipc::dma_map(
+            arg0,
+            arg1 as *mut u8,
+            usize::try_from(arg2).unwrap_or(usize::MAX),
+        ) {
+            Ok(()) => frame.rax = STATUS_OK,
+            Err(error) => frame.rax = ipc_error_status("SYS_DMA_MAP", error),
         },
         _ => {
             serial::write_str("Unknown userspace syscall: ");

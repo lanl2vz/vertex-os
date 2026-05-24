@@ -34,6 +34,7 @@ fn run(args: Vec<String>) -> Result<(), String> {
         "compile-boot-manifest" => compile_boot_manifest_cmd(&args[1..]),
         "corrupt-boot-manifest" => corrupt_boot_manifest_cmd(&args[1..]),
         "explain-krustboot" => explain_krustboot_cmd(&args[1..]),
+        "create-block-image" => create_block_image_cmd(&args[1..]),
         "activate" => activate_cmd(&args[1..]),
         "switch" => switch_cmd(&args[1..]),
         "rollback" => rollback_cmd(&args[1..]),
@@ -208,6 +209,23 @@ fn explain_krustboot_cmd(args: &[String]) -> Result<(), String> {
     }
 
     print!("{}", krustboot::explain(&manifest)?);
+    Ok(())
+}
+
+fn create_block_image_cmd(args: &[String]) -> Result<(), String> {
+    let [output_path] = args else {
+        return Err("usage: vertexctl create-block-image <output>".to_owned());
+    };
+
+    const SECTOR_SIZE: usize = 512;
+    const SECTORS: usize = 64;
+    const HELLO_OBJECT: &[u8] = b"hello from Krust store\n";
+
+    let mut image = vec![0u8; SECTOR_SIZE * SECTORS];
+    image[..HELLO_OBJECT.len()].copy_from_slice(HELLO_OBJECT);
+    fs::write(output_path, image)
+        .map_err(|source| format!("failed to write {output_path}: {source}"))?;
+    println!("wrote Krust block image: {output_path}");
     Ok(())
 }
 
@@ -470,6 +488,7 @@ fn print_usage() {
            vertexctl materialize-demo <manifest> <output-dir>\n\
            vertexctl compile-boot-manifest <manifest> <output>\n\
            vertexctl explain-krustboot <manifest>\n\
+           vertexctl create-block-image <output>\n\
            vertexctl activate <manifest> [--state-root <dir>] [--run-once]\n\
            vertexctl switch <manifest> [--state-root <dir>] [--run-once]\n\
            vertexctl rollback [--state-root <dir>] [--run-once] [--restore-state]\n\

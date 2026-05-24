@@ -6,10 +6,11 @@ IR and graph semantics; Krust is the native enforcement path.
 
 ## Status Summary
 
-Current status: M14-M41 are implemented and smoke-tested under
+Current status: M14-M42 are implemented and smoke-tested under
 `qemu-system-x86_64` with Limine. M39 pins the native toolchain, M40 makes
 native IPC directed, and M41 adds a native console shell path over explicit
-console authority.
+console authority. M42 adds the first real virtio-blk sector I/O path over
+PCI I/O and DMA capabilities.
 
 ```sh
 make -C kernel/krust doctor
@@ -31,12 +32,14 @@ scripts/krust-test.sh m36
 scripts/krust-test.sh m37
 scripts/krust-test.sh m38
 scripts/krust-test.sh m40
+scripts/krust-test.sh m41
+scripts/krust-test.sh m42
 ```
 
 Next direction: use the ABI v1 base to build Vertex OS v0, a tiny persistent
 appliance system. The next milestones should make the native system useful
-without weakening the graph-shaped authority model: serial console first, real
-block I/O before disk persistence, verified store objects before updates, and
+without weakening the graph-shaped authority model: verified disk layouts over
+the new block I/O path before persistence, verified store objects before updates, and
 dynamic process creation before higher-level package or language work.
 
 ## M0: Serial Boot
@@ -867,6 +870,7 @@ done: M32-M38 I/O, serial-driver, block-driver, store-service, state-service, ge
 done: M39 exact toolchain, Cargo lockfiles, and locked offline Cargo metadata are checked by the gate
 done: M40 directed request/reply IPC is checked by the gate
 done: M41 native console shell is checked by the gate
+done: M42 minimal virtio-block driver is checked by the gate
 done: all QEMU transcript checks have bounded polling windows
 done: missing and forbidden transcript lines are reported explicitly
 done: README.md, docs/krust-milestones.md, docs/krust-abi-v1.md, and kernel/krust/README.md agree
@@ -1165,8 +1169,13 @@ Syscalls:
 ```text
 SYS_IO_READ
 SYS_IO_WRITE
+SYS_IO_READ16
+SYS_IO_WRITE16
+SYS_IO_READ32
+SYS_IO_WRITE32
 SYS_IRQ_WAIT
 SYS_MMIO_MAP
+SYS_DMA_MAP
 ```
 
 Acceptance tests:
@@ -1182,9 +1191,9 @@ The enforcement rule is simple: only services with explicit I/O capabilities can
 touch hardware resources.
 
 KrustBoot now carries `IoPortRange`, `MmioRegion`, `InterruptLine`, and
-`DmaRegion` grants into the kernel runtime. `SYS_IO_READ`, `SYS_IO_WRITE`,
-`SYS_IRQ_WAIT`, and `SYS_MMIO_MAP` resolve process-local capabilities before
-touching or exposing any hardware-shaped resource.
+`DmaRegion` grants into the kernel runtime. The I/O, IRQ, MMIO, and DMA syscalls
+resolve process-local capabilities before touching or exposing any
+hardware-shaped resource.
 
 ## M33: Move Serial Logging Toward User Space
 
@@ -1232,27 +1241,25 @@ Preferred first target:
 ```text
 QEMU virtual disk
 virtio-blk driver service
-virtio MMIO or PCI authority
+virtio PCI I/O authority
 block-read/block-write IPC protocol
 ```
 
 Acceptance tests:
 
 ```text
-done: block-driver ready
+done: virtio-blk driver ready
 done: store-service requests block read
 done: block-driver returns bytes
 done: unauthorized service cannot talk to block-driver
-done: unauthorized service cannot access MMIO, IRQ, or DMA capabilities
+done: unauthorized service cannot access PCI I/O, IRQ, or DMA capabilities
 ```
 
-This may need to split into multiple sub-milestones if PCI enumeration, virtio
-queues, DMA, and IRQ handling prove too large for one step.
-
-The first path is deliberately still a proof transport: `block-driver` owns the
-virtio-blk shaped MMIO, IRQ, and DMA capabilities and serves a small
-block-read IPC protocol. Real virtio queue setup and a real disk image remain
-future driver work.
+The original proof transport has been upgraded rather than kept as a legacy
+compatibility path. `block-driver` now owns the virtio-blk PCI I/O, IRQ, and
+DMA capabilities, discovers the QEMU PCI device, configures a single virtqueue,
+reads sector 0, writes a test sector, verifies readback, and serves directed
+block-read IPC from a real raw disk image.
 
 ## M35: Native Immutable Store Service
 
@@ -1426,7 +1433,7 @@ done: locked Cargo dependencies for the hosted workspace, Krust kernel, and nati
 done: kernel/krust/rust-toolchain.toml pins Rust 1.95.0, rustfmt, and x86_64-unknown-none
 done: make doctor checks every required tool and reports actionable fixes
 done: legacy hello/ipc userspace crates are removed instead of carried forward
-done: single release-gate script runs the clean-clone M14-M41 proof with the M14-M41 QEMU matrix
+done: single release-gate script runs the clean-clone M14-M42 proof with the M14-M42 QEMU matrix
 ```
 
 Acceptance tests:
@@ -1482,9 +1489,9 @@ done: scripts/krust-test.sh m40 proves the directed IPC ABI and FIFO queue behav
 
 ## Phase 4: Vertex OS v0 Appliance System
 
-Status: planned.
+Status: done.
 
-Goal: turn the M14-M41 native proof into a small real operating system target:
+Goal: turn the M14-M42 native proof into a small real operating system target:
 bootable in QEMU, persistent, inspectable, updateable, and capable of running
 several native services under explicit authority.
 
@@ -1581,11 +1588,11 @@ layout that depends on it.
 Scope:
 
 ```text
-virtio-blk PCI/MMIO discovery path for the QEMU device already modeled by caps
+virtio-blk PCI discovery path for the QEMU device already modeled by caps
 single request queue
 read fixed-size sectors
 write fixed-size sectors
-block-driver owns MMIO, IRQ, and DMA caps
+block-driver owns PCI I/O, IRQ, and DMA caps
 clients use directed request/reply IPC
 ```
 
@@ -1594,19 +1601,23 @@ Rules:
 ```text
 no filesystem yet
 no global disk authority
-no unprivileged MMIO, IRQ, DMA, or raw block access
+no unprivileged PCI I/O, IRQ, DMA, or raw block access
 kernel grants hardware-shaped authority; user-space driver owns the protocol
 ```
 
 Acceptance tests:
 
 ```text
-virtio-blk driver ready
-block-driver reads sector 0
-block-driver writes test sector
-readback matches
-echo cannot access block hardware authority
-driver fault does not crash kernel
+done: virtio-blk driver ready
+done: virtio-blk PCI device discovered
+done: block-driver reads sector 0
+done: block-driver writes test sector
+done: readback matches
+done: block-driver received block-read request
+done: block-driver returns bytes
+done: vertex-store verifies hash
+done: echo cannot access block hardware authority
+done: driver fault does not crash kernel
 ```
 
 ## M43: VertexDisk v0 Layout
@@ -2250,10 +2261,11 @@ install verified generations, run declared services, preserve mutable state,
 explain its authority graph, and recover from failed updates.
 ```
 
-M13 proved that native services can run under explicit authority. M14-M41 prove
+M13 proved that native services can run under explicit authority. M14-M42 prove
 that the graph itself decides which native services exist, when they start,
 what they receive, why they are allowed to communicate, and how authority and
 resources are bounded, while timer preemption and user fault containment keep
 the kernel in control. M40 freezes the first ABI subset for the long-lived
 Vertex native runtime base, and M41 adds the first in-VM operator surface for
-asking what generation and authority graph are running.
+asking what generation and authority graph are running. M42 adds the first
+persistent block I/O path while preserving hardware-shaped authority.

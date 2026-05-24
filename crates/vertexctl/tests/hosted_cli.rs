@@ -226,12 +226,12 @@ fn compile_boot_manifest_emits_krustboot_plan() {
     assert!(stdout.contains("boot_modules: 13"));
     assert!(stdout.contains("processes: 13"));
     assert!(stdout.contains("endpoints: 10"));
-    assert!(stdout.contains("grants: 42"));
+    assert!(stdout.contains("grants: 43"));
     assert!(stdout.contains("store_objects: 0"));
     assert!(stdout.contains("state_volumes: 1"));
     assert!(stdout.contains("network_ports: 1"));
-    assert!(stdout.contains("io_ports: 1"));
-    assert!(stdout.contains("mmio_regions: 1"));
+    assert!(stdout.contains("io_ports: 3"));
+    assert!(stdout.contains("mmio_regions: 0"));
     assert!(stdout.contains("interrupt_lines: 1"));
     assert!(stdout.contains("dma_regions: 1"));
 
@@ -262,7 +262,8 @@ fn compile_boot_manifest_emits_krustboot_plan() {
     assert!(contains_bytes(&bytes, b"state-reader-state-reply"));
     assert!(contains_bytes(&bytes, b"readiness"));
     assert!(contains_bytes(&bytes, b"cap:io.com1"));
-    assert!(contains_bytes(&bytes, b"cap:mmio.virtio-blk0"));
+    assert!(contains_bytes(&bytes, b"cap:io.pci-config"));
+    assert!(contains_bytes(&bytes, b"cap:io.virtio-blk0"));
     assert!(contains_bytes(&bytes, b"cap:irq.virtio-blk0"));
     assert!(contains_bytes(&bytes, b"cap:dma.virtio-blk0"));
     assert!(contains_bytes(&bytes, b"cap:net.tcp.8080"));

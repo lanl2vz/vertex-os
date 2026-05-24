@@ -16,6 +16,10 @@ const STORE_ID: &[u8] = b"store:hello-text";
 const GENERATION_B_MANIFEST_ID: &[u8] = b"store:generation-b-manifest";
 const GENERATION_B_MANIFEST: &[u8] = b"krustboot:gen:switch-b-0002";
 const HELLO_OBJECT: &[u8] = b"hello from Krust store\n";
+const BLOCK_PROTOCOL_V1: u16 = 1;
+const BLOCK_OP_READ_SECTOR: u16 = 1;
+const HELLO_OBJECT_SECTOR: u64 = 0;
+const SECTOR_SIZE: usize = 512;
 const PROTOCOL_HEALTH_V0: u16 = 2;
 const MESSAGE_READY: u16 = 1;
 const ENVELOPE_LEN: usize = 16;
@@ -58,39 +62,48 @@ fn serve_generation_b_manifest() {
 
 fn serve_hello_object() -> ! {
     log(b"store-service requests block read");
-    if sys::ipc_send(CAP_BLOCK_REQUEST, b"read store:hello-text") != sys::STATUS_OK {
+    let request = block_read_request(HELLO_OBJECT_SECTOR);
+    if sys::ipc_send(CAP_BLOCK_REQUEST, &request) != sys::STATUS_OK {
         log(b"vertex-store block request failed");
         sys::exit(1);
     }
 
-    let mut object = [0u8; 64];
-    let object_len = sys::ipc_recv(CAP_BLOCK_REPLY, &mut object);
-    if object_len > object.len() as u64 {
+    let mut sector = [0u8; SECTOR_SIZE];
+    let object_len = sys::ipc_recv(CAP_BLOCK_REPLY, &mut sector);
+    if object_len != SECTOR_SIZE as u64 {
         log(b"vertex-store block response failed");
         sys::exit(1);
     }
-    let object_len = object_len as usize;
-    if !bytes_eq(&object[..object_len], HELLO_OBJECT) {
+    let object_len = HELLO_OBJECT.len();
+    if !bytes_eq(&sector[..object_len], HELLO_OBJECT) {
         log(b"vertex-store hash verification failed");
         sys::exit(1);
     }
     log(b"vertex-store verifies hash");
 
-    object[0] ^= 1;
-    if !bytes_eq(&object[..object_len], HELLO_OBJECT) {
+    sector[0] ^= 1;
+    if !bytes_eq(&sector[..object_len], HELLO_OBJECT) {
         log(b"modified object fails hash check");
     } else {
         log(b"vertex-store modified-object negative failed");
         sys::exit(1);
     }
-    object[0] ^= 1;
+    sector[0] ^= 1;
 
-    if sys::ipc_send(CAP_MODEL_REPLY, &object[..object_len]) != sys::STATUS_OK {
+    if sys::ipc_send(CAP_MODEL_REPLY, &sector[..object_len]) != sys::STATUS_OK {
         log(b"vertex-store response failed");
         sys::exit(1);
     }
     log(b"Native immutable store service ok");
     sys::exit(0)
+}
+
+fn block_read_request(sector: u64) -> [u8; 16] {
+    let mut request = [0u8; 16];
+    write_u16(&mut request, 0, BLOCK_PROTOCOL_V1);
+    write_u16(&mut request, 2, BLOCK_OP_READ_SECTOR);
+    write_u64(&mut request, 8, sector);
+    request
 }
 
 fn log(message: &[u8]) {

@@ -43,10 +43,12 @@ pub extern "C" fn _start() -> ! {
         log(b"echo block-driver denial failed");
         sys::exit(1);
     }
-    if sys::mmio_map(3) == sys::STATUS_BAD_CAPABILITY
+    let mut dma_denied = [0u8; 24];
+    if sys::io_read(3, 0x0cf8) == sys::STATUS_BAD_CAPABILITY
         && sys::irq_wait(3, 0) == sys::STATUS_BAD_CAPABILITY
+        && sys::dma_map(3, &mut dma_denied) == sys::STATUS_BAD_CAPABILITY
     {
-        log(b"unauthorized service cannot access MMIO, IRQ, or DMA capabilities");
+        log(b"unauthorized service cannot access PCI I/O, IRQ, or DMA capabilities");
     } else {
         log(b"echo device authority denial failed");
         sys::exit(1);

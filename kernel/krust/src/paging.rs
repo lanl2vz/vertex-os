@@ -5,6 +5,8 @@ const ENTRY_COUNT: usize = 512;
 const PRESENT: u64 = 1 << 0;
 const WRITABLE: u64 = 1 << 1;
 const USER_ACCESSIBLE: u64 = 1 << 2;
+const WRITE_THROUGH: u64 = 1 << 3;
+const CACHE_DISABLE: u64 = 1 << 4;
 const HUGE_PAGE: u64 = 1 << 7;
 const NO_EXECUTE: u64 = 1 << 63;
 const ADDRESS_MASK: u64 = 0x000f_ffff_ffff_f000;
@@ -115,6 +117,12 @@ impl PageFlags {
         Self { bits }
     }
 
+    pub const fn user_device() -> Self {
+        Self {
+            bits: PRESENT | WRITABLE | USER_ACCESSIBLE | WRITE_THROUGH | CACHE_DISABLE | NO_EXECUTE,
+        }
+    }
+
     fn user_accessible(self) -> bool {
         self.bits & USER_ACCESSIBLE != 0
     }
@@ -128,6 +136,25 @@ impl PageFlags {
 
         bits
     }
+}
+
+pub fn map_page_in_root(
+    hhdm_offset: u64,
+    root_table_physical: u64,
+    virtual_address: u64,
+    frame: PhysicalFrame,
+    flags: PageFlags,
+    allocator: &mut FrameAllocator,
+) -> Result<(), MapError> {
+    let root_table = phys_to_virt(hhdm_offset, root_table_physical);
+    map_page_in_table(
+        hhdm_offset,
+        root_table,
+        virtual_address,
+        frame,
+        flags,
+        allocator,
+    )
 }
 
 impl Mapper {

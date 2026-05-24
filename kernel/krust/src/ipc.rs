@@ -4,13 +4,13 @@ use core::{
 };
 
 use crate::{
-    capability, gdt, paging, serial,
+    capability, gdt, limine, memory, paging, serial,
     usercopy::{self, UserPtr},
 };
 
 pub const BOOT_ENDPOINT_ID: u64 = 1;
 
-const MAX_MESSAGE_BYTES: usize = 128;
+const MAX_MESSAGE_BYTES: usize = 512;
 const ENDPOINT_QUEUE_CAPACITY: usize = 4;
 const MAX_BOOT_READ_BYTES: usize = 16 * 1024;
 const MAX_OBJECTS: usize = 64;
@@ -21,6 +21,8 @@ const MAX_REVOKED_CAPS: usize = 128;
 const MAX_GENERATION_CONFIGS: usize = 4;
 const MAX_STATE_VALUE_BYTES: usize = 64;
 const MAX_INSPECT_REPORT_BYTES: usize = 32 * 1024;
+const DMA_MAPPING_INFO_BYTES: usize = 24;
+const USER_DMA_MAPPING_BASE: u64 = 0x0000_6000_0000_0000;
 const INITIAL_USER_RFLAGS: u64 = 0x202;
 const STATUS_BAD_BUFFER: u64 = u64::MAX - 2;
 const STATUS_OK: u64 = 0;
@@ -506,6 +508,7 @@ static GENERATION_RUNTIMES: Global<GenerationRuntimeTable> =
     Global(UnsafeCell::new(GenerationRuntimeTable::new()));
 static ROLLBACK_RUNTIME: Global<Option<GenerationRuntime>> = Global(UnsafeCell::new(None));
 static FAILED_GENERATION: Global<Option<&'static str>> = Global(UnsafeCell::new(None));
+static FRAME_ALLOCATOR: Global<Option<*mut memory::FrameAllocator>> = Global(UnsafeCell::new(None));
 
 impl CapabilitySpace {
     const fn new() -> Self {
@@ -1321,6 +1324,20 @@ impl ObjectTable {
         None
     }
 
+    fn get_dma_region(&self, id: KernelObjectId) -> Option<DmaRegionObject> {
+        let mut index = 0;
+        while index < self.count {
+            if let Some(KernelObject::DmaRegion(region)) = self.objects[index]
+                && region.id == id
+            {
+                return Some(region);
+            }
+            index += 1;
+        }
+
+        None
+    }
+
     fn get_process_control(&self, id: KernelObjectId) -> Option<ProcessControlObject> {
         let mut index = 0;
         while index < self.count {
@@ -2074,6 +2091,12 @@ pub fn set_rollback_boot_config(config: &'static BootRuntimeConfig) {
         generation_id: config.generation_id,
         config,
     });
+}
+
+pub fn install_frame_allocator(allocator: *mut memory::FrameAllocator) {
+    unsafe {
+        *FRAME_ALLOCATOR.0.get() = Some(allocator);
+    }
 }
 
 fn process_pid_at(runtime: &RuntimeState, process_index: usize) -> Result<ProcessId, InitError> {
@@ -3092,7 +3115,7 @@ pub fn state_read(cap_slot: u64, destination: *mut u8, max_len: usize) -> Result
 
 pub fn io_read(cap_slot: u64, port: u64) -> Result<u64, IpcError> {
     let range = io_port_from_cap(cap_slot, capability::RIGHT_READ)?;
-    if !port_in_range(range, port) || port > u16::MAX as u64 {
+    if !port_span_in_range(range, port, 1) || port > u16::MAX as u64 {
         return Err(IpcError::BadCapability);
     }
 
@@ -3102,12 +3125,56 @@ pub fn io_read(cap_slot: u64, port: u64) -> Result<u64, IpcError> {
 
 pub fn io_write(cap_slot: u64, port: u64, value: u64) -> Result<(), IpcError> {
     let range = io_port_from_cap(cap_slot, capability::RIGHT_WRITE)?;
-    if !port_in_range(range, port) || port > u16::MAX as u64 {
+    if !port_span_in_range(range, port, 1) || port > u16::MAX as u64 {
         return Err(IpcError::BadCapability);
     }
 
     unsafe {
         serial::outb_raw(port as u16, value as u8);
+    }
+    Ok(())
+}
+
+pub fn io_read16(cap_slot: u64, port: u64) -> Result<u64, IpcError> {
+    let range = io_port_from_cap(cap_slot, capability::RIGHT_READ)?;
+    if !port_span_in_range(range, port, 2) || port > u16::MAX as u64 {
+        return Err(IpcError::BadCapability);
+    }
+
+    let value = unsafe { serial::inw_raw(port as u16) };
+    Ok(value as u64)
+}
+
+pub fn io_write16(cap_slot: u64, port: u64, value: u64) -> Result<(), IpcError> {
+    let range = io_port_from_cap(cap_slot, capability::RIGHT_WRITE)?;
+    if !port_span_in_range(range, port, 2) || port > u16::MAX as u64 {
+        return Err(IpcError::BadCapability);
+    }
+
+    unsafe {
+        serial::outw_raw(port as u16, value as u16);
+    }
+    Ok(())
+}
+
+pub fn io_read32(cap_slot: u64, port: u64) -> Result<u64, IpcError> {
+    let range = io_port_from_cap(cap_slot, capability::RIGHT_READ)?;
+    if !port_span_in_range(range, port, 4) || port > u16::MAX as u64 {
+        return Err(IpcError::BadCapability);
+    }
+
+    let value = unsafe { serial::inl_raw(port as u16) };
+    Ok(value as u64)
+}
+
+pub fn io_write32(cap_slot: u64, port: u64, value: u64) -> Result<(), IpcError> {
+    let range = io_port_from_cap(cap_slot, capability::RIGHT_WRITE)?;
+    if !port_span_in_range(range, port, 4) || port > u16::MAX as u64 {
+        return Err(IpcError::BadCapability);
+    }
+
+    unsafe {
+        serial::outl_raw(port as u16, value as u32);
     }
     Ok(())
 }
@@ -3126,6 +3193,15 @@ pub fn irq_wait(cap_slot: u64, _timeout_ms: u64) -> Result<(), IpcError> {
 
 pub fn mmio_map(cap_slot: u64) -> Result<u64, IpcError> {
     let region = mmio_region_from_cap(cap_slot, capability::RIGHT_MAP)?;
+    map_current_process_physical_range(
+        align_down(region.base, memory::FRAME_SIZE),
+        align_down(region.base, memory::FRAME_SIZE),
+        region
+            .length
+            .checked_add(region.base - align_down(region.base, memory::FRAME_SIZE))
+            .ok_or(IpcError::BadCapability)?,
+        paging::PageFlags::user_device(),
+    )?;
     serial::write_str("MMIO map accepted: proc=");
     serial::write_str(current_process_name());
     serial::write_str(" mmio-region=");
@@ -3136,6 +3212,44 @@ pub fn mmio_map(cap_slot: u64) -> Result<u64, IpcError> {
     serial::write_u64_hex(region.length);
     serial::write_str("\n");
     Ok(region.base)
+}
+
+pub fn dma_map(cap_slot: u64, destination: *mut u8, max_len: usize) -> Result<(), IpcError> {
+    if max_len < DMA_MAPPING_INFO_BYTES {
+        return Err(IpcError::InvalidUserBuffer);
+    }
+
+    let region = dma_region_from_cap(
+        cap_slot,
+        capability::RIGHT_READ | capability::RIGHT_WRITE | capability::RIGHT_MAP,
+    )?;
+    let virtual_base = USER_DMA_MAPPING_BASE + (region.id.raw() << 20);
+    map_current_process_physical_range(
+        virtual_base,
+        region.base,
+        region.length,
+        paging::PageFlags::user(true, false),
+    )?;
+
+    let mut info = [0u8; DMA_MAPPING_INFO_BYTES];
+    write_u64(&mut info, 0, virtual_base);
+    write_u64(&mut info, 8, region.base);
+    write_u64(&mut info, 16, region.length);
+    usercopy::copy_to_user(UserPtr::new(destination as u64), &info)
+        .map_err(|_| IpcError::InvalidUserBuffer)?;
+
+    serial::write_str("DMA map accepted: proc=");
+    serial::write_str(current_process_name());
+    serial::write_str(" dma-region=");
+    serial::write_str(region.name);
+    serial::write_str(" phys=");
+    serial::write_u64_hex(region.base);
+    serial::write_str(" virt=");
+    serial::write_u64_hex(virtual_base);
+    serial::write_str(" length=");
+    serial::write_u64_hex(region.length);
+    serial::write_str("\n");
+    Ok(())
 }
 
 pub fn runtime_inspect(
@@ -3650,6 +3764,14 @@ fn interrupt_line_from_cap(
         .ok_or(IpcError::BadCapability)
 }
 
+fn dma_region_from_cap(cap_slot: u64, required_right: u64) -> Result<DmaRegionObject, IpcError> {
+    let cap = lookup_capability(cap_slot, required_right)?;
+    runtime()
+        .objects
+        .get_dma_region(cap.object)
+        .ok_or(IpcError::BadCapability)
+}
+
 fn process_control_from_cap(
     cap_slot: u64,
     required_right: u64,
@@ -3692,6 +3814,16 @@ fn port_in_range(range: IoPortRangeObject, port: u64) -> bool {
             .checked_sub(range.base)
             .map(|offset| offset < range.length)
             .unwrap_or(false)
+}
+
+fn port_span_in_range(range: IoPortRangeObject, port: u64, width: u64) -> bool {
+    if width == 0 {
+        return false;
+    }
+    let Some(last_port) = port.checked_add(width - 1) else {
+        return false;
+    };
+    port_in_range(range, port) && port_in_range(range, last_port)
 }
 
 fn capability_has_revoked_ancestor(runtime: &RuntimeState, cap: Capability) -> bool {
@@ -4197,6 +4329,75 @@ fn failed_generation_is(generation_id: &'static str) -> bool {
 
 fn runtime() -> &'static mut RuntimeState {
     unsafe { &mut *RUNTIME.0.get() }
+}
+
+fn frame_allocator() -> Result<&'static mut memory::FrameAllocator, IpcError> {
+    let allocator = unsafe { *FRAME_ALLOCATOR.0.get() }.ok_or(IpcError::BadCapability)?;
+    unsafe { allocator.as_mut().ok_or(IpcError::BadCapability) }
+}
+
+fn map_current_process_physical_range(
+    virtual_base: u64,
+    physical_base: u64,
+    length: u64,
+    flags: paging::PageFlags,
+) -> Result<(), IpcError> {
+    if length == 0
+        || virtual_base % memory::FRAME_SIZE != 0
+        || physical_base % memory::FRAME_SIZE != 0
+    {
+        return Err(IpcError::BadCapability);
+    }
+
+    let hhdm_offset = limine::hhdm_offset().ok_or(IpcError::BadCapability)?;
+    let root_table_physical = runtime()
+        .processes
+        .current_process()
+        .map(|process| process.context.cr3)
+        .ok_or(IpcError::BadCapability)?;
+    let allocator = frame_allocator()?;
+
+    let mut offset = 0;
+    while offset < length {
+        let frame = memory::PhysicalFrame::from_start(
+            physical_base
+                .checked_add(offset)
+                .ok_or(IpcError::BadCapability)?,
+        )
+        .ok_or(IpcError::BadCapability)?;
+        let virtual_address = virtual_base
+            .checked_add(offset)
+            .ok_or(IpcError::BadCapability)?;
+        match paging::map_page_in_root(
+            hhdm_offset,
+            root_table_physical,
+            virtual_address,
+            frame,
+            flags,
+            allocator,
+        ) {
+            Ok(()) | Err(paging::MapError::AlreadyMapped) => {}
+            Err(_) => return Err(IpcError::BadCapability),
+        }
+        offset = offset
+            .checked_add(memory::FRAME_SIZE)
+            .ok_or(IpcError::BadCapability)?;
+    }
+
+    Ok(())
+}
+
+fn align_down(value: u64, align: u64) -> u64 {
+    value & !(align - 1)
+}
+
+fn write_u64(buffer: &mut [u8], offset: usize, value: u64) {
+    let bytes = value.to_le_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        buffer[offset + index] = bytes[index];
+        index += 1;
+    }
 }
 
 fn min(left: usize, right: usize) -> usize {

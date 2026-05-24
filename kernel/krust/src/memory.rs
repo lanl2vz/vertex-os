@@ -11,6 +11,14 @@ pub struct PhysicalFrame {
 }
 
 impl PhysicalFrame {
+    pub const fn from_start(start: u64) -> Option<Self> {
+        if start % FRAME_SIZE == 0 {
+            Some(Self { start })
+        } else {
+            None
+        }
+    }
+
     pub fn start(&self) -> u64 {
         self.start
     }
@@ -143,6 +151,33 @@ impl FrameAllocator {
                 let frame = PhysicalFrame { start: range.next };
                 range.next += FRAME_SIZE;
                 self.allocated_frames += 1;
+                return Some(frame);
+            }
+
+            self.next_range += 1;
+        }
+
+        None
+    }
+
+    pub fn allocate_contiguous(&mut self, frame_count: u64) -> Option<PhysicalFrame> {
+        if frame_count == 0 {
+            return None;
+        }
+
+        while self.next_range < self.range_count {
+            let range = &mut self.ranges[self.next_range];
+            let Some(bytes) = frame_count.checked_mul(FRAME_SIZE) else {
+                return None;
+            };
+            let Some(end) = range.next.checked_add(bytes) else {
+                return None;
+            };
+
+            if end <= range.end {
+                let frame = PhysicalFrame { start: range.next };
+                range.next = end;
+                self.allocated_frames += frame_count;
                 return Some(frame);
             }
 

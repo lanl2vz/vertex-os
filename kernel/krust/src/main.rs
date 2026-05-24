@@ -357,22 +357,34 @@ fn run_capability_table_demo(allocator: &memory::FrameAllocator, heap: KernelHea
             return;
         }
     };
-    let virtio_mmio = match table.add_object(
-        capability::KernelObjectKind::MmioRegion,
-        "mmio:virtio-blk0",
-        0x1000_1000,
+    let pci_config_ports = match table.add_object(
+        capability::KernelObjectKind::IoPortRange,
+        "io:pci-config",
+        0x0cf8,
+        8,
+    ) {
+        Ok(id) => id,
+        Err(_) => {
+            serial::write_str("Capability table demo failed: PCI config I/O object\n");
+            return;
+        }
+    };
+    let virtio_ports = match table.add_object(
+        capability::KernelObjectKind::IoPortRange,
+        "io:virtio-blk0",
+        0xc000,
         0x1000,
     ) {
         Ok(id) => id,
         Err(_) => {
-            serial::write_str("Capability table demo failed: virtio MMIO object\n");
+            serial::write_str("Capability table demo failed: virtio I/O object\n");
             return;
         }
     };
     let virtio_irq = match table.add_object(
         capability::KernelObjectKind::InterruptLine,
         "irq:virtio-blk0",
-        5,
+        11,
         1,
     ) {
         Ok(id) => id,
@@ -385,7 +397,7 @@ fn run_capability_table_demo(allocator: &memory::FrameAllocator, heap: KernelHea
         capability::KernelObjectKind::DmaRegion,
         "dma:virtio-blk0",
         0,
-        0x1000,
+        0x4000,
     ) {
         Ok(id) => id,
         Err(_) => {
@@ -428,7 +440,18 @@ fn run_capability_table_demo(allocator: &memory::FrameAllocator, heap: KernelHea
         || table
             .grant(com1_ports, capability::RIGHT_READ | capability::RIGHT_WRITE)
             .is_err()
-        || table.grant(virtio_mmio, capability::RIGHT_MAP).is_err()
+        || table
+            .grant(
+                pci_config_ports,
+                capability::RIGHT_READ | capability::RIGHT_WRITE,
+            )
+            .is_err()
+        || table
+            .grant(
+                virtio_ports,
+                capability::RIGHT_READ | capability::RIGHT_WRITE,
+            )
+            .is_err()
         || table.grant(virtio_irq, capability::RIGHT_LISTEN).is_err()
         || table
             .grant(
@@ -443,7 +466,7 @@ fn run_capability_table_demo(allocator: &memory::FrameAllocator, heap: KernelHea
 
     table.print();
 
-    if table.object_count() == 10 && table.capability_count() == 10 {
+    if table.object_count() == 11 && table.capability_count() == 11 {
         serial::write_str("Capability table demo ok\n");
     } else {
         serial::write_str("Capability table demo failed: count mismatch\n");
@@ -618,6 +641,7 @@ fn run_native_boot(allocator: &mut memory::FrameAllocator, boot_manifests: &Boot
         serial::write_str("Native runtime init failed from KrustBoot manifest\n");
         return;
     }
+    ipc::install_frame_allocator(allocator as *mut memory::FrameAllocator);
 
     let Some(initial) = ipc::initial_process_context() else {
         serial::write_str("Native runtime init failed: no initial process\n");
@@ -661,7 +685,14 @@ fn prepare_native_boot_config(
     let config = unsafe { &mut *config_slot.0.get() };
     *config = ipc::BootRuntimeConfig::new();
     config.set_generation_id(boot_manifest.generation_id());
-    build_boot_runtime_config(boot_manifest, &images, &restart_images, config)?;
+    build_boot_runtime_config(
+        boot_manifest,
+        &images,
+        &restart_images,
+        hhdm_offset,
+        allocator,
+        config,
+    )?;
     let Some(_manifest_module) = find_module_by_string(manifest_module_string) else {
         serial::write_str("KrustBoot runtime init failed: manifest module missing\n");
         return None;
@@ -723,6 +754,8 @@ fn build_boot_runtime_config(
     boot_manifest: &boot_manifest::Manifest<'static>,
     images: &[Option<userspace::UserImage>; MAX_BOOT_PROCESSES],
     restart_images: &[Option<userspace::UserImage>; MAX_BOOT_PROCESSES],
+    hhdm_offset: u64,
+    allocator: &mut memory::FrameAllocator,
     config: &mut ipc::BootRuntimeConfig,
 ) -> Option<()> {
     let mut index = 0;
@@ -878,10 +911,15 @@ fn build_boot_runtime_config(
     index = 0;
     while index < boot_manifest.dma_region_count() {
         let region = boot_manifest.dma_region(index)?;
+        let base = if region.base == 0 {
+            allocate_dma_region(region.id, region.length, hhdm_offset, allocator)?
+        } else {
+            region.base
+        };
         if config
             .add_dma_region(ipc::BootDmaRegionConfig {
                 id: region.id,
-                base: region.base,
+                base,
                 length: region.length,
             })
             .is_err()
@@ -917,6 +955,33 @@ fn build_boot_runtime_config(
     }
 
     Some(())
+}
+
+fn allocate_dma_region(
+    id: &'static str,
+    length: u64,
+    hhdm_offset: u64,
+    allocator: &mut memory::FrameAllocator,
+) -> Option<u64> {
+    let frames = length
+        .checked_add(memory::FRAME_SIZE - 1)?
+        .checked_div(memory::FRAME_SIZE)?;
+    let frame = allocator.allocate_contiguous(frames)?;
+    unsafe {
+        core::ptr::write_bytes(
+            (hhdm_offset + frame.start()) as *mut u8,
+            0,
+            (frames * memory::FRAME_SIZE) as usize,
+        );
+    }
+    serial::write_str("KrustBoot allocated DMA region: id=");
+    serial::write_str(id);
+    serial::write_str(" base=");
+    serial::write_u64_hex(frame.start());
+    serial::write_str(" length=");
+    serial::write_u64_hex(frames * memory::FRAME_SIZE);
+    serial::write_str("\n");
+    Some(frame.start())
 }
 
 fn capability_rights_from_boot(rights: u16) -> u64 {

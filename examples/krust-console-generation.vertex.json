@@ -313,15 +313,15 @@
     },
     {
       "id": "device:virtio-blk0",
-      "kind": "virtio-blk-mmio",
+      "kind": "virtio-blk-pci",
       "selector": {
-        "base": "0x10001000",
+        "base": "0xc000",
         "length": 4096,
-        "irq": 5
+        "irq": 11
       },
       "driver": "svc:block-driver",
       "properties": {
-        "transport": "virtio-mmio-proof"
+        "transport": "virtio-pci-legacy"
       }
     }
   ],
@@ -442,14 +442,28 @@
       }
     },
     {
-      "id": "cap:mmio.virtio-blk0",
-      "kind": "mmio-region",
+      "id": "cap:io.pci-config",
+      "kind": "io-port",
       "provider": "device:virtio-blk0",
       "rights": [
-        "map"
+        "read",
+        "write"
       ],
       "properties": {
-        "base": "0x10001000",
+        "base": "0xcf8",
+        "length": 8
+      }
+    },
+    {
+      "id": "cap:io.virtio-blk0",
+      "kind": "io-port",
+      "provider": "device:virtio-blk0",
+      "rights": [
+        "read",
+        "write"
+      ],
+      "properties": {
+        "base": "0xc000",
         "length": 4096
       }
     },
@@ -461,7 +475,7 @@
         "listen"
       ],
       "properties": {
-        "irq": 5
+        "irq": 11
       }
     },
     {
@@ -474,8 +488,8 @@
         "map"
       ],
       "properties": {
-        "base": 0,
-        "length": 4096
+        "allocation": "kernel-dma",
+        "length": 16384
       }
     },
     {
@@ -738,9 +752,10 @@
           ]
         },
         {
-          "capability": "cap:mmio.virtio-blk0",
+          "capability": "cap:io.pci-config",
           "rights": [
-            "map"
+            "read",
+            "write"
           ]
         },
         {
@@ -755,6 +770,13 @@
             "read",
             "write",
             "map"
+          ]
+        },
+        {
+          "capability": "cap:io.virtio-blk0",
+          "rights": [
+            "read",
+            "write"
           ]
         }
       ],
