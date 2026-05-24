@@ -30,10 +30,13 @@ static SELECTED_BOOT_CONFIG: Global<ipc::BootRuntimeConfig> =
     Global(UnsafeCell::new(ipc::BootRuntimeConfig::new()));
 static FALLBACK_BOOT_CONFIG: Global<ipc::BootRuntimeConfig> =
     Global(UnsafeCell::new(ipc::BootRuntimeConfig::new()));
+static BAD_GENERATION_BOOT_CONFIG: Global<ipc::BootRuntimeConfig> =
+    Global(UnsafeCell::new(ipc::BootRuntimeConfig::new()));
 
 struct BootManifests {
     selected: &'static boot_manifest::Manifest<'static>,
     fallback: Option<&'static boot_manifest::Manifest<'static>>,
+    bad_generation: Option<&'static boot_manifest::Manifest<'static>>,
 }
 
 #[unsafe(link_section = ".text._start")]
@@ -580,6 +583,36 @@ fn run_native_boot(allocator: &mut memory::FrameAllocator, boot_manifests: &Boot
         }
     }
 
+    if let Some(bad_generation_manifest) = boot_manifests.bad_generation {
+        if bad_generation_manifest.generation_id() == boot_manifests.selected.generation_id()
+            || boot_manifests
+                .fallback
+                .map(|fallback| fallback.generation_id() == bad_generation_manifest.generation_id())
+                .unwrap_or(false)
+        {
+            serial::write_str(
+                "KrustBoot bad generation manifest matches an active generation; ignoring\n",
+            );
+        } else if let Some(bad_generation_config) = prepare_native_boot_config(
+            allocator,
+            bad_generation_manifest,
+            boot_manifest::BAD_GENERATION_MODULE_STRING,
+            "krustboot-bad-generation-manifest",
+            &BAD_GENERATION_BOOT_CONFIG,
+        ) {
+            if ipc::register_generation_config(bad_generation_config).is_err() {
+                serial::write_str("KrustBoot bad generation registration failed\n");
+                return;
+            }
+            serial::write_str("KrustBoot bad generation ready: ");
+            serial::write_str(bad_generation_manifest.generation_id());
+            serial::write_str("\n");
+        } else {
+            serial::write_str("KrustBoot bad generation runtime plan unavailable\n");
+            return;
+        }
+    }
+
     if ipc::init_from_boot_config(config).is_err() {
         serial::write_str("Native runtime init failed from KrustBoot manifest\n");
         return;
@@ -960,6 +993,7 @@ fn print_boot_modules() -> Option<BootManifests> {
 
     let mut selected_manifest = None;
     let mut fallback_manifest = None;
+    let mut bad_generation_manifest = None;
     let mut index = 0;
     while index < modules.module_count() {
         if let Some(module) = modules.module(index) {
@@ -977,6 +1011,8 @@ fn print_boot_modules() -> Option<BootManifests> {
                 selected_manifest = parse_boot_manifest_module(module, false);
             } else if c_string_eq(module.string, boot_manifest::FALLBACK_MODULE_STRING) {
                 fallback_manifest = parse_boot_manifest_module(module, true);
+            } else if c_string_eq(module.string, boot_manifest::BAD_GENERATION_MODULE_STRING) {
+                bad_generation_manifest = parse_bad_generation_manifest_module(module);
             }
         }
 
@@ -990,6 +1026,7 @@ fn print_boot_modules() -> Option<BootManifests> {
     selected_manifest.map(|selected| BootManifests {
         selected,
         fallback: fallback_manifest,
+        bad_generation: bad_generation_manifest,
     })
 }
 
@@ -1039,6 +1076,27 @@ fn parse_boot_manifest_module(
         }
         Err(error) => {
             serial::write_str("KrustBoot manifest parse failed: ");
+            print_boot_manifest_error(error);
+            serial::write_str("\n");
+            None
+        }
+    }
+}
+
+fn parse_bad_generation_manifest_module(
+    module: &'static limine::File,
+) -> Option<&'static boot_manifest::Manifest<'static>> {
+    serial::write_str("KrustBoot bad generation manifest module: ");
+    serial::write_c_string(module.path);
+    serial::write_str(" bytes=");
+    serial::write_u64_dec(module.size);
+    serial::write_str("\n");
+
+    let bytes = unsafe { core::slice::from_raw_parts(module.address, module.size as usize) };
+    match boot_manifest::parse_bad_generation(bytes) {
+        Ok(manifest) => Some(manifest),
+        Err(error) => {
+            serial::write_str("KrustBoot bad generation manifest parse failed: ");
             print_boot_manifest_error(error);
             serial::write_str("\n");
             None

@@ -5,6 +5,7 @@ ISO_ROOT := $(BUILD_DIR)/iso-root
 ISO_IMAGE := $(BUILD_DIR)/krust.iso
 BOOT_MANIFEST := $(BUILD_DIR)/hello-generation.krustboot
 FALLBACK_BOOT_MANIFEST := $(BUILD_DIR)/fallback-generation.krustboot
+BAD_GENERATION_BOOT_MANIFEST := $(BUILD_DIR)/bad-generation.krustboot
 KERNEL_ELF := target/$(KRUST_TARGET)/debug/krust
 INIT_TARGET_DIR := user/init/target/$(KRUST_TARGET)/debug
 SERIAL_DRIVER_TARGET_DIR := user/serial-driver/target/$(KRUST_TARGET)/debug
@@ -40,6 +41,7 @@ HOG_ELF := $(HOG_TARGET_DIR)/hog
 FAULTY_ELF := $(FAULTY_TARGET_DIR)/faulty
 VERTEX_MANIFEST ?= ../../examples/hello-generation.vertex.json
 FALLBACK_MANIFEST ?=
+BAD_GENERATION_MANIFEST ?=
 KRUSTBOOT_CORRUPT ?=
 
 QEMU ?= qemu-system-x86_64
@@ -85,6 +87,11 @@ boot-manifest:
 	else \
 		cp $(BOOT_MANIFEST) $(FALLBACK_BOOT_MANIFEST); \
 	fi
+	@if [ -n "$(BAD_GENERATION_MANIFEST)" ]; then \
+		$(VERTEXCTL) compile-boot-manifest $(BAD_GENERATION_MANIFEST) $(BAD_GENERATION_BOOT_MANIFEST); \
+	else \
+		cp $(BOOT_MANIFEST) $(BAD_GENERATION_BOOT_MANIFEST); \
+	fi
 
 iso: build boot-manifest check-tools check-limine-dir
 	rm -rf $(ISO_ROOT) $(ISO_IMAGE)
@@ -109,6 +116,7 @@ iso: build boot-manifest check-tools check-limine-dir
 	cp assets/hello-text.txt $(ISO_ROOT)/boot/hello-text.txt
 	cp $(BOOT_MANIFEST) $(ISO_ROOT)/boot/hello-generation.krustboot
 	cp $(FALLBACK_BOOT_MANIFEST) $(ISO_ROOT)/boot/fallback-generation.krustboot
+	cp $(BAD_GENERATION_BOOT_MANIFEST) $(ISO_ROOT)/boot/bad-generation.krustboot
 	cp limine.conf $(ISO_ROOT)/boot/limine.conf
 	cp $(LIMINE_DIR)/limine-bios.sys $(ISO_ROOT)/boot/limine-bios.sys
 	cp $(LIMINE_DIR)/limine-bios-cd.bin $(ISO_ROOT)/boot/limine-bios-cd.bin

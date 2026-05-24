@@ -1354,7 +1354,9 @@ generation, and enters the new `vertex-init`. The M37 QEMU case boots
 `gen:switch-a-0001`, has `vertex-init` obtain the generation-B marker from
 `vertex-store` over the declared store IPC endpoint, switches to
 `gen:switch-b-0002`, proves old authority was discarded with the old runtime
-tables, then rejects an unavailable bad generation C and remains on B.
+tables, then switches to registered bad generation C. C fails activation,
+invokes rollback to B, and B subsequently rejects re-entering the marked failed
+generation.
 
 ## M38: Native Vertexctl-Like Introspection Service
 
@@ -1386,6 +1388,8 @@ Acceptance tests:
 ```text
 done: native why echo log-sink
 done: native who-can state:counter
+done: native which-generation vertex-inspect
+done: native delegated endpoint cap enumeration
 done: native cap provenance report
 ```
 

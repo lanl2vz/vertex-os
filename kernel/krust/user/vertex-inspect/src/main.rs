@@ -57,6 +57,8 @@ pub extern "C" fn _start() -> ! {
 
     explain_echo_to_logd(report);
     explain_state_counter(report);
+    explain_vertex_inspect_generation(report, &generation.id[..generation.id_len]);
+    explain_derived_endpoint_caps(report);
     explain_cap_provenance(report);
 
     log(b"Native introspection service ok");
@@ -106,8 +108,16 @@ fn read_generation_graph() -> GenerationGraph {
 
 fn explain_echo_to_logd(report: &[u8]) {
     log(b"native why echo log-sink");
-    if contains(report, b"proc=echo cap[0] endpoint=log-sink rights=send")
-        && contains(report, b"parent_cap_id=")
+    let needles: [&[u8]; 6] = [
+        b"space=initial proc=echo cap[0] endpoint=log-sink",
+        b"rights=send",
+        b"parent_cap_id=",
+        b"owner=echo",
+        b"delegated_by=vertex-init",
+        b"revoked=no",
+    ];
+    if let Some(line) = find_line_contains_all(report, &needles)
+        && field_u64(line, b"parent_cap_id=").unwrap_or(0) != 0
     {
         log(b"why: echo can send to log-sink because delegated endpoint authority has send rights");
         return;
@@ -119,10 +129,13 @@ fn explain_echo_to_logd(report: &[u8]) {
 
 fn explain_state_counter(report: &[u8]) {
     log(b"native who-can state:counter");
-    if contains(
-        report,
-        b"proc=vertex-state cap[3] state-volume=state:counter rights=read|write|snapshot|restore",
-    ) {
+    let needles: [&[u8]; 4] = [
+        b"space=initial proc=vertex-state cap[3] state-volume=state:counter",
+        b"rights=read|write|snapshot|restore",
+        b"owner=vertex-state",
+        b"revoked=no",
+    ];
+    if find_line_contains_all(report, &needles).is_some() {
         log(b"who-can: vertex-state owns state:counter with rights=read|write|snapshot|restore");
         return;
     }
@@ -131,11 +144,65 @@ fn explain_state_counter(report: &[u8]) {
     sys::exit(1);
 }
 
+fn explain_vertex_inspect_generation(report: &[u8], generation: &[u8]) {
+    log(b"native which-generation vertex-inspect");
+    let needles: [&[u8]; 2] = [b"name=vertex-inspect", b" generation="];
+    if let Some(line) = find_line_contains_all(report, &needles)
+        && contains(line, generation)
+    {
+        log_prefix(b"generation: vertex-inspect started in ", generation);
+        return;
+    }
+
+    log(b"vertex-inspect generation query failed");
+    sys::exit(1);
+}
+
+fn explain_derived_endpoint_caps(report: &[u8]) {
+    log(b"native delegated endpoint cap report");
+    let needles: [&[u8]; 5] = [
+        b"space=initial",
+        b" endpoint=",
+        b"parent_cap_id=",
+        b"delegated_by=vertex-init",
+        b"revoked=no",
+    ];
+    let count = log_lines_contains_all(report, &needles);
+    if count == 0 {
+        log(b"vertex-inspect delegated endpoint query failed");
+        sys::exit(1);
+    }
+
+    let echo_needles: [&[u8]; 4] = [
+        b"space=initial proc=echo cap[0] endpoint=log-sink",
+        b"rights=send",
+        b"parent_cap_id=",
+        b"delegated_by=vertex-init",
+    ];
+    if let Some(line) = find_line_contains_all(report, &echo_needles)
+        && field_u64(line, b"parent_cap_id=").unwrap_or(0) != 0
+    {
+        log_count(b"derived endpoint caps from vertex-init: ", count as u64);
+        return;
+    }
+
+    log(b"vertex-inspect delegated endpoint query failed");
+    sys::exit(1);
+}
+
 fn explain_cap_provenance(report: &[u8]) {
     log(b"native cap provenance report");
-    if contains(report, b"space=initial proc=echo cap[0] endpoint=log-sink")
-        && contains(report, b"parent_cap_id=")
-        && contains(report, b"generation=")
+    let needles: [&[u8]; 6] = [
+        b"space=initial proc=echo cap[0] endpoint=log-sink",
+        b"rights=send",
+        b"cap_id=",
+        b"parent_cap_id=",
+        b"generation=",
+        b"delegated_by=vertex-init",
+    ];
+    if let Some(line) = find_line_contains_all(report, &needles)
+        && field_u64(line, b"cap_id=").unwrap_or(0) != 0
+        && field_u64(line, b"parent_cap_id=").unwrap_or(0) != 0
     {
         log(b"cap provenance: echo log-sink cap is derived from vertex-init endpoint authority");
         return;
@@ -162,21 +229,119 @@ fn fixed_string(bytes: &[u8]) -> &[u8] {
 }
 
 fn contains(haystack: &[u8], needle: &[u8]) -> bool {
+    find_subslice(haystack, needle).is_some()
+}
+
+fn find_line_contains_all<'a>(haystack: &'a [u8], needles: &[&[u8]]) -> Option<&'a [u8]> {
+    let mut start = 0;
+    while start <= haystack.len() {
+        let mut end = start;
+        while end < haystack.len() && haystack[end] != b'\n' {
+            end += 1;
+        }
+        let line = &haystack[start..end];
+        if contains_all(line, needles) {
+            return Some(line);
+        }
+        if end == haystack.len() {
+            break;
+        }
+        start = end + 1;
+    }
+    None
+}
+
+fn log_lines_contains_all(haystack: &[u8], needles: &[&[u8]]) -> usize {
+    let mut count = 0;
+    let mut start = 0;
+    while start <= haystack.len() {
+        let mut end = start;
+        while end < haystack.len() && haystack[end] != b'\n' {
+            end += 1;
+        }
+        let line = &haystack[start..end];
+        if contains_all(line, needles) && field_u64(line, b"parent_cap_id=").unwrap_or(0) != 0 {
+            log_derived_endpoint_cap(line);
+            count += 1;
+        }
+        if end == haystack.len() {
+            break;
+        }
+        start = end + 1;
+    }
+    count
+}
+
+fn log_derived_endpoint_cap(line: &[u8]) {
+    let mut buffer = [0u8; 128];
+    let mut len = append(&mut buffer, 0, b"derived endpoint cap: proc=");
+    len = append_field(&mut buffer, len, line, b"proc=", b' ');
+    len = append(&mut buffer, len, b" cap[");
+    len = append_field(&mut buffer, len, line, b"cap[", b']');
+    len = append(&mut buffer, len, b"] endpoint=");
+    len = append_field(&mut buffer, len, line, b"endpoint=", b' ');
+    log(&buffer[..len]);
+}
+
+fn append_field(
+    buffer: &mut [u8],
+    mut offset: usize,
+    line: &[u8],
+    key: &[u8],
+    terminator: u8,
+) -> usize {
+    let Some(mut source) = find_subslice(line, key).map(|index| index + key.len()) else {
+        return append(buffer, offset, b"<missing>");
+    };
+    while source < line.len() && line[source] != terminator && offset < buffer.len() {
+        buffer[offset] = line[source];
+        offset += 1;
+        source += 1;
+    }
+    offset
+}
+
+fn contains_all(line: &[u8], needles: &[&[u8]]) -> bool {
+    let mut index = 0;
+    while index < needles.len() {
+        if !contains(line, needles[index]) {
+            return false;
+        }
+        index += 1;
+    }
+    true
+}
+
+fn field_u64(line: &[u8], key: &[u8]) -> Option<u64> {
+    let mut offset = find_subslice(line, key)? + key.len();
+    let mut value = 0u64;
+    let mut saw_digit = false;
+    while offset < line.len() && line[offset] >= b'0' && line[offset] <= b'9' {
+        value = value
+            .saturating_mul(10)
+            .saturating_add((line[offset] - b'0') as u64);
+        saw_digit = true;
+        offset += 1;
+    }
+    if saw_digit { Some(value) } else { None }
+}
+
+fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     if needle.is_empty() {
-        return true;
+        return Some(0);
     }
     if needle.len() > haystack.len() {
-        return false;
+        return None;
     }
 
     let mut offset = 0;
     while offset + needle.len() <= haystack.len() {
         if bytes_eq(&haystack[offset..offset + needle.len()], needle) {
-            return true;
+            return Some(offset);
         }
         offset += 1;
     }
-    false
+    None
 }
 
 fn bytes_eq(left: &[u8], right: &[u8]) -> bool {
@@ -201,6 +366,20 @@ fn log_generation_graph(generation: &[u8], processes: u16, endpoints: u16) {
     len = append_u16(&mut buffer, len, processes);
     len = append(&mut buffer, len, b" endpoints=");
     len = append_u16(&mut buffer, len, endpoints);
+    log(&buffer[..len]);
+}
+
+fn log_prefix(prefix: &[u8], value: &[u8]) {
+    let mut buffer = [0u8; 128];
+    let len = append(&mut buffer, 0, prefix);
+    let len = append(&mut buffer, len, value);
+    log(&buffer[..len]);
+}
+
+fn log_count(prefix: &[u8], value: u64) {
+    let mut buffer = [0u8; 128];
+    let len = append(&mut buffer, 0, prefix);
+    let len = append_u64(&mut buffer, len, value);
     log(&buffer[..len]);
 }
 

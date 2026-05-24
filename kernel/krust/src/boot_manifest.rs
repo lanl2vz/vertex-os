@@ -2,6 +2,7 @@ use core::{cell::UnsafeCell, str};
 
 pub const MODULE_STRING: &[u8] = b"krustboot-manifest";
 pub const FALLBACK_MODULE_STRING: &[u8] = b"krustboot-fallback-manifest";
+pub const BAD_GENERATION_MODULE_STRING: &[u8] = b"krustboot-bad-generation-manifest";
 
 const COMPACT_MAGIC: &[u8; 16] = b"KRUSTBOOTV0\0\0\0\0\0";
 const COMPACT_VERSION: u16 = 4;
@@ -166,6 +167,8 @@ unsafe impl<T> Sync for Global<T> {}
 
 static SELECTED_MANIFEST: Global<Manifest<'static>> = Global(UnsafeCell::new(Manifest::empty()));
 static FALLBACK_MANIFEST: Global<Manifest<'static>> = Global(UnsafeCell::new(Manifest::empty()));
+static BAD_GENERATION_MANIFEST: Global<Manifest<'static>> =
+    Global(UnsafeCell::new(Manifest::empty()));
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ParseError {
@@ -390,6 +393,12 @@ pub fn parse_selected(bytes: &'static [u8]) -> Result<&'static Manifest<'static>
 
 pub fn parse_fallback(bytes: &'static [u8]) -> Result<&'static Manifest<'static>, ParseError> {
     parse_static(bytes, &FALLBACK_MANIFEST)
+}
+
+pub fn parse_bad_generation(
+    bytes: &'static [u8],
+) -> Result<&'static Manifest<'static>, ParseError> {
+    parse_static(bytes, &BAD_GENERATION_MANIFEST)
 }
 
 fn parse_static(

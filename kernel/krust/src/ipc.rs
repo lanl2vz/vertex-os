@@ -499,6 +499,7 @@ static RUNTIME: Global<RuntimeState> = Global(UnsafeCell::new(RuntimeState::new(
 static GENERATION_RUNTIMES: Global<GenerationRuntimeTable> =
     Global(UnsafeCell::new(GenerationRuntimeTable::new()));
 static ROLLBACK_RUNTIME: Global<Option<GenerationRuntime>> = Global(UnsafeCell::new(None));
+static FAILED_GENERATION: Global<Option<&'static str>> = Global(UnsafeCell::new(None));
 
 impl CapabilitySpace {
     const fn new() -> Self {
@@ -2327,6 +2328,12 @@ pub fn activate_generation(
             return Err(IpcError::BadCapability);
         }
     };
+    if failed_generation_is(target.generation_id) {
+        serial::write_str("Krust generation switch rejected: requested=");
+        serial::write_ascii_bytes(requested);
+        serial::write_str(" failed=yes\n");
+        return Err(IpcError::BadCapability);
+    }
 
     let (previous_generation, previous_config, old_cap_count) = {
         let runtime = runtime();
@@ -2421,6 +2428,7 @@ pub fn rollback_generation(
             generation_id: previous_generation,
             config: previous_config,
         });
+        set_failed_generation(previous_generation);
     }
 
     serial::write_str("Krust rollback generation accepted: target=");
@@ -3634,6 +3642,14 @@ fn write_capability_space_report(
             report.push_u64_dec(cap.parent_cap_id);
             report.push_str(" generation=");
             report.push_str(cap.generation_id);
+            report.push_str(" owner_pid=");
+            report.push_u64_dec(cap.owner_process.raw());
+            report.push_str(" owner=");
+            report.push_str(process_name_by_pid(runtime, cap.owner_process));
+            report.push_str(" delegated_by_pid=");
+            report.push_u64_dec(cap.delegated_by.raw());
+            report.push_str(" delegated_by=");
+            report.push_str(process_name_by_pid(runtime, cap.delegated_by));
             report.push_str(" revoked=");
             report.push_str(if cap.revoked || runtime.cap_id_revoked(cap.id) {
                 "yes"
@@ -3644,6 +3660,24 @@ fn write_capability_space_report(
         }
         slot += 1;
     }
+}
+
+fn process_name_by_pid(runtime: &RuntimeState, pid: ProcessId) -> &'static str {
+    if pid == ProcessId::empty() {
+        return "kernel";
+    }
+
+    let mut index = 0;
+    while index < runtime.processes.count {
+        if let Some(process) = runtime.processes.processes[index]
+            && process.pid == pid
+        {
+            return process.name;
+        }
+        index += 1;
+    }
+
+    "<unknown>"
 }
 
 fn write_capability_object_report(
@@ -3991,6 +4025,16 @@ fn set_rollback_runtime(runtime: GenerationRuntime) {
     unsafe {
         *ROLLBACK_RUNTIME.0.get() = Some(runtime);
     }
+}
+
+fn set_failed_generation(generation_id: &'static str) {
+    unsafe {
+        *FAILED_GENERATION.0.get() = Some(generation_id);
+    }
+}
+
+fn failed_generation_is(generation_id: &'static str) -> bool {
+    unsafe { *FAILED_GENERATION.0.get() == Some(generation_id) }
 }
 
 fn runtime() -> &'static mut RuntimeState {

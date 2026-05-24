@@ -14,6 +14,7 @@ QEMU_STABILITY_ATTEMPTS=${QEMU_STABILITY_ATTEMPTS:-1}
 QEMU_PREEMPTION_STABILITY_ATTEMPTS=${QEMU_PREEMPTION_STABILITY_ATTEMPTS:-3}
 CASE=${1:-m14}
 FALLBACK_MANIFEST=
+BAD_GENERATION_MANIFEST=
 KRUSTBOOT_CORRUPT=
 EXPECT_ACTIVATION_SUCCESS=0
 SUCCESS_STABILITY_ATTEMPTS=$QEMU_STABILITY_ATTEMPTS
@@ -249,6 +250,7 @@ system generation rollback does not automatically roll back state unless policy 
     m37|generation-switch)
         MANIFEST="$ROOT_DIR/examples/krust-switch-a-generation.vertex.json"
         FALLBACK_MANIFEST="$ROOT_DIR/examples/krust-switch-b-generation.vertex.json"
+        BAD_GENERATION_MANIFEST="$ROOT_DIR/examples/krust-switch-c-bad-generation.vertex.json"
         EXPECT_ACTIVATION_SUCCESS=1
         required_lines='
 Boot generation: gen:switch-a-0001
@@ -261,6 +263,13 @@ Krust generation switch entering generation: gen:switch-b-0002
 Boot generation: gen:switch-b-0002
 service from B runs
 vertex-init validates generation C
+Krust generation switch accepted: from=gen:switch-b-0002 to=gen:switch-c-bad-0003
+Krust generation switch entering generation: gen:switch-c-bad-0003
+Boot generation: gen:switch-c-bad-0003
+activation failed
+falling back to generation: gen:switch-b-0002
+Krust rollback generation accepted: target=gen:switch-b-0002
+Krust rollback entering generation: gen:switch-b-0002
 Krust generation switch rejected: requested=gen:switch-c-bad-0003
 bad generation C fails
 rollback to B
@@ -280,6 +289,11 @@ native why echo log-sink
 why: echo can send to log-sink because delegated endpoint authority has send rights
 native who-can state:counter
 who-can: vertex-state owns state:counter with rights=read|write|snapshot|restore
+native which-generation vertex-inspect
+generation: vertex-inspect started in gen:inspect-0001
+native delegated endpoint cap report
+derived endpoint cap: proc=echo cap[0] endpoint=log-sink
+derived endpoint caps from vertex-init:
 native cap provenance report
 cap provenance: echo log-sink cap is derived from vertex-init endpoint authority
 Native introspection service ok
@@ -350,7 +364,7 @@ Native service activation failed
 "
 fi
 
-(cd "$KRUST_DIR" && make iso VERTEX_MANIFEST="$MANIFEST" FALLBACK_MANIFEST="$FALLBACK_MANIFEST" KRUSTBOOT_CORRUPT="$KRUSTBOOT_CORRUPT")
+(cd "$KRUST_DIR" && make iso VERTEX_MANIFEST="$MANIFEST" FALLBACK_MANIFEST="$FALLBACK_MANIFEST" BAD_GENERATION_MANIFEST="$BAD_GENERATION_MANIFEST" KRUSTBOOT_CORRUPT="$KRUSTBOOT_CORRUPT")
 
 mkdir -p "$(dirname "$SERIAL_LOG")"
 rm -f "$SERIAL_LOG"
