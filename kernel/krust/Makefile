@@ -15,6 +15,8 @@ BAD_GENERATION_BOOT_MANIFEST := $(BUILD_DIR)/bad-generation.krustboot
 KERNEL_ELF := target/$(KRUST_TARGET)/debug/krust
 INIT_TARGET_DIR := user/init/target/$(KRUST_TARGET)/debug
 SERIAL_DRIVER_TARGET_DIR := user/serial-driver/target/$(KRUST_TARGET)/debug
+CONSOLE_DRIVER_TARGET_DIR := user/console-driver/target/$(KRUST_TARGET)/debug
+CONSOLE_SHELL_TARGET_DIR := user/console-shell/target/$(KRUST_TARGET)/debug
 LOGD_TARGET_DIR := user/logd/target/$(KRUST_TARGET)/debug
 ECHO_TARGET_DIR := user/echo/target/$(KRUST_TARGET)/debug
 NETSTACK_TARGET_DIR := user/netstack/target/$(KRUST_TARGET)/debug
@@ -31,6 +33,8 @@ HOG_TARGET_DIR := user/hog/target/$(KRUST_TARGET)/debug
 FAULTY_TARGET_DIR := user/faulty/target/$(KRUST_TARGET)/debug
 VERTEX_INIT_ELF := $(INIT_TARGET_DIR)/vertex-init
 SERIAL_DRIVER_ELF := $(SERIAL_DRIVER_TARGET_DIR)/serial-driver
+CONSOLE_DRIVER_ELF := $(CONSOLE_DRIVER_TARGET_DIR)/console-driver
+CONSOLE_SHELL_ELF := $(CONSOLE_SHELL_TARGET_DIR)/console-shell
 LOGD_ELF := $(LOGD_TARGET_DIR)/logd
 ECHO_ELF := $(ECHO_TARGET_DIR)/echo
 NETSTACK_ELF := $(NETSTACK_TARGET_DIR)/netstack
@@ -70,6 +74,8 @@ kernel:
 user:
 	cd user/init && $(CARGO) build --locked --target $(KRUST_TARGET)
 	cd user/serial-driver && $(CARGO) build --locked --target $(KRUST_TARGET)
+	cd user/console-driver && $(CARGO) build --locked --target $(KRUST_TARGET)
+	cd user/console-shell && $(CARGO) build --locked --target $(KRUST_TARGET)
 	cd user/logd && $(CARGO) build --locked --target $(KRUST_TARGET)
 	cd user/echo && $(CARGO) build --locked --target $(KRUST_TARGET)
 	cd user/netstack && $(CARGO) build --locked --target $(KRUST_TARGET)
@@ -108,6 +114,8 @@ iso: build boot-manifest check-tools check-limine-dir
 	cp $(KERNEL_ELF) $(ISO_ROOT)/boot/krust.elf
 	cp $(VERTEX_INIT_ELF) $(ISO_ROOT)/boot/vertex-init.elf
 	cp $(SERIAL_DRIVER_ELF) $(ISO_ROOT)/boot/serial-driver.elf
+	cp $(CONSOLE_DRIVER_ELF) $(ISO_ROOT)/boot/console-driver.elf
+	cp $(CONSOLE_SHELL_ELF) $(ISO_ROOT)/boot/console-shell.elf
 	cp $(LOGD_ELF) $(ISO_ROOT)/boot/logd.elf
 	cp $(ECHO_ELF) $(ISO_ROOT)/boot/echo.elf
 	cp $(NETSTACK_ELF) $(ISO_ROOT)/boot/netstack.elf
@@ -167,13 +175,13 @@ doctor: check-tools check-tool-versions check-cargo-locks check-rust-target chec
 	@echo "limine: $$(command -v $(LIMINE)) ($$($(LIMINE) --version | sed -n '1p'))"
 	@echo "xorriso: $$(command -v $(XORRISO)) ($$($(XORRISO) --version 2>/dev/null | sed -n '1p'))"
 	@echo "LIMINE_DIR: $(LIMINE_DIR)"
-	@echo "Krust M14-M40 toolchain is ready."
+	@echo "Krust M14-M41 toolchain is ready."
 
 release-gate:
 	../../scripts/krust-release-gate.sh
 
 clean:
-	rm -rf $(BUILD_DIR) target user/init/target user/serial-driver/target user/logd/target user/echo/target user/netstack/target user/block-driver/target user/vertex-store/target user/vertex-state/target user/vertex-inspect/target user/model-reader/target user/counter/target user/state-reader/target user/timer/target user/flaky/target user/hog/target user/faulty/target
+	rm -rf $(BUILD_DIR) target user/init/target user/serial-driver/target user/console-driver/target user/console-shell/target user/logd/target user/echo/target user/netstack/target user/block-driver/target user/vertex-store/target user/vertex-state/target user/vertex-inspect/target user/model-reader/target user/counter/target user/state-reader/target user/timer/target user/flaky/target user/hog/target user/faulty/target
 
 check-tools:
 	@command -v $(RUSTC) >/dev/null 2>&1 || { echo "error: rustc not found. Install Rust $(REQUIRED_RUST), or run rustup from kernel/krust so rust-toolchain.toml installs it."; exit 1; }

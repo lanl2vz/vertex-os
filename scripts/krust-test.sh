@@ -18,6 +18,8 @@ BAD_GENERATION_MANIFEST=
 KRUSTBOOT_CORRUPT=
 EXPECT_ACTIVATION_SUCCESS=0
 SUCCESS_STABILITY_ATTEMPTS=$QEMU_STABILITY_ATTEMPTS
+USE_SERIAL_PIPE=0
+SERIAL_INPUT=
 
 case "$CASE" in
     m13|m14|valid-activation)
@@ -315,6 +317,51 @@ reader-service write rejected
 Native service activation ok
 '
         ;;
+    m41|console-shell)
+        MANIFEST="$ROOT_DIR/examples/krust-console-generation.vertex.json"
+        EXPECT_ACTIVATION_SUCCESS=1
+        USE_SERIAL_PIPE=1
+        SERIAL_INPUT='help
+generation
+services
+why svc:echo cap:log.sink
+halt
+'
+        required_lines='
+Boot generation: gen:console-0001
+KrustBoot boot modules: 15
+KrustBoot processes: 15
+KrustBoot endpoints: 12
+KrustBoot grants: 49
+proc=console-driver cap[0] endpoint=console-output rights=receive
+proc=console-driver cap[3] endpoint=console-driver-control rights=receive
+proc=console-shell cap[0] endpoint=console-shell-request rights=receive
+proc=console-driver cap[5] io-port=cap:io.com1 rights=read|write
+vertex-init delegates inspect authority to console-shell
+console-driver ready
+vertex-init observed ready: console-driver
+console-shell ready
+vertex-init observed ready: console-shell
+Runtime inspect accepted: proc=console-shell
+console-driver wrote console output
+Vertex shell ready
+console-driver forwarded serial command: help
+commands: generation services why halt
+console-driver forwarded serial command: generation
+current generation: gen:console-0001
+console-driver forwarded serial command: services
+console-shell service state: vertex-init=
+console-shell service state: logd=
+console-shell service state: vertex-store=
+console-shell service state: vertex-state=
+console-shell service state: console-shell=
+console-driver forwarded serial command: why svc:echo cap:log.sink
+console-shell why result: svc:echo cap:log.sink send slot 0
+console-driver forwarded serial command: halt
+Native console shell ok
+Native service activation ok
+'
+        ;;
     m38|introspection)
         MANIFEST="$ROOT_DIR/examples/krust-inspect-generation.vertex.json"
         EXPECT_ACTIVATION_SUCCESS=1
@@ -388,7 +435,7 @@ activation failed
 '
         ;;
     *)
-        echo "usage: scripts/krust-test.sh <m13|m14|valid-activation|manifest-cycle|bad-cap|readiness|readiness-timeout|rollback|store-state-services|timer|preemption|m30|user-fault|m31|restart|manifest-v1|cap-lifecycle|typed-arenas|quotas|m32|io-substrate|m33|serial-driver|m34|block-driver|m35|store-service|m36|state-service|m37|generation-switch|m38|introspection|m40|directed-ipc|manifest-truncated|manifest-bad-magic|manifest-raw-compact|manifest-unsupported-version|manifest-oob-record|manifest-missing-provider>" >&2
+        echo "usage: scripts/krust-test.sh <m13|m14|valid-activation|manifest-cycle|bad-cap|readiness|readiness-timeout|rollback|store-state-services|timer|preemption|m30|user-fault|m31|restart|manifest-v1|cap-lifecycle|typed-arenas|quotas|m32|io-substrate|m33|serial-driver|m34|block-driver|m35|store-service|m36|state-service|m37|generation-switch|m38|introspection|m40|directed-ipc|m41|console-shell|manifest-truncated|manifest-bad-magic|manifest-raw-compact|manifest-unsupported-version|manifest-oob-record|manifest-missing-provider>" >&2
         exit 2
         ;;
 esac
@@ -409,23 +456,62 @@ mkdir -p "$(dirname "$SERIAL_LOG")"
 rm -f "$SERIAL_LOG"
 
 pid=
+cat_pid=
+feeder_pid=
+serial_pipe=
 cleanup() {
+    if [ -n "$feeder_pid" ]; then
+        kill "$feeder_pid" >/dev/null 2>&1 || true
+        wait "$feeder_pid" >/dev/null 2>&1 || true
+    fi
     if [ -n "$pid" ]; then
         kill "$pid" >/dev/null 2>&1 || true
         wait "$pid" >/dev/null 2>&1 || true
     fi
+    if [ -n "$cat_pid" ]; then
+        kill "$cat_pid" >/dev/null 2>&1 || true
+        wait "$cat_pid" >/dev/null 2>&1 || true
+    fi
+    if [ -n "$serial_pipe" ]; then
+        rm -f "$serial_pipe.in" "$serial_pipe.out"
+    fi
 }
 trap cleanup EXIT INT TERM
 
+serial_arg="file:$SERIAL_LOG"
+if [ "$USE_SERIAL_PIPE" -eq 1 ]; then
+    serial_pipe="$BUILD_DIR/serial-test-pipe"
+    rm -f "$serial_pipe.in" "$serial_pipe.out"
+    mkfifo "$serial_pipe.in" "$serial_pipe.out"
+    cat "$serial_pipe.out" >"$SERIAL_LOG" &
+    cat_pid=$!
+    serial_arg="pipe:$serial_pipe"
+fi
+
 "$QEMU" $QEMU_EXTRA \
     -m 256M \
-    -serial "file:$SERIAL_LOG" \
+    -serial "$serial_arg" \
     -monitor none \
     -display none \
     -no-reboot \
     -no-shutdown \
     -cdrom "$ISO_IMAGE" &
 pid=$!
+
+if [ "$USE_SERIAL_PIPE" -eq 1 ]; then
+    (
+        input_attempt=1
+        while [ "$input_attempt" -le "$QEMU_ATTEMPTS" ]; do
+            if grep -Fq "Vertex shell ready" "$SERIAL_LOG" 2>/dev/null; then
+                break
+            fi
+            sleep "$QEMU_POLL_SECONDS"
+            input_attempt=$((input_attempt + 1))
+        done
+        printf '%s' "$SERIAL_INPUT" >"$serial_pipe.in" 2>/dev/null || true
+    ) &
+    feeder_pid=$!
+fi
 
 missing_required=
 present_forbidden=

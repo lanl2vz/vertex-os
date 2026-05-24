@@ -1036,8 +1036,18 @@ fn value_str<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
     value.get(key).and_then(Value::as_str)
 }
 
+fn value_bool(value: &Value, key: &str) -> Option<bool> {
+    value.get(key).and_then(Value::as_bool)
+}
+
 fn requirement_starts_after_provider(capability: &vertex_ir::Capability) -> bool {
-    capability.kind != "ipc-endpoint" || value_str(&capability.properties, "role") != Some("reply")
+    if capability.kind != "ipc-endpoint" {
+        return true;
+    }
+    if value_bool(&capability.properties, "startAfterProvider") == Some(false) {
+        return false;
+    }
+    value_str(&capability.properties, "role") != Some("reply")
 }
 
 fn parse_u64_literal(value: &str) -> Option<u64> {

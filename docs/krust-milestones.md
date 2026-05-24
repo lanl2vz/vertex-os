@@ -6,10 +6,10 @@ IR and graph semantics; Krust is the native enforcement path.
 
 ## Status Summary
 
-Current status: M14-M40 are implemented and smoke-tested under
-`qemu-system-x86_64` with Limine. M39 pins the native toolchain and M40 makes
-native IPC directed: request endpoints are FIFO queues, providers hold
-receive-only caps, and replies use private reply endpoints.
+Current status: M14-M41 are implemented and smoke-tested under
+`qemu-system-x86_64` with Limine. M39 pins the native toolchain, M40 makes
+native IPC directed, and M41 adds a native console shell path over explicit
+console authority.
 
 ```sh
 make -C kernel/krust doctor
@@ -866,6 +866,7 @@ done: M30-M31 timer-preemption and user-fault containment QEMU tests are run fro
 done: M32-M38 I/O, serial-driver, block-driver, store-service, state-service, generation-switch, and introspection QEMU tests are run from the gate
 done: M39 exact toolchain, Cargo lockfiles, and locked offline Cargo metadata are checked by the gate
 done: M40 directed request/reply IPC is checked by the gate
+done: M41 native console shell is checked by the gate
 done: all QEMU transcript checks have bounded polling windows
 done: missing and forbidden transcript lines are reported explicitly
 done: README.md, docs/krust-milestones.md, docs/krust-abi-v1.md, and kernel/krust/README.md agree
@@ -1425,7 +1426,7 @@ done: locked Cargo dependencies for the hosted workspace, Krust kernel, and nati
 done: kernel/krust/rust-toolchain.toml pins Rust 1.95.0, rustfmt, and x86_64-unknown-none
 done: make doctor checks every required tool and reports actionable fixes
 done: legacy hello/ipc userspace crates are removed instead of carried forward
-done: single release-gate script runs the clean-clone M14-M40 proof with the M14-M40 QEMU matrix
+done: single release-gate script runs the clean-clone M14-M41 proof with the M14-M41 QEMU matrix
 ```
 
 Acceptance tests:
@@ -1483,7 +1484,7 @@ done: scripts/krust-test.sh m40 proves the directed IPC ABI and FIFO queue behav
 
 Status: planned.
 
-Goal: turn the M14-M40 native proof into a small real operating system target:
+Goal: turn the M14-M41 native proof into a small real operating system target:
 bootable in QEMU, persistent, inspectable, updateable, and capable of running
 several native services under explicit authority.
 
@@ -1516,7 +1517,7 @@ networking features before the persistent appliance loop works end to end.
 
 ## M41: Native Console Shell
 
-Status: planned.
+Status: done.
 
 Goal: make the system interactable from inside Vertex OS using the existing
 serial substrate, without introducing ambient terminal authority.
@@ -1524,33 +1525,34 @@ serial substrate, without introducing ambient terminal authority.
 Add:
 
 ```text
-console-driver
-console-shell
-console protocol over directed IPC
-runtime-inspect backed shell commands
+done: console-driver owns COM1 I/O authority in the M41 generation
+done: console-driver reads serial input and forwards complete command lines to console-shell
+done: console output, shell input, and driver control use separate directed endpoints
+done: vertex-init delegates inspect-only authority to console-shell
+done: generation, services, and why commands are backed by the runtime inspect report
+done: scripts/krust-test.sh m41 checks the native console transcript
 ```
 
-Initial shell commands:
+M41 shell transcript commands:
 
 ```text
 help
 generation
 services
-caps
-objects
-who-can <capability>
 why <service> <capability>
-store list
-state list
-reboot <generation>
 halt
 ```
+
+The broader command surface remains the direction for later appliance
+milestones once persistent store, state, update, and boot-selection services
+exist.
 
 Rules:
 
 ```text
 console-driver owns COM1 I/O authority
-console-shell receives only console endpoint authority and inspect authority
+console-shell receives only shell request, console output, console control, and inspect authority
+ordinary services can write console output but cannot inject shell commands
 serial log remains available for tests
 shell output is a service protocol, not kernel println as an API
 ```
@@ -1559,15 +1561,13 @@ Acceptance tests:
 
 ```text
 Vertex shell ready
-> generation
-current generation: gen:hello-v0
-> services
-vertex-init Ready
-logd Ready
-vertex-store Ready
-vertex-state Ready
-console-shell Ready
-> why svc:echo cap:log.sink
+user types: help
+commands: generation services why halt
+user types: generation
+current generation: gen:console-0001
+user types: services
+services: vertex-init=<state> logd=<state> vertex-store=<state> vertex-state=<state> console-shell=<state>
+user types: why svc:echo cap:log.sink
 svc:echo has send authority because generation graph granted cap slot 0
 ```
 
@@ -2250,9 +2250,10 @@ install verified generations, run declared services, preserve mutable state,
 explain its authority graph, and recover from failed updates.
 ```
 
-M13 proved that native services can run under explicit authority. M14-M40 prove
+M13 proved that native services can run under explicit authority. M14-M41 prove
 that the graph itself decides which native services exist, when they start,
 what they receive, why they are allowed to communicate, and how authority and
 resources are bounded, while timer preemption and user fault containment keep
 the kernel in control. M40 freezes the first ABI subset for the long-lived
-Vertex native runtime base.
+Vertex native runtime base, and M41 adds the first in-VM operator surface for
+asking what generation and authority graph are running.

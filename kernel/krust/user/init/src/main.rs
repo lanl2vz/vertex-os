@@ -48,6 +48,8 @@ const M40_VERTEX_STORE_INIT_REPLY_SLOT: u64 = 6;
 const M38_PROCESS_NAME: &[u8] = b"vertex-inspect";
 const M38_INSPECT_CAP_SLOT: u64 = 0;
 const M38_MANIFEST_CAP_SLOT: u64 = 3;
+const M41_PROCESS_NAME: &[u8] = b"console-shell";
+const M41_INSPECT_CAP_SLOT: u64 = 5;
 
 #[unsafe(link_section = ".text._start")]
 #[unsafe(no_mangle)]
@@ -150,6 +152,9 @@ pub extern "C" fn _start() -> ! {
 
         if bytes_eq(name, M38_PROCESS_NAME) {
             grant_introspection_authority(process_index as u64, parent_generation);
+        }
+        if bytes_eq(name, M41_PROCESS_NAME) {
+            grant_console_shell_authority(process_index as u64, parent_generation);
         }
         start_service(name, process_index as u64, parent_generation);
         if bytes_eq(generation, M37_GENERATION_A) && bytes_eq(name, b"vertex-store") {
@@ -813,6 +818,20 @@ fn grant_introspection_authority(process_index: u64, parent_generation: &[u8]) {
     ) != sys::STATUS_OK
     {
         log(b"vertex-init manifest cap transfer failed");
+        activation_failed(parent_generation);
+    }
+}
+
+fn grant_console_shell_authority(process_index: u64, parent_generation: &[u8]) {
+    log(b"vertex-init delegates inspect authority to console-shell");
+    if sys::cap_transfer(
+        process_index,
+        sys::CAP_PROCESS_CONTROL,
+        M41_INSPECT_CAP_SLOT,
+        sys::RIGHT_INSPECT,
+    ) != sys::STATUS_OK
+    {
+        log(b"vertex-init console-shell inspect cap transfer failed");
         activation_failed(parent_generation);
     }
 }

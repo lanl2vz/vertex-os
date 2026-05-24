@@ -1,8 +1,8 @@
 # Krust Kernel
 
-Krust now covers the M14-M40 native graph-activation proof path, substrate
-hardening, reproducible build environment, and directed IPC ABI v1. M40 is
-tracked in `../../docs/krust-milestones.md`.
+Krust now covers the M14-M41 native graph-activation proof path, substrate
+hardening, reproducible build environment, directed IPC ABI v1, and native
+console shell. M41 is tracked in `../../docs/krust-milestones.md`.
 
 The target is intentionally small:
 
@@ -25,7 +25,7 @@ Krust writes and reads through the mapped virtual pages
 Krust allocates typed endpoint and process arenas from the kernel heap and checks capacity failure paths
 Krust creates fixed kernel objects and boot capabilities
 Krust prints the boot capability table
-Limine loads native service ELFs for vertex-init, serial-driver, logd, netstack, block-driver, vertex-store, vertex-state, vertex-inspect, echo, model-reader, counter, state-reader, timer, flaky-service, cpu-hog, and faulty-service
+Limine loads native service ELFs for vertex-init, serial-driver, console-driver, console-shell, logd, netstack, block-driver, vertex-store, vertex-state, vertex-inspect, echo, model-reader, counter, state-reader, timer, flaky-service, cpu-hog, and faulty-service
 Krust loads each declared process into a fresh low-half address space
 Krust creates a runtime process table and endpoint table from the KrustBoot manifest
 Krust allocates runtime process IDs and states from KrustBoot process records
@@ -57,6 +57,7 @@ block-driver owns virtio-blk shaped MMIO, IRQ, and DMA authority and serves bloc
 model-reader reads an immutable object through vertex-store and block-driver
 counter-service and reader-service access mutable state through vertex-state
 vertex-inspect reads the generation graph and asks the kernel for a process/capability graph through inspect-only authority
+console-driver owns COM1 in the M41 generation, and console-shell prints runtime-inspect backed commands through directed console request/reply IPC
 timer-service sleeps through its own timer capability without monopolizing the scheduler
 cpu-hog proves a CPU-bound userspace loop cannot starve logd
 faulty-service proves a direct userspace page fault kills only that process and can be restarted
@@ -328,14 +329,14 @@ make smoke
 ```
 
 The smoke test boots QEMU headlessly, captures serial output to
-`build/serial.log`, and passes when it sees the M14-M40 directed IPC boot transcript. The
+`build/serial.log`, and passes when it sees the M14-M41 directed IPC and console boot transcript. The
 same check is available from the repository root:
 
 ```sh
 scripts/krust-smoke.sh
 ```
 
-## M26-M40 Substrate Gate
+## M26-M41 Substrate Gate
 
 Run the clean-clone gate from the repository root:
 
@@ -350,11 +351,11 @@ make release-gate
 ```
 
 The gate checks script executability and shell syntax, verifies Makefile recipe
-parsing, checks Rust formatting and Markdown whitespace, confirms the M14-M40
+parsing, checks Rust formatting and Markdown whitespace, confirms the M14-M41
 documentation anchors, checks the pinned M39 toolchain and Cargo lockfiles, runs
 `cargo metadata --locked --offline` and `cargo build --locked --offline`,
 validates `examples/hello-generation.vertex.json`, runs `make doctor`, rebuilds
-from `make clean`, runs `make smoke`, and then runs the M14-M40 QEMU cases:
+from `make clean`, runs `make smoke`, and then runs the M14-M41 QEMU cases:
 `m14`,
 `manifest-cycle`, `bad-cap`, `readiness-timeout`, `rollback`, `store-state-services`,
 `timer`, `preemption`, `user-fault`, `restart`, `manifest-v1`, `cap-lifecycle`,
