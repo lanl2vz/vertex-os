@@ -33,8 +33,11 @@ scripts/krust-test.sh m38
 scripts/krust-test.sh m40
 ```
 
-Next direction: use the ABI v1 base for the next native runtime services rather
-than carrying the old shared send/receive endpoint pattern forward.
+Next direction: use the ABI v1 base to build Vertex OS v0, a tiny persistent
+appliance system. The next milestones should make the native system useful
+without weakening the graph-shaped authority model: serial console first, real
+block I/O before disk persistence, verified store objects before updates, and
+dynamic process creation before higher-level package or language work.
 
 ## M0: Serial Boot
 
@@ -1476,38 +1479,775 @@ done: Vertex IR examples and schema remove the legacy bidirectional endpoint rig
 done: scripts/krust-test.sh m40 proves the directed IPC ABI and FIFO queue behavior
 ```
 
-## Immediate Issue List
+## Phase 4: Vertex OS v0 Appliance System
 
-Completed first slices:
+Status: planned.
+
+Goal: turn the M14-M40 native proof into a small real operating system target:
+bootable in QEMU, persistent, inspectable, updateable, and capable of running
+several native services under explicit authority.
+
+The design target is an idealized NixOS shape, not Linux compatibility:
 
 ```text
-done: M32.1  Add first I/O capability substrate path
-done: M33.1  Move serial logging toward user space
+immutable store objects
+explicit runtime graph
+capability-derived service authority
+generation switch and rollback
+persistent mutable state with policy
+reproducible build inputs
+inspectable provenance and authority
 ```
 
-## Deferred Work
+The practical target is a v0.1 appliance, not a desktop:
 
-Avoid these until substrate hardening, generation switching, store/state, and
-I/O capability enforcement are solid:
+```text
+QEMU boots Vertex OS from a disk image
+serial console shell is available
+store and state persist across reboot
+new generations install transactionally
+corrupted store objects fail verification
+generation rollback works from disk metadata
+native services can be explained from inside the VM
+```
+
+Ordering rule: do not build high-level language, package manager, POSIX, or
+networking features before the persistent appliance loop works end to end.
+
+## M41: Native Console Shell
+
+Status: planned.
+
+Goal: make the system interactable from inside Vertex OS using the existing
+serial substrate, without introducing ambient terminal authority.
+
+Add:
+
+```text
+console-driver
+console-shell
+console protocol over directed IPC
+runtime-inspect backed shell commands
+```
+
+Initial shell commands:
+
+```text
+help
+generation
+services
+caps
+objects
+who-can <capability>
+why <service> <capability>
+store list
+state list
+reboot <generation>
+halt
+```
+
+Rules:
+
+```text
+console-driver owns COM1 I/O authority
+console-shell receives only console endpoint authority and inspect authority
+serial log remains available for tests
+shell output is a service protocol, not kernel println as an API
+```
+
+Acceptance tests:
+
+```text
+Vertex shell ready
+> generation
+current generation: gen:hello-v0
+> services
+vertex-init Ready
+logd Ready
+vertex-store Ready
+vertex-state Ready
+console-shell Ready
+> why svc:echo cap:log.sink
+svc:echo has send authority because generation graph granted cap slot 0
+```
+
+## M42: Minimal Virtio-Block Driver
+
+Status: planned.
+
+Goal: add the first real persistent block I/O path before defining a disk
+layout that depends on it.
+
+Scope:
+
+```text
+virtio-blk PCI/MMIO discovery path for the QEMU device already modeled by caps
+single request queue
+read fixed-size sectors
+write fixed-size sectors
+block-driver owns MMIO, IRQ, and DMA caps
+clients use directed request/reply IPC
+```
+
+Rules:
+
+```text
+no filesystem yet
+no global disk authority
+no unprivileged MMIO, IRQ, DMA, or raw block access
+kernel grants hardware-shaped authority; user-space driver owns the protocol
+```
+
+Acceptance tests:
+
+```text
+virtio-blk driver ready
+block-driver reads sector 0
+block-driver writes test sector
+readback matches
+echo cannot access block hardware authority
+driver fault does not crash kernel
+```
+
+## M43: VertexDisk v0 Layout
+
+Status: planned.
+
+Goal: stop relying only on ISO boot modules by defining a minimal disk format
+for generations, immutable store objects, state volumes, and update journals.
+
+Initial layout:
+
+```text
+VertexDisk v0
+  superblock
+  generation metadata area
+  immutable store index
+  immutable store data
+  mutable state index
+  mutable state data
+  journal area
+```
+
+Rules:
+
+```text
+custom block-object format first
+no full filesystem
+no path namespace yet
+all metadata has version, checksum, and bounds
+state writes are explicit service operations
+```
+
+Acceptance tests:
+
+```text
+QEMU boots with VertexDisk image attached
+vertex-store reads object index from disk
+vertex-state writes state volume to disk
+reboot preserves state value
+bad superblock is rejected without panic
+```
+
+## M44: Native Boot Manager and Generation Selector
+
+Status: planned.
+
+Goal: make generation selection and fallback disk-native instead of
+QEMU-scripted or boot-module-only.
+
+Generation selector state:
+
+```text
+selected_generation
+previous_generation
+known_good_generation
+last_failed_generation
+boot_attempt_counter
+```
+
+Boot behavior:
+
+```text
+try selected_generation
+if activation succeeds, mark selected_generation as known_good_generation
+if activation fails, mark selected_generation as last_failed_generation
+fallback to previous known_good_generation
+record the decision in the journal
+```
+
+Acceptance tests:
+
+```text
+Boot gen:A
+gen:A activation ok
+Install gen:B
+Boot gen:B
+gen:B activation fails
+Fallback to gen:A
+gen:A activation ok
+journal records failed gen:B and fallback gen:A
+```
+
+## M45: Store Object Hashing and Verification
+
+Status: planned.
+
+Goal: make the native store trustworthy enough to activate generations from
+disk.
+
+Object identity:
+
+```text
+store:blake3:<hash>
+```
+
+Metadata:
+
+```text
+id
+hash
+size
+kind
+references[]
+build_provenance optional
+```
+
+Rules:
+
+```text
+activation fails if any required object is missing or corrupted
+reads come from a verified index or re-verify before use
+services never receive corrupted object bytes as success
+hash mismatch is a security event in inspect output
+```
+
+Acceptance tests:
+
+```text
+store object hash matches -> read ok
+store object modified on disk -> verification fails
+service denied corrupted object
+generation activation fails if required object is corrupted
+```
+
+## M46: Native Update Transaction
+
+Status: planned.
+
+Goal: install a new generation as an atomic disk transaction.
+
+Flow:
+
+```text
+receive or import new generation manifest
+verify manifest hash and optional signature
+verify every referenced store object
+install missing objects
+write generation metadata
+fsync-equivalent journal commit at block layer
+set selected_generation to the new generation
+activate live or reboot into it
+```
+
+Rules:
+
+```text
+a generation is not bootable until its full closure is present and verified
+partial installs are recoverable
+rollback metadata is updated only after commit
+update authority is an explicit capability
+```
+
+Acceptance tests:
+
+```text
+install gen:B
+simulate missing store object
+install rejected
+selected_generation unchanged
+install gen:C
+all objects verified
+selected_generation updated
+boot gen:C succeeds
+power-loss simulation before commit leaves old generation selected
+```
+
+## M47: Executables Loaded From Native Store
+
+Status: planned.
+
+Goal: move native service executables out of boot-module-only activation and
+into verified store objects.
+
+Flow:
+
+```text
+vertex-init reads generation graph
+vertex-store verifies executable store object
+kernel creates process image from verified bytes
+vertex-init grants declared capabilities
+vertex-init starts service
+```
+
+Rules:
+
+```text
+ELF bytes must be verified before process creation
+kernel does not trust service-provided executable bytes blindly
+boot modules remain only for the seed kernel/init/store path while needed
+```
+
+Acceptance tests:
+
+```text
+logd executable loaded from store object
+echo executable loaded from store object
+store hash verified before process creation
+corrupted executable rejected
+generation activation fails cleanly
+```
+
+## M48: Dynamic Process Creation Authority
+
+Status: planned.
+
+Goal: replace predeclared process slots with capability-controlled process
+creation from vertex-init.
+
+Add:
+
+```text
+SYS_PROCESS_CREATE
+SYS_PROCESS_START
+SYS_PROCESS_KILL
+SYS_PROCESS_WAIT
+```
+
+Process-factory rights:
+
+```text
+create
+start
+kill
+wait
+inspect
+```
+
+Rules:
+
+```text
+only holders of process-factory authority can create processes
+initial capability table is supplied as explicit grants
+arguments and environment-like metadata are immutable launch objects
+process IDs and cap IDs appear in runtime inspect output
+```
+
+Acceptance tests:
+
+```text
+vertex-init creates logd dynamically from verified store object
+vertex-init grants only declared caps
+unprivileged service calls SYS_PROCESS_CREATE
+request rejected: bad capability
+vertex-init waits for service exit status
+```
+
+## M49: Immutable Config Objects
+
+Status: planned.
+
+Goal: make service configuration explicit, immutable, hashable, and
+inspectable without returning to ambient config files.
+
+Config object:
+
+```text
+id
+bytes
+hash
+schema optional
+```
+
+Rules:
+
+```text
+config is passed as a capability
+config can be shared explicitly between services
+config hash mismatch fails activation
+services cannot read configs they were not granted
+```
+
+Acceptance tests:
+
+```text
+logd reads config object
+echo cannot read logd config
+config hash mismatch fails activation
+vertex-inspect shows config authority without dumping large content
+```
+
+## M50: Native Secrets Model
+
+Status: planned.
+
+Goal: add first-class secret authority without treating secrets as normal
+config or store content.
+
+Secret rights:
+
+```text
+read
+derive
+seal
+unseal
+inspect-metadata
+```
+
+Rules:
+
+```text
+secrets are not printed in inspect output
+secrets are not stored in plaintext generation manifests
+secret access logs metadata, never content
+early v0 may keep secrets in memory only
+later versions can bind secrets to TPM, encrypted state, or sealed keys
+```
+
+Acceptance tests:
+
+```text
+service with secret cap reads secret
+service without cap rejected
+vertex-inspect shows which services have secret access
+vertex-inspect does not print secret value
+```
+
+## M51: Native Package Boundary
+
+Status: planned.
+
+Goal: define the metadata boundary for reusable Vertex-native software without
+building a full package manager yet.
+
+Package contents:
+
+```text
+executable store objects
+library store objects
+config schemas
+declared runtime needs
+service templates
+metadata and provenance
+```
+
+Acceptance tests:
+
+```text
+vertexctl package inspect logd.vertexpkg
+vertexctl package instantiate logd.vertexpkg
+output graph fragment contains service, executable, config, and cap needs
+```
+
+## M52: Vertex Graph Linker
+
+Status: planned.
+
+Goal: link package graph fragments into a concrete generation graph and store
+closure.
+
+The linker resolves provider/consumer relationships:
+
+```text
+logd requires serial-output/send
+serial-driver provides serial-output
+linker emits endpoint capability and grant path
+```
+
+Acceptance tests:
+
+```text
+input: serial-driver package, logd package, echo package
+output: generation graph
+output: store closure
+output: KrustBoot or disk generation metadata
+linked graph boots in QEMU
+```
+
+## M53: Reproducible Build Graph Interface
+
+Status: planned.
+
+Goal: define Vertex's own build graph boundary so external builders can feed
+verified artifacts into Vertex without making Vertex depend on any one build
+system.
+
+Pipeline:
+
+```text
+source
+  -> external reproducible build
+  -> store object
+  -> Vertex package metadata
+  -> generation graph
+  -> disk image and KrustBoot seed
+```
+
+Rules:
+
+```text
+Vertex records artifact hashes, provenance, package metadata, and runtime graph
+Nix may be one adapter, but not the privileged or required build model
+the Vertex store identity is content-addressed and builder-independent
+the runtime graph must be reproducible from declared inputs
+```
+
+Acceptance tests:
+
+```text
+vertexctl build-import build-output.json
+produces krust.elf
+produces VertexDisk image
+produces store objects
+produces generation manifest
+produces bootable QEMU target
+optional Nix adapter produces the same build-output.json shape
+```
+
+## M54: First Appliance Release Target
+
+Status: planned.
+
+Goal: ship one tiny appliance that demonstrates the whole model with polish.
+
+Initial target: stateful counter appliance.
+
+Required behavior:
+
+```text
+boot from disk
+show shell
+run counter service
+persist counter state
+install a new generation
+rollback system generation
+preserve or rollback state according to policy
+explain authority graph from shell
+```
+
+Acceptance transcript:
+
+```text
+Vertex OS v0 appliance booted
+counter value: 41
+increment -> 42
+install generation gen:new
+rollback to gen:old
+counter state policy: preserve
+counter value: 42
+why svc:counter state:counter
+svc:counter has state authority from generation graph
+```
+
+## M55: User-Space Driver Framework
+
+Status: planned.
+
+Goal: formalize native drivers as capability-bound services.
+
+Driver object types:
+
+```text
+IoPortRange
+MmioRegion
+InterruptLine
+DmaRegion
+PciDevice
+VirtioDevice
+```
+
+Rules:
+
+```text
+drivers own hardware caps
+drivers provide service endpoints
+driver health checks are mandatory
+driver restart policy is explicit
+unprivileged services never receive hardware caps by default
+```
+
+Acceptance tests:
+
+```text
+serial-driver owns COM1 I/O ports
+block-driver owns virtio-blk device
+unprivileged service cannot access hardware authority
+driver crash does not crash kernel
+driver restart preserves or reinitializes protocol state explicitly
+```
+
+## M56: Virtio Device Stack
+
+Status: planned.
+
+Goal: grow beyond virtio-blk into the QEMU-friendly device set needed for a
+usable appliance and development loop.
+
+Priority:
+
+```text
+virtio-console
+virtio-rng
+virtio-net
+```
+
+Acceptance tests:
+
+```text
+virtio-console replaces raw serial shell transport
+virtio-rng provides random bytes through explicit cap
+virtio-net driver can send and receive raw frames
+unauthorized service cannot access virtio devices
+```
+
+## M57: Networking v0
+
+Status: planned.
+
+Goal: add the smallest useful network path after storage and the appliance
+model are stable.
+
+Likely order:
+
+```text
+Ethernet frames
+ARP
+IPv4
+ICMP ping
+UDP
+TCP later
+```
+
+Acceptance tests:
+
+```text
+QEMU user-mode network attached
+Vertex replies to ping or sends ICMP echo
+Vertex sends UDP packet
+network authority is endpoint/capability mediated
+unauthorized service cannot use network device
+```
+
+## M58: POSIX Compatibility Plan
+
+Status: planned.
+
+Goal: write the compatibility architecture before implementing it.
+
+Design layers:
+
+```text
+Vertex-native services
+WASI personality service
+POSIX personality service
+Linux personality research service
+VM fallback
+```
+
+Rule: compatibility services may emulate ambient authority internally, but
+they must themselves be launched with explicit Vertex capabilities.
+
+Acceptance artifact:
+
+```text
+docs/posix-personality-v0.md
+```
+
+## M59: Capability Namespace Service
+
+Status: planned.
+
+Goal: add path-like convenience without creating a global Unix namespace.
+
+Namespace service maps names to capabilities:
+
+```text
+/bin/logd -> store object cap
+/state/counter -> state volume cap
+/dev/serial -> endpoint cap
+```
+
+Rules:
+
+```text
+namespace itself is a capability
+different services can receive different namespaces
+resolution returns capabilities, not ambient access
+```
+
+Acceptance tests:
+
+```text
+service A namespace contains /state/a
+service B namespace contains /state/b
+service A cannot resolve /state/b
+inspect shows namespace grants
+```
+
+## M60: Human-Readable Policy and Typed Vertex Prototype
+
+Status: planned.
+
+Goal: introduce a readable system definition layer only after the runtime
+semantics have been proven by the appliance path.
+
+Stage 1:
+
+```text
+small .vertex policy syntax or structured TOML/YAML
+compiles to Vertex IR
+boots through existing pipeline
+```
+
+Stage 2:
+
+```text
+typed Vertex language prototype
+services, capabilities, state, store, secrets, drivers, namespaces
+compile-time rejection of missing capability wiring
+```
+
+Acceptance tests:
+
+```text
+vertexctl compile policy.vertex -> generation manifest
+generation manifest -> disk generation metadata
+typed system definition compiles
+invalid missing capability rejected before boot
+valid system boots in QEMU
+```
+
+## Later Direction
+
+Avoid these until the persistent appliance, update path, and native store are
+solid:
 
 ```text
 USB
 GPU
 full filesystem
-POSIX compatibility
 Linux syscall compatibility
-network stack
-package manager replacement
 desktop
-Haskell DSL
 multicore
+self-hosting
 ```
 
 They matter eventually, but they distract from the next core proof:
 
 ```text
-A native booted Vertex system should be able to activate, switch, inspect,
-revoke, and persist declared generation graphs under explicit authority.
+A native booted Vertex system should be able to boot from persistent storage,
+install verified generations, run declared services, preserve mutable state,
+explain its authority graph, and recover from failed updates.
 ```
 
 M13 proved that native services can run under explicit authority. M14-M40 prove
