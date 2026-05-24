@@ -741,11 +741,13 @@ fn validate_manifest(manifest: &Manifest<'_>) -> Result<(), ParseError> {
             }
             _ => return Err(ParseError::InvalidObjectKind),
         }
-        if grant.rights == 0
+        if grant.object_kind == OBJECT_ENDPOINT {
+            if grant.rights != RIGHT_SEND && grant.rights != RIGHT_RECEIVE {
+                return Err(ParseError::InvalidRights);
+            }
+        } else if grant.rights == 0
             || grant.rights
-                & !(RIGHT_SEND
-                    | RIGHT_RECEIVE
-                    | RIGHT_READ
+                & !(RIGHT_READ
                     | RIGHT_WRITE
                     | RIGHT_SNAPSHOT
                     | RIGHT_RESTORE
@@ -769,7 +771,7 @@ fn validate_endpoint_rights(
 ) -> Result<(), ParseError> {
     let mut index = 0;
     while index < count {
-        if rights[index] == 0 || rights[index] & !(RIGHT_SEND | RIGHT_RECEIVE) != 0 {
+        if rights[index] != RIGHT_SEND {
             return Err(ParseError::InvalidRights);
         }
         index += 1;

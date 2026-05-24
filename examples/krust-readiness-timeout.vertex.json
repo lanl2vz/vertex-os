@@ -86,7 +86,7 @@
       "provider": "svc:logd",
       "rights": ["send"],
       "properties": {
-        "protocol": "vertex.log.v0"
+        "protocol": "vertex.log.v1"
       }
     }
   ],

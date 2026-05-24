@@ -6,10 +6,13 @@ IR and graph semantics; Krust is the native enforcement path.
 
 ## Status Summary
 
-Current status: M14-M38 are implemented and smoke-tested under
-`qemu-system-x86_64` with Limine.
+Current status: M14-M40 are implemented and smoke-tested under
+`qemu-system-x86_64` with Limine. M39 pins the native toolchain and M40 makes
+native IPC directed: request endpoints are FIFO queues, providers hold
+receive-only caps, and replies use private reply endpoints.
 
 ```sh
+make -C kernel/krust doctor
 scripts/krust-release-gate.sh
 scripts/krust-smoke.sh
 scripts/krust-test.sh manifest-cycle
@@ -27,10 +30,11 @@ scripts/krust-test.sh m35
 scripts/krust-test.sh m36
 scripts/krust-test.sh m37
 scripts/krust-test.sh m38
+scripts/krust-test.sh m40
 ```
 
-Next direction: M39-M40 continue hardening the M14-M38 graph-activation proof
-into a small, reliable, extensible capability microkernel substrate.
+Next direction: use the ABI v1 base for the next native runtime services rather
+than carrying the old shared send/receive endpoint pattern forward.
 
 ## M0: Serial Boot
 
@@ -456,7 +460,7 @@ process logd
 process echo
 endpoint log-sink
 grant logd cap[0] receive log-sink
-grant vertex-init cap[4] send|receive log-sink
+grant vertex-init cap[4] send log-sink
 start_after echo <- logd
 ```
 
@@ -705,8 +709,9 @@ This keeps immutable generation rollback and mutable state rollback separate.
 
 Status: done.
 
-Goal: define `Vertex Native Protocol v0` so native services stop inventing
-ad hoc byte strings as the graph grows.
+Goal: define the Vertex native protocol envelope so native services stop
+inventing ad hoc byte strings as the graph grows. M40 carries these protocol
+families forward as v1 identifiers.
 
 Minimal message envelope:
 
@@ -722,11 +727,11 @@ optional transferred cap slots
 Initial protocol families:
 
 ```text
-vertex.log.v0
-vertex.health.v0
-vertex.supervision.v0
-vertex.store.v0
-vertex.state.v0
+vertex.log.v1
+vertex.health.v1
+vertex.supervision.v1
+vertex.store.v1
+vertex.state.v1
 ```
 
 Keep this deliberately small. The purpose is a simple graph-first component
@@ -830,9 +835,8 @@ M39  Reproducible build environment
 M40  Vertex Native Runtime ABI v1
 ```
 
-M32 is the immediate priority. M39 can run in parallel with I/O and storage
-work because reproducible development tooling is part of the system story, not
-an afterthought.
+M40 is now complete. The M39 build environment pin keeps the proof repeatable
+while ABI v1 removes the old shared bidirectional endpoint protocol.
 
 ## M25: Reproducible Clean-Clone Release Gate
 
@@ -857,9 +861,11 @@ done: all M14-M24 QEMU tests are run from the gate
 done: M26-M29 manifest, capability, arena, quota, and malformed-manifest QEMU tests are run from the gate
 done: M30-M31 timer-preemption and user-fault containment QEMU tests are run from the gate
 done: M32-M38 I/O, serial-driver, block-driver, store-service, state-service, generation-switch, and introspection QEMU tests are run from the gate
+done: M39 exact toolchain, Cargo lockfiles, and locked offline Cargo metadata are checked by the gate
+done: M40 directed request/reply IPC is checked by the gate
 done: all QEMU transcript checks have bounded polling windows
 done: missing and forbidden transcript lines are reported explicitly
-done: README.md, docs/krust-milestones.md, docs/krust-abi-v0.md, and kernel/krust/README.md agree
+done: README.md, docs/krust-milestones.md, docs/krust-abi-v1.md, and kernel/krust/README.md agree
 done: offline build failure reports the Cargo cache/vendor prerequisite
 ```
 
@@ -1403,39 +1409,41 @@ receiving control, allocation, delegate, or revoke authority.
 
 ## M39: Reproducible Build Environment
 
-Status: planned.
+Status: done.
 
 Goal: make the build environment itself reproducible without requiring an
 external functional package manager.
 
-Add:
+Implemented:
 
 ```text
-documented host tool versions for Rust, qemu, limine, xorriso, and cargo tools
-locked Cargo dependencies
-kernel/krust/rust-toolchain.toml as the native Krust toolchain pin
-make doctor checks every required tool and reports actionable fixes
-single release-gate script that runs the clean-clone M14-M38 proof
+done: documented host tool versions for Rust, qemu, limine, xorriso, and cargo tools
+done: locked Cargo dependencies for the hosted workspace, Krust kernel, and native userspace crates
+done: kernel/krust/rust-toolchain.toml pins Rust 1.95.0, rustfmt, and x86_64-unknown-none
+done: make doctor checks every required tool and reports actionable fixes
+done: legacy hello/ipc userspace crates are removed instead of carried forward
+done: single release-gate script runs the clean-clone M14-M40 proof with the M14-M40 QEMU matrix
 ```
 
 Acceptance tests:
 
 ```text
-cargo build --offline
-target/debug/vertexctl validate examples/hello-generation.vertex.json
-cd kernel/krust && make doctor && make smoke
-scripts/krust-test.sh restart
-scripts/krust-test.sh timer
-scripts/krust-test.sh store-state-services
+done: cargo metadata --locked --offline --no-deps --format-version 1
+done: cargo build --locked --offline
+done: target/debug/vertexctl validate examples/hello-generation.vertex.json
+done: cd kernel/krust && make doctor && make smoke
+done: scripts/krust-test.sh restart
+done: scripts/krust-test.sh timer
+done: scripts/krust-test.sh store-state-services
 ```
 
-This can land earlier than M39 as a parallel track. The milestone number marks
-the point by which the project should have first-class, repo-native build
-reproducibility instead of placeholder external tooling.
+The pinned tool list lives in `docs/krust-toolchain.md`. The release gate
+rejects floating Rust channels, missing lockfiles, stale legacy userspace
+crates, and unlocked or online Cargo resolution.
 
 ## M40: Vertex Native Runtime ABI v1
 
-Status: planned.
+Status: done.
 
 Goal: freeze a small native ABI subset after the substrate has enough real use
 to reveal the unstable parts.
@@ -1454,6 +1462,19 @@ State Volume v1
 
 This does not mean Vertex OS is stable. It means the prototype has a durable
 base for the next phase.
+
+Implemented:
+
+```text
+done: kernel IPC endpoints keep a fixed four-message FIFO for one-way request queues
+done: native endpoint requirements are send-only; provider receive authority is derived from provides
+done: native endpoint grants are one-way send or receive, never shared send|receive
+done: store, block, and state protocols use request endpoints plus private reply endpoints
+done: vertex-init fetches generation B through an attenuated receive-only private dynamic reply endpoint
+done: provider readiness replaces scheduling-yield assumptions for serial, block, store, state, and log services
+done: Vertex IR examples and schema remove the legacy bidirectional endpoint right
+done: scripts/krust-test.sh m40 proves the directed IPC ABI and FIFO queue behavior
+```
 
 ## Immediate Issue List
 
@@ -1489,9 +1510,9 @@ A native booted Vertex system should be able to activate, switch, inspect,
 revoke, and persist declared generation graphs under explicit authority.
 ```
 
-M13 proved that native services can run under explicit authority. M14-M38 prove
+M13 proved that native services can run under explicit authority. M14-M40 prove
 that the graph itself decides which native services exist, when they start,
 what they receive, why they are allowed to communicate, and how authority and
 resources are bounded, while timer preemption and user fault containment keep
-the kernel in control. M39-M40 should make that model reliable enough to become
-the long-lived Vertex native runtime base.
+the kernel in control. M40 freezes the first ABI subset for the long-lived
+Vertex native runtime base.

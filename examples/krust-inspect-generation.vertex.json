@@ -329,7 +329,9 @@
       "id": "cap:clock.monotonic",
       "kind": "clock",
       "provider": "kernel:hosted-linux-placeholder",
-      "rights": ["read"],
+      "rights": [
+        "read"
+      ],
       "properties": {
         "clock": "monotonic"
       }
@@ -338,7 +340,10 @@
       "id": "cap:io.com1",
       "kind": "io-port",
       "provider": "device:serial-com1",
-      "rights": ["read", "write"],
+      "rights": [
+        "read",
+        "write"
+      ],
       "properties": {
         "base": "0x3f8",
         "length": 8
@@ -348,25 +353,32 @@
       "id": "cap:serial.console",
       "kind": "ipc-endpoint",
       "provider": "svc:serial-driver",
-      "rights": ["send"],
+      "rights": [
+        "send"
+      ],
       "properties": {
-        "protocol": "vertex.serial.v0"
+        "protocol": "vertex.serial.v1"
       }
     },
     {
       "id": "cap:log.sink",
       "kind": "ipc-endpoint",
       "provider": "svc:logd",
-      "rights": ["send"],
+      "rights": [
+        "send"
+      ],
       "properties": {
-        "protocol": "vertex.log.v0"
+        "protocol": "vertex.log.v1"
       }
     },
     {
       "id": "cap:net.tcp.8080",
       "kind": "network-port",
       "provider": "svc:netstack",
-      "rights": ["listen", "bind"],
+      "rights": [
+        "listen",
+        "bind"
+      ],
       "properties": {
         "protocol": "tcp",
         "port": 8080,
@@ -377,16 +389,20 @@
       "id": "cap:echo.api",
       "kind": "ipc-endpoint",
       "provider": "svc:echo-server",
-      "rights": ["sendrecv"],
+      "rights": [
+        "send"
+      ],
       "properties": {
-        "protocol": "vertex.echo.v0"
+        "protocol": "vertex.echo.v1"
       }
     },
     {
       "id": "cap:mmio.virtio-blk0",
       "kind": "mmio-region",
       "provider": "device:virtio-blk0",
-      "rights": ["map"],
+      "rights": [
+        "map"
+      ],
       "properties": {
         "base": "0x10001000",
         "length": 4096
@@ -396,7 +412,9 @@
       "id": "cap:irq.virtio-blk0",
       "kind": "interrupt-line",
       "provider": "device:virtio-blk0",
-      "rights": ["listen"],
+      "rights": [
+        "listen"
+      ],
       "properties": {
         "irq": 5
       }
@@ -405,53 +423,112 @@
       "id": "cap:dma.virtio-blk0",
       "kind": "dma-region",
       "provider": "device:virtio-blk0",
-      "rights": ["read", "write", "map"],
+      "rights": [
+        "read",
+        "write",
+        "map"
+      ],
       "properties": {
         "base": 0,
         "length": 4096
       }
     },
     {
-      "id": "cap:block.io",
+      "id": "cap:block.read.request",
       "kind": "ipc-endpoint",
       "provider": "svc:block-driver",
-      "rights": ["sendrecv"],
+      "rights": [
+        "send"
+      ],
       "properties": {
-        "protocol": "vertex.block.v0"
+        "protocol": "vertex.block.v1",
+        "role": "request"
       }
     },
     {
-      "id": "cap:store.hello-text.api",
+      "id": "cap:vertex-store.block.reply",
       "kind": "ipc-endpoint",
       "provider": "svc:vertex-store",
-      "rights": ["sendrecv"],
+      "rights": [
+        "send"
+      ],
       "properties": {
-        "protocol": "vertex.store.v0",
+        "protocol": "vertex.block.v1",
+        "role": "reply",
+        "client": "svc:vertex-store"
+      }
+    },
+    {
+      "id": "cap:store.hello-text.request",
+      "kind": "ipc-endpoint",
+      "provider": "svc:vertex-store",
+      "rights": [
+        "send"
+      ],
+      "properties": {
+        "protocol": "vertex.store.v1",
+        "role": "request",
         "object": "store:hello-text"
       }
     },
     {
-      "id": "cap:state.counter.api",
+      "id": "cap:model-reader.store.reply",
+      "kind": "ipc-endpoint",
+      "provider": "svc:model-reader",
+      "rights": [
+        "send"
+      ],
+      "properties": {
+        "protocol": "vertex.store.v1",
+        "role": "reply",
+        "client": "svc:model-reader"
+      }
+    },
+    {
+      "id": "cap:state.counter.request",
       "kind": "ipc-endpoint",
       "provider": "svc:vertex-state",
-      "rights": ["sendrecv"],
+      "rights": [
+        "send"
+      ],
       "properties": {
-        "protocol": "vertex.state.v0",
+        "protocol": "vertex.state.v1",
+        "role": "request",
         "volume": "state:counter"
+      }
+    },
+    {
+      "id": "cap:state-reader.state.reply",
+      "kind": "ipc-endpoint",
+      "provider": "svc:state-reader",
+      "rights": [
+        "send"
+      ],
+      "properties": {
+        "protocol": "vertex.state.v1",
+        "role": "reply",
+        "client": "svc:state-reader"
       }
     },
     {
       "id": "cap:state.counter.backend",
       "kind": "state-volume",
       "provider": "state:counter",
-      "rights": ["read", "write", "snapshot", "restore"],
+      "rights": [
+        "read",
+        "write",
+        "snapshot",
+        "restore"
+      ],
       "properties": {}
     },
     {
       "id": "cap:timer.sleep",
       "kind": "timer",
       "provider": "kernel:hosted-linux-placeholder",
-      "rights": ["control"],
+      "rights": [
+        "control"
+      ],
       "properties": {
         "clock": "monotonic"
       }
@@ -462,10 +539,17 @@
       "id": "svc:vertex-supervisor",
       "name": "vertex-supervisor",
       "executable": "exe:vertex-init",
-      "args": ["--supervisor-mode"],
+      "args": [
+        "--supervisor-mode"
+      ],
       "env": {},
       "requires": [
-        { "capability": "cap:clock.monotonic", "rights": ["read"] }
+        {
+          "capability": "cap:clock.monotonic",
+          "rights": [
+            "read"
+          ]
+        }
       ],
       "provides": [],
       "state": [],
@@ -488,9 +572,17 @@
       "args": [],
       "env": {},
       "requires": [
-        { "capability": "cap:io.com1", "rights": ["read", "write"] }
+        {
+          "capability": "cap:io.com1",
+          "rights": [
+            "read",
+            "write"
+          ]
+        }
       ],
-      "provides": ["cap:serial.console"],
+      "provides": [
+        "cap:serial.console"
+      ],
       "state": [],
       "secrets": [],
       "restart": "never",
@@ -498,9 +590,14 @@
         "memoryMaxBytes": 33554432,
         "cpuShares": 25
       },
-      "health": null,
+      "health": {
+        "kind": "ipc-ping",
+        "target": "cap:serial.console"
+      },
       "lifecycle": {
-        "startAfter": ["svc:vertex-supervisor"],
+        "startAfter": [
+          "svc:vertex-supervisor"
+        ],
         "stopBefore": []
       }
     },
@@ -511,10 +608,22 @@
       "args": [],
       "env": {},
       "requires": [
-        { "capability": "cap:clock.monotonic", "rights": ["read"] },
-        { "capability": "cap:serial.console", "rights": ["send"] }
+        {
+          "capability": "cap:clock.monotonic",
+          "rights": [
+            "read"
+          ]
+        },
+        {
+          "capability": "cap:serial.console",
+          "rights": [
+            "send"
+          ]
+        }
       ],
-      "provides": ["cap:log.sink"],
+      "provides": [
+        "cap:log.sink"
+      ],
       "state": [],
       "secrets": [],
       "restart": "on-failure",
@@ -527,7 +636,9 @@
         "target": "cap:log.sink"
       },
       "lifecycle": {
-        "startAfter": ["svc:serial-driver"],
+        "startAfter": [
+          "svc:serial-driver"
+        ],
         "stopBefore": []
       }
     },
@@ -538,9 +649,16 @@
       "args": [],
       "env": {},
       "requires": [
-        { "capability": "cap:clock.monotonic", "rights": ["read"] }
+        {
+          "capability": "cap:clock.monotonic",
+          "rights": [
+            "read"
+          ]
+        }
       ],
-      "provides": ["cap:net.tcp.8080"],
+      "provides": [
+        "cap:net.tcp.8080"
+      ],
       "state": [],
       "secrets": [],
       "restart": "on-failure",
@@ -550,7 +668,9 @@
       },
       "health": null,
       "lifecycle": {
-        "startAfter": ["svc:vertex-supervisor"],
+        "startAfter": [
+          "svc:vertex-supervisor"
+        ],
         "stopBefore": []
       }
     },
@@ -561,11 +681,36 @@
       "args": [],
       "env": {},
       "requires": [
-        { "capability": "cap:mmio.virtio-blk0", "rights": ["map"] },
-        { "capability": "cap:irq.virtio-blk0", "rights": ["listen"] },
-        { "capability": "cap:dma.virtio-blk0", "rights": ["read", "write", "map"] }
+        {
+          "capability": "cap:vertex-store.block.reply",
+          "rights": [
+            "send"
+          ]
+        },
+        {
+          "capability": "cap:mmio.virtio-blk0",
+          "rights": [
+            "map"
+          ]
+        },
+        {
+          "capability": "cap:irq.virtio-blk0",
+          "rights": [
+            "listen"
+          ]
+        },
+        {
+          "capability": "cap:dma.virtio-blk0",
+          "rights": [
+            "read",
+            "write",
+            "map"
+          ]
+        }
       ],
-      "provides": ["cap:block.io"],
+      "provides": [
+        "cap:block.read.request"
+      ],
       "state": [],
       "secrets": [],
       "restart": "never",
@@ -573,9 +718,14 @@
         "memoryMaxBytes": 33554432,
         "cpuShares": 25
       },
-      "health": null,
+      "health": {
+        "kind": "ipc-ping",
+        "target": "cap:block.read.request"
+      },
       "lifecycle": {
-        "startAfter": ["svc:vertex-supervisor"],
+        "startAfter": [
+          "svc:vertex-supervisor"
+        ],
         "stopBefore": []
       }
     },
@@ -586,9 +736,23 @@
       "args": [],
       "env": {},
       "requires": [
-        { "capability": "cap:block.io", "rights": ["sendrecv"] }
+        {
+          "capability": "cap:block.read.request",
+          "rights": [
+            "send"
+          ]
+        },
+        {
+          "capability": "cap:model-reader.store.reply",
+          "rights": [
+            "send"
+          ]
+        }
       ],
-      "provides": ["cap:store.hello-text.api"],
+      "provides": [
+        "cap:store.hello-text.request",
+        "cap:vertex-store.block.reply"
+      ],
       "state": [],
       "secrets": [],
       "restart": "never",
@@ -596,9 +760,14 @@
         "memoryMaxBytes": 33554432,
         "cpuShares": 25
       },
-      "health": null,
+      "health": {
+        "kind": "ipc-ping",
+        "target": "cap:store.hello-text.request"
+      },
       "lifecycle": {
-        "startAfter": ["svc:block-driver"],
+        "startAfter": [
+          "svc:block-driver"
+        ],
         "stopBefore": []
       }
     },
@@ -609,19 +778,42 @@
       "args": [],
       "env": {},
       "requires": [
-        { "capability": "cap:state.counter.backend", "rights": ["read", "write", "snapshot", "restore"] }
+        {
+          "capability": "cap:state.counter.backend",
+          "rights": [
+            "read",
+            "write",
+            "snapshot",
+            "restore"
+          ]
+        },
+        {
+          "capability": "cap:state-reader.state.reply",
+          "rights": [
+            "send"
+          ]
+        }
       ],
-      "provides": ["cap:state.counter.api"],
-      "state": ["state:counter"],
+      "provides": [
+        "cap:state.counter.request"
+      ],
+      "state": [
+        "state:counter"
+      ],
       "secrets": [],
       "restart": "never",
       "resources": {
         "memoryMaxBytes": 33554432,
         "cpuShares": 25
       },
-      "health": null,
+      "health": {
+        "kind": "ipc-ping",
+        "target": "cap:state.counter.request"
+      },
       "lifecycle": {
-        "startAfter": ["svc:vertex-supervisor"],
+        "startAfter": [
+          "svc:vertex-supervisor"
+        ],
         "stopBefore": []
       }
     },
@@ -629,14 +821,34 @@
       "id": "svc:echo-server",
       "name": "echo",
       "executable": "exe:echo-server",
-      "args": ["--listen", "cap:net.tcp.8080"],
+      "args": [
+        "--listen",
+        "cap:net.tcp.8080"
+      ],
       "env": {},
       "requires": [
-        { "capability": "cap:clock.monotonic", "rights": ["read"] },
-        { "capability": "cap:log.sink", "rights": ["send"] },
-        { "capability": "cap:net.tcp.8080", "rights": ["listen"] }
+        {
+          "capability": "cap:clock.monotonic",
+          "rights": [
+            "read"
+          ]
+        },
+        {
+          "capability": "cap:log.sink",
+          "rights": [
+            "send"
+          ]
+        },
+        {
+          "capability": "cap:net.tcp.8080",
+          "rights": [
+            "listen"
+          ]
+        }
       ],
-      "provides": ["cap:echo.api"],
+      "provides": [
+        "cap:echo.api"
+      ],
       "state": [],
       "secrets": [],
       "restart": "always",
@@ -646,7 +858,10 @@
       },
       "health": null,
       "lifecycle": {
-        "startAfter": ["svc:logd", "svc:netstack"],
+        "startAfter": [
+          "svc:logd",
+          "svc:netstack"
+        ],
         "stopBefore": []
       }
     },
@@ -657,9 +872,16 @@
       "args": [],
       "env": {},
       "requires": [
-        { "capability": "cap:store.hello-text.api", "rights": ["sendrecv"] }
+        {
+          "capability": "cap:store.hello-text.request",
+          "rights": [
+            "send"
+          ]
+        }
       ],
-      "provides": [],
+      "provides": [
+        "cap:model-reader.store.reply"
+      ],
       "state": [],
       "secrets": [],
       "restart": "never",
@@ -669,7 +891,9 @@
       },
       "health": null,
       "lifecycle": {
-        "startAfter": ["svc:vertex-store"],
+        "startAfter": [
+          "svc:vertex-store"
+        ],
         "stopBefore": []
       }
     },
@@ -680,10 +904,17 @@
       "args": [],
       "env": {},
       "requires": [
-        { "capability": "cap:state.counter.api", "rights": ["sendrecv"] }
+        {
+          "capability": "cap:state.counter.request",
+          "rights": [
+            "send"
+          ]
+        }
       ],
       "provides": [],
-      "state": ["state:counter"],
+      "state": [
+        "state:counter"
+      ],
       "secrets": [],
       "restart": "never",
       "resources": {
@@ -692,7 +923,9 @@
       },
       "health": null,
       "lifecycle": {
-        "startAfter": ["svc:vertex-state"],
+        "startAfter": [
+          "svc:vertex-state"
+        ],
         "stopBefore": []
       }
     },
@@ -703,10 +936,19 @@
       "args": [],
       "env": {},
       "requires": [
-        { "capability": "cap:state.counter.api", "rights": ["sendrecv"] }
+        {
+          "capability": "cap:state.counter.request",
+          "rights": [
+            "send"
+          ]
+        }
       ],
-      "provides": [],
-      "state": ["state:counter"],
+      "provides": [
+        "cap:state-reader.state.reply"
+      ],
+      "state": [
+        "state:counter"
+      ],
       "secrets": [],
       "restart": "never",
       "resources": {
@@ -715,7 +957,9 @@
       },
       "health": null,
       "lifecycle": {
-        "startAfter": ["svc:counter-service"],
+        "startAfter": [
+          "svc:counter-service"
+        ],
         "stopBefore": []
       }
     },
@@ -736,7 +980,10 @@
       },
       "health": null,
       "lifecycle": {
-        "startAfter": ["svc:echo-server", "svc:state-reader"],
+        "startAfter": [
+          "svc:echo-server",
+          "svc:state-reader"
+        ],
         "stopBefore": []
       }
     },
@@ -747,7 +994,12 @@
       "args": [],
       "env": {},
       "requires": [
-        { "capability": "cap:timer.sleep", "rights": ["control"] }
+        {
+          "capability": "cap:timer.sleep",
+          "rights": [
+            "control"
+          ]
+        }
       ],
       "provides": [],
       "state": [],
@@ -759,7 +1011,9 @@
       },
       "health": null,
       "lifecycle": {
-        "startAfter": ["svc:vertex-supervisor"],
+        "startAfter": [
+          "svc:vertex-supervisor"
+        ],
         "stopBefore": []
       }
     },
@@ -780,7 +1034,9 @@
       },
       "health": null,
       "lifecycle": {
-        "startAfter": ["svc:vertex-supervisor"],
+        "startAfter": [
+          "svc:vertex-supervisor"
+        ],
         "stopBefore": []
       }
     }

@@ -1,8 +1,8 @@
 # Krust Kernel
 
-Krust now covers the M14-M38 native graph-activation proof path and substrate
-hardening. The planned M39-M40 roadmap is tracked in
-`../../docs/krust-milestones.md`.
+Krust now covers the M14-M40 native graph-activation proof path, substrate
+hardening, reproducible build environment, and directed IPC ABI v1. M40 is
+tracked in `../../docs/krust-milestones.md`.
 
 The target is intentionally small:
 
@@ -44,7 +44,11 @@ vertex-init logs through cap[1]
 vertex-init computes a manifest-driven activation order and starts declared services through cap[2]
 vertex-init proves endpoint quota enforcement and quota delegation bounds
 logd reports readiness before echo starts
+serial-driver, block-driver, vertex-store, vertex-state, and logd report
+readiness before dependent clients start
 vertex-init derives and transfers attenuated endpoint authority
+request endpoints use a fixed FIFO, providers hold receive-only endpoint caps,
+consumers hold send-only caps, and replies use private reply endpoints
 echo sends one message to logd through an explicit IPC capability
 echo inspects, copies, moves, and revokes delegated authority
 echo drops its endpoint capability and denied authority stays rejected
@@ -73,10 +77,15 @@ policy remain a userspace responsibility.
 
 ## Prerequisites
 
-- Rust stable with the `x86_64-unknown-none` target.
-- `qemu-system-x86_64`.
-- `limine` v12 or newer.
-- `xorriso`.
+M39 pins exact host tool versions. See `../../docs/krust-toolchain.md` for the
+full toolchain contract.
+
+- `rustc 1.95.0` with the `x86_64-unknown-none` target.
+- `cargo 1.95.0`.
+- `rustfmt 1.9.0-stable`.
+- `qemu-system-x86_64 11.0.0`.
+- `limine 12.3.0`.
+- `xorriso 1.5.8.pl01`.
 - Limine boot assets containing:
   - `limine-bios.sys`
   - `limine-bios-cd.bin`
@@ -101,7 +110,8 @@ If Limine is installed somewhere else, pass it explicitly:
 LIMINE_DIR=/path/to/limine/assets make smoke
 ```
 
-On macOS with Homebrew:
+On macOS with Homebrew, install the pinned tools or set `QEMU`, `LIMINE`,
+`XORRISO`, and `LIMINE_DIR` to exact-version binaries/assets:
 
 ```sh
 brew install limine xorriso qemu
@@ -115,8 +125,9 @@ and run:
 make doctor
 ```
 
-`make doctor` prints the resolved Rust, QEMU, Limine, xorriso, and Limine asset
-paths, and checks that the `x86_64-unknown-none` Rust target is installed.
+`make doctor` prints the resolved Rust, Cargo, rustfmt, QEMU, Limine, xorriso,
+and Limine asset paths. It rejects wrong versions, missing Cargo lockfiles, and
+a missing `x86_64-unknown-none` Rust target with concrete fix commands.
 
 ## Build
 
@@ -124,11 +135,11 @@ paths, and checks that the `x86_64-unknown-none` Rust target is installed.
 make build
 ```
 
-This builds `target/x86_64-unknown-none/debug/krust` and the native user
-programs under `user/*/target/x86_64-unknown-none/debug/`: `vertex-init`,
+This builds `target/x86_64-unknown-none/debug/krust` and the supported native
+user programs under `user/*/target/x86_64-unknown-none/debug/`: `vertex-init`,
 `serial-driver`, `logd`, `echo`, `netstack`, `block-driver`, `vertex-store`,
-`vertex-state`, `model-reader`, `counter`, `state-reader`, `timer`, and
-`flaky`.
+`vertex-state`, `vertex-inspect`, `model-reader`, `counter`, `state-reader`,
+`timer`, `flaky`, `cpu-hog`, and `faulty-service`.
 
 ## Build ISO
 
@@ -137,10 +148,12 @@ make iso
 ```
 
 This runs `vertexctl compile-boot-manifest`, writes
-`build/hello-generation.krustboot` plus `build/fallback-generation.krustboot`,
-and creates `build/krust.iso`. By default the fallback manifest is the same
-generation; pass `FALLBACK_MANIFEST=/path/to/previous.vertex.json` to package a
-real fallback generation.
+`build/hello-generation.krustboot`, `build/fallback-generation.krustboot`, and
+`build/bad-generation.krustboot`, then creates `build/krust.iso`. By default
+the fallback and bad-generation manifests are the same generation; pass
+`FALLBACK_MANIFEST=/path/to/previous.vertex.json` and
+`BAD_GENERATION_MANIFEST=/path/to/bad.vertex.json` to package explicit
+generation-switch rollback inputs.
 
 ## Run
 
@@ -158,8 +171,8 @@ KrustBoot manifest generation: gen:hello-0001
 KrustBoot Manifest v1 records: 9
 KrustBoot boot modules: 13
 KrustBoot processes: 13
-KrustBoot endpoints: 7
-KrustBoot grants: 32
+KrustBoot endpoints: 10
+KrustBoot grants: 42
 KrustBoot store objects: 0
 KrustBoot state volumes: 1
 KrustBoot network ports: 1
@@ -169,7 +182,7 @@ KrustBoot interrupt lines: 1
 KrustBoot dma regions: 1
   grant[0] process=vertex-init cap[1] endpoint=serial-log rights=send
   grant[11] process=logd cap[0] endpoint=log-sink rights=receive
-  grant[12] process=vertex-init cap[4] endpoint=log-sink rights=send|receive
+  grant[12] process=vertex-init cap[4] endpoint=log-sink rights=send
   grant[13] process=echo cap[3] network-port=cap:net.tcp.8080 rights=listen
   grant[14] process=model-reader cap[0] store-object=store:hello-text rights=read
   grant[16] process=reader-service cap[0] state-volume=state:counter rights=read|snapshot|restore
@@ -181,7 +194,7 @@ Kernel heap arena allocation ok
 Typed endpoint arena created 32 endpoints
 Typed process arena created 32 processes
 Process table entries: 13
-Endpoint table entries: 7
+Endpoint table entries: 10
 endpoint[0] id=1 name=serial-log
 endpoint[1] id=2 name=readiness
 endpoint[2] id=3 name=log-sink
@@ -196,14 +209,14 @@ proc=vertex-init cap[0] boot-module=krustboot-manifest rights=read
 proc=vertex-init cap[1] endpoint=serial-log rights=send
 proc=vertex-init cap[2] process-control=process-control rights=control|allocate|delegate|revoke|inspect
 proc=vertex-init cap[3] endpoint=readiness rights=receive
-proc=vertex-init cap[4] endpoint=log-sink rights=send|receive
+proc=vertex-init cap[4] endpoint=log-sink rights=send
 proc=serial-driver cap[3] io-port=cap:io.com1 rights=read|write
 proc=block-driver cap[3] mmio-region=cap:mmio.virtio-blk0 rights=map
 proc=block-driver cap[4] interrupt-line=cap:irq.virtio-blk0 rights=listen
 proc=block-driver cap[5] dma-region=cap:dma.virtio-blk0 rights=read|write|map
 proc=logd cap[0] endpoint=log-sink rights=receive
-proc=model-reader cap[0] endpoint=store-hello-text-api rights=send|receive
-proc=reader-service cap[0] endpoint=state-counter-api rights=send|receive
+proc=model-reader cap[0] endpoint=store-hello-text-request rights=send
+proc=reader-service cap[0] endpoint=state-counter-request rights=send
 proc=timer-service cap[0] timer=monotonic-timer rights=control
 GDT initialized
 IDT initialized: #UD #GP #PF
@@ -217,8 +230,8 @@ vertex-init received cap[2]=process-control
 vertex-init manifest generation: gen:hello-0001
 vertex-init boot modules: 13
 vertex-init processes: 13
-vertex-init endpoints: 7
-vertex-init grants: 32
+vertex-init endpoints: 10
+vertex-init grants: 42
 vertex-init network ports: 1
 vertex-init io ports: 1
 vertex-init mmio regions: 1
@@ -315,14 +328,14 @@ make smoke
 ```
 
 The smoke test boots QEMU headlessly, captures serial output to
-`build/serial.log`, and passes when it sees the M14-M36 boot transcript. The same
-check is available from the repository root:
+`build/serial.log`, and passes when it sees the M14-M40 directed IPC boot transcript. The
+same check is available from the repository root:
 
 ```sh
 scripts/krust-smoke.sh
 ```
 
-## M26-M38 Substrate Gate
+## M26-M40 Substrate Gate
 
 Run the clean-clone gate from the repository root:
 
@@ -337,13 +350,16 @@ make release-gate
 ```
 
 The gate checks script executability and shell syntax, verifies Makefile recipe
-parsing, checks Rust formatting and milestone Markdown whitespace, confirms the
-M14-M38 documentation anchors, runs `cargo build --offline`, validates
-`examples/hello-generation.vertex.json`, runs `make doctor`, rebuilds from
-`make clean`, runs `make smoke`, and then runs the M14-M38 QEMU cases: `m14`,
+parsing, checks Rust formatting and Markdown whitespace, confirms the M14-M40
+documentation anchors, checks the pinned M39 toolchain and Cargo lockfiles, runs
+`cargo metadata --locked --offline` and `cargo build --locked --offline`,
+validates `examples/hello-generation.vertex.json`, runs `make doctor`, rebuilds
+from `make clean`, runs `make smoke`, and then runs the M14-M40 QEMU cases:
+`m14`,
 `manifest-cycle`, `bad-cap`, `readiness-timeout`, `rollback`, `store-state-services`,
 `timer`, `preemption`, `user-fault`, `restart`, `manifest-v1`, `cap-lifecycle`,
-`typed-arenas`, `quotas`, `m32`, `m33`, `m34`, `m35`, `m36`, `m37`, `m38`, and the
+`typed-arenas`, `quotas`, `m32`, `m33`, `m34`, `m35`, `m36`, `m37`, `m38`, `m40`,
+and the
 malformed-manifest cases. If the offline build
 fails, the gate prints the Cargo cache or vendoring prerequisite explicitly.
 
@@ -356,8 +372,8 @@ KrustBoot manifest generation: gen:hello-0001
 KrustBoot Manifest v1 records: 9
 KrustBoot boot modules: 13
 KrustBoot processes: 13
-KrustBoot endpoints: 7
-KrustBoot grants: 32
+KrustBoot endpoints: 10
+KrustBoot grants: 42
 KrustBoot network ports: 1
 KrustBoot io port ranges: 1
 KrustBoot mmio regions: 1
@@ -365,7 +381,7 @@ KrustBoot interrupt lines: 1
 KrustBoot dma regions: 1
 grant[0] process=vertex-init cap[1] endpoint=serial-log rights=send
 grant[11] process=logd cap[0] endpoint=log-sink rights=receive
-grant[12] process=vertex-init cap[4] endpoint=log-sink rights=send|receive
+grant[12] process=vertex-init cap[4] endpoint=log-sink rights=send
 grant[13] process=echo cap[3] network-port=cap:net.tcp.8080 rights=listen
 grant[...] process=serial-driver cap[3] io-port=cap:io.com1 rights=read|write
 grant[...] process=block-driver cap[3] mmio-region=cap:mmio.virtio-blk0 rights=map
@@ -380,7 +396,7 @@ Typed endpoint arena created 32 endpoints
 Typed process arena created 32 processes
 IDT initialized: #UD #GP #PF
 Process table entries: 13
-Endpoint table entries: 7
+Endpoint table entries: 10
 endpoint[0] id=1 name=serial-log
 endpoint[1] id=2 name=readiness
 endpoint[2] id=3 name=log-sink
@@ -395,11 +411,11 @@ proc=vertex-init cap[0] boot-module=krustboot-manifest rights=read
 proc=vertex-init cap[1] endpoint=serial-log rights=send
 proc=vertex-init cap[2] process-control=process-control rights=control|allocate|delegate|revoke|inspect
 proc=vertex-init cap[3] endpoint=readiness rights=receive
-proc=vertex-init cap[4] endpoint=log-sink rights=send|receive
+proc=vertex-init cap[4] endpoint=log-sink rights=send
 proc=logd cap[0] endpoint=log-sink rights=receive
 proc=serial-driver cap[3] io-port=cap:io.com1 rights=read|write
-proc=model-reader cap[0] endpoint=store-hello-text-api rights=send|receive
-proc=reader-service cap[0] endpoint=state-counter-api rights=send|receive
+proc=model-reader cap[0] endpoint=store-hello-text-request rights=send
+proc=reader-service cap[0] endpoint=state-counter-request rights=send
 proc=timer-service cap[0] timer=monotonic-timer rights=control
 vertex-init started
 Boot module read accepted: proc=vertex-init module=krustboot-manifest bytes=

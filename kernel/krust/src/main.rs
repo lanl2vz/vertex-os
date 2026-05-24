@@ -110,6 +110,7 @@ fn print_boot_info() {
     };
     run_capability_table_demo(&allocator, heap);
     run_typed_arena_demo(heap);
+    ipc::run_fifo_regression();
     run_native_boot(&mut allocator, &boot_manifests);
 }
 

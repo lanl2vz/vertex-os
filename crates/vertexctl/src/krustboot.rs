@@ -548,8 +548,14 @@ fn derive_plan(manifest: &GenerationManifest) -> Result<BootPlan, String> {
         else {
             continue;
         };
-        let provider_rights = RIGHT_RECEIVE
-            | (endpoint_rights_mask(&[], &capability.rights, &capability.id)? & RIGHT_SEND);
+        let provider_slot = provided_endpoint_target_slot_for_capability(
+            manifest,
+            &processes,
+            &root_service.id,
+            &capability.provider,
+            &capability.id,
+        )?;
+        let provider_rights = RIGHT_RECEIVE;
 
         add_process_endpoint_ref(
             &mut processes,
@@ -561,7 +567,7 @@ fn derive_plan(manifest: &GenerationManifest) -> Result<BootPlan, String> {
             process: provider_process,
             object_kind: OBJECT_ENDPOINT,
             object_name: endpoint.clone(),
-            cap_slot: SERVICE_CAP_SLOT,
+            cap_slot: provider_slot,
             rights: provider_rights,
         });
 
@@ -570,7 +576,7 @@ fn derive_plan(manifest: &GenerationManifest) -> Result<BootPlan, String> {
             object_kind: OBJECT_ENDPOINT,
             object_name: endpoint.clone(),
             cap_slot: init_endpoint_auth_slot(&endpoints, &endpoint)?,
-            rights: RIGHT_SEND | RIGHT_RECEIVE,
+            rights: RIGHT_SEND,
         });
 
         for service in &manifest.services {
@@ -593,7 +599,9 @@ fn derive_plan(manifest: &GenerationManifest) -> Result<BootPlan, String> {
                     endpoint.clone(),
                     EndpointRefKind::Requires(consumer_rights),
                 );
-                add_process_start_after(&mut processes, &service.id, &capability.provider)?;
+                if requirement_starts_after_provider(capability) {
+                    add_process_start_after(&mut processes, &service.id, &capability.provider)?;
+                }
             }
         }
     }
@@ -614,7 +622,9 @@ fn derive_plan(manifest: &GenerationManifest) -> Result<BootPlan, String> {
                     service.id, requirement.capability
                 ));
             };
-            if manifest.service(&capability.provider).is_some() {
+            if manifest.service(&capability.provider).is_some()
+                && requirement_starts_after_provider(capability)
+            {
                 add_process_start_after(&mut processes, &service.id, &capability.provider)?;
             }
         }
@@ -1022,6 +1032,14 @@ fn value_u64(value: &Value, key: &str) -> Option<u64> {
     })
 }
 
+fn value_str<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
+    value.get(key).and_then(Value::as_str)
+}
+
+fn requirement_starts_after_provider(capability: &vertex_ir::Capability) -> bool {
+    capability.kind != "ipc-endpoint" || value_str(&capability.properties, "role") != Some("reply")
+}
+
 fn parse_u64_literal(value: &str) -> Option<u64> {
     if let Some(hex) = value
         .strip_prefix("0x")
@@ -1041,7 +1059,7 @@ fn initial_object_cap_slots(processes: &[NativeProcess]) -> BTreeMap<String, u16
                 SERVICE_CAP_SLOT
             } else {
                 first_non_endpoint_service_slot(
-                    !process.provides_endpoints.is_empty(),
+                    process.provides_endpoints.len(),
                     process.requires_endpoints.len(),
                 )
             };
@@ -1053,17 +1071,17 @@ fn initial_object_cap_slots(processes: &[NativeProcess]) -> BTreeMap<String, u16
     slots
 }
 
-fn first_non_endpoint_service_slot(has_provided_endpoint: bool, endpoint_count: usize) -> u16 {
-    let mut slot = if endpoint_count == 0 && !has_provided_endpoint {
-        SERVICE_CAP_SLOT
-    } else {
-        let last_required_slot = if endpoint_count == 0 {
-            SERVICE_CAP_SLOT
-        } else {
-            endpoint_target_slot(has_provided_endpoint, endpoint_count - 1)
-        };
-        last_required_slot + 1
-    };
+fn first_non_endpoint_service_slot(provided_count: usize, endpoint_count: usize) -> u16 {
+    let mut slot = SERVICE_CAP_SLOT;
+    if provided_count > 0 {
+        slot = provided_endpoint_target_slot(provided_count - 1) + 1;
+    }
+    if endpoint_count > 0 {
+        let after_required = endpoint_target_slot(provided_count, endpoint_count - 1) + 1;
+        if after_required > slot {
+            slot = after_required;
+        }
+    }
     if slot <= READINESS_RESERVED_CAP_SLOT {
         slot = READINESS_RESERVED_CAP_SLOT + 1;
     }
@@ -1195,9 +1213,9 @@ fn validate_plan(plan: &BootPlan) -> Result<(), String> {
         }
         for requirement in &process.requires_endpoints {
             endpoint_index(plan, &requirement.endpoint)?;
-            if requirement.rights == 0 || requirement.rights & !(RIGHT_SEND | RIGHT_RECEIVE) != 0 {
+            if requirement.rights != RIGHT_SEND {
                 return Err(format!(
-                    "process {} has invalid endpoint requirement rights",
+                    "process {} has invalid endpoint requirement rights; native endpoint requirements are send-only",
                     process.name
                 ));
             }
@@ -1217,7 +1235,14 @@ fn validate_plan(plan: &BootPlan) -> Result<(), String> {
     for grant in &plan.grants {
         process_index(plan, &grant.process)?;
         object_index(plan, grant)?;
-        if grant.rights == 0 {
+        if grant.object_kind == OBJECT_ENDPOINT {
+            if grant.rights != RIGHT_SEND && grant.rights != RIGHT_RECEIVE {
+                return Err(format!(
+                    "endpoint grant to {} must be one-way send or receive",
+                    grant.process
+                ));
+            }
+        } else if grant.rights == 0 {
             return Err(format!("grant to {} has no rights", grant.process));
         }
     }
@@ -1346,9 +1371,9 @@ fn endpoint_rights_mask(
     context: &str,
 ) -> Result<u16, String> {
     let mask = rights_mask(required, capability, context)?;
-    if mask & !(RIGHT_SEND | RIGHT_RECEIVE) != 0 {
+    if mask != RIGHT_SEND {
         return Err(format!(
-            "ipc endpoint {context} requires non-endpoint native rights"
+            "ipc endpoint {context} native requirements are send-only"
         ));
     }
     Ok(mask)
@@ -1366,7 +1391,6 @@ fn rights_mask(required: &[String], capability: &[String], context: &str) -> Res
         match right.as_str() {
             "send" => mask |= RIGHT_SEND,
             "receive" => mask |= RIGHT_RECEIVE,
-            "sendrecv" => mask |= RIGHT_SEND | RIGHT_RECEIVE,
             "read" => mask |= RIGHT_READ,
             "write" => mask |= RIGHT_WRITE,
             "readwrite" | "read-write" => mask |= RIGHT_READ | RIGHT_WRITE,
@@ -1419,13 +1443,52 @@ fn init_endpoint_auth_slot(endpoints: &[Endpoint], endpoint: &str) -> Result<u16
     Ok(INIT_ENDPOINT_AUTH_BASE_SLOT + (index as u16 - 2))
 }
 
-fn endpoint_target_slot(has_provided_endpoint: bool, requirement_index: usize) -> u16 {
-    if !has_provided_endpoint && requirement_index == 0 {
+fn provided_endpoint_target_slot(provided_index: usize) -> u16 {
+    if provided_index == 0 {
         SERVICE_CAP_SLOT
-    } else if has_provided_endpoint {
-        READINESS_RESERVED_CAP_SLOT + 1 + requirement_index as u16
     } else {
+        READINESS_RESERVED_CAP_SLOT + provided_index as u16
+    }
+}
+
+fn provided_endpoint_target_slot_for_capability(
+    manifest: &GenerationManifest,
+    processes: &[NativeProcess],
+    root_service_id: &str,
+    service_id: &str,
+    capability_id: &str,
+) -> Result<u16, String> {
+    let service = manifest.service(service_id).ok_or_else(|| {
+        format!("endpoint capability {capability_id} has unknown provider {service_id}")
+    })?;
+    let mut provided_index = 0;
+    for provided in &service.provides {
+        let Some(capability) = manifest.capability(provided) else {
+            continue;
+        };
+        if capability.kind != "ipc-endpoint"
+            || !native_requirement_exists(manifest, processes, provided, root_service_id)
+        {
+            continue;
+        }
+        if provided == capability_id {
+            return Ok(provided_endpoint_target_slot(provided_index));
+        }
+        provided_index += 1;
+    }
+
+    Err(format!(
+        "service {service_id} does not provide endpoint capability {capability_id}"
+    ))
+}
+
+fn endpoint_target_slot(provided_count: usize, requirement_index: usize) -> u16 {
+    if provided_count == 0 && requirement_index == 0 {
+        SERVICE_CAP_SLOT
+    } else if provided_count == 0 {
         READINESS_RESERVED_CAP_SLOT + requirement_index as u16
+    } else {
+        READINESS_RESERVED_CAP_SLOT + provided_count as u16 + requirement_index as u16
     }
 }
 
@@ -1920,18 +1983,17 @@ mod tests {
 
     #[test]
     fn endpoint_target_slots_do_not_overlap_provider_slot() {
-        assert_eq!(endpoint_target_slot(false, 0), SERVICE_CAP_SLOT);
+        assert_eq!(endpoint_target_slot(0, 0), SERVICE_CAP_SLOT);
+        assert_eq!(endpoint_target_slot(0, 1), READINESS_RESERVED_CAP_SLOT + 1);
+        assert_eq!(endpoint_target_slot(1, 0), READINESS_RESERVED_CAP_SLOT + 1);
+        assert_eq!(endpoint_target_slot(2, 0), READINESS_RESERVED_CAP_SLOT + 2);
         assert_eq!(
-            endpoint_target_slot(false, 1),
-            READINESS_RESERVED_CAP_SLOT + 1
-        );
-        assert_eq!(
-            endpoint_target_slot(true, 0),
-            READINESS_RESERVED_CAP_SLOT + 1
-        );
-        assert_eq!(
-            first_non_endpoint_service_slot(true, 1),
+            first_non_endpoint_service_slot(1, 1),
             READINESS_RESERVED_CAP_SLOT + 2
+        );
+        assert_eq!(
+            first_non_endpoint_service_slot(2, 1),
+            READINESS_RESERVED_CAP_SLOT + 3
         );
     }
 }

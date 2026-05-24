@@ -109,7 +109,9 @@
       "id": "cap:clock.monotonic",
       "kind": "clock",
       "provider": "kernel:hosted-linux-placeholder",
-      "rights": ["read"],
+      "rights": [
+        "read"
+      ],
       "properties": {
         "clock": "monotonic"
       }
@@ -118,16 +120,21 @@
       "id": "cap:log.sink",
       "kind": "ipc-endpoint",
       "provider": "svc:logd",
-      "rights": ["send"],
+      "rights": [
+        "send"
+      ],
       "properties": {
-        "protocol": "vertex.log.v0"
+        "protocol": "vertex.log.v1"
       }
     },
     {
       "id": "cap:net.tcp.8080",
       "kind": "network-port",
       "provider": "svc:netstack",
-      "rights": ["listen", "bind"],
+      "rights": [
+        "listen",
+        "bind"
+      ],
       "properties": {
         "protocol": "tcp",
         "port": 8080,
@@ -138,9 +145,11 @@
       "id": "cap:echo.api",
       "kind": "ipc-endpoint",
       "provider": "svc:echo-server",
-      "rights": ["sendrecv"],
+      "rights": [
+        "send"
+      ],
       "properties": {
-        "protocol": "vertex.echo.v0"
+        "protocol": "vertex.echo.v1"
       }
     }
   ],
@@ -149,10 +158,17 @@
       "id": "svc:vertex-supervisor",
       "name": "vertex-supervisor",
       "executable": "exe:vertex-init",
-      "args": ["--supervisor-mode"],
+      "args": [
+        "--supervisor-mode"
+      ],
       "env": {},
       "requires": [
-        { "capability": "cap:clock.monotonic", "rights": ["read"] }
+        {
+          "capability": "cap:clock.monotonic",
+          "rights": [
+            "read"
+          ]
+        }
       ],
       "provides": [],
       "state": [],
@@ -175,9 +191,16 @@
       "args": [],
       "env": {},
       "requires": [
-        { "capability": "cap:clock.monotonic", "rights": ["read"] }
+        {
+          "capability": "cap:clock.monotonic",
+          "rights": [
+            "read"
+          ]
+        }
       ],
-      "provides": ["cap:log.sink"],
+      "provides": [
+        "cap:log.sink"
+      ],
       "state": [],
       "secrets": [],
       "restart": "on-failure",
@@ -190,7 +213,9 @@
         "target": "cap:log.sink"
       },
       "lifecycle": {
-        "startAfter": ["svc:vertex-supervisor"],
+        "startAfter": [
+          "svc:vertex-supervisor"
+        ],
         "stopBefore": []
       }
     },
@@ -201,9 +226,16 @@
       "args": [],
       "env": {},
       "requires": [
-        { "capability": "cap:clock.monotonic", "rights": ["read"] }
+        {
+          "capability": "cap:clock.monotonic",
+          "rights": [
+            "read"
+          ]
+        }
       ],
-      "provides": ["cap:net.tcp.8080"],
+      "provides": [
+        "cap:net.tcp.8080"
+      ],
       "state": [],
       "secrets": [],
       "restart": "on-failure",
@@ -213,7 +245,9 @@
       },
       "health": null,
       "lifecycle": {
-        "startAfter": ["svc:vertex-supervisor"],
+        "startAfter": [
+          "svc:vertex-supervisor"
+        ],
         "stopBefore": []
       }
     },
@@ -221,15 +255,30 @@
       "id": "svc:echo-server",
       "name": "echo-server",
       "executable": "exe:echo-server",
-      "args": ["--listen", "cap:net.tcp.8080"],
+      "args": [
+        "--listen",
+        "cap:net.tcp.8080"
+      ],
       "env": {
         "VERTEX_REQUIRE_LOG_SINK": "1"
       },
       "requires": [
-        { "capability": "cap:clock.monotonic", "rights": ["read"] },
-        { "capability": "cap:net.tcp.8080", "rights": ["listen"] }
+        {
+          "capability": "cap:clock.monotonic",
+          "rights": [
+            "read"
+          ]
+        },
+        {
+          "capability": "cap:net.tcp.8080",
+          "rights": [
+            "listen"
+          ]
+        }
       ],
-      "provides": ["cap:echo.api"],
+      "provides": [
+        "cap:echo.api"
+      ],
       "state": [],
       "secrets": [],
       "restart": "on-failure",
@@ -242,14 +291,22 @@
         "target": "cap:echo.api"
       },
       "lifecycle": {
-        "startAfter": ["svc:logd", "svc:netstack"],
+        "startAfter": [
+          "svc:logd",
+          "svc:netstack"
+        ],
         "stopBefore": []
       }
     }
   ],
   "activation": {
     "rootService": "svc:vertex-supervisor",
-    "startOrder": ["svc:vertex-supervisor", "svc:logd", "svc:netstack", "svc:echo-server"],
+    "startOrder": [
+      "svc:vertex-supervisor",
+      "svc:logd",
+      "svc:netstack",
+      "svc:echo-server"
+    ],
     "rollbackPolicy": {
       "default": "system-only",
       "state": "preserve-unless-explicit"

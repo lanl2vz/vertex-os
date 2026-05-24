@@ -33,6 +33,7 @@ const SYS_PROCESS_STATUS: u64 = 17;
 const SYS_ROLLBACK_GENERATION: u64 = 18;
 const SYS_IPC_RECV_TIMEOUT: u64 = 19;
 const SYS_CAP_INSPECT: u64 = 22;
+const SYS_CAP_MOVE: u64 = 23;
 const SYS_ENDPOINT_CREATE: u64 = 25;
 const SYS_QUOTA_DELEGATE: u64 = 26;
 
@@ -133,6 +134,10 @@ pub fn cap_transfer(
 
 pub fn cap_inspect(slot: u64) -> u64 {
     syscall3(SYS_CAP_INSPECT, slot, 0, 0)
+}
+
+pub fn cap_move(source_slot: u64, target_slot: u64) -> u64 {
+    syscall3(SYS_CAP_MOVE, source_slot, target_slot, 0)
 }
 
 pub fn endpoint_create(cap_slot: u64) -> u64 {

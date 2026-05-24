@@ -1,11 +1,11 @@
-# Krust ABI v0
+# Krust ABI v1
 
 This document describes the current experimental userspace ABI used by the
 native Krust QEMU/Limine milestone. It is intentionally small and unstable. Its
 current job is to boot native `vertex-init`, start a tiny declared service
 graph, and enforce explicit process-local capabilities.
 
-Milestone status: ABI v0 now covers the M14-M38 native activation and substrate
+Milestone status: ABI v1 now covers the M14-M40 native activation and substrate
 proof. M25 adds the release gate. M26-M29 add Manifest v1 parsing, capability
 provenance/revocation, typed arena allocation checks, and resource quotas.
 M30-M31 add PIT-backed preemption and user page-fault containment. M32-M36 add
@@ -13,9 +13,9 @@ I/O capability objects, user-space serial and block-driver proof paths, and
 native store/state services. M37 upgrades generation activation into a real
 runtime switch between registered native KrustBoot configs.
 M38 adds native runtime introspection through an inspect-only process-control
-right. This is
-still experimental and does not freeze syscall, capability, process, or IPC ABI
-surface.
+right. M39 pins the reproducible native build environment and release gate.
+M40 freezes ABI v1 with directed request/reply IPC. The ABI is still
+intentionally small, but this subset is the current native contract.
 
 ## Machine ABI
 
@@ -110,7 +110,7 @@ values above as errors.
 
 Syscalls must not directly trust userspace pointers.
 
-ABI v0 validation checks:
+ABI v1 validation checks:
 
 - The range is low-half canonical.
 - The range does not overflow.
@@ -126,7 +126,7 @@ becoming uncontrolled kernel faults.
 Capabilities are process-local. A capability slot number is meaningful only in
 the current process's capability space.
 
-Current M14-M38 layout:
+Current M14-M40 layout:
 
 ```text
 vertex-init:
@@ -134,8 +134,8 @@ vertex-init:
   cap[1] = endpoint serial-log, rights=send
   cap[2] = process-control object, rights=control|allocate|delegate|revoke|inspect
   cap[3] = endpoint readiness, rights=receive
-  cap[4] = endpoint log-sink, rights=send|receive
-  cap[5+] = additional delegated endpoint authorities, if the graph needs them
+  cap[4+] = endpoint authority caps, rights=send, one per declared
+           graph endpoint beyond serial-log/readiness
 
 logd:
   cap[0] = endpoint log-sink, rights=receive
@@ -146,24 +146,33 @@ logd:
 serial-driver:
   cap[0] = endpoint serial-console, rights=receive
   cap[1] = endpoint serial-log, rights=send
+  cap[2] = endpoint readiness, rights=send
   cap[3] = io-port cap:io.com1, rights=read|write
 
 block-driver:
-  cap[0] = endpoint block-io, rights=send|receive
+  cap[0] = endpoint block-read-request, rights=receive
   cap[1] = endpoint serial-log, rights=send
-  cap[3] = mmio-region cap:mmio.virtio-blk0, rights=map
-  cap[4] = interrupt-line cap:irq.virtio-blk0, rights=listen
-  cap[5] = dma-region cap:dma.virtio-blk0, rights=read|write|map
+  cap[2] = endpoint readiness, rights=send
+  cap[3] = endpoint vertex-store-block-reply, rights=send after vertex-init derives and transfers it
+  cap[4] = mmio-region cap:mmio.virtio-blk0, rights=map
+  cap[5] = interrupt-line cap:irq.virtio-blk0, rights=listen
+  cap[6] = dma-region cap:dma.virtio-blk0, rights=read|write|map
 
 vertex-store:
-  cap[0] = endpoint store-hello-text-api, rights=send|receive
+  cap[0] = endpoint store-hello-text-request, rights=receive
   cap[1] = endpoint serial-log, rights=send
-  cap[3] = endpoint block-io, rights=send|receive after vertex-init derives and transfers it
+  cap[2] = endpoint readiness, rights=send
+  cap[3] = endpoint vertex-store-block-reply, rights=receive
+  cap[4] = endpoint block-read-request, rights=send after vertex-init derives and transfers it
+  cap[5] = endpoint model-reader-store-reply, rights=send after vertex-init derives and transfers it
+  cap[6] = dynamic init store reply endpoint, rights=send during M37 generation fetch
 
 vertex-state:
-  cap[0] = endpoint state-counter-api, rights=send|receive
+  cap[0] = endpoint state-counter-request, rights=receive
   cap[1] = endpoint serial-log, rights=send
-  cap[3] = state-volume state:counter, rights=read|write|snapshot|restore
+  cap[2] = endpoint readiness, rights=send
+  cap[3] = endpoint state-reader-state-reply, rights=send after vertex-init derives and transfers it
+  cap[4] = state-volume state:counter, rights=read|write|snapshot|restore
 
 vertex-inspect:
   cap[0] = process-control object, rights=inspect after vertex-init transfers it
@@ -176,16 +185,18 @@ echo:
   cap[0] = endpoint log-sink, rights=send after vertex-init derives and transfers it
 
 model-reader:
-  cap[0] = endpoint store-hello-text-api, rights=send|receive after vertex-init derives and transfers it
+  cap[0] = endpoint model-reader-store-reply, rights=receive
   cap[1] = endpoint serial-log, rights=send
+  cap[3] = endpoint store-hello-text-request, rights=send after vertex-init derives and transfers it
 
 counter-service:
-  cap[0] = endpoint state-counter-api, rights=send|receive after vertex-init derives and transfers it
+  cap[0] = endpoint state-counter-request, rights=send after vertex-init derives and transfers it
   cap[1] = endpoint serial-log, rights=send
 
 reader-service:
-  cap[0] = endpoint state-counter-api, rights=send|receive after vertex-init derives and transfers it
+  cap[0] = endpoint state-reader-state-reply, rights=receive
   cap[1] = endpoint serial-log, rights=send
+  cap[3] = endpoint state-counter-request, rights=send after vertex-init derives and transfers it
 
 timer-service:
   cap[0] = timer monotonic-timer, rights=control
@@ -199,6 +210,15 @@ special-case process names; it resolves:
 ```text
 current process -> cap slot -> kernel object -> required rights
 ```
+
+M40 removes the legacy shared bidirectional request/reply pattern. A service
+request endpoint is a one-way FIFO: clients hold `send`, the provider holds
+`receive`, and replies go to a separate reply endpoint where the client holds
+`receive` and the provider receives a delegated `send` cap. Native endpoint
+requirements are send-only; provider receive authority is derived from
+`provides`, and vertex-init's static endpoint authority is send-only.
+When vertex-init creates a private dynamic reply endpoint, it transfers `send`
+to the provider and attenuates its local cap to `receive` before waiting.
 
 The native activation path uses the same rule:
 
@@ -230,7 +250,7 @@ not yet include a network driver syscall that consumes it.
 Native I/O objects now cover the first hardware authority substrate:
 `IoPortRange`, `MmioRegion`, `InterruptLine`, and `DmaRegion`. `DmaRegion`
 authority is represented and granted to `block-driver`; real DMA mapping is not
-implemented in ABI v0.
+implemented in ABI v1.
 
 Capability records carry kernel-owned metadata:
 
@@ -275,7 +295,7 @@ tables, and enters the new generation's `vertex-init`.
 
 ## Process Model
 
-ABI v0 uses a fixed-size kernel process table.
+ABI v1 uses a fixed-size kernel process table.
 
 Current states:
 
@@ -324,7 +344,7 @@ on failure: STATUS_BAD_CAPABILITY
 
 Restart uses the same syscall; restarting an exited process resets its saved
 frame, exit status, capability table, and user context before making it Ready
-again. ABI v0 native supervision is explicitly bounded to one restart per
+again. ABI v1 native supervision is explicitly bounded to one restart per
 service; `restart = always` means "restart after the first exit" in this proof,
 not an unbounded service-manager loop. `SYS_PROCESS_ATTEMPT` lets a process
 distinguish its first start from a kernel-mediated restart without relying on
@@ -333,7 +353,7 @@ preserved process memory.
 `SYS_SLEEP_MS` moves the caller into `Sleeping` and yields to another ready
 process. Deadlines use CPUID-reported TSC/base frequency when available, with a
 fixed fallback only when the CPU does not report a usable frequency. If no
-process is ready, ABI v0 waits through the PIT interrupt path instead of
+process is ready, ABI v1 waits through the PIT interrupt path instead of
 accepting a cooperative-only TSC polling fallback.
 
 User page faults are process-contained. A direct userspace page fault identifies
@@ -343,7 +363,9 @@ keeps the kernel running. Kernel faults still stop the kernel.
 
 ## IPC Semantics
 
-Endpoints currently hold one fixed-size message buffer.
+Endpoints hold a fixed four-message FIFO. The FIFO is safe for request
+endpoints because only providers receive from request queues and only clients
+receive from their private reply queues.
 
 Send path:
 
@@ -351,7 +373,7 @@ Send path:
 SYS_IPC_SEND(cap_slot, user_ptr, len)
   validate send capability
   copy message from user
-  store message on endpoint
+  append message to endpoint FIFO
   wake one process blocked on that endpoint, if any
 ```
 
@@ -361,9 +383,9 @@ Receive path:
 SYS_IPC_RECV(cap_slot, user_ptr, max_len)
   validate receive capability
   validate writable user buffer
-  if message exists:
+  if a queued message from another process exists:
       copy to receiver buffer and return byte count
-  if no message exists:
+  if no matching message exists:
       save syscall frame
       set state to BlockedOnEndpoint
       schedule the next Ready process
@@ -502,7 +524,7 @@ Endpoint, hardware, store-object, state-volume, and timer grants for declared se
 come from the compact manifest. Endpoint consumers do not receive static boot
 send grants for delegated authority; vertex-init derives and transfers the
 attenuated cap before starting the consumer. A transfer to a still-declared
-process becomes part of that process's restart baseline, so the one ABI v0
+process becomes part of that process's restart baseline, so the one ABI v1
 restart restores the delegated endpoint cap along with static grants. If a
 service both provides an endpoint and consumes delegated endpoint authority, the
 provided endpoint keeps cap[0] and delegated endpoint caps start at cap[3] to

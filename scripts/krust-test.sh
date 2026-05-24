@@ -255,6 +255,8 @@ system generation rollback does not automatically roll back state unless policy 
         required_lines='
 Boot generation: gen:switch-a-0001
 vertex-store exposes generation B manifest
+vertex-init attenuates private store reply endpoint to receive-only
+vertex-init uses private store reply endpoint
 vertex-init validates generation B
 Krust generation switch accepted: from=gen:switch-a-0001 to=gen:switch-b-0002
 Krust generation switch revoked old generation authority: generation=gen:switch-a-0001
@@ -273,6 +275,43 @@ Krust rollback entering generation: gen:switch-b-0002
 Krust generation switch rejected: requested=gen:switch-c-bad-0003
 bad generation C fails
 rollback to B
+Native service activation ok
+'
+        ;;
+    m40|directed-ipc)
+        MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
+        EXPECT_ACTIVATION_SUCCESS=1
+        required_lines='
+KrustBoot endpoints: 10
+KrustBoot grants: 42
+IPC FIFO regression: queued sends preserve FIFO order
+IPC FIFO regression: queue-full send rejected
+IPC FIFO regression: receiver-specific dequeue preserves eligible ordering
+IPC FIFO regression: multiple blocked receivers match eligible messages
+IPC FIFO regression ok
+endpoint[4] name=block-read-request
+endpoint[5] name=vertex-store-block-reply
+endpoint[6] name=store-hello-text-request
+endpoint[7] name=model-reader-store-reply
+endpoint[8] name=state-counter-request
+endpoint[9] name=state-reader-state-reply
+grant[23] process=block-driver cap[0] endpoint=block-read-request rights=receive
+grant[25] process=vertex-store cap[3] endpoint=vertex-store-block-reply rights=receive
+grant[27] process=vertex-store cap[0] endpoint=store-hello-text-request rights=receive
+grant[29] process=model-reader cap[0] endpoint=model-reader-store-reply rights=receive
+grant[31] process=vertex-state cap[0] endpoint=state-counter-request rights=receive
+grant[33] process=reader-service cap[0] endpoint=state-reader-state-reply rights=receive
+vertex-init observed ready: serial-driver
+vertex-init observed ready: block-driver
+vertex-init observed ready: vertex-store
+vertex-init observed ready: vertex-state
+vertex-init derives endpoint cap for vertex-store from endpoint[4] rights=send
+vertex-init derives endpoint cap for vertex-store from endpoint[7] rights=send
+vertex-init derives endpoint cap for model-reader from endpoint[6] rights=send
+vertex-init derives endpoint cap for counter-service from endpoint[8] rights=send
+vertex-init derives endpoint cap for reader-service from endpoint[8] rights=send
+model-reader reads bytes successfully
+reader-service write rejected
 Native service activation ok
 '
         ;;
@@ -349,7 +388,7 @@ activation failed
 '
         ;;
     *)
-        echo "usage: scripts/krust-test.sh <m13|m14|valid-activation|manifest-cycle|bad-cap|readiness|readiness-timeout|rollback|store-state-services|timer|preemption|m30|user-fault|m31|restart|manifest-v1|cap-lifecycle|typed-arenas|quotas|m32|io-substrate|m33|serial-driver|m34|block-driver|m35|store-service|m36|state-service|m37|generation-switch|m38|introspection|manifest-truncated|manifest-bad-magic|manifest-raw-compact|manifest-unsupported-version|manifest-oob-record|manifest-missing-provider>" >&2
+        echo "usage: scripts/krust-test.sh <m13|m14|valid-activation|manifest-cycle|bad-cap|readiness|readiness-timeout|rollback|store-state-services|timer|preemption|m30|user-fault|m31|restart|manifest-v1|cap-lifecycle|typed-arenas|quotas|m32|io-substrate|m33|serial-driver|m34|block-driver|m35|store-service|m36|state-service|m37|generation-switch|m38|introspection|m40|directed-ipc|manifest-truncated|manifest-bad-magic|manifest-raw-compact|manifest-unsupported-version|manifest-oob-record|manifest-missing-provider>" >&2
         exit 2
         ;;
 esac

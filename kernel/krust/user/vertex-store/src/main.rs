@@ -5,22 +5,30 @@ mod sys;
 
 use core::panic::PanicInfo;
 
-const CAP_STORE_API: u64 = 0;
+const CAP_STORE_REQUEST: u64 = 0;
 const CAP_SERIAL_LOG: u64 = 1;
-const CAP_BLOCK: u64 = 3;
+const CAP_READINESS: u64 = 2;
+const CAP_BLOCK_REPLY: u64 = 3;
+const CAP_BLOCK_REQUEST: u64 = 4;
+const CAP_MODEL_REPLY: u64 = 5;
+const CAP_INIT_REPLY: u64 = 6;
 const STORE_ID: &[u8] = b"store:hello-text";
 const GENERATION_B_MANIFEST_ID: &[u8] = b"store:generation-b-manifest";
 const GENERATION_B_MANIFEST: &[u8] = b"krustboot:gen:switch-b-0002";
 const HELLO_OBJECT: &[u8] = b"hello from Krust store\n";
+const PROTOCOL_HEALTH_V0: u16 = 2;
+const MESSAGE_READY: u16 = 1;
+const ENVELOPE_LEN: usize = 16;
 
 #[unsafe(link_section = ".text._start")]
 #[unsafe(no_mangle)]
 pub extern "C" fn _start() -> ! {
+    send_ready();
     log(b"vertex-store ready");
 
     loop {
         let mut request = [0u8; 64];
-        let received = sys::ipc_recv(CAP_STORE_API, &mut request);
+        let received = sys::ipc_recv(CAP_STORE_REQUEST, &mut request);
         if received > request.len() as u64 {
             log(b"vertex-store request invalid");
             sys::exit(1);
@@ -42,7 +50,7 @@ pub extern "C" fn _start() -> ! {
 
 fn serve_generation_b_manifest() {
     log(b"vertex-store exposes generation B manifest");
-    if sys::ipc_send(CAP_STORE_API, GENERATION_B_MANIFEST) != sys::STATUS_OK {
+    if sys::ipc_send(CAP_INIT_REPLY, GENERATION_B_MANIFEST) != sys::STATUS_OK {
         log(b"vertex-store generation manifest response failed");
         sys::exit(1);
     }
@@ -50,13 +58,13 @@ fn serve_generation_b_manifest() {
 
 fn serve_hello_object() -> ! {
     log(b"store-service requests block read");
-    if sys::ipc_send(CAP_BLOCK, b"read store:hello-text") != sys::STATUS_OK {
+    if sys::ipc_send(CAP_BLOCK_REQUEST, b"read store:hello-text") != sys::STATUS_OK {
         log(b"vertex-store block request failed");
         sys::exit(1);
     }
 
     let mut object = [0u8; 64];
-    let object_len = sys::ipc_recv(CAP_BLOCK, &mut object);
+    let object_len = sys::ipc_recv(CAP_BLOCK_REPLY, &mut object);
     if object_len > object.len() as u64 {
         log(b"vertex-store block response failed");
         sys::exit(1);
@@ -77,7 +85,7 @@ fn serve_hello_object() -> ! {
     }
     object[0] ^= 1;
 
-    if sys::ipc_send(CAP_STORE_API, &object[..object_len]) != sys::STATUS_OK {
+    if sys::ipc_send(CAP_MODEL_REPLY, &object[..object_len]) != sys::STATUS_OK {
         log(b"vertex-store response failed");
         sys::exit(1);
     }
@@ -88,6 +96,51 @@ fn serve_hello_object() -> ! {
 fn log(message: &[u8]) {
     if sys::log(CAP_SERIAL_LOG, message) != sys::STATUS_OK {
         sys::exit(1);
+    }
+}
+
+fn send_ready() {
+    let ready = ready_message(b"vertex-store");
+    if sys::ipc_send(CAP_READINESS, &ready) != sys::STATUS_OK {
+        log(b"vertex-store ready send failed");
+        sys::exit(1);
+    }
+}
+
+fn ready_message(service: &[u8]) -> [u8; 32] {
+    let mut message = [0u8; 32];
+    write_u16(&mut message, 0, PROTOCOL_HEALTH_V0);
+    write_u16(&mut message, 2, MESSAGE_READY);
+    write_u32(&mut message, 4, service.len() as u32);
+    write_u64(&mut message, 8, 1);
+    let mut index = 0;
+    while index < service.len() && ENVELOPE_LEN + index < message.len() {
+        message[ENVELOPE_LEN + index] = service[index];
+        index += 1;
+    }
+    message
+}
+
+fn write_u16(buffer: &mut [u8], offset: usize, value: u16) {
+    let bytes = value.to_le_bytes();
+    buffer[offset] = bytes[0];
+    buffer[offset + 1] = bytes[1];
+}
+
+fn write_u32(buffer: &mut [u8], offset: usize, value: u32) {
+    let bytes = value.to_le_bytes();
+    buffer[offset] = bytes[0];
+    buffer[offset + 1] = bytes[1];
+    buffer[offset + 2] = bytes[2];
+    buffer[offset + 3] = bytes[3];
+}
+
+fn write_u64(buffer: &mut [u8], offset: usize, value: u64) {
+    let bytes = value.to_le_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        buffer[offset + index] = bytes[index];
+        index += 1;
     }
 }
 

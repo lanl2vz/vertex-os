@@ -225,8 +225,8 @@ fn compile_boot_manifest_emits_krustboot_plan() {
     assert!(stdout.contains("generation: gen:hello-0001"));
     assert!(stdout.contains("boot_modules: 13"));
     assert!(stdout.contains("processes: 13"));
-    assert!(stdout.contains("endpoints: 7"));
-    assert!(stdout.contains("grants: 32"));
+    assert!(stdout.contains("endpoints: 10"));
+    assert!(stdout.contains("grants: 42"));
     assert!(stdout.contains("store_objects: 0"));
     assert!(stdout.contains("state_volumes: 1"));
     assert!(stdout.contains("network_ports: 1"));
@@ -254,15 +254,61 @@ fn compile_boot_manifest_emits_krustboot_plan() {
     assert!(contains_bytes(&bytes, b"flaky-service"));
     assert!(contains_bytes(&bytes, b"log-sink"));
     assert!(contains_bytes(&bytes, b"serial-console"));
-    assert!(contains_bytes(&bytes, b"block-io"));
-    assert!(contains_bytes(&bytes, b"store-hello-text-api"));
-    assert!(contains_bytes(&bytes, b"state-counter-api"));
+    assert!(contains_bytes(&bytes, b"block-read-request"));
+    assert!(contains_bytes(&bytes, b"vertex-store-block-reply"));
+    assert!(contains_bytes(&bytes, b"store-hello-text-request"));
+    assert!(contains_bytes(&bytes, b"model-reader-store-reply"));
+    assert!(contains_bytes(&bytes, b"state-counter-request"));
+    assert!(contains_bytes(&bytes, b"state-reader-state-reply"));
     assert!(contains_bytes(&bytes, b"readiness"));
     assert!(contains_bytes(&bytes, b"cap:io.com1"));
     assert!(contains_bytes(&bytes, b"cap:mmio.virtio-blk0"));
     assert!(contains_bytes(&bytes, b"cap:irq.virtio-blk0"));
     assert!(contains_bytes(&bytes, b"cap:dma.virtio-blk0"));
     assert!(contains_bytes(&bytes, b"cap:net.tcp.8080"));
+}
+
+#[test]
+fn compile_boot_manifest_rejects_consumer_receive_endpoint_requirement() {
+    let dir = temp_dir("krustboot-receive-requirement");
+    let input_path = dir.join("bad-receive.vertex.json");
+    let output_path = dir.join("bad-receive.krustboot");
+    let mut manifest: Value = serde_json::from_str(
+        &fs::read_to_string(repo_root().join("examples/hello-generation.vertex.json"))
+            .expect("read hello manifest"),
+    )
+    .expect("hello manifest should be json");
+
+    let services = manifest["services"]
+        .as_array_mut()
+        .expect("services should be an array");
+    let echo = services
+        .iter_mut()
+        .find(|service| service["id"] == "svc:echo-server")
+        .expect("echo service should exist");
+    let requirements = echo["requires"]
+        .as_array_mut()
+        .expect("echo requirements should be an array");
+    let log_requirement = requirements
+        .iter_mut()
+        .find(|requirement| requirement["capability"] == "cap:log.sink")
+        .expect("echo should require log sink");
+    log_requirement["rights"] = serde_json::json!(["send", "receive"]);
+
+    fs::write(
+        &input_path,
+        serde_json::to_string_pretty(&manifest).expect("serialize bad manifest"),
+    )
+    .expect("write bad manifest");
+
+    let stderr = assert_failure(run(&[
+        "compile-boot-manifest",
+        &input_path.to_string_lossy(),
+        &output_path.to_string_lossy(),
+    ]));
+
+    assert!(stderr.contains("requires receive authority on ipc endpoint cap:log.sink"));
+    assert!(!output_path.exists());
 }
 
 #[test]

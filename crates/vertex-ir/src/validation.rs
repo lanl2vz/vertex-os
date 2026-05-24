@@ -127,6 +127,17 @@ fn validate_capabilities(
         if capability.rights.is_empty() {
             report.error(format!("capability {} has no rights", capability.id));
         }
+        for right in &capability.rights {
+            if !is_valid_right(right) {
+                report.error(format!(
+                    "capability {} declares unsupported right {}",
+                    capability.id, right
+                ));
+            }
+        }
+        if capability.kind == "ipc-endpoint" {
+            validate_ipc_endpoint_rights(&capability.id, &capability.rights, "capability", report);
+        }
 
         if !ids.contains(&capability.provider) {
             report.error(format!(
@@ -174,6 +185,22 @@ fn validate_services(manifest: &GenerationManifest, report: &mut ValidationRepor
                     "service {} requires {} with no rights",
                     service.id, requirement.capability
                 ));
+            }
+            for right in &requirement.rights {
+                if !is_valid_right(right) {
+                    report.error(format!(
+                        "service {} requires unsupported right {} on {}",
+                        service.id, right, requirement.capability
+                    ));
+                }
+            }
+            if capability.kind == "ipc-endpoint" {
+                validate_ipc_endpoint_requirement_rights(
+                    &service.id,
+                    &requirement.capability,
+                    &requirement.rights,
+                    report,
+                );
             }
 
             let available: BTreeSet<&str> = capability.rights.iter().map(String::as_str).collect();
@@ -226,6 +253,55 @@ fn validate_services(manifest: &GenerationManifest, report: &mut ValidationRepor
             }
         }
     }
+}
+
+fn validate_ipc_endpoint_rights(
+    capability_id: &str,
+    rights: &[String],
+    context: &str,
+    report: &mut ValidationReport,
+) {
+    for right in rights {
+        if right != "send" {
+            report.error(format!(
+                "{context} {capability_id} declares {right} authority on an ipc endpoint; ipc endpoint declarations are send-only"
+            ));
+        }
+    }
+}
+
+fn validate_ipc_endpoint_requirement_rights(
+    service_id: &str,
+    capability_id: &str,
+    rights: &[String],
+    report: &mut ValidationReport,
+) {
+    for right in rights {
+        if right != "send" {
+            report.error(format!(
+                "service {service_id} requires {right} authority on ipc endpoint {capability_id}; endpoint consumers may require send only"
+            ));
+        }
+    }
+}
+
+fn is_valid_right(right: &str) -> bool {
+    matches!(
+        right,
+        "read"
+            | "write"
+            | "send"
+            | "bind"
+            | "listen"
+            | "connect"
+            | "map"
+            | "execute"
+            | "control"
+            | "snapshot"
+            | "restore"
+            | "delegate"
+            | "revoke"
+    )
 }
 
 fn validate_state_volumes(

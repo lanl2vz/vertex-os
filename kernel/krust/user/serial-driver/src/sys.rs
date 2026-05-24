@@ -4,7 +4,9 @@ pub const STATUS_OK: u64 = 0;
 pub const STATUS_BAD_CAPABILITY: u64 = u64::MAX - 1;
 
 const SYS_EXIT: u64 = 2;
+const SYS_IPC_SEND: u64 = 3;
 const SYS_IPC_RECV: u64 = 4;
+const SYS_LOG_WRITE: u64 = 7;
 const SYS_IO_READ: u64 = 27;
 const SYS_IO_WRITE: u64 = 28;
 
@@ -17,8 +19,26 @@ pub fn ipc_recv(cap_slot: u64, buffer: &mut [u8]) -> u64 {
     )
 }
 
+pub fn ipc_send(cap_slot: u64, message: &[u8]) -> u64 {
+    syscall3(
+        SYS_IPC_SEND,
+        cap_slot,
+        message.as_ptr() as u64,
+        message.len() as u64,
+    )
+}
+
 pub fn io_read(cap_slot: u64, port: u64) -> u64 {
     syscall3(SYS_IO_READ, cap_slot, port, 0)
+}
+
+pub fn log(cap_slot: u64, message: &[u8]) -> u64 {
+    syscall3(
+        SYS_LOG_WRITE,
+        cap_slot,
+        message.as_ptr() as u64,
+        message.len() as u64,
+    )
 }
 
 pub fn io_write(cap_slot: u64, port: u64, value: u8) -> u64 {

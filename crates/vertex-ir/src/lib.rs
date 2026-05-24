@@ -73,6 +73,30 @@ mod tests {
     }
 
     #[test]
+    fn ipc_endpoint_consumer_cannot_require_receive() {
+        let mut manifest: GenerationManifest = serde_json::from_str(HELLO).unwrap();
+        let echo = manifest
+            .services
+            .iter_mut()
+            .find(|service| service.id == "svc:echo-server")
+            .expect("hello manifest should include echo service");
+        let log_requirement = echo
+            .requires
+            .iter_mut()
+            .find(|requirement| requirement.capability == "cap:log.sink")
+            .expect("echo should require the log sink");
+        log_requirement.rights = vec!["send".to_owned(), "receive".to_owned()];
+
+        let report = validate_manifest(&manifest);
+
+        assert!(report.errors.iter().any(|diagnostic| {
+            diagnostic
+                .message
+                .contains("requires receive authority on ipc endpoint cap:log.sink")
+        }));
+    }
+
+    #[test]
     fn why_explains_echo_log_authority() {
         let manifest: GenerationManifest = serde_json::from_str(HELLO).unwrap();
         let explanation = explain_authority(&manifest, "svc:echo-server", "cap:log.sink");

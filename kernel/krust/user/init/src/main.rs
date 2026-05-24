@@ -41,9 +41,10 @@ const READINESS_TIMEOUT_MS: u64 = 50;
 const M37_GENERATION_A: &[u8] = b"gen:switch-a-0001";
 const M37_GENERATION_B: &[u8] = b"gen:switch-b-0002";
 const M37_GENERATION_C_BAD: &[u8] = b"gen:switch-c-bad-0003";
-const M37_STORE_ENDPOINT: &[u8] = b"store-hello-text-api";
+const M37_STORE_ENDPOINT: &[u8] = b"store-hello-text-request";
 const M37_GENERATION_B_STORE_REQUEST: &[u8] = b"store:generation-b-manifest";
 const M37_GENERATION_B_STORE_RESPONSE: &[u8] = b"krustboot:gen:switch-b-0002";
+const M40_VERTEX_STORE_INIT_REPLY_SLOT: u64 = 6;
 const M38_PROCESS_NAME: &[u8] = b"vertex-inspect";
 const M38_INSPECT_CAP_SLOT: u64 = 0;
 const M38_MANIFEST_CAP_SLOT: u64 = 3;
@@ -445,8 +446,7 @@ fn transfer_endpoint_requirements(
 ) {
     let offset = requires_offset(boot_modules, process_index);
     let count = ref_count(manifest, offset);
-    let has_provided_endpoint =
-        ref_count(manifest, provides_offset(boot_modules, process_index)) > 0;
+    let provided_count = ref_count(manifest, provides_offset(boot_modules, process_index));
     let mut requirement_index = 0;
     while requirement_index < count {
         let endpoint_index = endpoint_requirement_value(manifest, offset, requirement_index);
@@ -456,7 +456,7 @@ fn transfer_endpoint_requirements(
             activation_failed(parent_generation);
         };
         let auth_slot = endpoint_auth_slot(endpoint_index);
-        let target_slot = endpoint_target_slot(has_provided_endpoint, requirement_index);
+        let target_slot = endpoint_target_slot(provided_count, requirement_index);
         log_derive(name, endpoint_index, manifest_rights);
         if sys::cap_derive(auth_slot, sys::CAP_DERIVED, sys_rights) != sys::STATUS_OK {
             log(b"vertex-init cap derive failed");
@@ -520,28 +520,22 @@ fn endpoint_auth_slot(endpoint_index: u16) -> u64 {
     sys::CAP_ENDPOINT_AUTH_BASE + (endpoint_index as u64 - 2)
 }
 
-fn endpoint_target_slot(has_provided_endpoint: bool, requirement_index: usize) -> u64 {
-    if !has_provided_endpoint && requirement_index == 0 {
+fn endpoint_target_slot(provided_count: usize, requirement_index: usize) -> u64 {
+    if provided_count == 0 && requirement_index == 0 {
         0
-    } else if has_provided_endpoint {
-        3 + requirement_index as u64
-    } else {
+    } else if provided_count == 0 {
         2 + requirement_index as u64
+    } else {
+        2 + provided_count as u64 + requirement_index as u64
     }
 }
 
 fn endpoint_rights_to_sys(rights: u16) -> Option<u64> {
-    let mut out = 0;
-    if rights & 1 != 0 {
-        out |= sys::RIGHT_SEND;
+    if rights == 1 {
+        Some(sys::RIGHT_SEND)
+    } else {
+        None
     }
-    if rights & 2 != 0 {
-        out |= sys::RIGHT_RECEIVE;
-    }
-    if out == 0 || rights & !3 != 0 {
-        return None;
-    }
-    Some(out)
 }
 
 fn start_service(name: &[u8], process_index: u64, parent_generation: &[u8]) {
@@ -700,13 +694,49 @@ fn fetch_generation_b_manifest(
         activation_failed(parent_generation);
     }
 
+    let Some(vertex_store_index) =
+        process_index_by_name(manifest, boot_modules, processes, b"vertex-store")
+    else {
+        log(b"vertex-init generation B store service missing");
+        activation_failed(parent_generation);
+    };
+    if sys::cap_transfer(
+        vertex_store_index as u64,
+        sys::CAP_CREATED_ENDPOINT,
+        M40_VERTEX_STORE_INIT_REPLY_SLOT,
+        sys::RIGHT_SEND,
+    ) != sys::STATUS_OK
+    {
+        log(b"vertex-init generation B reply cap transfer failed");
+        activation_failed(parent_generation);
+    }
+    if sys::cap_derive(
+        sys::CAP_CREATED_ENDPOINT,
+        sys::CAP_DERIVED,
+        sys::RIGHT_RECEIVE,
+    ) != sys::STATUS_OK
+    {
+        log(b"vertex-init generation B reply cap attenuate failed");
+        activation_failed(parent_generation);
+    }
+    if sys::cap_drop(sys::CAP_CREATED_ENDPOINT) != sys::STATUS_OK {
+        log(b"vertex-init generation B full reply cap drop failed");
+        activation_failed(parent_generation);
+    }
+    if sys::cap_move(sys::CAP_DERIVED, sys::CAP_CREATED_ENDPOINT) != sys::STATUS_OK {
+        log(b"vertex-init generation B receive-only reply cap move failed");
+        activation_failed(parent_generation);
+    }
+    log(b"vertex-init attenuates private store reply endpoint to receive-only");
+    log(b"vertex-init uses private store reply endpoint");
+
     if sys::ipc_send(store_cap, M37_GENERATION_B_STORE_REQUEST) != sys::STATUS_OK {
         log(b"vertex-init generation B manifest request failed");
         activation_failed(parent_generation);
     }
 
     let mut buffer = [0u8; 64];
-    let received = sys::ipc_recv(store_cap, &mut buffer);
+    let received = sys::ipc_recv(sys::CAP_CREATED_ENDPOINT, &mut buffer);
     if received == sys::STATUS_BAD_CAPABILITY || received == sys::STATUS_BAD_BUFFER {
         log(b"vertex-init generation B manifest read failed");
         activation_failed(parent_generation);
@@ -724,6 +754,22 @@ fn fetch_generation_b_manifest(
     }
 
     log(b"vertex-init validates generation B");
+}
+
+fn process_index_by_name(
+    manifest: &[u8],
+    boot_modules: u16,
+    processes: u16,
+    name: &[u8],
+) -> Option<usize> {
+    let mut index = 0;
+    while index < processes as usize {
+        if bytes_eq(process_name(manifest, boot_modules, index), name) {
+            return Some(index);
+        }
+        index += 1;
+    }
+    None
 }
 
 fn endpoint_index_by_name(

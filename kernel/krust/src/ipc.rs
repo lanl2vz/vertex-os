@@ -11,6 +11,7 @@ use crate::{
 pub const BOOT_ENDPOINT_ID: u64 = 1;
 
 const MAX_MESSAGE_BYTES: usize = 128;
+const ENDPOINT_QUEUE_CAPACITY: usize = 4;
 const MAX_BOOT_READ_BYTES: usize = 16 * 1024;
 const MAX_OBJECTS: usize = 64;
 const MAX_PROCESSES: usize = 16;
@@ -353,13 +354,18 @@ struct ProcessQuota {
 }
 
 #[derive(Clone, Copy)]
+struct IpcMessage {
+    sender: ProcessId,
+    len: usize,
+    bytes: [u8; MAX_MESSAGE_BYTES],
+}
+
+#[derive(Clone, Copy)]
 struct IpcEndpoint {
     id: KernelObjectId,
     name: &'static str,
-    message_ready: bool,
-    message_sender: ProcessId,
-    message_len: usize,
-    message: [u8; MAX_MESSAGE_BYTES],
+    queue: [IpcMessage; ENDPOINT_QUEUE_CAPACITY],
+    queue_len: usize,
 }
 
 #[derive(Clone, Copy)]
@@ -655,12 +661,176 @@ impl IpcEndpoint {
         Self {
             id,
             name,
-            message_ready: false,
-            message_sender: ProcessId::empty(),
-            message_len: 0,
-            message: [0; MAX_MESSAGE_BYTES],
+            queue: [IpcMessage::empty(); ENDPOINT_QUEUE_CAPACITY],
+            queue_len: 0,
         }
     }
+
+    fn enqueue(
+        &mut self,
+        sender: ProcessId,
+        bytes: &[u8; MAX_MESSAGE_BYTES],
+        len: usize,
+    ) -> Result<(), IpcError> {
+        if self.queue_len == ENDPOINT_QUEUE_CAPACITY {
+            return Err(IpcError::MessageTooLarge);
+        }
+
+        let mut message = IpcMessage::empty();
+        message.sender = sender;
+        message.len = len;
+        message.bytes[..len].copy_from_slice(&bytes[..len]);
+        self.queue[self.queue_len] = message;
+        self.queue_len += 1;
+        Ok(())
+    }
+
+    fn has_message_for(&self, receiver: ProcessId) -> bool {
+        let mut index = 0;
+        while index < self.queue_len {
+            if self.queue[index].sender != receiver {
+                return true;
+            }
+            index += 1;
+        }
+        false
+    }
+
+    fn dequeue_for(&mut self, receiver: ProcessId) -> Option<IpcMessage> {
+        let mut index = 0;
+        while index < self.queue_len {
+            if self.queue[index].sender != receiver {
+                let message = self.queue[index];
+                while index + 1 < self.queue_len {
+                    self.queue[index] = self.queue[index + 1];
+                    index += 1;
+                }
+                self.queue_len -= 1;
+                self.queue[self.queue_len] = IpcMessage::empty();
+                return Some(message);
+            }
+            index += 1;
+        }
+        None
+    }
+}
+
+impl IpcMessage {
+    const fn empty() -> Self {
+        Self {
+            sender: ProcessId::empty(),
+            len: 0,
+            bytes: [0; MAX_MESSAGE_BYTES],
+        }
+    }
+}
+
+pub fn run_fifo_regression() {
+    let provider = ProcessId::new(1);
+    let client_a = ProcessId::new(2);
+    let client_b = ProcessId::new(3);
+    let mut endpoint = IpcEndpoint::new(KernelObjectId(0xf100), "fifo-regression");
+    let mut message = [0u8; MAX_MESSAGE_BYTES];
+
+    message[0] = b'a';
+    if endpoint.enqueue(client_a, &message, 1).is_err() {
+        fifo_regression_failed("enqueue a");
+        return;
+    }
+    message[0] = b'b';
+    if endpoint.enqueue(client_b, &message, 1).is_err() {
+        fifo_regression_failed("enqueue b");
+        return;
+    }
+    if endpoint
+        .dequeue_for(provider)
+        .map(|queued| queued.len == 1 && queued.bytes[0] == b'a')
+        != Some(true)
+    {
+        fifo_regression_failed("fifo first");
+        return;
+    }
+    if endpoint
+        .dequeue_for(provider)
+        .map(|queued| queued.len == 1 && queued.bytes[0] == b'b')
+        != Some(true)
+    {
+        fifo_regression_failed("fifo second");
+        return;
+    }
+    serial::write_str("IPC FIFO regression: queued sends preserve FIFO order\n");
+
+    let mut full_endpoint = IpcEndpoint::new(KernelObjectId(0xf101), "fifo-full-regression");
+    let mut index = 0;
+    while index < ENDPOINT_QUEUE_CAPACITY {
+        message[0] = b'0' + index as u8;
+        if full_endpoint.enqueue(client_a, &message, 1).is_err() {
+            fifo_regression_failed("fill queue");
+            return;
+        }
+        index += 1;
+    }
+    if !matches!(
+        full_endpoint.enqueue(client_b, &message, 1),
+        Err(IpcError::MessageTooLarge)
+    ) {
+        fifo_regression_failed("queue full");
+        return;
+    }
+    serial::write_str("IPC FIFO regression: queue-full send rejected\n");
+
+    let mut receiver_endpoint =
+        IpcEndpoint::new(KernelObjectId(0xf102), "fifo-receiver-regression");
+    message[0] = b'a';
+    if receiver_endpoint.enqueue(client_a, &message, 1).is_err() {
+        fifo_regression_failed("receiver enqueue a");
+        return;
+    }
+    if receiver_endpoint.has_message_for(client_a) {
+        fifo_regression_failed("self message visible");
+        return;
+    }
+    if !receiver_endpoint.has_message_for(client_b) {
+        fifo_regression_failed("other receiver hidden");
+        return;
+    }
+    message[0] = b'b';
+    if receiver_endpoint.enqueue(client_b, &message, 1).is_err() {
+        fifo_regression_failed("receiver enqueue b");
+        return;
+    }
+    if !receiver_endpoint.has_message_for(client_a) || !receiver_endpoint.has_message_for(client_b)
+    {
+        fifo_regression_failed("blocked receiver eligibility");
+        return;
+    }
+    if receiver_endpoint
+        .dequeue_for(client_a)
+        .map(|queued| queued.len == 1 && queued.bytes[0] == b'b')
+        != Some(true)
+    {
+        fifo_regression_failed("receiver a eligible message");
+        return;
+    }
+    if receiver_endpoint
+        .dequeue_for(client_b)
+        .map(|queued| queued.len == 1 && queued.bytes[0] == b'a')
+        != Some(true)
+    {
+        fifo_regression_failed("receiver b eligible message");
+        return;
+    }
+    serial::write_str(
+        "IPC FIFO regression: receiver-specific dequeue preserves eligible ordering\n",
+    );
+    serial::write_str("IPC FIFO regression: multiple blocked receivers match eligible messages\n");
+    serial::write_str("IPC FIFO regression ok\n");
+}
+
+fn fifo_regression_failed(reason: &str) {
+    serial::write_str("IPC FIFO regression failed: ");
+    serial::write_str(reason);
+    serial::write_str("\n");
 }
 
 impl BootModuleObject {
@@ -1033,6 +1203,19 @@ impl ObjectTable {
             Some(KernelObject::IpcEndpoint(endpoint)) => Some(endpoint),
             _ => None,
         }
+    }
+
+    fn get_endpoint(&self, id: KernelObjectId) -> Option<IpcEndpoint> {
+        let mut index = 0;
+        while index < self.count {
+            if let Some(KernelObject::IpcEndpoint(endpoint)) = self.objects[index]
+                && endpoint.id == id
+            {
+                return Some(endpoint);
+            }
+            index += 1;
+        }
+        None
     }
 
     fn get_boot_module(&self, id: KernelObjectId) -> Option<BootModuleObject> {
@@ -2137,10 +2320,7 @@ pub fn send(cap_slot: u64, source: *const u8, len: usize) -> Result<(), IpcError
         .get_endpoint_mut(endpoint_id)
         .ok_or(IpcError::BadCapability)?;
 
-    endpoint.message[..len].copy_from_slice(&message[..len]);
-    endpoint.message_len = len;
-    endpoint.message_sender = sender;
-    endpoint.message_ready = true;
+    endpoint.enqueue(sender, &message, len)?;
 
     serial::write_str("IPC send accepted: endpoint=");
     serial::write_u64_dec(endpoint.id.raw());
@@ -2200,50 +2380,33 @@ fn receive_with_timeout(
     )
     .map_err(|_| IpcError::InvalidUserBuffer)?;
 
-    let mut message = [0u8; MAX_MESSAGE_BYTES];
     let current_pid = runtime()
         .processes
         .current_process()
         .map(|process| process.pid)
         .unwrap_or_else(ProcessId::empty);
-    let message_ready = {
+    let queued_message = {
         let endpoint = runtime()
             .objects
             .get_endpoint_mut(endpoint_id)
             .ok_or(IpcError::BadCapability)?;
-        endpoint.message_ready && endpoint.message_sender != current_pid
+        endpoint.dequeue_for(current_pid)
     };
 
-    if !message_ready {
+    let Some(message) = queued_message else {
         if block_current_on_endpoint(endpoint_id, destination as u64, max_len, timeout_tsc, frame) {
             return Ok(());
         }
 
         return Err(IpcError::Empty);
-    }
-
-    let copy_len = {
-        let endpoint = runtime()
-            .objects
-            .get_endpoint_mut(endpoint_id)
-            .ok_or(IpcError::BadCapability)?;
-
-        let copy_len = min(endpoint.message_len, max_len);
-        message[..copy_len].copy_from_slice(&endpoint.message[..copy_len]);
-        copy_len
     };
 
-    usercopy::copy_to_user(UserPtr::new(destination as u64), &message[..copy_len])
+    let copy_len = min(message.len, max_len);
+    usercopy::copy_to_user(UserPtr::new(destination as u64), &message.bytes[..copy_len])
         .map_err(|_| IpcError::InvalidUserBuffer)?;
 
-    let endpoint = runtime()
-        .objects
-        .get_endpoint_mut(endpoint_id)
-        .ok_or(IpcError::BadCapability)?;
-    endpoint.message_ready = false;
-
     serial::write_str("IPC receive delivered: endpoint=");
-    serial::write_u64_dec(endpoint.id.raw());
+    serial::write_u64_dec(endpoint_id.raw());
     serial::write_str(" bytes=");
     serial::write_u64_dec(copy_len as u64);
     serial::write_str("\n");
@@ -3141,26 +3304,11 @@ fn block_current_on_endpoint(
 fn wake_blocked_receiver(endpoint: KernelObjectId) {
     wake_timed_processes(read_tsc());
 
-    let mut message = [0u8; MAX_MESSAGE_BYTES];
-    let (message_len, message_sender) = {
-        let runtime = runtime();
-        let Some(endpoint_object) = runtime.objects.get_endpoint_mut(endpoint) else {
-            return;
-        };
-        if !endpoint_object.message_ready {
-            return;
-        }
-
-        let message_len = endpoint_object.message_len;
-        message[..message_len].copy_from_slice(&endpoint_object.message[..message_len]);
-        (message_len, endpoint_object.message_sender)
-    };
-
-    let Some(waiter_index) = blocked_receiver_index(endpoint, message_sender) else {
+    let Some(waiter_index) = blocked_receiver_index(endpoint) else {
         return;
     };
 
-    let (name, receiver_cr3, destination, max_len, current_cr3) = {
+    let (name, receiver_pid, receiver_cr3, destination, max_len, current_cr3) = {
         let runtime = runtime();
         let Some(waiter) = runtime.processes.processes[waiter_index] else {
             return;
@@ -3182,6 +3330,7 @@ fn wake_blocked_receiver(endpoint: KernelObjectId) {
 
         (
             waiter.name,
+            waiter.pid,
             waiter.context.cr3,
             destination,
             max_len,
@@ -3189,10 +3338,20 @@ fn wake_blocked_receiver(endpoint: KernelObjectId) {
         )
     };
 
-    let copy_len = min(message_len, max_len);
+    let Some(message) = ({
+        let runtime = runtime();
+        let Some(endpoint_object) = runtime.objects.get_endpoint_mut(endpoint) else {
+            return;
+        };
+        endpoint_object.dequeue_for(receiver_pid)
+    }) else {
+        return;
+    };
+
+    let copy_len = min(message.len, max_len);
     let copy_result = unsafe {
         gdt::switch_address_space(receiver_cr3);
-        let result = usercopy::copy_to_user(UserPtr::new(destination), &message[..copy_len]);
+        let result = usercopy::copy_to_user(UserPtr::new(destination), &message.bytes[..copy_len]);
         gdt::switch_address_space(current_cr3);
         result
     };
@@ -3206,11 +3365,6 @@ fn wake_blocked_receiver(endpoint: KernelObjectId) {
                 };
                 waiter.saved_frame.rax = copy_len as u64;
                 waiter.state = ProcessState::Ready;
-            }
-
-            let runtime = runtime();
-            if let Some(endpoint_object) = runtime.objects.get_endpoint_mut(endpoint) {
-                endpoint_object.message_ready = false;
             }
 
             serial::write_str("IPC receive delivered: endpoint=");
@@ -3241,7 +3395,7 @@ fn wake_blocked_receiver(endpoint: KernelObjectId) {
     }
 }
 
-fn blocked_receiver_index(endpoint: KernelObjectId, sender: ProcessId) -> Option<usize> {
+fn blocked_receiver_index(endpoint: KernelObjectId) -> Option<usize> {
     let runtime = runtime();
     let mut index = 0;
 
@@ -3252,7 +3406,11 @@ fn blocked_receiver_index(endpoint: KernelObjectId, sender: ProcessId) -> Option
                 ..
             } = process.state
             && waiting_endpoint == endpoint
-            && process.pid != sender
+            && runtime
+                .objects
+                .get_endpoint(endpoint)
+                .map(|endpoint_object| endpoint_object.has_message_for(process.pid))
+                .unwrap_or(false)
         {
             return Some(index);
         }

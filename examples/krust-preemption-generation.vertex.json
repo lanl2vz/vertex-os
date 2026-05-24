@@ -139,7 +139,7 @@
       "provider": "svc:logd",
       "rights": ["send"],
       "properties": {
-        "protocol": "vertex.log.v0"
+        "protocol": "vertex.log.v1"
       }
     },
     {
@@ -158,7 +158,7 @@
       "provider": "svc:serial-driver",
       "rights": ["send"],
       "properties": {
-        "protocol": "vertex.serial.v0"
+        "protocol": "vertex.serial.v1"
       }
     }
   ],
@@ -227,7 +227,10 @@
         "memoryMaxBytes": 33554432,
         "cpuShares": 50
       },
-      "health": null,
+      "health": {
+        "kind": "ipc-ping",
+        "target": "cap:serial.console"
+      },
       "lifecycle": {
         "startAfter": ["svc:vertex-supervisor"],
         "stopBefore": []

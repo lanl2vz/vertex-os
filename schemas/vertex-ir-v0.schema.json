@@ -173,6 +173,26 @@
       "type": "object",
       "required": ["id", "kind", "provider", "rights", "properties"],
       "additionalProperties": true,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": { "const": "ipc-endpoint" }
+            },
+            "required": ["kind"]
+          },
+          "then": {
+            "properties": {
+              "rights": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "items": { "const": "send" }
+              }
+            }
+          }
+        }
+      ],
       "properties": {
         "id": { "$ref": "#/$defs/id" },
         "kind": {
@@ -192,13 +212,12 @@
         "rights": {
           "type": "array",
           "minItems": 1,
+          "uniqueItems": true,
           "items": {
             "enum": [
               "read",
               "write",
               "send",
-              "receive",
-              "sendrecv",
               "bind",
               "listen",
               "connect",
@@ -292,6 +311,10 @@
         "rights": {
           "type": "array",
           "minItems": 1,
+          "uniqueItems": true,
+          "not": {
+            "contains": { "const": "receive" }
+          },
           "items": { "type": "string" }
         }
       }
@@ -366,6 +389,7 @@
         "rights": {
           "type": "array",
           "minItems": 1,
+          "maxItems": 1,
           "items": { "enum": ["send", "receive"] }
         }
       }

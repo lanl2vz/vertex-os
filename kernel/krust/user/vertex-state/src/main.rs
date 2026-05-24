@@ -5,13 +5,19 @@ mod sys;
 
 use core::panic::PanicInfo;
 
-const CAP_STATE_API: u64 = 0;
+const CAP_STATE_REQUEST: u64 = 0;
 const CAP_SERIAL_LOG: u64 = 1;
-const CAP_STATE_BACKEND: u64 = 3;
+const CAP_READINESS: u64 = 2;
+const CAP_READER_REPLY: u64 = 3;
+const CAP_STATE_BACKEND: u64 = 4;
+const PROTOCOL_HEALTH_V0: u16 = 2;
+const MESSAGE_READY: u16 = 1;
+const ENVELOPE_LEN: usize = 16;
 
 #[unsafe(link_section = ".text._start")]
 #[unsafe(no_mangle)]
 pub extern "C" fn _start() -> ! {
+    send_ready();
     log(b"vertex-state ready");
 
     let mut request = [0u8; 16];
@@ -20,7 +26,7 @@ pub extern "C" fn _start() -> ! {
     let mut wrote_value = false;
     let mut pending_read = false;
     loop {
-        let received = sys::ipc_recv(CAP_STATE_API, &mut request);
+        let received = sys::ipc_recv(CAP_STATE_REQUEST, &mut request);
         if received == 1 && request[0] == b'R' {
             if wrote_value {
                 let read_len = read_snapshot(&mut value);
@@ -53,13 +59,13 @@ pub extern "C" fn _start() -> ! {
         sys::exit(1);
     }
 
-    let received = sys::ipc_recv(CAP_STATE_API, &mut request);
+    let received = sys::ipc_recv(CAP_STATE_REQUEST, &mut request);
     if received < 2 || received > request.len() as u64 || request[0] != b'W' {
         log(b"vertex-state write-denial request invalid");
         sys::exit(1);
     }
     log(b"reader-service write denied");
-    if sys::ipc_send(CAP_STATE_API, b"DENIED") != sys::STATUS_OK {
+    if sys::ipc_send(CAP_READER_REPLY, b"DENIED") != sys::STATUS_OK {
         log(b"vertex-state denial response failed");
         sys::exit(1);
     }
@@ -85,7 +91,7 @@ fn read_snapshot(value: &mut [u8; 16]) -> usize {
 }
 
 fn send_read_response(value: &[u8]) {
-    if sys::ipc_send(CAP_STATE_API, value) != sys::STATUS_OK {
+    if sys::ipc_send(CAP_READER_REPLY, value) != sys::STATUS_OK {
         log(b"vertex-state read response failed");
         sys::exit(1);
     }
@@ -94,6 +100,51 @@ fn send_read_response(value: &[u8]) {
 fn log(message: &[u8]) {
     if sys::log(CAP_SERIAL_LOG, message) != sys::STATUS_OK {
         sys::exit(1);
+    }
+}
+
+fn send_ready() {
+    let ready = ready_message(b"vertex-state");
+    if sys::ipc_send(CAP_READINESS, &ready) != sys::STATUS_OK {
+        log(b"vertex-state ready send failed");
+        sys::exit(1);
+    }
+}
+
+fn ready_message(service: &[u8]) -> [u8; 32] {
+    let mut message = [0u8; 32];
+    write_u16(&mut message, 0, PROTOCOL_HEALTH_V0);
+    write_u16(&mut message, 2, MESSAGE_READY);
+    write_u32(&mut message, 4, service.len() as u32);
+    write_u64(&mut message, 8, 1);
+    let mut index = 0;
+    while index < service.len() && ENVELOPE_LEN + index < message.len() {
+        message[ENVELOPE_LEN + index] = service[index];
+        index += 1;
+    }
+    message
+}
+
+fn write_u16(buffer: &mut [u8], offset: usize, value: u16) {
+    let bytes = value.to_le_bytes();
+    buffer[offset] = bytes[0];
+    buffer[offset + 1] = bytes[1];
+}
+
+fn write_u32(buffer: &mut [u8], offset: usize, value: u32) {
+    let bytes = value.to_le_bytes();
+    buffer[offset] = bytes[0];
+    buffer[offset + 1] = bytes[1];
+    buffer[offset + 2] = bytes[2];
+    buffer[offset + 3] = bytes[3];
+}
+
+fn write_u64(buffer: &mut [u8], offset: usize, value: u64) {
+    let bytes = value.to_le_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        buffer[offset + index] = bytes[index];
+        index += 1;
     }
 }
 

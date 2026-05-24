@@ -28,12 +28,12 @@ vertex-os/
     netstack/            Demo hosted network capability provider
     echo-server/         Demo service consuming log and network capabilities
   kernel/
-    krust/               Bootable Krust kernel prototype, currently covering M14-M38 native graph activation and substrate hardening
+    krust/               Bootable Krust kernel prototype, currently covering M14-M40 native graph activation, substrate hardening, pinned tooling, and ABI v1 IPC
   lang/
     vertex-lang/         Planned typed system-definition language
 ```
 
-## Krust M14-M38
+## Krust M14-M40
 
 The current native activation path lives in `kernel/krust`. It is isolated
 from the hosted Cargo workspace and boots a Limine ISO under QEMU. The ISO
@@ -50,25 +50,26 @@ and supervises process exits. The QEMU test path now proves Manifest v1 bounds
 checks, capability provenance/revocation, typed arena allocation, resource
 quotas, PIT timer preemption, user page-fault containment, explicit I/O
 capabilities, user-space serial and block drivers, native store/state services,
-native generation switching, native runtime introspection, and a real restart
-of `flaky-service`, not
-init-owned transcript logging.
+native generation switching, native runtime introspection, exact M39 toolchain
+checks, M40 directed request/reply IPC, and a real restart of `flaky-service`,
+not init-owned transcript logging.
 
 ```sh
 scripts/krust-smoke.sh
 ```
 
 The clean-clone release gate validates the hosted build, checks the Krust
-toolchain, rebuilds the ISO from clean kernel artifacts, and runs the M14-M38
-QEMU test matrix:
+toolchain, rebuilds the ISO from clean kernel artifacts, and runs the M14-M40
+gate with the M14-M40 QEMU test matrix:
 
 ```sh
 scripts/krust-release-gate.sh
 ```
 
-See [docs/krust-milestones.md](docs/krust-milestones.md) for M0 through M38
-completion status and the planned M39-M40 substrate-hardening roadmap,
-and [docs/krust-abi-v0.md](docs/krust-abi-v0.md) for the current syscall,
+See [docs/krust-milestones.md](docs/krust-milestones.md) for M0 through M40
+completion status,
+[docs/krust-toolchain.md](docs/krust-toolchain.md) for the pinned M39 toolchain,
+and [docs/krust-abi-v1.md](docs/krust-abi-v1.md) for the current syscall,
 capability, process, and IPC ABI.
 
 The current Krust milestone status and deferred work are tracked in
@@ -79,7 +80,7 @@ The current Krust milestone status and deferred work are tracked in
 Build and validate the example generation:
 
 ```sh
-cargo build --offline
+cargo build --locked --offline
 target/debug/vertexctl validate examples/hello-generation.vertex.json
 target/debug/vertexctl validate examples/hello-stateful-generation.vertex.json
 target/debug/vertexctl validate examples/deny-log-generation.vertex.json

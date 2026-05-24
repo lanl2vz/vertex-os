@@ -288,8 +288,6 @@ Common rights:
 read
 write
 send
-receive
-sendrecv
 bind
 listen
 connect
@@ -311,12 +309,16 @@ Example:
   "provider": "svc:logd",
   "rights": ["send"],
   "properties": {
-    "protocol": "vertex.log.v0"
+    "protocol": "vertex.log.v1"
   }
 }
 ```
 
 Important rule: a capability declaration describes possible authority. A service receives authority only when it has a matching `requires` entry and the activation policy grants it.
+
+Native `ipc-endpoint` declarations and consumer requirements are send-only.
+Receive authority is not requested by consumers; it is derived from the
+provider service's `provides` list during native boot compilation.
 
 ## Services
 

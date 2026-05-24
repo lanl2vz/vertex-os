@@ -86,7 +86,7 @@ fn write_manifest(dir: &Path) -> PathBuf {
       "id": "cap:test.api",
       "kind": "ipc-endpoint",
       "provider": "svc:test-service",
-      "rights": ["sendrecv"],
+      "rights": ["send"],
       "properties": {{"protocol": "test"}}
     }}
   ],
@@ -212,7 +212,7 @@ fn write_negative_grant_manifest(dir: &Path) -> PathBuf {
       "kind": "ipc-endpoint",
       "provider": "svc:logd",
       "rights": ["send"],
-      "properties": {{"protocol": "vertex.log.v0"}}
+      "properties": {{"protocol": "vertex.log.v1"}}
     }}
   ],
   "services": [

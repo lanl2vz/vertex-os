@@ -51,8 +51,8 @@ KrustBoot manifest generation: gen:hello-0001
 KrustBoot Manifest v1 records: 9
 KrustBoot boot modules: 13
 KrustBoot processes: 13
-KrustBoot endpoints: 7
-KrustBoot grants: 32
+KrustBoot endpoints: 10
+KrustBoot grants: 42
 KrustBoot store objects: 0
 KrustBoot state volumes: 1
 KrustBoot network ports: 1
@@ -90,22 +90,29 @@ endpoint[0] name=serial-log
 endpoint[1] name=readiness
 endpoint[2] name=serial-console
 endpoint[3] name=log-sink
-endpoint[4] name=block-io
-endpoint[5] name=store-hello-text-api
-endpoint[6] name=state-counter-api
+endpoint[4] name=block-read-request
+endpoint[5] name=vertex-store-block-reply
+endpoint[6] name=store-hello-text-request
+endpoint[7] name=model-reader-store-reply
+endpoint[8] name=state-counter-request
+endpoint[9] name=state-reader-state-reply
 grant[0] process=vertex-init cap[1] endpoint=serial-log rights=send
 grant[1] process=vertex-init cap[3] endpoint=readiness rights=receive
-grant[15] process=serial-driver cap[0] endpoint=serial-console rights=send|receive
-grant[19] process=block-driver cap[0] endpoint=block-io rights=send|receive
-grant[21] process=vertex-store cap[0] endpoint=store-hello-text-api rights=send|receive
-grant[23] process=vertex-state cap[0] endpoint=state-counter-api rights=send|receive
-grant[25] process=serial-driver cap[3] io-port=cap:io.com1 rights=read|write
-grant[26] process=block-driver cap[3] mmio-region=cap:mmio.virtio-blk0 rights=map
-grant[27] process=block-driver cap[4] interrupt-line=cap:irq.virtio-blk0 rights=listen
-grant[28] process=block-driver cap[5] dma-region=cap:dma.virtio-blk0 rights=read|write|map
-grant[29] process=vertex-state cap[3] state-volume=state:counter rights=read|write|snapshot|restore
-grant[30] process=echo cap[3] network-port=cap:net.tcp.8080 rights=listen
-grant[31] process=timer-service cap[0] timer=monotonic-timer rights=control
+grant[19] process=serial-driver cap[0] endpoint=serial-console rights=receive
+grant[21] process=logd cap[0] endpoint=log-sink rights=receive
+grant[23] process=block-driver cap[0] endpoint=block-read-request rights=receive
+grant[25] process=vertex-store cap[3] endpoint=vertex-store-block-reply rights=receive
+grant[27] process=vertex-store cap[0] endpoint=store-hello-text-request rights=receive
+grant[29] process=model-reader cap[0] endpoint=model-reader-store-reply rights=receive
+grant[31] process=vertex-state cap[0] endpoint=state-counter-request rights=receive
+grant[33] process=reader-service cap[0] endpoint=state-reader-state-reply rights=receive
+grant[35] process=serial-driver cap[3] io-port=cap:io.com1 rights=read|write
+grant[36] process=block-driver cap[4] mmio-region=cap:mmio.virtio-blk0 rights=map
+grant[37] process=block-driver cap[5] interrupt-line=cap:irq.virtio-blk0 rights=listen
+grant[38] process=block-driver cap[6] dma-region=cap:dma.virtio-blk0 rights=read|write|map
+grant[39] process=vertex-state cap[4] state-volume=state:counter rights=read|write|snapshot|restore
+grant[40] process=echo cap[3] network-port=cap:net.tcp.8080 rights=listen
+grant[41] process=timer-service cap[0] timer=monotonic-timer rights=control
 state_volume[0] id=state:counter
 network_port[0] id=cap:net.tcp.8080
 io_port[0] id=cap:io.com1 base=0x00000000000003f8 length=0x0000000000000008
@@ -121,16 +128,24 @@ Typed process arena created 32 processes
 Typed arena free and reuse ok
 Typed arena allocation failure returned controlled error
 Typed object arenas no silent overwrite ok
+IPC FIFO regression: queued sends preserve FIFO order
+IPC FIFO regression: queue-full send rejected
+IPC FIFO regression: receiver-specific dequeue preserves eligible ordering
+IPC FIFO regression: multiple blocked receivers match eligible messages
+IPC FIFO regression ok
 IDT initialized: #UD #GP #PF
 Process table entries: 13
-Endpoint table entries: 7
+Endpoint table entries: 10
 endpoint[0] id=1 name=serial-log
 endpoint[1] id=2 name=readiness
 endpoint[2] id=3 name=serial-console
 endpoint[3] id=4 name=log-sink
-endpoint[4] id=5 name=block-io
-endpoint[5] id=6 name=store-hello-text-api
-endpoint[6] id=7 name=state-counter-api
+endpoint[4] id=5 name=block-read-request
+endpoint[5] id=6 name=vertex-store-block-reply
+endpoint[6] id=7 name=store-hello-text-request
+endpoint[7] id=8 name=model-reader-store-reply
+endpoint[8] id=9 name=state-counter-request
+endpoint[9] id=10 name=state-reader-state-reply
 process[0] id=1 name=vertex-init state=running
 process[1] id=2 name=serial-driver state=declared
 process[2] id=3 name=logd state=declared
@@ -148,17 +163,25 @@ proc=vertex-init cap[0] boot-module=krustboot-manifest rights=read
 proc=vertex-init cap[1] endpoint=serial-log rights=send
 proc=vertex-init cap[2] process-control=process-control rights=control|allocate|delegate|revoke|inspect
 proc=vertex-init cap[3] endpoint=readiness rights=receive
-proc=vertex-init cap[4] endpoint=serial-console rights=send|receive
-proc=vertex-init cap[5] endpoint=log-sink rights=send|receive
-proc=vertex-init cap[6] endpoint=block-io rights=send|receive
-proc=vertex-init cap[7] endpoint=store-hello-text-api rights=send|receive
-proc=vertex-init cap[8] endpoint=state-counter-api rights=send|receive
+proc=vertex-init cap[4] endpoint=serial-console rights=send
+proc=vertex-init cap[5] endpoint=log-sink rights=send
+proc=vertex-init cap[6] endpoint=block-read-request rights=send
+proc=vertex-init cap[7] endpoint=vertex-store-block-reply rights=send
+proc=vertex-init cap[8] endpoint=store-hello-text-request rights=send
+proc=vertex-init cap[9] endpoint=model-reader-store-reply rights=send
+proc=vertex-init cap[10] endpoint=state-counter-request rights=send
+proc=vertex-init cap[11] endpoint=state-reader-state-reply rights=send
 proc=serial-driver cap[3] io-port=cap:io.com1 rights=read|write
-proc=block-driver cap[3] mmio-region=cap:mmio.virtio-blk0 rights=map
-proc=block-driver cap[4] interrupt-line=cap:irq.virtio-blk0 rights=listen
-proc=block-driver cap[5] dma-region=cap:dma.virtio-blk0 base=0x0000000000000000 length=0x0000000000001000 rights=read|write|map
-proc=vertex-store cap[0] endpoint=store-hello-text-api rights=send|receive
-proc=vertex-state cap[3] state-volume=state:counter rights=read|write|snapshot|restore
+proc=block-driver cap[0] endpoint=block-read-request rights=receive
+proc=block-driver cap[4] mmio-region=cap:mmio.virtio-blk0 rights=map
+proc=block-driver cap[5] interrupt-line=cap:irq.virtio-blk0 rights=listen
+proc=block-driver cap[6] dma-region=cap:dma.virtio-blk0 base=0x0000000000000000 length=0x0000000000001000 rights=read|write|map
+proc=vertex-store cap[0] endpoint=store-hello-text-request rights=receive
+proc=vertex-store cap[3] endpoint=vertex-store-block-reply rights=receive
+proc=vertex-state cap[0] endpoint=state-counter-request rights=receive
+proc=vertex-state cap[4] state-volume=state:counter rights=read|write|snapshot|restore
+proc=model-reader cap[0] endpoint=model-reader-store-reply rights=receive
+proc=reader-service cap[0] endpoint=state-reader-state-reply rights=receive
 proc=echo cap[3] network-port=cap:net.tcp.8080 rights=listen
 proc=netstack cap[1] endpoint=serial-log rights=send
 proc=echo cap[1] endpoint=serial-log rights=send
@@ -174,8 +197,8 @@ Boot generation: gen:hello-0001
 vertex-init manifest generation: gen:hello-0001
 vertex-init boot modules: 13
 vertex-init processes: 13
-vertex-init endpoints: 7
-vertex-init grants: 32
+vertex-init endpoints: 10
+vertex-init grants: 42
 vertex-init network ports: 1
 vertex-init store objects: 0
 vertex-init state volumes: 1
@@ -202,6 +225,7 @@ vertex-init activation plan:
   12. flaky-service
 vertex-init starting service: serial-driver
 Krust process start accepted: proc=vertex-init target=serial-driver
+vertex-init observed ready: serial-driver
 vertex-init starting service: logd
 Krust process start accepted: proc=vertex-init target=logd
 logd ready
@@ -210,11 +234,22 @@ vertex-init starting service: netstack
 Krust process start accepted: proc=vertex-init target=netstack
 vertex-init starting service: block-driver
 Krust process start accepted: proc=vertex-init target=block-driver
+vertex-init observed ready: block-driver
 vertex-init starting service: vertex-store
 Krust process start accepted: proc=vertex-init target=vertex-store
+vertex-init observed ready: vertex-store
 vertex-init starting service: vertex-state
 Krust process start accepted: proc=vertex-init target=vertex-state
+vertex-init observed ready: vertex-state
+vertex-init derives endpoint cap for logd from endpoint[2] rights=send
+vertex-init derives endpoint cap for block-driver from endpoint[5] rights=send
+vertex-init derives endpoint cap for vertex-store from endpoint[4] rights=send
+vertex-init derives endpoint cap for vertex-store from endpoint[7] rights=send
+vertex-init derives endpoint cap for vertex-state from endpoint[9] rights=send
 vertex-init derives endpoint cap for echo from endpoint[3] rights=send
+vertex-init derives endpoint cap for model-reader from endpoint[6] rights=send
+vertex-init derives endpoint cap for counter-service from endpoint[8] rights=send
+vertex-init derives endpoint cap for reader-service from endpoint[8] rights=send
 Capability inspect: proc=vertex-init
 Capability transfer accepted: proc=vertex-init target=echo slot=0 rights=send
 vertex-init starting service: echo
@@ -357,7 +392,7 @@ while [ "$attempt" -le "$QEMU_ATTEMPTS" ]; do
     if check_transcript; then
         cleanup
         pid=
-        echo "smoke ok: Krust completed manifest v1, typed arenas, cap lifecycle, quotas, service-local store/state/timer access, restart, and native service activation"
+        echo "smoke ok: Krust completed manifest v1, directed IPC, typed arenas, cap lifecycle, quotas, service-local store/state/timer access, restart, and native service activation"
         exit 0
     fi
 
@@ -367,7 +402,7 @@ done
 
 cleanup
 pid=
-echo "smoke failed: serial output did not contain the full M14-M36 native activation transcript after $QEMU_ATTEMPTS checks"
+echo "smoke failed: serial output did not contain the full M14-M40 native activation transcript after $QEMU_ATTEMPTS checks"
 echo "serial log: $SERIAL_LOG"
 if [ -n "$missing_required" ]; then
     echo "missing required transcript lines:"

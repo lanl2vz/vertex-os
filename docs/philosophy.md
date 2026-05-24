@@ -355,7 +355,7 @@ Example conceptually:
 service: prisma-api
   executable: store:prisma-api
   requires:
-    - cap:postgres.socket/sendrecv
+    - cap:postgres.request/send
     - cap:gpu0.compute/submit
     - cap:secret.r2-token/read
     - cap:store.model-weights/read
