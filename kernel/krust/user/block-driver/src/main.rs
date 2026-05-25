@@ -16,6 +16,7 @@ const CAP_PCI_CONFIG: u64 = 4;
 const CAP_IRQ: u64 = 5;
 const CAP_DMA: u64 = 6;
 const CAP_VIRTIO_IO: u64 = 7;
+const CAP_FAULT_INJECTION: u64 = 8;
 
 const PROTOCOL_HEALTH_V0: u16 = 2;
 const MESSAGE_READY: u16 = 1;
@@ -70,6 +71,8 @@ const VIRTIO_BLK_S_OK: u8 = 0;
 #[unsafe(link_section = ".text._start")]
 #[unsafe(no_mangle)]
 pub extern "C" fn _start() -> ! {
+    maybe_trigger_fault_injection();
+
     let Some(mut device) = VirtioBlock::init() else {
         log(b"virtio-blk driver init failed");
         sys::exit(1);
@@ -104,6 +107,18 @@ pub extern "C" fn _start() -> ! {
     }
     log(b"block-driver returns bytes");
     sys::exit(0)
+}
+
+fn maybe_trigger_fault_injection() {
+    if sys::process_attempt() <= 1
+        && sys::cap_inspect(CAP_FAULT_INJECTION) != sys::STATUS_BAD_CAPABILITY
+    {
+        log(b"block-driver fault injection triggers direct invalid load");
+        unsafe {
+            let fault = 0x0000_0000_dead_4200 as *const u64;
+            let _ = fault.read_volatile();
+        }
+    }
 }
 
 struct VirtioBlock {

@@ -1,12 +1,15 @@
 use core::arch::asm;
 
 pub const STATUS_OK: u64 = 0;
+pub const STATUS_BAD_CAPABILITY: u64 = u64::MAX - 1;
 
 const SYS_EXIT: u64 = 2;
 const SYS_IPC_SEND: u64 = 3;
 const SYS_IPC_RECV: u64 = 4;
 const SYS_YIELD: u64 = 5;
 const SYS_LOG_WRITE: u64 = 7;
+const SYS_PROCESS_ATTEMPT: u64 = 20;
+const SYS_CAP_INSPECT: u64 = 22;
 const SYS_IO_READ: u64 = 27;
 const SYS_IO_WRITE: u64 = 28;
 const SYS_IRQ_WAIT: u64 = 29;
@@ -48,6 +51,14 @@ pub fn log(cap_slot: u64, message: &[u8]) -> u64 {
         message.as_ptr() as u64,
         message.len() as u64,
     )
+}
+
+pub fn process_attempt() -> u64 {
+    syscall3(SYS_PROCESS_ATTEMPT, 0, 0, 0)
+}
+
+pub fn cap_inspect(cap_slot: u64) -> u64 {
+    syscall3(SYS_CAP_INSPECT, cap_slot, 0, 0)
 }
 
 pub fn irq_wait(cap_slot: u64, timeout_ms: u64) -> u64 {

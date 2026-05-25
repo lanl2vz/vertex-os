@@ -4,7 +4,7 @@ set -eu
 ROOT_DIR=$(CDPATH= cd "$(dirname "$0")/.." && pwd)
 KRUST_DIR=${KRUST_DIR:-"$ROOT_DIR/kernel/krust"}
 LOG_DIR=${LOG_DIR:-"$KRUST_DIR/build/release-gate"}
-KRUST_CASES=${KRUST_CASES:-"m14 manifest-cycle bad-cap readiness-timeout rollback store-state-services timer preemption user-fault restart manifest-v1 cap-lifecycle typed-arenas quotas m32 m33 m34 m35 m36 m37 m38 m40 m41 m42 manifest-truncated manifest-bad-magic manifest-raw-compact manifest-unsupported-version manifest-oob-record manifest-missing-provider"}
+KRUST_CASES=${KRUST_CASES:-"m14 manifest-cycle bad-cap readiness-timeout rollback store-state-services timer preemption user-fault restart manifest-v1 cap-lifecycle typed-arenas quotas m32 m33 m34 m35 m36 m37 m38 m40 m41 m42 m42-driver-fault manifest-truncated manifest-bad-magic manifest-raw-compact manifest-unsupported-version manifest-oob-record manifest-missing-provider"}
 
 fail() {
     echo "error: $*" >&2

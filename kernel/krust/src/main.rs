@@ -21,6 +21,7 @@ use core::panic::PanicInfo;
 use core::{arch::asm, cell::UnsafeCell};
 
 const MAX_BOOT_PROCESSES: usize = 16;
+const DMA_KERNEL_ALLOCATED_BASE: u64 = u64::MAX;
 
 struct Global<T>(UnsafeCell<T>);
 
@@ -911,8 +912,11 @@ fn build_boot_runtime_config(
     index = 0;
     while index < boot_manifest.dma_region_count() {
         let region = boot_manifest.dma_region(index)?;
-        let base = if region.base == 0 {
+        let base = if region.base == DMA_KERNEL_ALLOCATED_BASE {
             allocate_dma_region(region.id, region.length, hhdm_offset, allocator)?
+        } else if region.base == 0 {
+            serial::write_str("KrustBoot runtime plan failed: dma region base zero\n");
+            return None;
         } else {
             region.base
         };

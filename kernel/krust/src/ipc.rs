@@ -3823,6 +3823,9 @@ fn port_span_in_range(range: IoPortRangeObject, port: u64, width: u64) -> bool {
     let Some(last_port) = port.checked_add(width - 1) else {
         return false;
     };
+    if last_port > u16::MAX as u64 {
+        return false;
+    }
     port_in_range(range, port) && port_in_range(range, last_port)
 }
 

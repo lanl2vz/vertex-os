@@ -34,6 +34,7 @@ scripts/krust-test.sh m38
 scripts/krust-test.sh m40
 scripts/krust-test.sh m41
 scripts/krust-test.sh m42
+scripts/krust-test.sh m42-driver-fault
 ```
 
 Next direction: use the ABI v1 base to build Vertex OS v0, a tiny persistent
@@ -1617,7 +1618,7 @@ done: block-driver received block-read request
 done: block-driver returns bytes
 done: vertex-store verifies hash
 done: echo cannot access block hardware authority
-done: driver fault does not crash kernel
+done: block-driver fault does not crash kernel
 ```
 
 ## M43: VertexDisk v0 Layout

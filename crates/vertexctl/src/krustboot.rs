@@ -39,6 +39,7 @@ const MAX_MMIO_REGIONS: usize = 4;
 const MAX_INTERRUPT_LINES: usize = 4;
 const MAX_DMA_REGIONS: usize = 4;
 const MAX_PROCESS_REFS: usize = 4;
+const DMA_KERNEL_ALLOCATED_BASE: u64 = u64::MAX;
 const RIGHT_SEND: u16 = 1 << 0;
 const RIGHT_RECEIVE: u16 = 1 << 1;
 const RIGHT_READ: u16 = 1 << 2;
@@ -917,21 +918,39 @@ fn push_unique_io_port(
                 capability.id, capability.provider
             )
         })?;
+    let base = value_u64(&capability.properties, "base")
+        .or_else(|| value_u64(&capability.properties, "portBase"))
+        .or_else(|| value_u64(&capability.properties, "port"))
+        .or_else(|| value_u64(&device.selector, "base"))
+        .or_else(|| value_u64(&device.selector, "portBase"))
+        .or_else(|| value_u64(&device.selector, "port"))
+        .ok_or_else(|| format!("io-port capability {} missing base port", capability.id))?;
+    let length = value_u64(&capability.properties, "length")
+        .or_else(|| value_u64(&capability.properties, "ports"))
+        .or_else(|| value_u64(&device.selector, "length"))
+        .or_else(|| value_u64(&device.selector, "ports"))
+        .unwrap_or(1);
+    validate_io_port_range(&capability.id, base, length)?;
     ports.push(IoPortRange {
         id: capability.id.clone(),
-        base: value_u64(&capability.properties, "base")
-            .or_else(|| value_u64(&capability.properties, "portBase"))
-            .or_else(|| value_u64(&capability.properties, "port"))
-            .or_else(|| value_u64(&device.selector, "base"))
-            .or_else(|| value_u64(&device.selector, "portBase"))
-            .or_else(|| value_u64(&device.selector, "port"))
-            .ok_or_else(|| format!("io-port capability {} missing base port", capability.id))?,
-        length: value_u64(&capability.properties, "length")
-            .or_else(|| value_u64(&capability.properties, "ports"))
-            .or_else(|| value_u64(&device.selector, "length"))
-            .or_else(|| value_u64(&device.selector, "ports"))
-            .unwrap_or(1),
+        base,
+        length,
     });
+    Ok(())
+}
+
+fn validate_io_port_range(id: &str, base: u64, length: u64) -> Result<(), String> {
+    if length == 0 {
+        return Err(format!("io-port capability {id} length must be nonzero"));
+    }
+    let last = base
+        .checked_add(length - 1)
+        .ok_or_else(|| format!("io-port capability {id} range overflows"))?;
+    if last > u16::MAX as u64 {
+        return Err(format!(
+            "io-port capability {id} range exceeds x86 I/O port space"
+        ));
+    }
     Ok(())
 }
 
@@ -1014,16 +1033,29 @@ fn push_unique_dma_region(
         })?;
     let kernel_allocated = value_str(&capability.properties, "allocation") == Some("kernel-dma");
     let base = if kernel_allocated {
-        0
+        DMA_KERNEL_ALLOCATED_BASE
     } else {
-        value_u64(&capability.properties, "base")
+        let base = value_u64(&capability.properties, "base")
             .or_else(|| value_u64(&device.selector, "base"))
             .ok_or_else(|| {
                 format!(
                     "dma-region capability {} must set allocation=kernel-dma or provide base",
                     capability.id
                 )
-            })?
+            })?;
+        if base == 0 {
+            return Err(format!(
+                "dma-region capability {} must use allocation=kernel-dma instead of base=0",
+                capability.id
+            ));
+        }
+        if base == DMA_KERNEL_ALLOCATED_BASE {
+            return Err(format!(
+                "dma-region capability {} base is reserved; use allocation=kernel-dma",
+                capability.id
+            ));
+        }
+        base
     };
     regions.push(DmaRegion {
         id: capability.id.clone(),

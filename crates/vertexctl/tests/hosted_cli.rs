@@ -109,6 +109,12 @@ fn validates_both_example_manifests() {
         "examples/krust-readiness-timeout.vertex.json",
     ]));
     assert!(readiness_timeout.contains("valid: gen:readiness-timeout-0001"));
+
+    let block_driver_fault = assert_success(run(&[
+        "validate",
+        "examples/krust-block-driver-fault-generation.vertex.json",
+    ]));
+    assert!(block_driver_fault.contains("valid: gen:block-driver-fault-0001"));
 }
 
 #[test]
@@ -309,6 +315,84 @@ fn compile_boot_manifest_rejects_consumer_receive_endpoint_requirement() {
     ]));
 
     assert!(stderr.contains("requires receive authority on ipc endpoint cap:log.sink"));
+    assert!(!output_path.exists());
+}
+
+#[test]
+fn compile_boot_manifest_rejects_implicit_dma_base_zero() {
+    let dir = temp_dir("krustboot-dma-zero");
+    let input_path = dir.join("bad-dma-zero.vertex.json");
+    let output_path = dir.join("bad-dma-zero.krustboot");
+    let mut manifest: Value = serde_json::from_str(
+        &fs::read_to_string(repo_root().join("examples/hello-generation.vertex.json"))
+            .expect("read hello manifest"),
+    )
+    .expect("hello manifest should be json");
+
+    let capabilities = manifest["capabilities"]
+        .as_array_mut()
+        .expect("capabilities should be an array");
+    let dma = capabilities
+        .iter_mut()
+        .find(|capability| capability["id"] == "cap:dma.virtio-blk0")
+        .expect("virtio DMA capability should exist");
+    dma["properties"] = serde_json::json!({
+        "base": 0,
+        "length": 16384
+    });
+
+    fs::write(
+        &input_path,
+        serde_json::to_string_pretty(&manifest).expect("serialize bad manifest"),
+    )
+    .expect("write bad manifest");
+
+    let stderr = assert_failure(run(&[
+        "compile-boot-manifest",
+        &input_path.to_string_lossy(),
+        &output_path.to_string_lossy(),
+    ]));
+
+    assert!(stderr.contains("must use allocation=kernel-dma instead of base=0"));
+    assert!(!output_path.exists());
+}
+
+#[test]
+fn compile_boot_manifest_rejects_io_port_span_past_16_bit_space() {
+    let dir = temp_dir("krustboot-io-span");
+    let input_path = dir.join("bad-io-span.vertex.json");
+    let output_path = dir.join("bad-io-span.krustboot");
+    let mut manifest: Value = serde_json::from_str(
+        &fs::read_to_string(repo_root().join("examples/hello-generation.vertex.json"))
+            .expect("read hello manifest"),
+    )
+    .expect("hello manifest should be json");
+
+    let capabilities = manifest["capabilities"]
+        .as_array_mut()
+        .expect("capabilities should be an array");
+    let io_port = capabilities
+        .iter_mut()
+        .find(|capability| capability["id"] == "cap:io.virtio-blk0")
+        .expect("virtio I/O capability should exist");
+    io_port["properties"] = serde_json::json!({
+        "base": "0xfffe",
+        "length": 4
+    });
+
+    fs::write(
+        &input_path,
+        serde_json::to_string_pretty(&manifest).expect("serialize bad manifest"),
+    )
+    .expect("write bad manifest");
+
+    let stderr = assert_failure(run(&[
+        "compile-boot-manifest",
+        &input_path.to_string_lossy(),
+        &output_path.to_string_lossy(),
+    ]));
+
+    assert!(stderr.contains("range exceeds x86 I/O port space"));
     assert!(!output_path.exists());
 }
 

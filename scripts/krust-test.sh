@@ -259,6 +259,20 @@ unauthorized service cannot access PCI I/O, IRQ, or DMA capabilities
 Native service activation ok
 '
         ;;
+    m42-driver-fault|block-driver-fault)
+        MANIFEST="$ROOT_DIR/examples/krust-block-driver-fault-generation.vertex.json"
+        required_lines='
+Boot generation: gen:block-driver-fault-0001
+KrustBoot grants: 44
+proc=block-driver cap[8] timer=monotonic-timer rights=control
+block-driver fault injection triggers direct invalid load
+User page fault: proc=block-driver
+User process fault contained: proc=block-driver
+vertex-init readiness timeout
+activation failed
+Native service activation failed
+'
+        ;;
     m35|store-service)
         MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
         EXPECT_ACTIVATION_SUCCESS=1
@@ -468,7 +482,7 @@ activation failed
 '
         ;;
     *)
-        echo "usage: scripts/krust-test.sh <m13|m14|valid-activation|manifest-cycle|bad-cap|readiness|readiness-timeout|rollback|store-state-services|timer|preemption|m30|user-fault|m31|restart|manifest-v1|cap-lifecycle|typed-arenas|quotas|m32|io-substrate|m33|serial-driver|m34|block-driver|m35|store-service|m36|state-service|m37|generation-switch|m38|introspection|m40|directed-ipc|m41|console-shell|m42|virtio-block|manifest-truncated|manifest-bad-magic|manifest-raw-compact|manifest-unsupported-version|manifest-oob-record|manifest-missing-provider>" >&2
+        echo "usage: scripts/krust-test.sh <m13|m14|valid-activation|manifest-cycle|bad-cap|readiness|readiness-timeout|rollback|store-state-services|timer|preemption|m30|user-fault|m31|restart|manifest-v1|cap-lifecycle|typed-arenas|quotas|m32|io-substrate|m33|serial-driver|m34|block-driver|m35|store-service|m36|state-service|m37|generation-switch|m38|introspection|m40|directed-ipc|m41|console-shell|m42|virtio-block|m42-driver-fault|block-driver-fault|manifest-truncated|manifest-bad-magic|manifest-raw-compact|manifest-unsupported-version|manifest-oob-record|manifest-missing-provider>" >&2
         exit 2
         ;;
 esac
