@@ -154,24 +154,24 @@ impl VirtioBlock {
             avail_idx: 0,
             used_idx: 0,
         };
-        if !device.setup_legacy_queue() {
+        if device.setup_legacy_queue().is_none() {
             return None;
         }
         Some(device)
     }
 
-    fn setup_legacy_queue(&mut self) -> bool {
-        self.write_status(0);
-        self.write_status(VIRTIO_STATUS_ACKNOWLEDGE);
-        self.write_status(VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER);
+    fn setup_legacy_queue(&mut self) -> Option<()> {
+        self.write_status(0)?;
+        self.write_status(VIRTIO_STATUS_ACKNOWLEDGE)?;
+        self.write_status(VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER)?;
         let _features = self.read32(VIRTIO_PCI_HOST_FEATURES);
-        self.write32(VIRTIO_PCI_GUEST_FEATURES, 0);
-        self.write16(VIRTIO_PCI_QUEUE_SEL, 0);
+        self.write32(VIRTIO_PCI_GUEST_FEATURES, 0)?;
+        self.write16(VIRTIO_PCI_QUEUE_SEL, 0)?;
 
         if self.read16(VIRTIO_PCI_QUEUE_NUM) < QUEUE_SIZE {
             log(b"virtio-blk queue too small");
-            self.write_status(VIRTIO_STATUS_FAILED);
-            return false;
+            let _ = self.write_status(VIRTIO_STATUS_FAILED);
+            return None;
         }
 
         zero_dma(self.dma_virtual, DMA_REQUIRED_LEN as usize);
@@ -179,11 +179,11 @@ impl VirtioBlock {
         self.write32(
             VIRTIO_PCI_QUEUE_PFN,
             ((self.dma_physical + QUEUE_DESC_OFFSET as u64) >> 12) as u32,
-        );
+        )?;
         self.write_status(
             VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_DRIVER_OK,
-        );
-        true
+        )?;
+        Some(())
     }
 
     fn read_sector(&mut self, sector: u64, out: &mut [u8; SECTOR_SIZE]) -> bool {
@@ -239,7 +239,10 @@ impl VirtioBlock {
         compiler_fence(Ordering::SeqCst);
         write_dma_u16(self.dma_virtual, QUEUE_AVAIL_OFFSET + 2, self.avail_idx);
         compiler_fence(Ordering::SeqCst);
-        self.write16(VIRTIO_PCI_QUEUE_NOTIFY, 0);
+        if self.write16(VIRTIO_PCI_QUEUE_NOTIFY, 0).is_none() {
+            log(b"virtio-blk queue notify failed");
+            return false;
+        }
 
         let target_used = self.used_idx.wrapping_add(1);
         let mut spins = 0u64;
@@ -280,16 +283,16 @@ impl VirtioBlock {
         io_read32(CAP_VIRTIO_IO, self.io_base + offset).unwrap_or(u32::MAX)
     }
 
-    fn write16(&self, offset: u16, value: u16) {
-        let _ = io_write16(CAP_VIRTIO_IO, self.io_base + offset, value);
+    fn write16(&self, offset: u16, value: u16) -> Option<()> {
+        io_write16(CAP_VIRTIO_IO, self.io_base + offset, value)
     }
 
-    fn write32(&self, offset: u16, value: u32) {
-        let _ = io_write32(CAP_VIRTIO_IO, self.io_base + offset, value);
+    fn write32(&self, offset: u16, value: u32) -> Option<()> {
+        io_write32(CAP_VIRTIO_IO, self.io_base + offset, value)
     }
 
-    fn write_status(&self, value: u8) {
-        let _ = io_write8(CAP_VIRTIO_IO, self.io_base + VIRTIO_PCI_STATUS, value);
+    fn write_status(&self, value: u8) -> Option<()> {
+        io_write8(CAP_VIRTIO_IO, self.io_base + VIRTIO_PCI_STATUS, value)
     }
 }
 
