@@ -441,7 +441,7 @@
       }
     },
     {
-      "id": "cap:block.request",
+      "id": "cap:vertex-store.block.request",
       "kind": "ipc-endpoint",
       "provider": "svc:block-driver",
       "rights": [
@@ -449,7 +449,28 @@
       ],
       "properties": {
         "protocol": "vertex.block.v1",
-        "role": "request"
+        "role": "request",
+        "client": "svc:vertex-store",
+        "operations": [
+          "read"
+        ]
+      }
+    },
+    {
+      "id": "cap:vertex-state.block.request",
+      "kind": "ipc-endpoint",
+      "provider": "svc:block-driver",
+      "rights": [
+        "send"
+      ],
+      "properties": {
+        "protocol": "vertex.block.v1",
+        "role": "request",
+        "client": "svc:vertex-state",
+        "operations": [
+          "read",
+          "write"
+        ]
       }
     },
     {
@@ -749,7 +770,8 @@
         }
       ],
       "provides": [
-        "cap:block.request"
+        "cap:vertex-store.block.request",
+        "cap:vertex-state.block.request"
       ],
       "state": [],
       "secrets": [],
@@ -760,7 +782,7 @@
       },
       "health": {
         "kind": "ipc-ping",
-        "target": "cap:block.request"
+        "target": "cap:vertex-store.block.request"
       },
       "lifecycle": {
         "startAfter": [
@@ -777,7 +799,7 @@
       "env": {},
       "requires": [
         {
-          "capability": "cap:block.request",
+          "capability": "cap:vertex-store.block.request",
           "rights": [
             "send"
           ]
@@ -819,7 +841,7 @@
       "env": {},
       "requires": [
         {
-          "capability": "cap:block.request",
+          "capability": "cap:vertex-state.block.request",
           "rights": [
             "send"
           ]

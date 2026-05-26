@@ -54,7 +54,7 @@ echo sends one message to logd through an explicit IPC capability
 echo inspects, copies, moves, and revokes delegated authority
 echo drops its endpoint capability and denied authority stays rejected
 serial-driver writes COM1 through its own I/O port capability
-block-driver owns virtio-blk PCI I/O, IRQ, and DMA authority and serves VertexDisk block IPC
+block-driver owns virtio-blk PCI I/O, IRQ, and DMA authority and serves separate VertexDisk block IPC endpoints for store and state
 model-reader reads an immutable object through vertex-store and VertexDisk/block-driver
 counter-service and reader-service access mutable state through vertex-state persisted on VertexDisk
 vertex-inspect reads the generation graph and asks the kernel for a process/capability graph through inspect-only authority
@@ -172,8 +172,8 @@ KrustBoot manifest generation: gen:hello-0001
 KrustBoot Manifest v1 records: 9
 KrustBoot boot modules: 13
 KrustBoot processes: 13
-KrustBoot endpoints: 11
-KrustBoot grants: 44
+KrustBoot endpoints: 12
+KrustBoot grants: 46
 KrustBoot store objects: 0
 KrustBoot state volumes: 0
 KrustBoot network ports: 1
@@ -185,10 +185,10 @@ KrustBoot dma regions: 1
   grant[11] process=logd cap[0] endpoint=log-sink rights=receive
   grant[12] process=vertex-init cap[4] endpoint=log-sink rights=send
   grant[13] process=echo cap[3] network-port=cap:net.tcp.8080 rights=listen
-  grant[36] process=block-driver cap[5] io-port=cap:io.pci-config rights=read|write
-  grant[37] process=block-driver cap[6] interrupt-line=cap:irq.virtio-blk0 rights=listen
-  grant[38] process=block-driver cap[7] dma-region=cap:dma.virtio-blk0 rights=read|write|map
-  grant[39] process=block-driver cap[8] io-port=cap:io.virtio-blk0 rights=read|write
+  grant[...] process=block-driver cap[6] io-port=cap:io.pci-config rights=read|write
+  grant[...] process=block-driver cap[7] interrupt-line=cap:irq.virtio-blk0 rights=listen
+  grant[...] process=block-driver cap[8] dma-region=cap:dma.virtio-blk0 rights=read|write|map
+  grant[...] process=block-driver cap[9] io-port=cap:io.virtio-blk0 rights=read|write
   grant[42] process=timer-service cap[0] timer=monotonic-timer rights=control
 io_port[1] id=cap:io.pci-config base=0x0000000000000cf8 length=0x0000000000000008
 io_port[2] id=cap:io.virtio-blk0 base=0x000000000000c000 length=0x0000000000001000
@@ -199,18 +199,19 @@ Kernel heap arena allocation ok
 Typed endpoint arena created 32 endpoints
 Typed process arena created 32 processes
 Process table entries: 13
-Endpoint table entries: 11
+Endpoint table entries: 12
 endpoint[0] id=1 name=serial-log
 endpoint[1] id=2 name=readiness
 endpoint[2] id=3 name=serial-console
 endpoint[3] id=4 name=log-sink
-endpoint[4] id=5 name=block-request
-endpoint[5] id=6 name=vertex-store-block-reply
-endpoint[6] id=7 name=vertex-state-block-reply
-endpoint[7] id=8 name=store-hello-text-request
-endpoint[8] id=9 name=model-reader-store-reply
-endpoint[9] id=10 name=state-counter-request
-endpoint[10] id=11 name=state-reader-state-reply
+endpoint[4] id=5 name=vertex-store-block-request
+endpoint[5] id=6 name=vertex-state-block-request
+endpoint[6] id=7 name=vertex-store-block-reply
+endpoint[7] id=8 name=vertex-state-block-reply
+endpoint[8] id=9 name=store-hello-text-request
+endpoint[9] id=10 name=model-reader-store-reply
+endpoint[10] id=11 name=state-counter-request
+endpoint[11] id=12 name=state-reader-state-reply
 process[0] id=1 name=vertex-init state=running
 process[1] id=2 name=serial-driver state=declared
 process[2] id=3 name=logd state=declared
@@ -224,10 +225,10 @@ proc=vertex-init cap[2] process-control=process-control rights=control|allocate|
 proc=vertex-init cap[3] endpoint=readiness rights=receive
 proc=vertex-init cap[4] endpoint=log-sink rights=send
 proc=serial-driver cap[3] io-port=cap:io.com1 rights=read|write
-proc=block-driver cap[5] io-port=cap:io.pci-config rights=read|write
-proc=block-driver cap[6] interrupt-line=cap:irq.virtio-blk0 rights=listen
-proc=block-driver cap[7] dma-region=cap:dma.virtio-blk0 rights=read|write|map
-proc=block-driver cap[8] io-port=cap:io.virtio-blk0 rights=read|write
+proc=block-driver cap[6] io-port=cap:io.pci-config rights=read|write
+proc=block-driver cap[7] interrupt-line=cap:irq.virtio-blk0 rights=listen
+proc=block-driver cap[8] dma-region=cap:dma.virtio-blk0 rights=read|write|map
+proc=block-driver cap[9] io-port=cap:io.virtio-blk0 rights=read|write
 proc=logd cap[0] endpoint=log-sink rights=receive
 proc=model-reader cap[0] endpoint=store-hello-text-request rights=send
 proc=reader-service cap[0] endpoint=state-counter-request rights=send
@@ -244,8 +245,8 @@ vertex-init received cap[2]=process-control
 vertex-init manifest generation: gen:hello-0001
 vertex-init boot modules: 13
 vertex-init processes: 13
-vertex-init endpoints: 11
-vertex-init grants: 44
+vertex-init endpoints: 12
+vertex-init grants: 46
 vertex-init network ports: 1
 vertex-init store objects: 0
 vertex-init state volumes: 0
@@ -400,8 +401,8 @@ KrustBoot manifest generation: gen:hello-0001
 KrustBoot Manifest v1 records: 9
 KrustBoot boot modules: 13
 KrustBoot processes: 13
-KrustBoot endpoints: 11
-KrustBoot grants: 44
+KrustBoot endpoints: 12
+KrustBoot grants: 46
 KrustBoot network ports: 1
 KrustBoot io port ranges: 3
 KrustBoot mmio regions: 0
@@ -412,10 +413,10 @@ grant[11] process=logd cap[0] endpoint=log-sink rights=receive
 grant[12] process=vertex-init cap[4] endpoint=log-sink rights=send
 grant[13] process=echo cap[3] network-port=cap:net.tcp.8080 rights=listen
 grant[...] process=serial-driver cap[3] io-port=cap:io.com1 rights=read|write
-grant[...] process=block-driver cap[5] io-port=cap:io.pci-config rights=read|write
-grant[...] process=block-driver cap[6] interrupt-line=cap:irq.virtio-blk0 rights=listen
-grant[...] process=block-driver cap[7] dma-region=cap:dma.virtio-blk0 rights=read|write|map
-grant[...] process=block-driver cap[8] io-port=cap:io.virtio-blk0 rights=read|write
+grant[...] process=block-driver cap[6] io-port=cap:io.pci-config rights=read|write
+grant[...] process=block-driver cap[7] interrupt-line=cap:irq.virtio-blk0 rights=listen
+grant[...] process=block-driver cap[8] dma-region=cap:dma.virtio-blk0 rights=read|write|map
+grant[...] process=block-driver cap[9] io-port=cap:io.virtio-blk0 rights=read|write
 network_port[0] id=cap:net.tcp.8080
 io_port[1] id=cap:io.pci-config base=0x0000000000000cf8 length=0x0000000000000008
 io_port[2] id=cap:io.virtio-blk0 base=0x000000000000c000 length=0x0000000000001000
@@ -427,7 +428,7 @@ Typed endpoint arena created 32 endpoints
 Typed process arena created 32 processes
 IDT initialized: #UD #GP #PF IRQ0
 Process table entries: 13
-Endpoint table entries: 11
+Endpoint table entries: 12
 endpoint[0] id=1 name=serial-log
 endpoint[1] id=2 name=readiness
 endpoint[2] id=3 name=log-sink
@@ -445,10 +446,10 @@ proc=vertex-init cap[3] endpoint=readiness rights=receive
 proc=vertex-init cap[4] endpoint=log-sink rights=send
 proc=logd cap[0] endpoint=log-sink rights=receive
 proc=serial-driver cap[3] io-port=cap:io.com1 rights=read|write
-proc=block-driver cap[5] io-port=cap:io.pci-config rights=read|write
-proc=block-driver cap[6] interrupt-line=cap:irq.virtio-blk0 rights=listen
-proc=block-driver cap[7] dma-region=cap:dma.virtio-blk0 base=
-proc=block-driver cap[8] io-port=cap:io.virtio-blk0 rights=read|write
+proc=block-driver cap[6] io-port=cap:io.pci-config rights=read|write
+proc=block-driver cap[7] interrupt-line=cap:irq.virtio-blk0 rights=listen
+proc=block-driver cap[8] dma-region=cap:dma.virtio-blk0 base=
+proc=block-driver cap[9] io-port=cap:io.virtio-blk0 rights=read|write
 proc=model-reader cap[0] endpoint=store-hello-text-request rights=send
 proc=reader-service cap[0] endpoint=state-counter-request rights=send
 proc=timer-service cap[0] timer=monotonic-timer rights=control

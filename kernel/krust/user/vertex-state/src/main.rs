@@ -15,21 +15,25 @@ const STATE_VOLUME_ID: &[u8] = b"state:counter";
 const BLOCK_PROTOCOL_V1: u16 = 1;
 const BLOCK_OP_READ_SECTOR: u16 = 1;
 const BLOCK_OP_WRITE_SECTOR: u16 = 2;
-const BLOCK_CLIENT_STATE: u16 = 2;
 const BLOCK_REQUEST_LEN: usize = 16;
 const BLOCK_WRITE_ACK_LEN: usize = 16;
 const SECTOR_SIZE: usize = 512;
 const MAX_STATE_VALUE_BYTES: usize = 16;
 const VERTEX_DISK_MAGIC: &[u8; 16] = b"VERTEXDISKV0\0\0\0\0";
 const STATE_INDEX_MAGIC: &[u8; 16] = b"VDISKSTATEV0\0\0\0\0";
+const JOURNAL_RECORD_MAGIC: &[u8; 16] = b"VDISKJOURNALV0\0\0";
 const VERTEX_DISK_VERSION: u16 = 1;
+const JOURNAL_RECORD_STATE_WRITE: u16 = 1;
 const VERTEX_DISK_CHECKSUM_OFFSET: usize = 20;
 const VERTEX_DISK_TOTAL_SECTORS_OFFSET: usize = 24;
 const VERTEX_DISK_SECTION_TABLE_OFFSET: usize = 32;
 const VERTEX_DISK_SECTION_RECORD_LEN: usize = 16;
 const VERTEX_DISK_STATE_INDEX_SECTION: usize = 3;
 const VERTEX_DISK_STATE_DATA_SECTION: usize = 4;
+const VERTEX_DISK_JOURNAL_SECTION: usize = 5;
 const STATE_ENTRY_OFFSET: usize = 32;
+const JOURNAL_STATE_ID_OFFSET: usize = 48;
+const JOURNAL_VALUE_OFFSET: usize = 128;
 const PROTOCOL_HEALTH_V0: u16 = 2;
 const MESSAGE_READY: u16 = 1;
 const ENVELOPE_LEN: usize = 16;
@@ -102,6 +106,13 @@ pub extern "C" fn _start() -> ! {
 struct StateEntry {
     index_sector: u64,
     data_sector: u64,
+    journal_sector: u64,
+    value_len: usize,
+    checksum: u32,
+}
+
+#[derive(Clone, Copy)]
+struct JournalRecord {
     value_len: usize,
     checksum: u32,
 }
@@ -124,6 +135,11 @@ fn load_state_entry() -> StateEntry {
         vertexdisk_section(&superblock, VERTEX_DISK_STATE_DATA_SECTION)
     else {
         log(b"vertex-state data bounds invalid");
+        sys::exit(1);
+    };
+    let Some(journal_sector) = vertexdisk_section_start(&superblock, VERTEX_DISK_JOURNAL_SECTION)
+    else {
+        log(b"vertex-state journal bounds invalid");
         sys::exit(1);
     };
 
@@ -156,12 +172,15 @@ fn load_state_entry() -> StateEntry {
                 sys::exit(1);
             }
             log(b"vertex-state reads state volume from disk");
-            return StateEntry {
+            let mut state = StateEntry {
                 index_sector: state_index_sector,
                 data_sector,
+                journal_sector,
                 value_len,
                 checksum,
             };
+            recover_state_from_journal(&mut state);
+            return state;
         }
         index += 1;
     }
@@ -192,6 +211,10 @@ fn write_state_value(state: &mut StateEntry, value: &[u8]) {
     }
 
     let checksum = checksum32(value);
+    let journal_sector = state_journal_sector(*state, value, checksum);
+    write_block_sector(state.journal_sector, &journal_sector);
+    log(b"vertex-state writes journal record to disk");
+
     let mut data_sector = [0u8; SECTOR_SIZE];
     data_sector[..value.len()].copy_from_slice(value);
     write_block_sector(state.data_sector, &data_sector);
@@ -215,6 +238,74 @@ fn state_index_sector(state: StateEntry) -> [u8; SECTOR_SIZE] {
     write_u32(&mut sector, STATE_ENTRY_OFFSET + 80, state.checksum);
     write_metadata_checksum(&mut sector);
     sector
+}
+
+fn state_journal_sector(state: StateEntry, value: &[u8], checksum: u32) -> [u8; SECTOR_SIZE] {
+    let mut sector = [0u8; SECTOR_SIZE];
+    sector[..JOURNAL_RECORD_MAGIC.len()].copy_from_slice(JOURNAL_RECORD_MAGIC);
+    write_u16(&mut sector, 16, VERTEX_DISK_VERSION);
+    write_u16(&mut sector, 18, JOURNAL_RECORD_STATE_WRITE);
+    write_u64(&mut sector, 24, state.index_sector);
+    write_u64(&mut sector, 32, state.data_sector);
+    write_u32(&mut sector, 40, value.len() as u32);
+    write_u32(&mut sector, 44, checksum);
+    write_fixed_string(&mut sector, JOURNAL_STATE_ID_OFFSET, STATE_VOLUME_ID);
+    sector[JOURNAL_VALUE_OFFSET..JOURNAL_VALUE_OFFSET + value.len()].copy_from_slice(value);
+    write_metadata_checksum(&mut sector);
+    sector
+}
+
+fn recover_state_from_journal(state: &mut StateEntry) {
+    let mut journal = [0u8; SECTOR_SIZE];
+    read_block_sector(state.journal_sector, &mut journal);
+    let Some(record) = parse_state_journal_record(&journal, *state) else {
+        return;
+    };
+    if state.value_len == record.value_len && state.checksum == record.checksum {
+        return;
+    }
+
+    let mut data_sector = [0u8; SECTOR_SIZE];
+    data_sector[..record.value_len]
+        .copy_from_slice(&journal[JOURNAL_VALUE_OFFSET..JOURNAL_VALUE_OFFSET + record.value_len]);
+    write_block_sector(state.data_sector, &data_sector);
+    state.value_len = record.value_len;
+    state.checksum = record.checksum;
+    let index_sector = state_index_sector(*state);
+    write_block_sector(state.index_sector, &index_sector);
+    log(b"vertex-state replays journal record");
+}
+
+fn parse_state_journal_record(
+    sector: &[u8; SECTOR_SIZE],
+    state: StateEntry,
+) -> Option<JournalRecord> {
+    if !starts_with(sector, JOURNAL_RECORD_MAGIC)
+        || read_u16(sector, 16) != VERTEX_DISK_VERSION
+        || read_u16(sector, 18) != JOURNAL_RECORD_STATE_WRITE
+        || !metadata_checksum_valid(sector)
+        || read_u64(sector, 24) != state.index_sector
+        || read_u64(sector, 32) != state.data_sector
+        || !fixed_string_eq(sector, JOURNAL_STATE_ID_OFFSET, STATE_VOLUME_ID)
+    {
+        return None;
+    }
+
+    let value_len = read_u32(sector, 40) as usize;
+    let checksum = read_u32(sector, 44);
+    if value_len > MAX_STATE_VALUE_BYTES
+        || JOURNAL_VALUE_OFFSET
+            .checked_add(value_len)
+            .is_none_or(|end| end > sector.len())
+        || checksum32(&sector[JOURNAL_VALUE_OFFSET..JOURNAL_VALUE_OFFSET + value_len]) != checksum
+    {
+        return None;
+    }
+
+    Some(JournalRecord {
+        value_len,
+        checksum,
+    })
 }
 
 fn read_block_sector(sector: u64, out: &mut [u8; SECTOR_SIZE]) {
@@ -257,7 +348,7 @@ fn block_request(op: u16, sector: u64) -> [u8; BLOCK_REQUEST_LEN] {
     let mut request = [0u8; BLOCK_REQUEST_LEN];
     write_u16(&mut request, 0, BLOCK_PROTOCOL_V1);
     write_u16(&mut request, 2, op);
-    write_u16(&mut request, 4, BLOCK_CLIENT_STATE);
+    write_u16(&mut request, 4, 0);
     write_u64(&mut request, 8, sector);
     request
 }
@@ -273,7 +364,7 @@ fn valid_superblock(sector: &[u8; SECTOR_SIZE]) -> bool {
 
     let total_sectors = read_u32(sector, VERTEX_DISK_TOTAL_SECTORS_OFFSET) as u64;
     let mut section = 0;
-    while section <= VERTEX_DISK_STATE_DATA_SECTION {
+    while section <= VERTEX_DISK_JOURNAL_SECTION {
         let Some((start, count)) = vertexdisk_section(sector, section) else {
             return false;
         };

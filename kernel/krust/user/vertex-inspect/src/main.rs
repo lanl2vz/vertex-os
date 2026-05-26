@@ -131,7 +131,7 @@ fn explain_state_counter(report: &[u8]) {
     log(b"native who-can state:counter");
     let needles: [&[u8]; 5] = [
         b"space=initial proc=vertex-state cap[4]",
-        b"endpoint=block-request",
+        b"endpoint=vertex-state-block-request",
         b"rights=send",
         b"owner=vertex-state",
         b"revoked=no",

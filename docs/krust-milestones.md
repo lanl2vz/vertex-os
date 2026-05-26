@@ -1665,14 +1665,18 @@ done: QEMU boots with VertexDisk image attached
 done: VertexDisk superblock accepted
 done: vertex-store reads object index from disk
 done: vertex-state reads state volume from disk
+done: vertex-state writes journal record before state data/index writeback
 done: vertex-state writes state volume to disk
 done: reboot preserves state value
 done: bad superblock is rejected without panic
 ```
 
 Implementation note: native M43 uses custom VertexDisk block IPC through
-`block-driver`; it does not keep the legacy kernel state syscall or native
-state backend capability path alive.
+`block-driver`; store and state clients use separate request endpoints so the
+driver can enforce read-only store access and state-only read/write sector
+bounds. `vertex-state` writes a journal record before state data/index
+writeback and can replay that record if the index is stale. It does not keep
+the legacy kernel state syscall or native state backend capability path alive.
 
 ## M44: Native Boot Manager and Generation Selector
 

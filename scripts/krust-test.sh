@@ -238,15 +238,15 @@ unauthorized service cannot access PCI I/O, IRQ, or DMA capabilities
         MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
         EXPECT_ACTIVATION_SUCCESS=1
         required_lines='
-KrustBoot grants: 44
+KrustBoot grants: 46
 KrustBoot io port ranges: 3
 KrustBoot mmio regions: 0
 io_port[1] id=cap:io.pci-config base=0x0000000000000cf8 length=0x0000000000000008
 io_port[2] id=cap:io.virtio-blk0 base=0x000000000000c000 length=0x0000000000001000
 interrupt_line[0] id=cap:irq.virtio-blk0 line=11
 dma_region[0] id=cap:dma.virtio-blk0 base=
-proc=block-driver cap[5] io-port=cap:io.pci-config rights=read|write
-proc=block-driver cap[8] io-port=cap:io.virtio-blk0 rights=read|write
+proc=block-driver cap[6] io-port=cap:io.pci-config rights=read|write
+proc=block-driver cap[9] io-port=cap:io.virtio-blk0 rights=read|write
 virtio-blk PCI device discovered
 DMA map accepted: proc=block-driver dma-region=cap:dma.virtio-blk0
 virtio-blk driver ready
@@ -265,9 +265,9 @@ Native service activation ok
         MANIFEST="$ROOT_DIR/examples/krust-block-driver-fault-generation.vertex.json"
         required_lines='
 Boot generation: gen:block-driver-fault-0001
-KrustBoot grants: 45
+KrustBoot grants: 47
 KrustBoot store objects: 1
-proc=block-driver cap[9] store-object=store:block-driver-fault-token rights=read
+proc=block-driver cap[10] store-object=store:block-driver-fault-token rights=read
 Object read accepted: proc=block-driver object=store:block-driver-fault-token bytes=25
 block-driver fault injection triggers direct invalid load
 User page fault: proc=block-driver
@@ -281,13 +281,14 @@ Native service activation failed
         MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
         EXPECT_ACTIVATION_SUCCESS=1
         required_lines='
-KrustBoot endpoints: 11
-KrustBoot grants: 44
+KrustBoot endpoints: 12
+KrustBoot grants: 46
 KrustBoot state volumes: 0
 QEMU boots with VertexDisk image attached
 VertexDisk superblock accepted
 vertex-store reads object index from disk
 vertex-state reads state volume from disk
+vertex-state writes journal record to disk
 vertex-state writes state volume to disk
 Native service activation ok
 '
@@ -365,21 +366,23 @@ Native service activation ok
         MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
         EXPECT_ACTIVATION_SUCCESS=1
         required_lines='
-KrustBoot endpoints: 11
-KrustBoot grants: 44
+KrustBoot endpoints: 12
+KrustBoot grants: 46
 IPC FIFO regression: queued sends preserve FIFO order
 IPC FIFO regression: queue-full send rejected
 IPC FIFO regression: receiver-specific dequeue preserves eligible ordering
 IPC FIFO regression: multiple blocked receivers match eligible messages
 IPC FIFO regression ok
-endpoint[4] name=block-request
-endpoint[5] name=vertex-store-block-reply
-endpoint[6] name=vertex-state-block-reply
-endpoint[7] name=store-hello-text-request
-endpoint[8] name=model-reader-store-reply
-endpoint[9] name=state-counter-request
-endpoint[10] name=state-reader-state-reply
-process=block-driver cap[0] endpoint=block-request rights=receive
+endpoint[4] name=vertex-store-block-request
+endpoint[5] name=vertex-state-block-request
+endpoint[6] name=vertex-store-block-reply
+endpoint[7] name=vertex-state-block-reply
+endpoint[8] name=store-hello-text-request
+endpoint[9] name=model-reader-store-reply
+endpoint[10] name=state-counter-request
+endpoint[11] name=state-reader-state-reply
+process=block-driver cap[0] endpoint=vertex-store-block-request rights=receive
+process=block-driver cap[3] endpoint=vertex-state-block-request rights=receive
 process=vertex-store cap[3] endpoint=vertex-store-block-reply rights=receive
 process=vertex-store cap[0] endpoint=store-hello-text-request rights=receive
 process=model-reader cap[0] endpoint=model-reader-store-reply rights=receive
@@ -390,15 +393,15 @@ vertex-init observed ready: serial-driver
 vertex-init observed ready: block-driver
 vertex-init observed ready: vertex-store
 vertex-init observed ready: vertex-state
-vertex-init derives endpoint cap for block-driver from endpoint[5] rights=send
 vertex-init derives endpoint cap for block-driver from endpoint[6] rights=send
+vertex-init derives endpoint cap for block-driver from endpoint[7] rights=send
 vertex-init derives endpoint cap for vertex-store from endpoint[4] rights=send
-vertex-init derives endpoint cap for vertex-store from endpoint[8] rights=send
-vertex-init derives endpoint cap for vertex-state from endpoint[4] rights=send
-vertex-init derives endpoint cap for vertex-state from endpoint[10] rights=send
-vertex-init derives endpoint cap for model-reader from endpoint[7] rights=send
-vertex-init derives endpoint cap for counter-service from endpoint[9] rights=send
-vertex-init derives endpoint cap for reader-service from endpoint[9] rights=send
+vertex-init derives endpoint cap for vertex-store from endpoint[9] rights=send
+vertex-init derives endpoint cap for vertex-state from endpoint[5] rights=send
+vertex-init derives endpoint cap for vertex-state from endpoint[11] rights=send
+vertex-init derives endpoint cap for model-reader from endpoint[8] rights=send
+vertex-init derives endpoint cap for counter-service from endpoint[10] rights=send
+vertex-init derives endpoint cap for reader-service from endpoint[10] rights=send
 model-reader reads bytes successfully
 reader-service write rejected
 Native service activation ok
@@ -418,8 +421,8 @@ halt
 Boot generation: gen:console-0001
 KrustBoot boot modules: 15
 KrustBoot processes: 15
-KrustBoot endpoints: 13
-KrustBoot grants: 51
+KrustBoot endpoints: 14
+KrustBoot grants: 53
 proc=console-driver cap[0] endpoint=console-output rights=receive
 proc=console-driver cap[3] endpoint=console-driver-control rights=receive
 proc=console-shell cap[0] endpoint=console-shell-request rights=receive

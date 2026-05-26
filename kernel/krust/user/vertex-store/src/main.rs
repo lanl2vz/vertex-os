@@ -18,7 +18,6 @@ const GENERATION_B_MANIFEST: &[u8] = b"krustboot:gen:switch-b-0002";
 const HELLO_OBJECT: &[u8] = b"hello from Krust store\n";
 const BLOCK_PROTOCOL_V1: u16 = 1;
 const BLOCK_OP_READ_SECTOR: u16 = 1;
-const BLOCK_CLIENT_STORE: u16 = 1;
 const SECTOR_SIZE: usize = 512;
 const VERTEX_DISK_MAGIC: &[u8; 16] = b"VERTEXDISKV0\0\0\0\0";
 const STORE_INDEX_MAGIC: &[u8; 16] = b"VDISKSTOREV0\0\0\0\0";
@@ -175,7 +174,7 @@ fn block_read_request(sector: u64) -> [u8; 16] {
     let mut request = [0u8; 16];
     write_u16(&mut request, 0, BLOCK_PROTOCOL_V1);
     write_u16(&mut request, 2, BLOCK_OP_READ_SECTOR);
-    write_u16(&mut request, 4, BLOCK_CLIENT_STORE);
+    write_u16(&mut request, 4, 0);
     write_u64(&mut request, 8, sector);
     request
 }

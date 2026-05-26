@@ -158,22 +158,23 @@ serial-driver:
   cap[3] = io-port cap:io.com1, rights=read|write
 
 block-driver:
-  cap[0] = endpoint block-request, rights=receive
+  cap[0] = endpoint vertex-store-block-request, rights=receive
   cap[1] = endpoint serial-log, rights=send
   cap[2] = endpoint readiness, rights=send
-  cap[3] = endpoint vertex-store-block-reply, rights=send after vertex-init derives and transfers it
-  cap[4] = endpoint vertex-state-block-reply, rights=send after vertex-init derives and transfers it
-  cap[5] = io-port cap:io.pci-config, rights=read|write
-  cap[6] = interrupt-line cap:irq.virtio-blk0, rights=listen
-  cap[7] = dma-region cap:dma.virtio-blk0, rights=read|write|map
-  cap[8] = io-port cap:io.virtio-blk0, rights=read|write
+  cap[3] = endpoint vertex-state-block-request, rights=receive
+  cap[4] = endpoint vertex-store-block-reply, rights=send after vertex-init derives and transfers it
+  cap[5] = endpoint vertex-state-block-reply, rights=send after vertex-init derives and transfers it
+  cap[6] = io-port cap:io.pci-config, rights=read|write
+  cap[7] = interrupt-line cap:irq.virtio-blk0, rights=listen
+  cap[8] = dma-region cap:dma.virtio-blk0, rights=read|write|map
+  cap[9] = io-port cap:io.virtio-blk0, rights=read|write
 
 vertex-store:
   cap[0] = endpoint store-hello-text-request, rights=receive
   cap[1] = endpoint serial-log, rights=send
   cap[2] = endpoint readiness, rights=send
   cap[3] = endpoint vertex-store-block-reply, rights=receive
-  cap[4] = endpoint block-request, rights=send after vertex-init derives and transfers it
+  cap[4] = endpoint vertex-store-block-request, rights=send after vertex-init derives and transfers it
   cap[5] = endpoint model-reader-store-reply, rights=send after vertex-init derives and transfers it
   cap[6] = dynamic init store reply endpoint, rights=send during M37 generation fetch
 
@@ -182,7 +183,7 @@ vertex-state:
   cap[1] = endpoint serial-log, rights=send
   cap[2] = endpoint readiness, rights=send
   cap[3] = endpoint vertex-state-block-reply, rights=receive
-  cap[4] = endpoint block-request, rights=send after vertex-init derives and transfers it
+  cap[4] = endpoint vertex-state-block-request, rights=send after vertex-init derives and transfers it
   cap[5] = endpoint state-reader-state-reply, rights=send after vertex-init derives and transfers it
 
 vertex-inspect:
@@ -247,7 +248,10 @@ SYS_QUOTA_DELEGATE requires delegate rights on process-control and cannot exceed
 SYS_OBJECT_READ requires read rights on a store-object cap.
 Native state reads and writes are service IPC to `vertex-state`.
 `vertex-state` persists those operations through the VertexDisk block protocol
-served by `block-driver`.
+served by `block-driver`. Store and state traffic use separate block request
+endpoints; the driver treats the receiving endpoint as the client identity and
+enforces read-only store access, state-only writes, and section bounds before
+performing sector I/O.
 SYS_SLEEP_MS requires control rights on a timer cap.
 SYS_IO_READ, SYS_IO_READ16, and SYS_IO_READ32 require read rights on an io-port cap and a fully covered port span inside the granted range.
 SYS_IO_WRITE, SYS_IO_WRITE16, and SYS_IO_WRITE32 require write rights on an io-port cap and a fully covered port span inside the granted range.

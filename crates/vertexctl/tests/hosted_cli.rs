@@ -231,8 +231,8 @@ fn compile_boot_manifest_emits_krustboot_plan() {
     assert!(stdout.contains("generation: gen:hello-0001"));
     assert!(stdout.contains("boot_modules: 13"));
     assert!(stdout.contains("processes: 13"));
-    assert!(stdout.contains("endpoints: 11"));
-    assert!(stdout.contains("grants: 44"));
+    assert!(stdout.contains("endpoints: 12"));
+    assert!(stdout.contains("grants: 46"));
     assert!(stdout.contains("store_objects: 0"));
     assert!(stdout.contains("state_volumes: 0"));
     assert!(stdout.contains("network_ports: 1"));
@@ -260,7 +260,8 @@ fn compile_boot_manifest_emits_krustboot_plan() {
     assert!(contains_bytes(&bytes, b"flaky-service"));
     assert!(contains_bytes(&bytes, b"log-sink"));
     assert!(contains_bytes(&bytes, b"serial-console"));
-    assert!(contains_bytes(&bytes, b"block-request"));
+    assert!(contains_bytes(&bytes, b"vertex-store-block-request"));
+    assert!(contains_bytes(&bytes, b"vertex-state-block-request"));
     assert!(contains_bytes(&bytes, b"vertex-store-block-reply"));
     assert!(contains_bytes(&bytes, b"vertex-state-block-reply"));
     assert!(contains_bytes(&bytes, b"store-hello-text-request"));
