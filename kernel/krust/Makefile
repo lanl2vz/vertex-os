@@ -54,6 +54,7 @@ VERTEX_MANIFEST ?= ../../examples/hello-generation.vertex.json
 FALLBACK_MANIFEST ?=
 BAD_GENERATION_MANIFEST ?=
 KRUSTBOOT_CORRUPT ?=
+VERTEX_DISK_CORRUPT ?=
 
 QEMU ?= qemu-system-x86_64
 QEMU_EXTRA ?=
@@ -113,7 +114,10 @@ boot-manifest:
 
 block-image:
 	mkdir -p $(BUILD_DIR)
-	$(VERTEXCTL) create-block-image $(BLOCK_IMAGE)
+	$(VERTEXCTL) create-vertex-disk $(BLOCK_IMAGE)
+	@if [ -n "$(VERTEX_DISK_CORRUPT)" ]; then \
+		$(VERTEXCTL) corrupt-vertex-disk $(VERTEX_DISK_CORRUPT) $(BLOCK_IMAGE) $(BLOCK_IMAGE); \
+	fi
 
 iso: build boot-manifest block-image check-tools check-limine-dir
 	rm -rf $(ISO_ROOT) $(ISO_IMAGE)
@@ -186,7 +190,7 @@ doctor: check-tools check-tool-versions check-cargo-locks check-rust-target chec
 	@echo "limine: $$(command -v $(LIMINE)) ($$($(LIMINE) --version | sed -n '1p'))"
 	@echo "xorriso: $$(command -v $(XORRISO)) ($$($(XORRISO) --version 2>/dev/null | sed -n '1p'))"
 	@echo "LIMINE_DIR: $(LIMINE_DIR)"
-	@echo "Krust M14-M42 toolchain is ready."
+	@echo "Krust M14-M43 toolchain is ready."
 
 release-gate:
 	../../scripts/krust-release-gate.sh

@@ -190,6 +190,7 @@ pub enum ParseError {
     InvalidReference,
     InvalidRights,
     InvalidObjectKind,
+    UnsupportedStateVolumes,
     TrailingBytes,
     BadChecksum,
     BadRecordTable,
@@ -508,6 +509,9 @@ fn parse_compact_into(
         reader.read_count(MAX_STORE_OBJECTS, ParseError::TooManyStoreObjects)?;
     let state_volume_count =
         reader.read_count(MAX_STATE_VOLUMES, ParseError::TooManyStateVolumes)?;
+    if state_volume_count != 0 {
+        return Err(ParseError::UnsupportedStateVolumes);
+    }
     let network_port_count =
         reader.read_count(MAX_NETWORK_PORTS, ParseError::TooManyNetworkPorts)?;
     let io_port_count = reader.read_count(MAX_IO_PORT_RANGES, ParseError::TooManyIoPortRanges)?;
@@ -586,6 +590,9 @@ fn parse_compact_into(
     while index < grant_count {
         let process_index = reader.read_u16()? as usize;
         let object_kind = reader.read_u16()?;
+        if object_kind == OBJECT_STATE {
+            return Err(ParseError::UnsupportedStateVolumes);
+        }
         let object_index = reader.read_u16()? as usize;
         let cap_slot = reader.read_u16()? as u64;
         let rights = reader.read_u16()?;
@@ -723,14 +730,14 @@ fn validate_manifest(manifest: &Manifest<'_>) -> Result<(), ParseError> {
         match grant.object_kind {
             OBJECT_ENDPOINT if grant.object_index < manifest.endpoint_count => {}
             OBJECT_STORE if grant.object_index < manifest.store_object_count => {}
-            OBJECT_STATE if grant.object_index < manifest.state_volume_count => {}
+            OBJECT_STATE => return Err(ParseError::UnsupportedStateVolumes),
             OBJECT_TIMER if grant.object_index == 0 => {}
             OBJECT_NETWORK_PORT if grant.object_index < manifest.network_port_count => {}
             OBJECT_IO_PORT_RANGE if grant.object_index < manifest.io_port_count => {}
             OBJECT_MMIO_REGION if grant.object_index < manifest.mmio_region_count => {}
             OBJECT_INTERRUPT_LINE if grant.object_index < manifest.interrupt_line_count => {}
             OBJECT_DMA_REGION if grant.object_index < manifest.dma_region_count => {}
-            OBJECT_ENDPOINT | OBJECT_STORE | OBJECT_STATE | OBJECT_TIMER | OBJECT_NETWORK_PORT => {
+            OBJECT_ENDPOINT | OBJECT_STORE | OBJECT_TIMER | OBJECT_NETWORK_PORT => {
                 return Err(ParseError::InvalidReference);
             }
             OBJECT_IO_PORT_RANGE

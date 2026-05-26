@@ -5,7 +5,7 @@ native Krust QEMU/Limine milestone. It is intentionally small and unstable. Its
 current job is to boot native `vertex-init`, start a tiny declared service
 graph, and enforce explicit process-local capabilities.
 
-Milestone status: ABI v1 now covers the M14-M42 native activation and substrate
+Milestone status: ABI v1 now covers the M14-M43 native activation and substrate
 proof. M25 adds the release gate. M26-M29 add Manifest v1 parsing, capability
 provenance/revocation, typed arena allocation checks, and resource quotas.
 M30-M31 add PIT-backed preemption and user page-fault containment. M32-M36 add
@@ -15,9 +15,10 @@ runtime switch between registered native KrustBoot configs.
 M38 adds native runtime introspection through an inspect-only process-control
 right. M39 pins the reproducible native build environment and release gate.
 M40 freezes ABI v1 with directed request/reply IPC. M41 adds the console shell
-path, and M42 adds minimal virtio-blk sector I/O over PCI I/O and DMA
-capabilities. The ABI is still intentionally small, but this subset is the
-current native contract.
+path, M42 adds minimal virtio-blk sector I/O over PCI I/O and DMA
+capabilities, and M43 adds VertexDisk v0 block-object persistence for store,
+state, and journal data. The ABI is still intentionally small, but this subset
+is the current native contract.
 
 ## Machine ABI
 
@@ -71,8 +72,8 @@ process frame, switch CR3, and return into another userspace process through
 | 11 | `SYS_CAP_DROP` | `arg0 = cap_slot` | status |
 | 12 | `SYS_CAP_TRANSFER` | `arg0 = process_control_cap_slot`, `arg1 = target_process_index`, `arg2 = packed transfer` | status |
 | 13 | `SYS_OBJECT_READ` | `arg0 = cap_slot`, `arg1 = user_ptr`, `arg2 = max_len` | byte count or error status |
-| 14 | `SYS_STATE_WRITE` | `arg0 = cap_slot`, `arg1 = user_ptr`, `arg2 = len` | status |
-| 15 | `SYS_STATE_READ` | `arg0 = cap_slot`, `arg1 = user_ptr`, `arg2 = max_len` | byte count or error status |
+| 14 | reserved | removed M43 native state syscall slot | `u64::MAX` |
+| 15 | reserved | removed M43 native state syscall slot | `u64::MAX` |
 | 16 | `SYS_SLEEP_MS` | `arg0 = timer_cap_slot`, `arg1 = milliseconds`, `arg2 = 0` | status |
 | 17 | `SYS_PROCESS_STATUS` | `arg0 = process_control_cap_slot`, `arg1 = process_index`, `arg2 = 0` | exit status, running marker, or error status |
 | 18 | `SYS_ROLLBACK_GENERATION` | `arg0 = process_control_cap_slot`, `arg1 = generation_ptr`, `arg2 = len` | switches to the prepared fallback generation or returns error |
@@ -133,7 +134,7 @@ becoming uncontrolled kernel faults.
 Capabilities are process-local. A capability slot number is meaningful only in
 the current process's capability space.
 
-Current M14-M42 layout:
+Current M14-M43 layout:
 
 ```text
 vertex-init:
@@ -157,21 +158,22 @@ serial-driver:
   cap[3] = io-port cap:io.com1, rights=read|write
 
 block-driver:
-  cap[0] = endpoint block-read-request, rights=receive
+  cap[0] = endpoint block-request, rights=receive
   cap[1] = endpoint serial-log, rights=send
   cap[2] = endpoint readiness, rights=send
   cap[3] = endpoint vertex-store-block-reply, rights=send after vertex-init derives and transfers it
-  cap[4] = io-port cap:io.pci-config, rights=read|write
-  cap[5] = interrupt-line cap:irq.virtio-blk0, rights=listen
-  cap[6] = dma-region cap:dma.virtio-blk0, rights=read|write|map
-  cap[7] = io-port cap:io.virtio-blk0, rights=read|write
+  cap[4] = endpoint vertex-state-block-reply, rights=send after vertex-init derives and transfers it
+  cap[5] = io-port cap:io.pci-config, rights=read|write
+  cap[6] = interrupt-line cap:irq.virtio-blk0, rights=listen
+  cap[7] = dma-region cap:dma.virtio-blk0, rights=read|write|map
+  cap[8] = io-port cap:io.virtio-blk0, rights=read|write
 
 vertex-store:
   cap[0] = endpoint store-hello-text-request, rights=receive
   cap[1] = endpoint serial-log, rights=send
   cap[2] = endpoint readiness, rights=send
   cap[3] = endpoint vertex-store-block-reply, rights=receive
-  cap[4] = endpoint block-read-request, rights=send after vertex-init derives and transfers it
+  cap[4] = endpoint block-request, rights=send after vertex-init derives and transfers it
   cap[5] = endpoint model-reader-store-reply, rights=send after vertex-init derives and transfers it
   cap[6] = dynamic init store reply endpoint, rights=send during M37 generation fetch
 
@@ -179,8 +181,9 @@ vertex-state:
   cap[0] = endpoint state-counter-request, rights=receive
   cap[1] = endpoint serial-log, rights=send
   cap[2] = endpoint readiness, rights=send
-  cap[3] = endpoint state-reader-state-reply, rights=send after vertex-init derives and transfers it
-  cap[4] = state-volume state:counter, rights=read|write|snapshot|restore
+  cap[3] = endpoint vertex-state-block-reply, rights=receive
+  cap[4] = endpoint block-request, rights=send after vertex-init derives and transfers it
+  cap[5] = endpoint state-reader-state-reply, rights=send after vertex-init derives and transfers it
 
 vertex-inspect:
   cap[0] = process-control object, rights=inspect after vertex-init transfers it
@@ -242,8 +245,9 @@ SYS_CAP_TRANSFER requires a caller-supplied process-control cap slot and applies
 SYS_ENDPOINT_CREATE requires allocate rights on process-control and available endpoint quota.
 SYS_QUOTA_DELEGATE requires delegate rights on process-control and cannot exceed the caller quota.
 SYS_OBJECT_READ requires read rights on a store-object cap.
-SYS_STATE_WRITE requires write rights on a state-volume cap.
-SYS_STATE_READ requires read rights on a state-volume cap.
+Native state reads and writes are service IPC to `vertex-state`.
+`vertex-state` persists those operations through the VertexDisk block protocol
+served by `block-driver`.
 SYS_SLEEP_MS requires control rights on a timer cap.
 SYS_IO_READ, SYS_IO_READ16, and SYS_IO_READ32 require read rights on an io-port cap and a fully covered port span inside the granted range.
 SYS_IO_WRITE, SYS_IO_WRITE16, and SYS_IO_WRITE32 require write rights on an io-port cap and a fully covered port span inside the granted range.
@@ -374,9 +378,9 @@ keeps the kernel running. Kernel faults still stop the kernel.
 ## IPC Semantics
 
 Endpoints hold a fixed four-message FIFO. Each message is capped at 512 bytes,
-which is large enough for M42 fixed-sector block replies. The FIFO is safe for
-request endpoints because only providers receive from request queues and only
-clients receive from their private reply queues.
+which is large enough for M43 VertexDisk fixed-sector block replies. The FIFO
+is safe for request endpoints because only providers receive from request
+queues and only clients receive from their private reply queues.
 
 Send path:
 
@@ -504,7 +508,7 @@ processes
 endpoints
 grants
 store_objects
-state_volumes
+state_volumes (must be zero in the current native ABI; mutable state lives on VertexDisk)
 network_ports
 io_port_ranges
 mmio_regions
@@ -514,7 +518,7 @@ dma_regions
 
 Manifest v1 adds a fixed header, record table, checksum, and record bounds
 validation. The current record kinds are boot modules, processes, endpoints,
-grants, store objects, state volumes, timer, generation, and policy. The kernel
+grants, store objects, empty legacy state table, timer, generation, and policy. The kernel
 requires the v1 wrapper at the boot-module boundary and rejects an unwrapped
 compact payload. After validating the wrapper, the kernel exposes the compact
 payload to `vertex-init` through cap[0] so existing userspace parsing stays
@@ -531,7 +535,7 @@ cap[4+] endpoint authority for graph-delegated endpoints, one authority cap per
 declared endpoint beyond the fixed serial-log/readiness endpoints
 ```
 
-Endpoint, hardware, store-object, state-volume, and timer grants for declared services
+Endpoint, hardware, store-object, network, device, and timer grants for declared services
 come from the compact manifest. Endpoint consumers do not receive static boot
 send grants for delegated authority; vertex-init derives and transfers the
 attenuated cap before starting the consumer. A transfer to a still-declared

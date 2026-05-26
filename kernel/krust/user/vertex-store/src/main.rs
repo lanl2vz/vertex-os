@@ -18,8 +18,18 @@ const GENERATION_B_MANIFEST: &[u8] = b"krustboot:gen:switch-b-0002";
 const HELLO_OBJECT: &[u8] = b"hello from Krust store\n";
 const BLOCK_PROTOCOL_V1: u16 = 1;
 const BLOCK_OP_READ_SECTOR: u16 = 1;
-const HELLO_OBJECT_SECTOR: u64 = 0;
+const BLOCK_CLIENT_STORE: u16 = 1;
 const SECTOR_SIZE: usize = 512;
+const VERTEX_DISK_MAGIC: &[u8; 16] = b"VERTEXDISKV0\0\0\0\0";
+const STORE_INDEX_MAGIC: &[u8; 16] = b"VDISKSTOREV0\0\0\0\0";
+const VERTEX_DISK_VERSION: u16 = 1;
+const VERTEX_DISK_CHECKSUM_OFFSET: usize = 20;
+const VERTEX_DISK_TOTAL_SECTORS_OFFSET: usize = 24;
+const VERTEX_DISK_SECTION_TABLE_OFFSET: usize = 32;
+const VERTEX_DISK_SECTION_RECORD_LEN: usize = 16;
+const VERTEX_DISK_STORE_INDEX_SECTION: usize = 1;
+const VERTEX_DISK_STORE_DATA_SECTION: usize = 2;
+const STORE_ENTRY_OFFSET: usize = 32;
 const PROTOCOL_HEALTH_V0: u16 = 2;
 const MESSAGE_READY: u16 = 1;
 const ENVELOPE_LEN: usize = 16;
@@ -27,6 +37,7 @@ const ENVELOPE_LEN: usize = 16;
 #[unsafe(link_section = ".text._start")]
 #[unsafe(no_mangle)]
 pub extern "C" fn _start() -> ! {
+    let entry = load_store_entry();
     send_ready();
     log(b"vertex-store ready");
 
@@ -44,7 +55,7 @@ pub extern "C" fn _start() -> ! {
             continue;
         }
         if starts_with(request, STORE_ID) {
-            serve_hello_object();
+            serve_hello_object(entry);
         }
 
         log(b"vertex-store request invalid");
@@ -60,21 +71,83 @@ fn serve_generation_b_manifest() {
     }
 }
 
-fn serve_hello_object() -> ! {
-    log(b"store-service requests block read");
-    let request = block_read_request(HELLO_OBJECT_SECTOR);
-    if sys::ipc_send(CAP_BLOCK_REQUEST, &request) != sys::STATUS_OK {
-        log(b"vertex-store block request failed");
+#[derive(Clone, Copy)]
+struct StoreEntry {
+    data_sector: u64,
+    byte_len: usize,
+    checksum: u32,
+}
+
+fn load_store_entry() -> StoreEntry {
+    let mut superblock = [0u8; SECTOR_SIZE];
+    read_block_sector(0, &mut superblock);
+    if !valid_superblock(&superblock) {
+        log(b"VertexDisk superblock rejected");
         sys::exit(1);
     }
 
-    let mut sector = [0u8; SECTOR_SIZE];
-    let object_len = sys::ipc_recv(CAP_BLOCK_REPLY, &mut sector);
-    if object_len != SECTOR_SIZE as u64 {
-        log(b"vertex-store block response failed");
+    let Some(store_index_sector) =
+        vertexdisk_section_start(&superblock, VERTEX_DISK_STORE_INDEX_SECTION)
+    else {
+        log(b"vertex-store store index bounds invalid");
+        sys::exit(1);
+    };
+    let Some((store_data_start, store_data_count)) =
+        vertexdisk_section(&superblock, VERTEX_DISK_STORE_DATA_SECTION)
+    else {
+        log(b"vertex-store store data bounds invalid");
+        sys::exit(1);
+    };
+
+    let mut index_sector = [0u8; SECTOR_SIZE];
+    read_block_sector(store_index_sector, &mut index_sector);
+    if !valid_index_header(&index_sector, STORE_INDEX_MAGIC) {
+        log(b"vertex-store object index rejected");
         sys::exit(1);
     }
-    let object_len = HELLO_OBJECT.len();
+
+    let count = read_u16(&index_sector, 18) as usize;
+    let mut index = 0;
+    while index < count {
+        let offset = STORE_ENTRY_OFFSET + index * 80;
+        if offset + 80 > index_sector.len() {
+            log(b"vertex-store object index bounds invalid");
+            sys::exit(1);
+        }
+        if fixed_string_eq(&index_sector, offset, STORE_ID) {
+            let data_sector = read_u64(&index_sector, offset + 64);
+            let byte_len = read_u32(&index_sector, offset + 72) as usize;
+            let checksum = read_u32(&index_sector, offset + 76);
+            if byte_len > SECTOR_SIZE
+                || data_sector < store_data_start
+                || data_sector >= store_data_start + store_data_count
+            {
+                log(b"vertex-store object bounds invalid");
+                sys::exit(1);
+            }
+            log(b"vertex-store reads object index from disk");
+            return StoreEntry {
+                data_sector,
+                byte_len,
+                checksum,
+            };
+        }
+        index += 1;
+    }
+
+    log(b"vertex-store object missing from disk index");
+    sys::exit(1);
+}
+
+fn serve_hello_object(entry: StoreEntry) -> ! {
+    log(b"store-service requests block read");
+    let mut sector = [0u8; SECTOR_SIZE];
+    read_block_sector(entry.data_sector, &mut sector);
+    let object_len = entry.byte_len;
+    if checksum32(&sector[..object_len]) != entry.checksum {
+        log(b"vertex-store disk checksum failed");
+        sys::exit(1);
+    }
     if !bytes_eq(&sector[..object_len], HELLO_OBJECT) {
         log(b"vertex-store hash verification failed");
         sys::exit(1);
@@ -102,8 +175,112 @@ fn block_read_request(sector: u64) -> [u8; 16] {
     let mut request = [0u8; 16];
     write_u16(&mut request, 0, BLOCK_PROTOCOL_V1);
     write_u16(&mut request, 2, BLOCK_OP_READ_SECTOR);
+    write_u16(&mut request, 4, BLOCK_CLIENT_STORE);
     write_u64(&mut request, 8, sector);
     request
+}
+
+fn read_block_sector(sector: u64, out: &mut [u8; SECTOR_SIZE]) {
+    let request = block_read_request(sector);
+    if sys::ipc_send(CAP_BLOCK_REQUEST, &request) != sys::STATUS_OK {
+        log(b"vertex-store block request failed");
+        sys::exit(1);
+    }
+
+    let received = sys::ipc_recv(CAP_BLOCK_REPLY, out);
+    if received != SECTOR_SIZE as u64 {
+        log(b"vertex-store block response failed");
+        sys::exit(1);
+    }
+}
+
+fn valid_superblock(sector: &[u8; SECTOR_SIZE]) -> bool {
+    if !starts_with(sector, VERTEX_DISK_MAGIC)
+        || read_u16(sector, 16) != VERTEX_DISK_VERSION
+        || read_u16(sector, 18) != SECTOR_SIZE as u16
+        || !metadata_checksum_valid(sector)
+    {
+        return false;
+    }
+
+    let total_sectors = read_u32(sector, VERTEX_DISK_TOTAL_SECTORS_OFFSET) as u64;
+    let mut section = 0;
+    while section <= VERTEX_DISK_STORE_DATA_SECTION {
+        let Some((start, count)) = vertexdisk_section(sector, section) else {
+            return false;
+        };
+        if count == 0
+            || start
+                .checked_add(count)
+                .is_none_or(|end| end > total_sectors)
+        {
+            return false;
+        }
+        section += 1;
+    }
+    true
+}
+
+fn valid_index_header(sector: &[u8; SECTOR_SIZE], magic: &[u8; 16]) -> bool {
+    starts_with(sector, magic)
+        && read_u16(sector, 16) == VERTEX_DISK_VERSION
+        && metadata_checksum_valid(sector)
+}
+
+fn vertexdisk_section_start(sector: &[u8; SECTOR_SIZE], section: usize) -> Option<u64> {
+    vertexdisk_section(sector, section).map(|(start, _count)| start)
+}
+
+fn vertexdisk_section(sector: &[u8; SECTOR_SIZE], section: usize) -> Option<(u64, u64)> {
+    let offset = VERTEX_DISK_SECTION_TABLE_OFFSET + section * VERTEX_DISK_SECTION_RECORD_LEN;
+    if offset + 16 > sector.len() {
+        return None;
+    }
+    Some((read_u64(sector, offset), read_u64(sector, offset + 8)))
+}
+
+fn metadata_checksum_valid(sector: &[u8; SECTOR_SIZE]) -> bool {
+    let stored = read_u32(sector, VERTEX_DISK_CHECKSUM_OFFSET);
+    let mut checksum = 0u32;
+    let mut index = 0;
+    while index < sector.len() {
+        let byte =
+            if index >= VERTEX_DISK_CHECKSUM_OFFSET && index < VERTEX_DISK_CHECKSUM_OFFSET + 4 {
+                0
+            } else {
+                sector[index]
+            };
+        checksum = checksum.wrapping_add((byte as u32).wrapping_mul(index as u32 + 1));
+        index += 1;
+    }
+    checksum == stored
+}
+
+fn checksum32(bytes: &[u8]) -> u32 {
+    let mut checksum = 0u32;
+    let mut index = 0;
+    while index < bytes.len() {
+        checksum = checksum.wrapping_add((bytes[index] as u32).wrapping_mul(index as u32 + 1));
+        index += 1;
+    }
+    checksum
+}
+
+fn fixed_string_eq(buffer: &[u8], offset: usize, value: &[u8]) -> bool {
+    if offset + 64 > buffer.len() || value.len() > 64 {
+        return false;
+    }
+    let mut index = 0;
+    while index < value.len() {
+        if buffer[offset + index] != value[index] {
+            return false;
+        }
+        index += 1;
+    }
+    if value.len() < 64 && buffer[offset + value.len()] != 0 {
+        return false;
+    }
+    true
 }
 
 fn log(message: &[u8]) {
@@ -140,12 +317,38 @@ fn write_u16(buffer: &mut [u8], offset: usize, value: u16) {
     buffer[offset + 1] = bytes[1];
 }
 
+fn read_u16(buffer: &[u8], offset: usize) -> u16 {
+    u16::from_le_bytes([buffer[offset], buffer[offset + 1]])
+}
+
+fn read_u32(buffer: &[u8], offset: usize) -> u32 {
+    u32::from_le_bytes([
+        buffer[offset],
+        buffer[offset + 1],
+        buffer[offset + 2],
+        buffer[offset + 3],
+    ])
+}
+
 fn write_u32(buffer: &mut [u8], offset: usize, value: u32) {
     let bytes = value.to_le_bytes();
     buffer[offset] = bytes[0];
     buffer[offset + 1] = bytes[1];
     buffer[offset + 2] = bytes[2];
     buffer[offset + 3] = bytes[3];
+}
+
+fn read_u64(buffer: &[u8], offset: usize) -> u64 {
+    u64::from_le_bytes([
+        buffer[offset],
+        buffer[offset + 1],
+        buffer[offset + 2],
+        buffer[offset + 3],
+        buffer[offset + 4],
+        buffer[offset + 5],
+        buffer[offset + 6],
+        buffer[offset + 7],
+    ])
 }
 
 fn write_u64(buffer: &mut [u8], offset: usize, value: u64) {

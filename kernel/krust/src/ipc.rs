@@ -19,7 +19,6 @@ const MAX_CAPS: usize = 32;
 const MAX_BOOT_GRANTS: usize = 128;
 const MAX_REVOKED_CAPS: usize = 128;
 const MAX_GENERATION_CONFIGS: usize = 4;
-const MAX_STATE_VALUE_BYTES: usize = 64;
 const MAX_INSPECT_REPORT_BYTES: usize = 32 * 1024;
 const DMA_MAPPING_INFO_BYTES: usize = 24;
 const USER_DMA_MAPPING_BASE: u64 = 0x0000_6000_0000_0000;
@@ -185,11 +184,6 @@ pub struct BootStoreObjectConfig {
 }
 
 #[derive(Clone, Copy)]
-pub struct BootStateVolumeConfig {
-    pub id: &'static str,
-}
-
-#[derive(Clone, Copy)]
 pub struct BootNetworkPortConfig {
     pub id: &'static str,
 }
@@ -240,8 +234,6 @@ pub struct BootRuntimeConfig {
     manifest_module: Option<BootModuleConfig>,
     store_objects: [Option<BootStoreObjectConfig>; MAX_OBJECTS],
     store_object_count: usize,
-    state_volumes: [Option<BootStateVolumeConfig>; MAX_OBJECTS],
-    state_volume_count: usize,
     network_ports: [Option<BootNetworkPortConfig>; MAX_OBJECTS],
     network_port_count: usize,
     io_ports: [Option<BootIoPortRangeConfig>; MAX_OBJECTS],
@@ -387,15 +379,6 @@ struct StoreObject {
 }
 
 #[derive(Clone, Copy)]
-struct StateVolumeObject {
-    id: KernelObjectId,
-    name: &'static str,
-    value_ready: bool,
-    value_len: usize,
-    value: [u8; MAX_STATE_VALUE_BYTES],
-}
-
-#[derive(Clone, Copy)]
 struct TimerObject {
     id: KernelObjectId,
     name: &'static str,
@@ -455,7 +438,6 @@ enum KernelObject {
     IpcEndpoint(IpcEndpoint),
     BootModule(BootModuleObject),
     StoreObject(StoreObject),
-    StateVolume(StateVolumeObject),
     Timer(TimerObject),
     NetworkPort(NetworkPortObject),
     IoPortRange(IoPortRangeObject),
@@ -858,18 +840,6 @@ impl StoreObject {
     }
 }
 
-impl StateVolumeObject {
-    const fn new(id: KernelObjectId, name: &'static str) -> Self {
-        Self {
-            id,
-            name,
-            value_ready: false,
-            value_len: 0,
-            value: [0; MAX_STATE_VALUE_BYTES],
-        }
-    }
-}
-
 impl TimerObject {
     const fn new(id: KernelObjectId, name: &'static str) -> Self {
         Self { id, name }
@@ -1046,19 +1016,6 @@ impl ObjectTable {
         self.objects[self.count] = Some(KernelObject::StoreObject(StoreObject::new(
             id, name, base, length,
         )));
-        self.count += 1;
-        Ok(id)
-    }
-
-    fn add_state_volume(&mut self, name: &'static str) -> Result<KernelObjectId, InitError> {
-        if self.count == self.objects.len() {
-            return Err(InitError::ObjectTableFull);
-        }
-
-        let id = KernelObjectId(self.next_id);
-        self.next_id += 1;
-        self.objects[self.count] =
-            Some(KernelObject::StateVolume(StateVolumeObject::new(id, name)));
         self.count += 1;
         Ok(id)
     }
@@ -1247,25 +1204,6 @@ impl ObjectTable {
         }
 
         None
-    }
-
-    fn get_state_volume_mut(&mut self, id: KernelObjectId) -> Option<&mut StateVolumeObject> {
-        let mut found = None;
-        let mut index = 0;
-        while index < self.count {
-            if let Some(KernelObject::StateVolume(state)) = self.objects[index]
-                && state.id == id
-            {
-                found = Some(index);
-                break;
-            }
-            index += 1;
-        }
-
-        match &mut self.objects[found?] {
-            Some(KernelObject::StateVolume(state)) => Some(state),
-            _ => None,
-        }
     }
 
     fn get_timer(&self, id: KernelObjectId) -> Option<TimerObject> {
@@ -1635,8 +1573,6 @@ impl BootRuntimeConfig {
             manifest_module: None,
             store_objects: [None; MAX_OBJECTS],
             store_object_count: 0,
-            state_volumes: [None; MAX_OBJECTS],
-            state_volume_count: 0,
             network_ports: [None; MAX_OBJECTS],
             network_port_count: 0,
             io_ports: [None; MAX_OBJECTS],
@@ -1684,15 +1620,6 @@ impl BootRuntimeConfig {
         }
         self.store_objects[self.store_object_count] = Some(object);
         self.store_object_count += 1;
-        Ok(())
-    }
-
-    pub fn add_state_volume(&mut self, state: BootStateVolumeConfig) -> Result<(), InitError> {
-        if self.state_volume_count == self.state_volumes.len() {
-            return Err(InitError::ObjectTableFull);
-        }
-        self.state_volumes[self.state_volume_count] = Some(state);
-        self.state_volume_count += 1;
         Ok(())
     }
 
@@ -1761,7 +1688,6 @@ impl BootRuntimeConfig {
         match grant.object_kind {
             BOOT_OBJECT_ENDPOINT if grant.object_index < self.endpoint_count => {}
             BOOT_OBJECT_STORE if grant.object_index < self.store_object_count => {}
-            BOOT_OBJECT_STATE if grant.object_index < self.state_volume_count => {}
             BOOT_OBJECT_TIMER if grant.object_index == 0 => {}
             BOOT_OBJECT_NETWORK_PORT if grant.object_index < self.network_port_count => {}
             BOOT_OBJECT_IO_PORT_RANGE if grant.object_index < self.io_port_count => {}
@@ -1909,14 +1835,6 @@ pub fn init_from_boot_config(config: &'static BootRuntimeConfig) -> Result<(), I
         store_index += 1;
     }
 
-    let mut state_volume_ids = [None; MAX_OBJECTS];
-    let mut state_index = 0;
-    while state_index < config.state_volume_count {
-        let state = config.state_volumes[state_index].ok_or(InitError::InvalidBootManifest)?;
-        state_volume_ids[state_index] = Some(runtime.objects.add_state_volume(state.id)?);
-        state_index += 1;
-    }
-
     let mut network_port_ids = [None; MAX_OBJECTS];
     let mut network_index = 0;
     while network_index < config.network_port_count {
@@ -2016,9 +1934,7 @@ pub fn init_from_boot_config(config: &'static BootRuntimeConfig) -> Result<(), I
             BOOT_OBJECT_STORE => {
                 store_object_ids[grant.object_index].ok_or(InitError::InvalidBootManifest)?
             }
-            BOOT_OBJECT_STATE => {
-                state_volume_ids[grant.object_index].ok_or(InitError::InvalidBootManifest)?
-            }
+            BOOT_OBJECT_STATE => return Err(InitError::InvalidBootManifest),
             BOOT_OBJECT_TIMER if grant.object_index == 0 => timer_id,
             BOOT_OBJECT_NETWORK_PORT => {
                 network_port_ids[grant.object_index].ok_or(InitError::InvalidBootManifest)?
@@ -3059,60 +2975,6 @@ pub fn object_read(cap_slot: u64, destination: *mut u8, max_len: usize) -> Resul
     Ok(copy_len)
 }
 
-pub fn state_write(cap_slot: u64, source: *const u8, len: usize) -> Result<(), IpcError> {
-    if len > MAX_STATE_VALUE_BYTES {
-        return Err(IpcError::MessageTooLarge);
-    }
-
-    let state_id = state_volume_from_cap(cap_slot, capability::RIGHT_WRITE)?;
-    let mut value = [0u8; MAX_STATE_VALUE_BYTES];
-    usercopy::copy_from_user(&mut value, UserPtr::new(source as u64), len)
-        .map_err(|_| IpcError::InvalidUserBuffer)?;
-
-    let process_name = current_process_name();
-    let state = runtime()
-        .objects
-        .get_state_volume_mut(state_id)
-        .ok_or(IpcError::BadCapability)?;
-    state.value[..len].copy_from_slice(&value[..len]);
-    state.value_len = len;
-    state.value_ready = true;
-
-    serial::write_str("State write accepted: proc=");
-    serial::write_str(process_name);
-    serial::write_str(" state=");
-    serial::write_str(state.name);
-    serial::write_str("\n");
-    Ok(())
-}
-
-pub fn state_read(cap_slot: u64, destination: *mut u8, max_len: usize) -> Result<usize, IpcError> {
-    let state_id = state_volume_from_cap(cap_slot, capability::RIGHT_READ)?;
-    let (name, value, copy_len) = {
-        let state = runtime()
-            .objects
-            .get_state_volume_mut(state_id)
-            .ok_or(IpcError::BadCapability)?;
-        if !state.value_ready {
-            return Err(IpcError::Empty);
-        }
-        let copy_len = min(state.value_len, max_len);
-        let mut value = [0u8; MAX_STATE_VALUE_BYTES];
-        value[..copy_len].copy_from_slice(&state.value[..copy_len]);
-        (state.name, value, copy_len)
-    };
-
-    usercopy::copy_to_user(UserPtr::new(destination as u64), &value[..copy_len])
-        .map_err(|_| IpcError::InvalidUserBuffer)?;
-
-    serial::write_str("State read accepted: proc=");
-    serial::write_str(current_process_name());
-    serial::write_str(" state=");
-    serial::write_str(name);
-    serial::write_str("\n");
-    Ok(copy_len)
-}
-
 pub fn io_read(cap_slot: u64, port: u64) -> Result<u64, IpcError> {
     let range = io_port_from_cap(cap_slot, capability::RIGHT_READ)?;
     if !port_span_in_range(range, port, 1) || port > u16::MAX as u64 {
@@ -3721,14 +3583,6 @@ fn store_object_from_cap(cap_slot: u64, required_right: u64) -> Result<StoreObje
         .ok_or(IpcError::BadCapability)
 }
 
-fn state_volume_from_cap(cap_slot: u64, required_right: u64) -> Result<KernelObjectId, IpcError> {
-    let cap = lookup_capability(cap_slot, required_right)?;
-    match runtime().objects.get_state_volume_mut(cap.object) {
-        Some(_) => Ok(cap.object),
-        None => Err(IpcError::BadCapability),
-    }
-}
-
 fn timer_from_cap(cap_slot: u64, required_right: u64) -> Result<TimerObject, IpcError> {
     let cap = lookup_capability(cap_slot, required_right)?;
     runtime()
@@ -3997,11 +3851,6 @@ fn write_capability_object_report(
                     report.push_str(store.name);
                     return;
                 }
-                KernelObject::StateVolume(state) if state.id == object => {
-                    report.push_str("state-volume=");
-                    report.push_str(state.name);
-                    return;
-                }
                 KernelObject::Timer(timer) if timer.id == object => {
                     report.push_str("timer=");
                     report.push_str(timer.name);
@@ -4182,11 +4031,6 @@ fn print_capability_object(object: KernelObjectId) {
                 KernelObject::StoreObject(store) if store.id == object => {
                     serial::write_str("store-object=");
                     serial::write_str(store.name);
-                    return;
-                }
-                KernelObject::StateVolume(state) if state.id == object => {
-                    serial::write_str("state-volume=");
-                    serial::write_str(state.name);
                     return;
                 }
                 KernelObject::Timer(timer) if timer.id == object => {

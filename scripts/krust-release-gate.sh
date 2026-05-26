@@ -4,7 +4,7 @@ set -eu
 ROOT_DIR=$(CDPATH= cd "$(dirname "$0")/.." && pwd)
 KRUST_DIR=${KRUST_DIR:-"$ROOT_DIR/kernel/krust"}
 LOG_DIR=${LOG_DIR:-"$KRUST_DIR/build/release-gate"}
-KRUST_CASES=${KRUST_CASES:-"m14 manifest-cycle bad-cap readiness-timeout rollback store-state-services timer preemption user-fault restart manifest-v1 cap-lifecycle typed-arenas quotas m32 m33 m34 m35 m36 m37 m38 m40 m41 m42 m42-driver-fault manifest-truncated manifest-bad-magic manifest-raw-compact manifest-unsupported-version manifest-oob-record manifest-missing-provider"}
+KRUST_CASES=${KRUST_CASES:-"m14 manifest-cycle bad-cap readiness-timeout rollback store-state-services timer preemption user-fault restart manifest-v1 cap-lifecycle typed-arenas quotas m32 m33 m34 m35 m36 m37 m38 m40 m41 m42 m42-driver-fault m43 m43-bad-superblock manifest-truncated manifest-bad-magic manifest-raw-compact manifest-unsupported-version manifest-oob-record manifest-missing-provider"}
 
 fail() {
     echo "error: $*" >&2
@@ -82,11 +82,11 @@ check_no_trailing_whitespace docs/krust-toolchain.md
 check_no_trailing_whitespace kernel/krust/README.md
 
 step "checking Krust status documentation"
-require_doc_line README.md "M14-M42"
+require_doc_line README.md "M14-M43"
 require_doc_line README.md "scripts/krust-release-gate.sh"
 require_doc_line README.md "docs/krust-toolchain.md"
 require_doc_line README.md "docs/krust-abi-v1.md"
-require_doc_line docs/krust-milestones.md "Current status: M14-M42"
+require_doc_line docs/krust-milestones.md "Current status: M14-M43"
 require_doc_line docs/krust-milestones.md "## M25: Reproducible Clean-Clone Release Gate"
 require_doc_line docs/krust-milestones.md "done: all M14-M24 QEMU tests are run from the gate"
 require_doc_line docs/krust-milestones.md "done: M26-M29 manifest, capability, arena, quota, and malformed-manifest QEMU tests are run from the gate"
@@ -95,7 +95,9 @@ require_doc_line docs/krust-milestones.md "done: M39 exact toolchain, Cargo lock
 require_doc_line docs/krust-milestones.md "done: M40 directed request/reply IPC is checked by the gate"
 require_doc_line docs/krust-milestones.md "done: M41 native console shell is checked by the gate"
 require_doc_line docs/krust-milestones.md "done: M42 minimal virtio-block driver is checked by the gate"
+require_doc_line docs/krust-milestones.md "done: M43 VertexDisk layout is checked by the gate"
 require_doc_line docs/krust-milestones.md "## M42: Minimal Virtio-Block Driver"
+require_doc_line docs/krust-milestones.md "## M43: VertexDisk v0 Layout"
 require_doc_line docs/krust-milestones.md "done: unwrapped compact payload rejected"
 require_doc_line docs/krust-milestones.md "## M39: Reproducible Build Environment"
 require_doc_line docs/krust-milestones.md "## M40: Vertex Native Runtime ABI v1"
@@ -107,7 +109,7 @@ require_doc_line docs/krust-toolchain.md "qemu-system-x86_64 11.0.0"
 require_doc_line docs/krust-toolchain.md "limine 12.3.0"
 require_doc_line docs/krust-toolchain.md "xorriso 1.5.8.pl01"
 require_doc_line docs/krust-abi-v1.md "M40 freezes ABI v1"
-require_doc_line kernel/krust/README.md "M26-M42 Substrate"
+require_doc_line kernel/krust/README.md "M26-M43 Substrate"
 require_doc_line kernel/krust/README.md "scripts/krust-release-gate.sh"
 require_doc_line kernel/krust/README.md "rustc 1.95.0"
 require_doc_line kernel/krust/README.md "directed IPC"
@@ -137,4 +139,4 @@ for case_name in $KRUST_CASES; do
 done
 
 echo
-echo "Krust release gate ok: clean-clone M14-M42 proof is repeatable."
+echo "Krust release gate ok: clean-clone M14-M43 proof is repeatable."

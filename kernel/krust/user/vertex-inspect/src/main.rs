@@ -130,14 +130,14 @@ fn explain_echo_to_logd(report: &[u8]) {
 fn explain_state_counter(report: &[u8]) {
     log(b"native who-can state:counter");
     let needles: [&[u8]; 5] = [
-        b"space=initial proc=vertex-state cap[",
-        b"state-volume=state:counter",
-        b"rights=read|write|snapshot|restore",
+        b"space=initial proc=vertex-state cap[4]",
+        b"endpoint=block-request",
+        b"rights=send",
         b"owner=vertex-state",
         b"revoked=no",
     ];
     if find_line_contains_all(report, &needles).is_some() {
-        log(b"who-can: vertex-state owns state:counter with rights=read|write|snapshot|restore");
+        log(b"who-can: vertex-state owns state:counter through VertexDisk block service authority");
         return;
     }
 

@@ -6,11 +6,13 @@ IR and graph semantics; Krust is the native enforcement path.
 
 ## Status Summary
 
-Current status: M14-M42 are implemented and smoke-tested under
+Current status: M14-M43 are implemented and smoke-tested under
 `qemu-system-x86_64` with Limine. M39 pins the native toolchain, M40 makes
 native IPC directed, and M41 adds a native console shell path over explicit
 console authority. M42 adds the first real virtio-blk sector I/O path over
-PCI I/O and DMA capabilities.
+PCI I/O and DMA capabilities. M43 adds the first VertexDisk v0 block-object
+layout for immutable store reads, mutable state persistence, journal writeback,
+and bad-superblock rejection.
 
 ```sh
 make -C kernel/krust doctor
@@ -35,13 +37,15 @@ scripts/krust-test.sh m40
 scripts/krust-test.sh m41
 scripts/krust-test.sh m42
 scripts/krust-test.sh m42-driver-fault
+scripts/krust-test.sh m43
+scripts/krust-test.sh m43-bad-superblock
 ```
 
-Next direction: use the ABI v1 base to build Vertex OS v0, a tiny persistent
-appliance system. The next milestones should make the native system useful
-without weakening the graph-shaped authority model: verified disk layouts over
-the new block I/O path before persistence, verified store objects before updates, and
-dynamic process creation before higher-level package or language work.
+Next direction: use the ABI v1 and VertexDisk base to build Vertex OS v0, a
+tiny persistent appliance system. The next milestones should make the native
+system useful without weakening the graph-shaped authority model: disk-native
+boot selection, verified store objects before updates, and dynamic process
+creation before higher-level package or language work.
 
 ## M0: Serial Boot
 
@@ -692,11 +696,12 @@ snapshot
 restore
 ```
 
-Candidate demo syscalls:
+Initial demo protocol:
 
 ```text
-SYS_STATE_WRITE(cap_slot, value)
-SYS_STATE_READ(cap_slot, buffer)
+counter-service -> vertex-state request endpoint
+reader-service -> vertex-state request endpoint
+vertex-state -> private reply endpoints
 ```
 
 Acceptance evidence:
@@ -835,7 +840,7 @@ M32  I/O capability substrate
 M33  Move serial logging toward user space
 M34  First real block-device path
 M35  Native immutable store service
-M36  Native state-volume service
+M36  Native state service
 M37  Native generation switch
 M38  Native vertexctl-like introspection service
 M39  Reproducible build environment
@@ -872,6 +877,7 @@ done: M39 exact toolchain, Cargo lockfiles, and locked offline Cargo metadata ar
 done: M40 directed request/reply IPC is checked by the gate
 done: M41 native console shell is checked by the gate
 done: M42 minimal virtio-block driver is checked by the gate
+done: M43 VertexDisk layout is checked by the gate
 done: all QEMU transcript checks have bounded polling windows
 done: missing and forbidden transcript lines are reported explicitly
 done: README.md, docs/krust-milestones.md, docs/krust-abi-v1.md, and kernel/krust/README.md agree
@@ -1301,7 +1307,7 @@ service.
 `vertex-store` requests bytes from `block-driver`, verifies the expected object
 content, rejects a modified-object negative check, and replies to the reader.
 
-## M36: Native State-Volume Service
+## M36: Native State Service
 
 Status: done.
 
@@ -1313,7 +1319,7 @@ Service:
 ```text
 vertex-state
   owns block ranges or state objects
-  exposes state-volume capabilities
+  exposes a directed state service endpoint
   supports read, write, snapshot, and restore semantics
 ```
 
@@ -1331,10 +1337,11 @@ done: system generation rollback does not automatically roll back state unless p
 Immutable system rollback and mutable state rollback are related policy
 decisions, not the same operation.
 
-`counter-service` and `reader-service` now use a `vertex-state` IPC endpoint
-instead of direct kernel state syscalls. `vertex-state` owns the state-volume
-backend capability, performs the write/read/deny flow, and demonstrates
-explicit snapshot and restore policy separation.
+`counter-service` and `reader-service` use a `vertex-state` IPC endpoint for
+state operations. The old direct kernel state syscall path was upgraded into
+service IPC and removed from the current ABI surface. M43 then moved
+`vertex-state` persistence onto VertexDisk block IPC, so there is no native
+state backend capability to preserve.
 
 ## M37: Native Generation Switch
 
@@ -1434,7 +1441,7 @@ done: locked Cargo dependencies for the hosted workspace, Krust kernel, and nati
 done: kernel/krust/rust-toolchain.toml pins Rust 1.95.0, rustfmt, and x86_64-unknown-none
 done: make doctor checks every required tool and reports actionable fixes
 done: legacy hello/ipc userspace crates are removed instead of carried forward
-done: single release-gate script runs the clean-clone M14-M42 proof with the M14-M42 QEMU matrix
+done: single release-gate script runs the clean-clone M14-M43 proof with the M14-M43 QEMU matrix
 ```
 
 Acceptance tests:
@@ -1492,7 +1499,7 @@ done: scripts/krust-test.sh m40 proves the directed IPC ABI and FIFO queue behav
 
 Status: done.
 
-Goal: turn the M14-M42 native proof into a small real operating system target:
+Goal: turn the M14-M43 native proof into a small real operating system target:
 bootable in QEMU, persistent, inspectable, updateable, and capable of running
 several native services under explicit authority.
 
@@ -1581,7 +1588,7 @@ svc:echo has send authority because generation graph granted cap slot 0
 
 ## M42: Minimal Virtio-Block Driver
 
-Status: planned.
+Status: done.
 
 Goal: add the first real persistent block I/O path before defining a disk
 layout that depends on it.
@@ -1623,7 +1630,7 @@ done: block-driver fault does not crash kernel
 
 ## M43: VertexDisk v0 Layout
 
-Status: planned.
+Status: done.
 
 Goal: stop relying only on ISO boot modules by defining a minimal disk format
 for generations, immutable store objects, state volumes, and update journals.
@@ -1654,12 +1661,18 @@ state writes are explicit service operations
 Acceptance tests:
 
 ```text
-QEMU boots with VertexDisk image attached
-vertex-store reads object index from disk
-vertex-state writes state volume to disk
-reboot preserves state value
-bad superblock is rejected without panic
+done: QEMU boots with VertexDisk image attached
+done: VertexDisk superblock accepted
+done: vertex-store reads object index from disk
+done: vertex-state reads state volume from disk
+done: vertex-state writes state volume to disk
+done: reboot preserves state value
+done: bad superblock is rejected without panic
 ```
+
+Implementation note: native M43 uses custom VertexDisk block IPC through
+`block-driver`; it does not keep the legacy kernel state syscall or native
+state backend capability path alive.
 
 ## M44: Native Boot Manager and Generation Selector
 
@@ -2185,7 +2198,7 @@ Namespace service maps names to capabilities:
 
 ```text
 /bin/logd -> store object cap
-/state/counter -> state volume cap
+/state/counter -> state service endpoint cap
 /dev/serial -> endpoint cap
 ```
 
@@ -2262,11 +2275,12 @@ install verified generations, run declared services, preserve mutable state,
 explain its authority graph, and recover from failed updates.
 ```
 
-M13 proved that native services can run under explicit authority. M14-M42 prove
+M13 proved that native services can run under explicit authority. M14-M43 prove
 that the graph itself decides which native services exist, when they start,
 what they receive, why they are allowed to communicate, and how authority and
 resources are bounded, while timer preemption and user fault containment keep
 the kernel in control. M40 freezes the first ABI subset for the long-lived
-Vertex native runtime base, and M41 adds the first in-VM operator surface for
-asking what generation and authority graph are running. M42 adds the first
-persistent block I/O path while preserving hardware-shaped authority.
+Vertex native runtime base, M41 adds the first in-VM operator surface for
+asking what generation and authority graph are running, M42 adds the first
+persistent block I/O path while preserving hardware-shaped authority, and M43
+turns that block path into a checked VertexDisk layout with persistent state.

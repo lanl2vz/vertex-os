@@ -11,12 +11,13 @@ use core::{
 const CAP_BLOCK_REQUEST: u64 = 0;
 const CAP_SERIAL_LOG: u64 = 1;
 const CAP_READINESS: u64 = 2;
-const CAP_BLOCK_REPLY: u64 = 3;
-const CAP_PCI_CONFIG: u64 = 4;
-const CAP_IRQ: u64 = 5;
-const CAP_DMA: u64 = 6;
-const CAP_VIRTIO_IO: u64 = 7;
-const CAP_FAULT_INJECTION: u64 = 8;
+const CAP_VERTEX_STORE_BLOCK_REPLY: u64 = 3;
+const CAP_VERTEX_STATE_BLOCK_REPLY: u64 = 4;
+const CAP_PCI_CONFIG: u64 = 5;
+const CAP_IRQ: u64 = 6;
+const CAP_DMA: u64 = 7;
+const CAP_VIRTIO_IO: u64 = 8;
+const CAP_FAULT_INJECTION: u64 = 9;
 const FAULT_INJECTION_TOKEN: &[u8] = b"krust-block-driver-fault\n";
 
 const PROTOCOL_HEALTH_V0: u16 = 2;
@@ -25,10 +26,21 @@ const ENVELOPE_LEN: usize = 16;
 
 const BLOCK_PROTOCOL_V1: u16 = 1;
 const BLOCK_OP_READ_SECTOR: u16 = 1;
+const BLOCK_OP_WRITE_SECTOR: u16 = 2;
+const BLOCK_CLIENT_STORE: u16 = 1;
+const BLOCK_CLIENT_STATE: u16 = 2;
 const BLOCK_REQUEST_LEN: usize = 16;
+const BLOCK_WRITE_ACK_LEN: usize = 16;
+const BLOCK_IDLE_TIMEOUT_MS: u64 = 250;
 const SECTOR_SIZE: usize = 512;
-const HELLO_OBJECT: &[u8] = b"hello from Krust store\n";
-const WRITEBACK_PATTERN: &[u8] = b"M42 virtio block writeback\n";
+const WRITEBACK_PATTERN: &[u8] = b"M43 VertexDisk journal writeback\n";
+const VERTEX_DISK_MAGIC: &[u8; 16] = b"VERTEXDISKV0\0\0\0\0";
+const VERTEX_DISK_VERSION: u16 = 1;
+const VERTEX_DISK_CHECKSUM_OFFSET: usize = 20;
+const VERTEX_DISK_TOTAL_SECTORS_OFFSET: usize = 24;
+const VERTEX_DISK_SECTION_TABLE_OFFSET: usize = 32;
+const VERTEX_DISK_SECTION_RECORD_LEN: usize = 16;
+const VERTEX_DISK_JOURNAL_SECTION: usize = 5;
 
 const PCI_CONFIG_ADDRESS: u16 = 0x0cf8;
 const PCI_CONFIG_DATA: u16 = 0x0cfc;
@@ -83,30 +95,12 @@ pub extern "C" fn _start() -> ! {
     run_self_test(&mut device);
     send_ready();
 
-    let mut request = [0u8; BLOCK_REQUEST_LEN];
-    let received = sys::ipc_recv(CAP_BLOCK_REQUEST, &mut request);
-    if received != BLOCK_REQUEST_LEN as u64 {
-        log(b"block-driver request receive failed");
-        sys::exit(1);
+    loop {
+        if !serve_block_request(&mut device) {
+            break;
+        }
     }
-    log(b"block-driver received block-read request");
-
-    let Some(sector) = parse_read_request(&request) else {
-        log(b"block-driver rejected malformed request");
-        sys::exit(1);
-    };
-
-    let mut sector_bytes = [0u8; SECTOR_SIZE];
-    if !device.read_sector(sector, &mut sector_bytes) {
-        log(b"block-driver sector read failed");
-        sys::exit(1);
-    }
-
-    if sys::ipc_send(CAP_BLOCK_REPLY, &sector_bytes) != sys::STATUS_OK {
-        log(b"block-driver response failed");
-        sys::exit(1);
-    }
-    log(b"block-driver returns bytes");
+    log(b"block-driver completed VertexDisk requests");
     sys::exit(0)
 }
 
@@ -419,10 +413,16 @@ fn io_write32(cap_slot: u64, port: u16, value: u32) -> Option<()> {
 
 fn run_self_test(device: &mut VirtioBlock) {
     let mut sector0 = [0u8; SECTOR_SIZE];
-    if !device.read_sector(0, &mut sector0) || !starts_with(&sector0, HELLO_OBJECT) {
+    if !device.read_sector(0, &mut sector0) {
         log(b"block-driver sector 0 read failed");
         sys::exit(1);
     }
+    if !valid_vertexdisk_superblock(&sector0) {
+        log(b"VertexDisk superblock rejected");
+        sys::exit(1);
+    }
+    log(b"QEMU boots with VertexDisk image attached");
+    log(b"VertexDisk superblock accepted");
     log(b"block-driver reads sector 0");
 
     let mut sector1 = [0u8; SECTOR_SIZE];
@@ -431,31 +431,216 @@ fn run_self_test(device: &mut VirtioBlock) {
         sector1[index] = WRITEBACK_PATTERN[index];
         index += 1;
     }
-    if !device.write_sector(1, &sector1) {
+    let Some(journal_sector) = vertexdisk_section_start(&sector0, VERTEX_DISK_JOURNAL_SECTION)
+    else {
+        log(b"VertexDisk journal bounds invalid");
+        sys::exit(1);
+    };
+    if !device.write_sector(journal_sector, &sector1) {
         log(b"block-driver sector write failed");
         sys::exit(1);
     }
     log(b"block-driver writes test sector");
 
     let mut readback = [0u8; SECTOR_SIZE];
-    if !device.read_sector(1, &mut readback) || !bytes_eq(&readback, &sector1) {
+    if !device.read_sector(journal_sector, &mut readback) || !bytes_eq(&readback, &sector1) {
         log(b"block-driver readback failed");
         sys::exit(1);
     }
     log(b"readback matches");
 }
 
-fn parse_read_request(request: &[u8; BLOCK_REQUEST_LEN]) -> Option<u64> {
-    if read_request_u16(request, 0) != BLOCK_PROTOCOL_V1
-        || read_request_u16(request, 2) != BLOCK_OP_READ_SECTOR
-    {
+fn serve_block_request(device: &mut VirtioBlock) -> bool {
+    let mut request = [0u8; BLOCK_REQUEST_LEN];
+    let received = sys::ipc_recv_timeout(CAP_BLOCK_REQUEST, &mut request, BLOCK_IDLE_TIMEOUT_MS);
+    if received == sys::STATUS_TIMEOUT {
+        return false;
+    }
+    if received != BLOCK_REQUEST_LEN as u64 {
+        log(b"block-driver request receive failed");
+        sys::exit(1);
+    }
+
+    let Some(request) = parse_block_request(&request) else {
+        log(b"block-driver rejected malformed request");
+        sys::exit(1);
+    };
+
+    match request.op {
+        BLOCK_OP_READ_SECTOR => serve_read_request(device, request),
+        BLOCK_OP_WRITE_SECTOR => serve_write_request(device, request),
+        _ => {
+            log(b"block-driver rejected unknown operation");
+            sys::exit(1);
+        }
+    }
+    true
+}
+
+#[derive(Clone, Copy)]
+struct BlockRequest {
+    op: u16,
+    client: u16,
+    sector: u64,
+}
+
+fn serve_read_request(device: &mut VirtioBlock, request: BlockRequest) {
+    log(b"block-driver received block-read request");
+
+    let mut sector_bytes = [0u8; SECTOR_SIZE];
+    if !device.read_sector(request.sector, &mut sector_bytes) {
+        log(b"block-driver sector read failed");
+        sys::exit(1);
+    }
+
+    let Some(reply_cap) = reply_cap_for_client(request.client) else {
+        log(b"block-driver rejected unknown client");
+        sys::exit(1);
+    };
+    if sys::ipc_send(reply_cap, &sector_bytes) != sys::STATUS_OK {
+        log(b"block-driver response failed");
+        sys::exit(1);
+    }
+    log(b"block-driver returns bytes");
+}
+
+fn serve_write_request(device: &mut VirtioBlock, request: BlockRequest) {
+    log(b"block-driver received block-write request");
+
+    let mut sector_bytes = [0u8; SECTOR_SIZE];
+    let received = sys::ipc_recv(CAP_BLOCK_REQUEST, &mut sector_bytes);
+    if received != SECTOR_SIZE as u64 {
+        log(b"block-driver write payload receive failed");
+        sys::exit(1);
+    }
+
+    if !device.write_sector(request.sector, &sector_bytes) {
+        log(b"block-driver sector write failed");
+        sys::exit(1);
+    }
+
+    let Some(reply_cap) = reply_cap_for_client(request.client) else {
+        log(b"block-driver rejected unknown client");
+        sys::exit(1);
+    };
+    let ack = block_write_ack(request.sector);
+    if sys::ipc_send(reply_cap, &ack) != sys::STATUS_OK {
+        log(b"block-driver write ack failed");
+        sys::exit(1);
+    }
+    log(b"block-driver writes bytes");
+}
+
+fn parse_block_request(request: &[u8; BLOCK_REQUEST_LEN]) -> Option<BlockRequest> {
+    if read_request_u16(request, 0) != BLOCK_PROTOCOL_V1 {
         return None;
     }
-    Some(read_request_u64(request, 8))
+    let op = read_request_u16(request, 2);
+    if op != BLOCK_OP_READ_SECTOR && op != BLOCK_OP_WRITE_SECTOR {
+        return None;
+    }
+    let client = read_request_u16(request, 4);
+    if client != BLOCK_CLIENT_STORE && client != BLOCK_CLIENT_STATE {
+        return None;
+    }
+    Some(BlockRequest {
+        op,
+        client,
+        sector: read_request_u64(request, 8),
+    })
+}
+
+fn reply_cap_for_client(client: u16) -> Option<u64> {
+    match client {
+        BLOCK_CLIENT_STORE => Some(CAP_VERTEX_STORE_BLOCK_REPLY),
+        BLOCK_CLIENT_STATE => Some(CAP_VERTEX_STATE_BLOCK_REPLY),
+        _ => None,
+    }
+}
+
+fn block_write_ack(sector: u64) -> [u8; BLOCK_WRITE_ACK_LEN] {
+    let mut ack = [0u8; BLOCK_WRITE_ACK_LEN];
+    write_u16(&mut ack, 0, BLOCK_PROTOCOL_V1);
+    write_u16(&mut ack, 2, BLOCK_OP_WRITE_SECTOR);
+    write_u16(&mut ack, 4, 0);
+    write_u64(&mut ack, 8, sector);
+    ack
+}
+
+fn valid_vertexdisk_superblock(sector: &[u8; SECTOR_SIZE]) -> bool {
+    if !starts_with(sector, VERTEX_DISK_MAGIC)
+        || read_request_u16(sector, 16) != VERTEX_DISK_VERSION
+        || read_request_u16(sector, 18) != SECTOR_SIZE as u16
+        || !metadata_checksum_valid(sector)
+    {
+        return false;
+    }
+
+    let total_sectors = read_request_u32(sector, VERTEX_DISK_TOTAL_SECTORS_OFFSET) as u64;
+    if total_sectors == 0 {
+        return false;
+    }
+
+    let mut section = 0;
+    while section <= VERTEX_DISK_JOURNAL_SECTION {
+        let Some((start, count)) = vertexdisk_section(sector, section) else {
+            return false;
+        };
+        if count == 0
+            || start
+                .checked_add(count)
+                .is_none_or(|end| end > total_sectors)
+        {
+            return false;
+        }
+        section += 1;
+    }
+    true
+}
+
+fn vertexdisk_section_start(sector: &[u8; SECTOR_SIZE], section: usize) -> Option<u64> {
+    vertexdisk_section(sector, section).map(|(start, _count)| start)
+}
+
+fn vertexdisk_section(sector: &[u8; SECTOR_SIZE], section: usize) -> Option<(u64, u64)> {
+    let offset = VERTEX_DISK_SECTION_TABLE_OFFSET + section * VERTEX_DISK_SECTION_RECORD_LEN;
+    if offset + 16 > sector.len() {
+        return None;
+    }
+    Some((
+        read_request_u64(sector, offset),
+        read_request_u64(sector, offset + 8),
+    ))
+}
+
+fn metadata_checksum_valid(sector: &[u8; SECTOR_SIZE]) -> bool {
+    let stored = read_request_u32(sector, VERTEX_DISK_CHECKSUM_OFFSET);
+    let mut checksum = 0u32;
+    let mut index = 0;
+    while index < sector.len() {
+        let byte =
+            if index >= VERTEX_DISK_CHECKSUM_OFFSET && index < VERTEX_DISK_CHECKSUM_OFFSET + 4 {
+                0
+            } else {
+                sector[index]
+            };
+        checksum = checksum.wrapping_add((byte as u32).wrapping_mul(index as u32 + 1));
+        index += 1;
+    }
+    checksum == stored
 }
 
 fn read_request_u16(buffer: &[u8], offset: usize) -> u16 {
     u16::from_le_bytes([buffer[offset], buffer[offset + 1]])
+}
+
+fn read_request_u32(buffer: &[u8], offset: usize) -> u32 {
+    u32::from_le_bytes([
+        buffer[offset],
+        buffer[offset + 1],
+        buffer[offset + 2],
+        buffer[offset + 3],
+    ])
 }
 
 fn read_request_u64(buffer: &[u8], offset: usize) -> u64 {

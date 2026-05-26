@@ -28,12 +28,12 @@ vertex-os/
     netstack/            Demo hosted network capability provider
     echo-server/         Demo service consuming log and network capabilities
   kernel/
-    krust/               Bootable Krust kernel prototype, currently covering M14-M42 native graph activation, substrate hardening, pinned tooling, ABI v1 IPC, console shell, and virtio-blk I/O
+    krust/               Bootable Krust kernel prototype, currently covering M14-M43 native graph activation, substrate hardening, pinned tooling, ABI v1 IPC, console shell, virtio-blk I/O, and VertexDisk v0
   lang/
     vertex-lang/         Planned typed system-definition language
 ```
 
-## Krust M14-M42
+## Krust M14-M43
 
 The current native activation path lives in `kernel/krust`. It is isolated
 from the hosted Cargo workspace and boots a Limine ISO under QEMU. The ISO
@@ -52,7 +52,8 @@ quotas, PIT timer preemption, user page-fault containment, explicit I/O
 capabilities, user-space serial and block drivers, native store/state services,
 native generation switching, native runtime introspection, exact M39 toolchain
 checks, M40 directed request/reply IPC, M41 native console shell commands, M42
-virtio-blk sector I/O over PCI/DMA authority, and
+virtio-blk sector I/O over PCI/DMA authority, M43 VertexDisk v0
+superblock/index/state/journal handling, and
 a real restart of `flaky-service`, not init-owned transcript logging.
 
 ```sh
@@ -60,14 +61,14 @@ scripts/krust-smoke.sh
 ```
 
 The clean-clone release gate validates the hosted build, checks the Krust
-toolchain, rebuilds the ISO from clean kernel artifacts, and runs the M14-M42
-gate with the M14-M42 QEMU test matrix:
+toolchain, rebuilds the ISO from clean kernel artifacts, and runs the M14-M43
+gate with the M14-M43 QEMU test matrix:
 
 ```sh
 scripts/krust-release-gate.sh
 ```
 
-See [docs/krust-milestones.md](docs/krust-milestones.md) for M0 through M42
+See [docs/krust-milestones.md](docs/krust-milestones.md) for M0 through M43
 completion status,
 [docs/krust-toolchain.md](docs/krust-toolchain.md) for the pinned M39 toolchain,
 and [docs/krust-abi-v1.md](docs/krust-abi-v1.md) for the current syscall,

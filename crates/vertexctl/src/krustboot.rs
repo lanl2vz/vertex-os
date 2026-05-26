@@ -632,7 +632,7 @@ fn derive_plan(manifest: &GenerationManifest) -> Result<BootPlan, String> {
     }
 
     let mut store_objects = Vec::new();
-    let mut state_volumes = Vec::new();
+    let state_volumes = Vec::new();
     let mut network_ports = Vec::new();
     let mut io_ports = Vec::new();
     let mut mmio_regions = Vec::new();
@@ -675,24 +675,10 @@ fn derive_plan(manifest: &GenerationManifest) -> Result<BootPlan, String> {
                     });
                 }
                 "state-volume" => {
-                    let state = manifest.state_volume(&capability.provider).ok_or_else(|| {
-                        format!(
-                            "capability {} references unknown state volume {}",
-                            capability.id, capability.provider
-                        )
-                    })?;
-                    push_unique_state_volume(&mut state_volumes, state.id.clone());
-                    grants.push(Grant {
-                        process: process_name.clone(),
-                        object_kind: OBJECT_STATE,
-                        object_name: state.id.clone(),
-                        cap_slot: next_object_cap_slot(&mut next_object_slots, &process_name)?,
-                        rights: rights_mask(
-                            &requirement.rights,
-                            &capability.rights,
-                            &capability.id,
-                        )?,
-                    });
+                    return Err(format!(
+                        "native KrustBoot uses vertexdisk-v0 state service IPC; legacy state backend capability {} required by {} is not supported",
+                        capability.id, service.id
+                    ));
                 }
                 "timer" => {
                     grants.push(Grant {
@@ -886,12 +872,6 @@ fn push_unique_store_object(objects: &mut Vec<StoreObject>, store: &vertex_ir::S
         hash: store.hash.clone(),
         size: store.size_bytes,
     });
-}
-
-fn push_unique_state_volume(states: &mut Vec<StateVolume>, state_id: String) {
-    if !states.iter().any(|state| state.id == state_id) {
-        states.push(StateVolume { id: state_id });
-    }
 }
 
 fn push_unique_network_port(ports: &mut Vec<NetworkPort>, port_id: String) {

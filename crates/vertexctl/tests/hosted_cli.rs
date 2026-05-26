@@ -231,10 +231,10 @@ fn compile_boot_manifest_emits_krustboot_plan() {
     assert!(stdout.contains("generation: gen:hello-0001"));
     assert!(stdout.contains("boot_modules: 13"));
     assert!(stdout.contains("processes: 13"));
-    assert!(stdout.contains("endpoints: 10"));
-    assert!(stdout.contains("grants: 43"));
+    assert!(stdout.contains("endpoints: 11"));
+    assert!(stdout.contains("grants: 44"));
     assert!(stdout.contains("store_objects: 0"));
-    assert!(stdout.contains("state_volumes: 1"));
+    assert!(stdout.contains("state_volumes: 0"));
     assert!(stdout.contains("network_ports: 1"));
     assert!(stdout.contains("io_ports: 3"));
     assert!(stdout.contains("mmio_regions: 0"));
@@ -260,8 +260,9 @@ fn compile_boot_manifest_emits_krustboot_plan() {
     assert!(contains_bytes(&bytes, b"flaky-service"));
     assert!(contains_bytes(&bytes, b"log-sink"));
     assert!(contains_bytes(&bytes, b"serial-console"));
-    assert!(contains_bytes(&bytes, b"block-read-request"));
+    assert!(contains_bytes(&bytes, b"block-request"));
     assert!(contains_bytes(&bytes, b"vertex-store-block-reply"));
+    assert!(contains_bytes(&bytes, b"vertex-state-block-reply"));
     assert!(contains_bytes(&bytes, b"store-hello-text-request"));
     assert!(contains_bytes(&bytes, b"model-reader-store-reply"));
     assert!(contains_bytes(&bytes, b"state-counter-request"));
@@ -273,6 +274,43 @@ fn compile_boot_manifest_emits_krustboot_plan() {
     assert!(contains_bytes(&bytes, b"cap:irq.virtio-blk0"));
     assert!(contains_bytes(&bytes, b"cap:dma.virtio-blk0"));
     assert!(contains_bytes(&bytes, b"cap:net.tcp.8080"));
+}
+
+#[test]
+fn compile_boot_manifest_rejects_legacy_state_backend_capability() {
+    let dir = temp_dir("krustboot-legacy-state");
+    let input_path = dir.join("legacy-state.vertex.json");
+    let output_path = dir.join("legacy-state.krustboot");
+    let mut manifest: Value = serde_json::from_str(
+        &fs::read_to_string(repo_root().join("examples/hello-generation.vertex.json"))
+            .expect("read hello manifest"),
+    )
+    .expect("hello manifest should be json");
+
+    let capabilities = manifest["capabilities"]
+        .as_array_mut()
+        .expect("capabilities should be an array");
+    let state_request = capabilities
+        .iter_mut()
+        .find(|capability| capability["id"] == "cap:state.counter.request")
+        .expect("state request capability should exist");
+    state_request["kind"] = Value::String("state-volume".to_owned());
+
+    fs::write(
+        &input_path,
+        serde_json::to_string_pretty(&manifest).expect("serialize legacy state manifest"),
+    )
+    .expect("write legacy state manifest");
+
+    let stderr = assert_failure(run(&[
+        "compile-boot-manifest",
+        &input_path.to_string_lossy(),
+        &output_path.to_string_lossy(),
+    ]));
+
+    assert!(stderr.contains("legacy state backend capability"));
+    assert!(stderr.contains("is not supported"));
+    assert!(!output_path.exists());
 }
 
 #[test]

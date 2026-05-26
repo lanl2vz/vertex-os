@@ -295,7 +295,7 @@
     {
       "id": "state:counter",
       "name": "counter",
-      "kind": "ephemeral-native-placeholder",
+      "kind": "vertexdisk-v0",
       "owner": "svc:echo-server",
       "mountIntent": "read-write",
       "snapshotPolicy": {
@@ -431,7 +431,7 @@
       }
     },
     {
-      "id": "cap:block.read.request",
+      "id": "cap:block.request",
       "kind": "ipc-endpoint",
       "provider": "svc:block-driver",
       "rights": [
@@ -453,6 +453,19 @@
         "protocol": "vertex.block.v1",
         "role": "reply",
         "client": "svc:vertex-store"
+      }
+    },
+    {
+      "id": "cap:vertex-state.block.reply",
+      "kind": "ipc-endpoint",
+      "provider": "svc:vertex-state",
+      "rights": [
+        "send"
+      ],
+      "properties": {
+        "protocol": "vertex.block.v1",
+        "role": "reply",
+        "client": "svc:vertex-state"
       }
     },
     {
@@ -506,18 +519,6 @@
         "role": "reply",
         "client": "svc:state-reader"
       }
-    },
-    {
-      "id": "cap:state.counter.backend",
-      "kind": "state-volume",
-      "provider": "state:counter",
-      "rights": [
-        "read",
-        "write",
-        "snapshot",
-        "restore"
-      ],
-      "properties": {}
     },
     {
       "id": "cap:timer.sleep",
@@ -685,6 +686,12 @@
           ]
         },
         {
+          "capability": "cap:vertex-state.block.reply",
+          "rights": [
+            "send"
+          ]
+        },
+        {
           "capability": "cap:io.pci-config",
           "rights": [
             "read",
@@ -714,7 +721,7 @@
         }
       ],
       "provides": [
-        "cap:block.read.request"
+        "cap:block.request"
       ],
       "state": [],
       "secrets": [],
@@ -725,7 +732,7 @@
       },
       "health": {
         "kind": "ipc-ping",
-        "target": "cap:block.read.request"
+        "target": "cap:block.request"
       },
       "lifecycle": {
         "startAfter": [
@@ -742,7 +749,7 @@
       "env": {},
       "requires": [
         {
-          "capability": "cap:block.read.request",
+          "capability": "cap:block.request",
           "rights": [
             "send"
           ]
@@ -784,12 +791,9 @@
       "env": {},
       "requires": [
         {
-          "capability": "cap:state.counter.backend",
+          "capability": "cap:block.request",
           "rights": [
-            "read",
-            "write",
-            "snapshot",
-            "restore"
+            "send"
           ]
         },
         {
@@ -800,7 +804,8 @@
         }
       ],
       "provides": [
-        "cap:state.counter.request"
+        "cap:state.counter.request",
+        "cap:vertex-state.block.reply"
       ],
       "state": [
         "state:counter"

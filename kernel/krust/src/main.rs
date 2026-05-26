@@ -834,19 +834,6 @@ fn build_boot_runtime_config(
     }
 
     index = 0;
-    while index < boot_manifest.state_volume_count() {
-        let state = boot_manifest.state_volume(index)?;
-        if config
-            .add_state_volume(ipc::BootStateVolumeConfig { id: state.id })
-            .is_err()
-        {
-            serial::write_str("KrustBoot runtime plan failed: state volume table\n");
-            return None;
-        }
-        index += 1;
-    }
-
-    index = 0;
     while index < boot_manifest.network_port_count() {
         let port = boot_manifest.network_port(index)?;
         if config
@@ -1441,13 +1428,8 @@ fn print_boot_grant_object(
             );
         }
         boot_manifest::OBJECT_STATE => {
-            serial::write_str("state-volume=");
-            serial::write_str(
-                manifest
-                    .state_volume(object_index)
-                    .map(|state| state.id)
-                    .unwrap_or("<bad>"),
-            );
+            serial::write_str("unsupported-state-object=");
+            serial::write_u64_dec(object_index as u64);
         }
         boot_manifest::OBJECT_TIMER => {
             serial::write_str("timer=monotonic-timer");
@@ -1605,6 +1587,9 @@ fn print_boot_manifest_error(error: boot_manifest::ParseError) {
         boot_manifest::ParseError::InvalidReference => serial::write_str("invalid reference"),
         boot_manifest::ParseError::InvalidRights => serial::write_str("invalid rights"),
         boot_manifest::ParseError::InvalidObjectKind => serial::write_str("invalid object kind"),
+        boot_manifest::ParseError::UnsupportedStateVolumes => {
+            serial::write_str("unsupported state volumes")
+        }
         boot_manifest::ParseError::TrailingBytes => serial::write_str("trailing bytes"),
         boot_manifest::ParseError::BadChecksum => serial::write_str("bad checksum"),
         boot_manifest::ParseError::BadRecordTable => serial::write_str("bad record table"),

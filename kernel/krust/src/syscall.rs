@@ -23,8 +23,6 @@ const SYS_CAP_DERIVE: u64 = 10;
 const SYS_CAP_DROP: u64 = 11;
 const SYS_CAP_TRANSFER: u64 = 12;
 const SYS_OBJECT_READ: u64 = 13;
-const SYS_STATE_WRITE: u64 = 14;
-const SYS_STATE_READ: u64 = 15;
 const SYS_SLEEP_MS: u64 = 16;
 const SYS_PROCESS_STATUS: u64 = 17;
 const SYS_ROLLBACK_GENERATION: u64 = 18;
@@ -231,22 +229,6 @@ pub extern "C" fn krust_syscall_dispatch(
         ) {
             Ok(len) => frame.rax = len as u64,
             Err(error) => frame.rax = ipc_error_status("SYS_OBJECT_READ", error),
-        },
-        SYS_STATE_WRITE => match ipc::state_write(
-            arg0,
-            arg1 as *const u8,
-            usize::try_from(arg2).unwrap_or(usize::MAX),
-        ) {
-            Ok(()) => frame.rax = STATUS_OK,
-            Err(error) => frame.rax = ipc_error_status("SYS_STATE_WRITE", error),
-        },
-        SYS_STATE_READ => match ipc::state_read(
-            arg0,
-            arg1 as *mut u8,
-            usize::try_from(arg2).unwrap_or(usize::MAX),
-        ) {
-            Ok(len) => frame.rax = len as u64,
-            Err(error) => frame.rax = ipc_error_status("SYS_STATE_READ", error),
         },
         SYS_SLEEP_MS => match ipc::sleep_ms(arg0, arg1, frame) {
             Ok(()) => {}

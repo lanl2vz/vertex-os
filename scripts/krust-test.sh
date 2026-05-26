@@ -19,10 +19,12 @@ CASE=${1:-m14}
 FALLBACK_MANIFEST=
 BAD_GENERATION_MANIFEST=
 KRUSTBOOT_CORRUPT=
+VERTEX_DISK_CORRUPT=
 EXPECT_ACTIVATION_SUCCESS=0
 SUCCESS_STABILITY_ATTEMPTS=$QEMU_STABILITY_ATTEMPTS
 USE_SERIAL_PIPE=0
 SERIAL_INPUT=
+REBOOT_REQUIRED_LINES=
 
 case "$CASE" in
     m13|m14|valid-activation)
@@ -236,15 +238,15 @@ unauthorized service cannot access PCI I/O, IRQ, or DMA capabilities
         MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
         EXPECT_ACTIVATION_SUCCESS=1
         required_lines='
-KrustBoot grants: 43
+KrustBoot grants: 44
 KrustBoot io port ranges: 3
 KrustBoot mmio regions: 0
 io_port[1] id=cap:io.pci-config base=0x0000000000000cf8 length=0x0000000000000008
 io_port[2] id=cap:io.virtio-blk0 base=0x000000000000c000 length=0x0000000000001000
 interrupt_line[0] id=cap:irq.virtio-blk0 line=11
 dma_region[0] id=cap:dma.virtio-blk0 base=
-proc=block-driver cap[4] io-port=cap:io.pci-config rights=read|write
-proc=block-driver cap[7] io-port=cap:io.virtio-blk0 rights=read|write
+proc=block-driver cap[5] io-port=cap:io.pci-config rights=read|write
+proc=block-driver cap[8] io-port=cap:io.virtio-blk0 rights=read|write
 virtio-blk PCI device discovered
 DMA map accepted: proc=block-driver dma-region=cap:dma.virtio-blk0
 virtio-blk driver ready
@@ -263,13 +265,43 @@ Native service activation ok
         MANIFEST="$ROOT_DIR/examples/krust-block-driver-fault-generation.vertex.json"
         required_lines='
 Boot generation: gen:block-driver-fault-0001
-KrustBoot grants: 44
+KrustBoot grants: 45
 KrustBoot store objects: 1
-proc=block-driver cap[8] store-object=store:block-driver-fault-token rights=read
+proc=block-driver cap[9] store-object=store:block-driver-fault-token rights=read
 Object read accepted: proc=block-driver object=store:block-driver-fault-token bytes=25
 block-driver fault injection triggers direct invalid load
 User page fault: proc=block-driver
 User process fault contained: proc=block-driver
+vertex-init readiness timeout
+activation failed
+Native service activation failed
+'
+        ;;
+    m43|vertexdisk)
+        MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
+        EXPECT_ACTIVATION_SUCCESS=1
+        required_lines='
+KrustBoot endpoints: 11
+KrustBoot grants: 44
+KrustBoot state volumes: 0
+QEMU boots with VertexDisk image attached
+VertexDisk superblock accepted
+vertex-store reads object index from disk
+vertex-state reads state volume from disk
+vertex-state writes state volume to disk
+Native service activation ok
+'
+        REBOOT_REQUIRED_LINES='
+reboot preserves state value
+vertex-state reads state volume from disk
+Native service activation ok
+'
+        ;;
+    m43-bad-superblock|vertexdisk-bad-superblock)
+        MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
+        VERTEX_DISK_CORRUPT=bad-superblock
+        required_lines='
+VertexDisk superblock rejected
 vertex-init readiness timeout
 activation failed
 Native service activation failed
@@ -333,34 +365,40 @@ Native service activation ok
         MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
         EXPECT_ACTIVATION_SUCCESS=1
         required_lines='
-KrustBoot endpoints: 10
-KrustBoot grants: 43
+KrustBoot endpoints: 11
+KrustBoot grants: 44
 IPC FIFO regression: queued sends preserve FIFO order
 IPC FIFO regression: queue-full send rejected
 IPC FIFO regression: receiver-specific dequeue preserves eligible ordering
 IPC FIFO regression: multiple blocked receivers match eligible messages
 IPC FIFO regression ok
-endpoint[4] name=block-read-request
+endpoint[4] name=block-request
 endpoint[5] name=vertex-store-block-reply
-endpoint[6] name=store-hello-text-request
-endpoint[7] name=model-reader-store-reply
-endpoint[8] name=state-counter-request
-endpoint[9] name=state-reader-state-reply
-grant[23] process=block-driver cap[0] endpoint=block-read-request rights=receive
-grant[25] process=vertex-store cap[3] endpoint=vertex-store-block-reply rights=receive
-grant[27] process=vertex-store cap[0] endpoint=store-hello-text-request rights=receive
-grant[29] process=model-reader cap[0] endpoint=model-reader-store-reply rights=receive
-grant[31] process=vertex-state cap[0] endpoint=state-counter-request rights=receive
-grant[33] process=reader-service cap[0] endpoint=state-reader-state-reply rights=receive
+endpoint[6] name=vertex-state-block-reply
+endpoint[7] name=store-hello-text-request
+endpoint[8] name=model-reader-store-reply
+endpoint[9] name=state-counter-request
+endpoint[10] name=state-reader-state-reply
+process=block-driver cap[0] endpoint=block-request rights=receive
+process=vertex-store cap[3] endpoint=vertex-store-block-reply rights=receive
+process=vertex-store cap[0] endpoint=store-hello-text-request rights=receive
+process=model-reader cap[0] endpoint=model-reader-store-reply rights=receive
+process=vertex-state cap[0] endpoint=state-counter-request rights=receive
+process=vertex-state cap[3] endpoint=vertex-state-block-reply rights=receive
+process=reader-service cap[0] endpoint=state-reader-state-reply rights=receive
 vertex-init observed ready: serial-driver
 vertex-init observed ready: block-driver
 vertex-init observed ready: vertex-store
 vertex-init observed ready: vertex-state
+vertex-init derives endpoint cap for block-driver from endpoint[5] rights=send
+vertex-init derives endpoint cap for block-driver from endpoint[6] rights=send
 vertex-init derives endpoint cap for vertex-store from endpoint[4] rights=send
-vertex-init derives endpoint cap for vertex-store from endpoint[7] rights=send
-vertex-init derives endpoint cap for model-reader from endpoint[6] rights=send
-vertex-init derives endpoint cap for counter-service from endpoint[8] rights=send
-vertex-init derives endpoint cap for reader-service from endpoint[8] rights=send
+vertex-init derives endpoint cap for vertex-store from endpoint[8] rights=send
+vertex-init derives endpoint cap for vertex-state from endpoint[4] rights=send
+vertex-init derives endpoint cap for vertex-state from endpoint[10] rights=send
+vertex-init derives endpoint cap for model-reader from endpoint[7] rights=send
+vertex-init derives endpoint cap for counter-service from endpoint[9] rights=send
+vertex-init derives endpoint cap for reader-service from endpoint[9] rights=send
 model-reader reads bytes successfully
 reader-service write rejected
 Native service activation ok
@@ -380,8 +418,8 @@ halt
 Boot generation: gen:console-0001
 KrustBoot boot modules: 15
 KrustBoot processes: 15
-KrustBoot endpoints: 12
-KrustBoot grants: 50
+KrustBoot endpoints: 13
+KrustBoot grants: 51
 proc=console-driver cap[0] endpoint=console-output rights=receive
 proc=console-driver cap[3] endpoint=console-driver-control rights=receive
 proc=console-shell cap[0] endpoint=console-shell-request rights=receive
@@ -423,7 +461,7 @@ vertex-inspect generation graph: gen:inspect-0001
 native why echo log-sink
 why: echo can send to log-sink because delegated endpoint authority has send rights
 native who-can state:counter
-who-can: vertex-state owns state:counter with rights=read|write|snapshot|restore
+who-can: vertex-state owns state:counter through VertexDisk block service authority
 native which-generation vertex-inspect
 generation: vertex-inspect started in gen:inspect-0001
 native delegated endpoint cap report
@@ -484,7 +522,7 @@ activation failed
 '
         ;;
     *)
-        echo "usage: scripts/krust-test.sh <m13|m14|valid-activation|manifest-cycle|bad-cap|readiness|readiness-timeout|rollback|store-state-services|timer|preemption|m30|user-fault|m31|restart|manifest-v1|cap-lifecycle|typed-arenas|quotas|m32|io-substrate|m33|serial-driver|m34|block-driver|m35|store-service|m36|state-service|m37|generation-switch|m38|introspection|m40|directed-ipc|m41|console-shell|m42|virtio-block|m42-driver-fault|block-driver-fault|manifest-truncated|manifest-bad-magic|manifest-raw-compact|manifest-unsupported-version|manifest-oob-record|manifest-missing-provider>" >&2
+        echo "usage: scripts/krust-test.sh <m13|m14|valid-activation|manifest-cycle|bad-cap|readiness|readiness-timeout|rollback|store-state-services|timer|preemption|m30|user-fault|m31|restart|manifest-v1|cap-lifecycle|typed-arenas|quotas|m32|io-substrate|m33|serial-driver|m34|block-driver|m35|store-service|m36|state-service|m37|generation-switch|m38|introspection|m40|directed-ipc|m41|console-shell|m42|virtio-block|m42-driver-fault|block-driver-fault|m43|vertexdisk|m43-bad-superblock|vertexdisk-bad-superblock|manifest-truncated|manifest-bad-magic|manifest-raw-compact|manifest-unsupported-version|manifest-oob-record|manifest-missing-provider>" >&2
         exit 2
         ;;
 esac
@@ -499,7 +537,7 @@ Native service activation failed
 "
 fi
 
-(cd "$KRUST_DIR" && make iso VERTEX_MANIFEST="$MANIFEST" FALLBACK_MANIFEST="$FALLBACK_MANIFEST" BAD_GENERATION_MANIFEST="$BAD_GENERATION_MANIFEST" KRUSTBOOT_CORRUPT="$KRUSTBOOT_CORRUPT")
+(cd "$KRUST_DIR" && make iso VERTEX_MANIFEST="$MANIFEST" FALLBACK_MANIFEST="$FALLBACK_MANIFEST" BAD_GENERATION_MANIFEST="$BAD_GENERATION_MANIFEST" KRUSTBOOT_CORRUPT="$KRUSTBOOT_CORRUPT" VERTEX_DISK_CORRUPT="$VERTEX_DISK_CORRUPT")
 
 mkdir -p "$(dirname "$SERIAL_LOG")"
 rm -f "$SERIAL_LOG"
@@ -622,6 +660,62 @@ attempt=1
 while [ "$attempt" -le "$QEMU_ATTEMPTS" ]; do
     if check_transcript; then
         if wait_for_stability; then
+            if [ -n "$REBOOT_REQUIRED_LINES" ]; then
+                cleanup
+                pid=
+                rm -f "$SERIAL_LOG"
+                required_lines="$REBOOT_REQUIRED_LINES"
+                missing_required=
+                present_forbidden=
+
+                "$QEMU" $QEMU_EXTRA \
+                    $QEMU_MACHINE \
+                    $QEMU_BLOCK \
+                    -m 256M \
+                    -serial "$serial_arg" \
+                    -monitor none \
+                    -display none \
+                    -no-reboot \
+                    -no-shutdown \
+                    -cdrom "$ISO_IMAGE" &
+                pid=$!
+
+                reboot_attempt=1
+                while [ "$reboot_attempt" -le "$QEMU_ATTEMPTS" ]; do
+                    if check_transcript; then
+                        if wait_for_stability; then
+                            cleanup
+                            pid=
+                            echo "krust test ok: $CASE"
+                            exit 0
+                        fi
+                    fi
+
+                    if [ -n "$present_forbidden" ]; then
+                        break
+                    fi
+
+                    sleep "$QEMU_POLL_SECONDS"
+                    reboot_attempt=$((reboot_attempt + 1))
+                done
+
+                cleanup
+                pid=
+                echo "krust test failed: $CASE reboot after $QEMU_ATTEMPTS checks"
+                echo "serial log: $SERIAL_LOG"
+                if [ -n "$missing_required" ]; then
+                    echo "missing required transcript lines:"
+                    printf '%s' "$missing_required" | print_lines
+                fi
+                if [ -n "$present_forbidden" ]; then
+                    echo "forbidden transcript lines were present:"
+                    printf '%s' "$present_forbidden" | print_lines
+                fi
+                if [ -f "$SERIAL_LOG" ]; then
+                    cat "$SERIAL_LOG"
+                fi
+                exit 1
+            fi
             cleanup
             pid=
             echo "krust test ok: $CASE"

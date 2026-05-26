@@ -1,6 +1,7 @@
 use core::arch::asm;
 
 pub const STATUS_OK: u64 = 0;
+pub const STATUS_TIMEOUT: u64 = u64::MAX - 9;
 
 const SYS_EXIT: u64 = 2;
 const SYS_IPC_SEND: u64 = 3;
@@ -8,6 +9,7 @@ const SYS_IPC_RECV: u64 = 4;
 const SYS_YIELD: u64 = 5;
 const SYS_LOG_WRITE: u64 = 7;
 const SYS_OBJECT_READ: u64 = 13;
+const SYS_IPC_RECV_TIMEOUT: u64 = 19;
 const SYS_PROCESS_ATTEMPT: u64 = 20;
 const SYS_IO_READ: u64 = 27;
 const SYS_IO_WRITE: u64 = 28;
@@ -40,6 +42,15 @@ pub fn ipc_recv(cap_slot: u64, buffer: &mut [u8]) -> u64 {
         cap_slot,
         buffer.as_mut_ptr() as u64,
         buffer.len() as u64,
+    )
+}
+
+pub fn ipc_recv_timeout(cap_slot: u64, buffer: &mut [u8], timeout_ms: u64) -> u64 {
+    syscall3(
+        SYS_IPC_RECV_TIMEOUT,
+        cap_slot,
+        buffer.as_mut_ptr() as u64,
+        (timeout_ms << 32) | buffer.len() as u64,
     )
 }
 
