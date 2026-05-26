@@ -50,7 +50,8 @@ const M38_PROCESS_NAME: &[u8] = b"vertex-inspect";
 const M38_INSPECT_CAP_SLOT: u64 = 0;
 const M38_MANIFEST_CAP_SLOT: u64 = 3;
 const M41_PROCESS_NAME: &[u8] = b"console-shell";
-const M41_INSPECT_CAP_SLOT: u64 = 5;
+const M41_INSPECT_CAP_SLOT: u64 = 7;
+const M54_UPDATE_CAP_SLOT: u64 = 8;
 
 #[unsafe(link_section = ".text._start")]
 #[unsafe(no_mangle)]
@@ -870,7 +871,7 @@ fn grant_introspection_authority(process_index: u64, parent_generation: &[u8]) {
 }
 
 fn grant_console_shell_authority(process_index: u64, parent_generation: &[u8]) {
-    log(b"vertex-init delegates inspect authority to console-shell");
+    log(b"vertex-init delegates inspect and update authority to console-shell");
     if sys::cap_transfer(
         process_index,
         sys::CAP_PROCESS_CONTROL,
@@ -879,6 +880,16 @@ fn grant_console_shell_authority(process_index: u64, parent_generation: &[u8]) {
     ) != sys::STATUS_OK
     {
         log(b"vertex-init console-shell inspect cap transfer failed");
+        activation_failed(parent_generation);
+    }
+    if sys::cap_transfer(
+        process_index,
+        sys::CAP_PROCESS_CONTROL,
+        M54_UPDATE_CAP_SLOT,
+        sys::RIGHT_CONTROL | sys::RIGHT_REVOKE,
+    ) != sys::STATUS_OK
+    {
+        log(b"vertex-init console-shell update cap transfer failed");
         activation_failed(parent_generation);
     }
 }

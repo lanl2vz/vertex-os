@@ -16,6 +16,8 @@ pub const STATUS_TIMEOUT: u64 = u64::MAX - 9;
 pub const RIGHT_READ: u64 = 1 << 0;
 pub const RIGHT_SEND: u64 = 1 << 4;
 pub const RIGHT_RECEIVE: u64 = 1 << 5;
+pub const RIGHT_CONTROL: u64 = 1 << 6;
+pub const RIGHT_REVOKE: u64 = 1 << 13;
 pub const RIGHT_INSPECT: u64 = 1 << 14;
 
 const SYS_EXIT: u64 = 2;

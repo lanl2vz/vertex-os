@@ -2073,9 +2073,10 @@ output: KrustBoot or disk generation metadata
 linked graph boots in QEMU
 ```
 
-Implementation note: `vertexctl graph-link` accepts package fragments and emits
-a concrete generation graph, store closure, and KrustBoot metadata seed for the
-current package proof.
+Implementation note: `vertexctl graph-link` accepts package fragments, resolves
+their service provider/consumer capabilities into a concrete generation graph,
+validates the result, and emits a store closure plus KrustBoot metadata seed for
+the current package proof.
 
 done: M52 graph linking is checked by the gate
 
@@ -2120,8 +2121,10 @@ optional Nix adapter produces the same build-output.json shape
 ```
 
 Implementation note: `vertexctl build-import` imports a declared
-`build-output.json`, materializes store objects and generation metadata, emits
-`krust.elf`, creates a VertexDisk image, and writes a QEMU target descriptor.
+`build-output.json`, rejects missing kernel or artifact paths, verifies declared
+artifact hashes when present, materializes actual artifact bytes and generation
+metadata, emits `krust.elf`, creates a VertexDisk image, and writes a QEMU
+target descriptor.
 
 done: M53 build graph import is checked by the gate
 
@@ -2150,9 +2153,9 @@ Acceptance transcript:
 
 ```text
 Vertex OS v0 appliance booted
+install generation gen:new
 counter value: 41
 increment -> 42
-install generation gen:new
 rollback to gen:old
 counter state policy: preserve
 counter value: 42

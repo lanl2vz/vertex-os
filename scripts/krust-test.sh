@@ -23,6 +23,8 @@ VERTEX_DISK_CORRUPT=
 EXPECT_ACTIVATION_SUCCESS=0
 SUCCESS_STABILITY_ATTEMPTS=$QEMU_STABILITY_ATTEMPTS
 USE_SERIAL_PIPE=0
+SERIAL_INPUT_DELAYED=0
+SERIAL_INPUT_DELAY_SECONDS=2
 SERIAL_INPUT=
 REBOOT_REQUIRED_LINES=
 case_forbidden_lines=
@@ -494,15 +496,15 @@ halt
 '
         required_lines='
 Boot generation: gen:console-0001
-KrustBoot boot modules: 15
-KrustBoot processes: 15
-KrustBoot endpoints: 14
-KrustBoot grants: 56
+KrustBoot boot modules: 14
+KrustBoot processes: 14
+KrustBoot endpoints: 15
+KrustBoot grants: 57
 proc=console-driver cap[0] endpoint=console-output rights=receive
 proc=console-driver cap[3] endpoint=console-driver-control rights=receive
 proc=console-shell cap[0] endpoint=console-shell-request rights=receive
 proc=console-driver cap[5] io-port=cap:io.com1 rights=read|write
-vertex-init delegates inspect authority to console-shell
+vertex-init delegates inspect and update authority to console-shell
 console-driver ready
 vertex-init observed ready: console-driver
 console-shell ready
@@ -585,11 +587,13 @@ native-secret-value
         ;;
     m54|appliance)
         MANIFEST="$ROOT_DIR/examples/krust-console-generation.vertex.json"
+        FALLBACK_MANIFEST="$ROOT_DIR/examples/krust-console-new-generation.vertex.json"
         EXPECT_ACTIVATION_SUCCESS=1
         USE_SERIAL_PIPE=1
-        SERIAL_INPUT='counter
+        SERIAL_INPUT_DELAYED=1
+        SERIAL_INPUT='install generation gen:new
+counter
 increment
-install generation gen:new
 rollback to gen:old
 why svc:counter state:counter
 halt
@@ -598,16 +602,22 @@ halt
 QEMU boots with VertexDisk image attached
 Vertex OS v0 appliance booted
 Vertex shell ready
+console-driver forwarded serial command: install generation gen:new
+install generation gen:new
+Native update transaction verifies manifest hash: generation=gen:console-new-0002
+Native update transaction verifies store closure: generation=gen:console-new-0002
+Krust generation switch accepted: from=gen:console-0001 to=gen:console-new-0002
+Krust generation switch entering generation: gen:console-new-0002
 console-driver forwarded serial command: counter
 counter value: 41
 console-driver forwarded serial command: increment
 increment -> 42
-console-driver forwarded serial command: install generation gen:new
-install generation gen:new
 console-driver forwarded serial command: rollback to gen:old
 rollback to gen:old
 counter state policy: preserve
 counter value: 42
+Krust rollback generation accepted: target=gen:console-0001
+Krust rollback entering generation: gen:console-0001
 console-driver forwarded serial command: why svc:counter state:counter
 why svc:counter state:counter
 svc:counter has state authority from generation graph
@@ -767,7 +777,14 @@ if [ "$USE_SERIAL_PIPE" -eq 1 ]; then
             sleep "$QEMU_POLL_SECONDS"
             input_attempt=$((input_attempt + 1))
         done
-        printf '%s' "$SERIAL_INPUT" >"$serial_pipe.in" 2>/dev/null || true
+        if [ "$SERIAL_INPUT_DELAYED" -eq 1 ]; then
+            printf '%s' "$SERIAL_INPUT" | while IFS= read -r line; do
+                printf '%s\n' "$line" >"$serial_pipe.in" 2>/dev/null || true
+                sleep "$SERIAL_INPUT_DELAY_SECONDS"
+            done
+        else
+            printf '%s' "$SERIAL_INPUT" >"$serial_pipe.in" 2>/dev/null || true
+        fi
     ) &
     feeder_pid=$!
 fi

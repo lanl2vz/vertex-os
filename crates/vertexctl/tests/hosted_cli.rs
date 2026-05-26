@@ -573,6 +573,121 @@ fn explain_krustboot_reports_derived_authority() {
 }
 
 #[test]
+fn graph_link_resolves_package_service_closure() {
+    let dir = temp_dir("graph-link");
+    let output_arg = dir.to_string_lossy().to_string();
+
+    assert_success(run(&[
+        "graph-link",
+        &output_arg,
+        "examples/packages/serial-driver.vertexpkg",
+        "examples/packages/logd.vertexpkg",
+        "examples/packages/echo.vertexpkg",
+    ]));
+
+    let generation_path = dir.join("generation.vertex.json");
+    let linked: Value = serde_json::from_str(
+        &fs::read_to_string(&generation_path).expect("read linked generation"),
+    )
+    .expect("linked generation should be json");
+    assert_ne!(linked["generation"]["id"], "gen:hello-0001");
+    assert_eq!(
+        linked["generation"]["linkedPackages"]
+            .as_array()
+            .expect("linked packages")
+            .len(),
+        3
+    );
+
+    let services = linked["services"].as_array().expect("services array");
+    assert!(
+        services
+            .iter()
+            .any(|service| service["id"] == "svc:serial-driver")
+    );
+    assert!(services.iter().any(|service| service["id"] == "svc:logd"));
+    assert!(
+        services
+            .iter()
+            .any(|service| service["id"] == "svc:echo-server")
+    );
+    assert!(
+        !services
+            .iter()
+            .any(|service| service["id"] == "svc:counter-service")
+    );
+
+    let capabilities = linked["capabilities"]
+        .as_array()
+        .expect("capabilities array");
+    assert!(
+        capabilities
+            .iter()
+            .any(|capability| capability["id"] == "cap:serial.console"
+                && capability["provider"] == "svc:serial-driver")
+    );
+    assert!(capabilities.iter().any(
+        |capability| capability["id"] == "cap:log.sink" && capability["provider"] == "svc:logd"
+    ));
+
+    let validation = assert_success(run(&["validate", &generation_path.to_string_lossy()]));
+    assert!(validation.contains("valid: gen:linked-"));
+}
+
+#[test]
+fn build_import_rejects_missing_kernel_and_artifact_paths() {
+    let dir = temp_dir("build-import-rejects");
+    let missing_kernel = dir.join("missing-kernel.json");
+    fs::write(
+        &missing_kernel,
+        serde_json::to_string_pretty(&serde_json::json!({
+            "schema": "vertex.build-output.v0",
+            "generationManifest": "examples/hello-generation.vertex.json",
+            "kernel": null,
+            "artifacts": []
+        }))
+        .expect("serialize missing kernel build output"),
+    )
+    .expect("write missing kernel build output");
+
+    let stderr = assert_failure(run(&[
+        "build-import",
+        &missing_kernel.to_string_lossy(),
+        "--output",
+        &dir.join("out-missing-kernel").to_string_lossy(),
+    ]));
+    assert!(stderr.contains("missing string field kernel"));
+
+    let fake_kernel = dir.join("krust.elf");
+    fs::write(&fake_kernel, b"fake kernel\n").expect("write fake kernel");
+    let missing_artifact = dir.join("missing-artifact.json");
+    fs::write(
+        &missing_artifact,
+        serde_json::to_string_pretty(&serde_json::json!({
+            "schema": "vertex.build-output.v0",
+            "generationManifest": "examples/hello-generation.vertex.json",
+            "kernel": fake_kernel,
+            "artifacts": [
+                {
+                    "id": "kernel:krust",
+                    "kind": "kernel-image"
+                }
+            ]
+        }))
+        .expect("serialize missing artifact build output"),
+    )
+    .expect("write missing artifact build output");
+
+    let stderr = assert_failure(run(&[
+        "build-import",
+        &missing_artifact.to_string_lossy(),
+        "--output",
+        &dir.join("out-missing-artifact").to_string_lossy(),
+    ]));
+    assert!(stderr.contains("missing string field path"));
+}
+
+#[test]
 fn state_snapshot_restore_round_trip() {
     let dir = temp_dir("restore");
     let state_root = dir.join("state");

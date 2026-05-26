@@ -1,13 +1,12 @@
 {
   "schema": "vertex.build-output.v0",
   "generationManifest": "examples/hello-generation.vertex.json",
-  "kernel": null,
+  "kernel": "../kernel/krust/target/x86_64-unknown-none/debug/krust",
   "artifacts": [
     {
       "id": "kernel:krust",
       "kind": "kernel-image",
-      "hashAlgorithm": "blake3",
-      "hash": "declared-by-demo-build-output"
+      "path": "../kernel/krust/target/x86_64-unknown-none/debug/krust"
     }
   ],
   "packages": [

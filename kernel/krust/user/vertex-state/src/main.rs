@@ -11,6 +11,7 @@ const CAP_READINESS: u64 = 2;
 const CAP_BLOCK_REPLY: u64 = 3;
 const CAP_BLOCK_REQUEST: u64 = 4;
 const CAP_READER_REPLY: u64 = 5;
+const CAP_COUNTER_REPLY: u64 = 5;
 const STATE_VOLUME_ID: &[u8] = b"state:counter";
 const BLOCK_PROTOCOL_V1: u16 = 1;
 const BLOCK_OP_READ_SECTOR: u16 = 1;
@@ -48,34 +49,61 @@ pub extern "C" fn _start() -> ! {
     let mut request = [0u8; 16];
     let mut value = [0u8; MAX_STATE_VALUE_BYTES];
     let mut value_len = read_state_value(&state, &mut value);
-    if value_len == 1 && value[0] == b'1' {
+    if value_len > 0 {
         log(b"reboot preserves state value");
     }
 
-    let mut wrote_value = false;
+    let mut wrote_value = value_len > 0;
     let mut pending_read = false;
     loop {
         let received = sys::ipc_recv(CAP_STATE_REQUEST, &mut request);
+        if received == 1 && request[0] == b'Q' {
+            write_state_value(&mut state, &value[..value_len]);
+            log(b"state restored");
+            log(b"system generation rollback does not automatically roll back state unless policy says so");
+            log(b"Native VertexDisk state service ok");
+            sys::exit(0);
+        }
+
+        if received == 2 && request[0] == b'R' && request[1] == b'C' {
+            send_counter_response(&value[..value_len]);
+            continue;
+        }
+
         if received == 1 && request[0] == b'R' {
             if wrote_value {
                 value_len = read_state_value(&state, &mut value);
-                send_read_response(&value[..value_len]);
-                break;
+                send_reader_response(&value[..value_len]);
+                continue;
             }
             pending_read = true;
             continue;
         }
 
-        if received >= 2 && received <= request.len() as u64 && request[0] == b'W' && !wrote_value {
+        if received == 2 && request[0] == b'W' && request[1] == b'2' {
+            log(b"reader-service write denied");
+            if sys::ipc_send(CAP_READER_REPLY, b"DENIED") != sys::STATUS_OK {
+                log(b"vertex-state denial response failed");
+                sys::exit(1);
+            }
+            write_state_value(&mut state, &value[..value_len]);
+            log(b"state restored");
+            log(b"system generation rollback does not automatically roll back state unless policy says so");
+            log(b"Native VertexDisk state service ok");
+            sys::exit(0);
+        }
+
+        if received >= 2 && received <= request.len() as u64 && request[0] == b'W' {
             let input = &request[1..received as usize];
             write_state_value(&mut state, input);
             value[..input.len()].copy_from_slice(input);
+            value_len = input.len();
             log(b"counter-service writes state");
             wrote_value = true;
             if pending_read {
                 value_len = read_state_value(&state, &mut value);
-                send_read_response(&value[..value_len]);
-                break;
+                send_reader_response(&value[..value_len]);
+                pending_read = false;
             }
             continue;
         }
@@ -83,23 +111,6 @@ pub extern "C" fn _start() -> ! {
         log(b"vertex-state request invalid");
         sys::exit(1);
     }
-
-    let received = sys::ipc_recv(CAP_STATE_REQUEST, &mut request);
-    if received < 2 || received > request.len() as u64 || request[0] != b'W' {
-        log(b"vertex-state write-denial request invalid");
-        sys::exit(1);
-    }
-    log(b"reader-service write denied");
-    if sys::ipc_send(CAP_READER_REPLY, b"DENIED") != sys::STATUS_OK {
-        log(b"vertex-state denial response failed");
-        sys::exit(1);
-    }
-
-    write_state_value(&mut state, &value[..value_len]);
-    log(b"state restored");
-    log(b"system generation rollback does not automatically roll back state unless policy says so");
-    log(b"Native VertexDisk state service ok");
-    sys::exit(0)
 }
 
 #[derive(Clone, Copy)]
@@ -462,10 +473,17 @@ fn starts_with(value: &[u8], prefix: &[u8]) -> bool {
     true
 }
 
-fn send_read_response(value: &[u8]) {
+fn send_reader_response(value: &[u8]) {
     log(b"snapshot created");
     if sys::ipc_send(CAP_READER_REPLY, value) != sys::STATUS_OK {
         log(b"vertex-state read response failed");
+        sys::exit(1);
+    }
+}
+
+fn send_counter_response(value: &[u8]) {
+    if sys::ipc_send(CAP_COUNTER_REPLY, value) != sys::STATUS_OK {
+        log(b"vertex-state counter read response failed");
         sys::exit(1);
     }
 }

@@ -4,11 +4,15 @@ pub const STATUS_OK: u64 = 0;
 pub const STATUS_BAD_CAPABILITY: u64 = u64::MAX - 1;
 pub const STATUS_BAD_BUFFER: u64 = u64::MAX - 2;
 pub const STATUS_TOO_LARGE: u64 = u64::MAX - 3;
+pub const STATUS_EMPTY: u64 = u64::MAX - 6;
 
 const SYS_EXIT: u64 = 2;
 const SYS_IPC_SEND: u64 = 3;
 const SYS_IPC_RECV: u64 = 4;
+const SYS_YIELD: u64 = 5;
 const SYS_LOG_WRITE: u64 = 7;
+const SYS_ACTIVATE_GENERATION: u64 = 8;
+const SYS_ROLLBACK_GENERATION: u64 = 18;
 const SYS_RUNTIME_INSPECT: u64 = 31;
 
 pub fn ipc_send(cap_slot: u64, message: &[u8]) -> u64 {
@@ -45,6 +49,36 @@ pub fn runtime_inspect(cap_slot: u64, buffer: &mut [u8]) -> u64 {
         buffer.as_mut_ptr() as u64,
         buffer.len() as u64,
     )
+}
+
+pub fn activate_generation(cap_slot: u64, generation: &[u8]) -> u64 {
+    syscall3(
+        SYS_ACTIVATE_GENERATION,
+        cap_slot,
+        generation.as_ptr() as u64,
+        generation.len() as u64,
+    )
+}
+
+pub fn rollback_generation(cap_slot: u64, generation: &[u8]) -> u64 {
+    syscall3(
+        SYS_ROLLBACK_GENERATION,
+        cap_slot,
+        generation.as_ptr() as u64,
+        generation.len() as u64,
+    )
+}
+
+pub fn yield_now() -> u64 {
+    syscall3(SYS_YIELD, 0, 0, 0)
+}
+
+pub fn pause() {
+    loop {
+        unsafe {
+            asm!("pause", options(nomem, nostack, preserves_flags));
+        }
+    }
 }
 
 pub fn exit(status: u64) -> ! {

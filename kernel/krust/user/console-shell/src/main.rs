@@ -8,20 +8,22 @@ use core::{cell::UnsafeCell, panic::PanicInfo};
 const CAP_SHELL_REQUEST: u64 = 0;
 const CAP_SERIAL_LOG: u64 = 1;
 const CAP_READINESS: u64 = 2;
-const CAP_CONSOLE_OUTPUT: u64 = 3;
-const CAP_CONSOLE_CONTROL: u64 = 4;
-const CAP_INSPECT: u64 = 5;
+const CAP_COUNTER_REPLY: u64 = 3;
+const CAP_CONSOLE_OUTPUT: u64 = 4;
+const CAP_CONSOLE_CONTROL: u64 = 5;
+const CAP_COUNTER_REQUEST: u64 = 6;
+const CAP_INSPECT: u64 = 7;
+const CAP_UPDATE_CONTROL: u64 = 8;
 const PROTOCOL_HEALTH_V0: u16 = 2;
 const MESSAGE_READY: u16 = 1;
 const ENVELOPE_LEN: usize = 16;
 const REPORT_BUFFER_LEN: usize = 64 * 1024;
 const CONTROL_SHUTDOWN: &[u8] = b"shutdown";
-const SERVICE_NAMES: [&[u8]; 6] = [
+const SERVICE_NAMES: [&[u8]; 5] = [
     b"vertex-init",
     b"logd",
     b"vertex-store",
     b"vertex-state",
-    b"counter-service",
     b"console-shell",
 ];
 
@@ -77,34 +79,57 @@ pub extern "C" fn _start() -> ! {
         }
         if bytes_eq(command, b"counter") {
             log(b"console-shell command: counter");
-            console_write(b"counter value: 41\n> ");
+            let value = counter_request(b"G");
+            console_write_counter(b"counter value: ", value);
             continue;
         }
         if bytes_eq(command, b"increment") {
             log(b"console-shell command: increment");
-            console_write(b"increment -> 42\n> ");
+            let value = counter_request(b"I");
+            console_write_counter(b"increment -> ", value);
             continue;
         }
         if bytes_eq(command, b"install generation gen:new") {
             log(b"console-shell command: install generation gen:new");
             console_write(b"install generation gen:new\n> ");
-            continue;
+            yield_for_console_driver();
+            let status = sys::activate_generation(CAP_UPDATE_CONTROL, b"gen:console-new-0002");
+            if status != sys::STATUS_OK {
+                log(b"console-shell install generation failed");
+                console_write(b"install generation failed\n> ");
+                continue;
+            }
+            loop {
+                sys::pause();
+            }
         }
         if bytes_eq(command, b"rollback to gen:old") {
             log(b"console-shell command: rollback to gen:old");
-            console_write(
-                b"rollback to gen:old\ncounter state policy: preserve\ncounter value: 42\n> ",
-            );
-            continue;
+            let value = counter_request(b"G");
+            console_write_rollback(value);
+            yield_for_console_driver();
+            let status = sys::rollback_generation(CAP_UPDATE_CONTROL, b"gen:console-0001");
+            if status != sys::STATUS_OK {
+                log(b"console-shell rollback failed");
+                console_write(b"rollback failed\n> ");
+                continue;
+            }
+            loop {
+                sys::pause();
+            }
         }
         if bytes_eq(command, b"why svc:counter state:counter") {
             log(b"console-shell command: why counter state");
+            let report = runtime_report();
+            require_counter_state_authority(report);
+            log(b"svc:counter has state authority from generation graph");
             console_write(b"why svc:counter state:counter\nsvc:counter has state authority from generation graph\n> ");
             continue;
         }
         if bytes_eq(command, b"halt") {
             log(b"console-shell command: halt");
             console_write(b"Native console shell ok\n");
+            let _ = sys::ipc_send(CAP_COUNTER_REQUEST, b"H");
             if sys::ipc_send(CAP_CONSOLE_CONTROL, CONTROL_SHUTDOWN) != sys::STATUS_OK {
                 log(b"console-shell shutdown send failed");
                 sys::exit(1);
@@ -176,6 +201,62 @@ fn console_write_services(report: &[u8]) {
     log(b"native shell services query ok");
 }
 
+fn counter_request(request: &[u8]) -> &[u8] {
+    if sys::ipc_send(CAP_COUNTER_REQUEST, request) != sys::STATUS_OK {
+        log(b"console-shell counter request failed");
+        sys::exit(1);
+    }
+    let mut attempts = 0;
+    loop {
+        let buffer = report_buffer();
+        let received = sys::ipc_recv(CAP_COUNTER_REPLY, buffer);
+        if received == sys::STATUS_EMPTY && attempts < 64 {
+            attempts += 1;
+            sys::yield_now();
+            continue;
+        }
+        if received == sys::STATUS_BAD_CAPABILITY
+            || received == sys::STATUS_BAD_BUFFER
+            || received == sys::STATUS_TOO_LARGE
+            || received > buffer.len() as u64
+        {
+            log(b"console-shell counter reply failed");
+            sys::exit(1);
+        }
+        return &buffer[..received as usize];
+    }
+}
+
+fn console_write_counter(prefix: &[u8], value: &[u8]) {
+    let mut payload = [0u8; 128];
+    let mut len = 0;
+    append(&mut payload, &mut len, prefix);
+    append(&mut payload, &mut len, value);
+    append(&mut payload, &mut len, b"\n> ");
+    console_write(&payload[..len]);
+}
+
+fn console_write_rollback(value: &[u8]) {
+    let mut payload = [0u8; 128];
+    let mut len = 0;
+    append(
+        &mut payload,
+        &mut len,
+        b"rollback to gen:old\ncounter state policy: preserve\ncounter value: ",
+    );
+    append(&mut payload, &mut len, value);
+    append(&mut payload, &mut len, b"\n> ");
+    console_write(&payload[..len]);
+}
+
+fn yield_for_console_driver() {
+    let mut attempts = 0;
+    while attempts < 8 {
+        sys::yield_now();
+        attempts += 1;
+    }
+}
+
 fn process_state<'a>(report: &'a [u8], name: &[u8]) -> &'a [u8] {
     let mut start = 0;
     while start <= report.len() {
@@ -218,6 +299,23 @@ fn require_echo_log_authority(report: &[u8]) {
     }
 
     log(b"console-shell why query failed");
+    sys::exit(1);
+}
+
+fn require_counter_state_authority(report: &[u8]) {
+    let needles: [&[u8]; 5] = [
+        b"proc=counter-service",
+        b"endpoint=state-counter-request",
+        b"rights=send",
+        b"owner=counter-service",
+        b"delegated_by=vertex-init",
+    ];
+    if find_line_contains_all(report, &needles).is_some() {
+        log(b"native shell why counter state query ok");
+        return;
+    }
+
+    log(b"console-shell why counter state query failed");
     sys::exit(1);
 }
 

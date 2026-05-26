@@ -1,10 +1,10 @@
 {
   "schema": "vertex.ir.v0",
   "generation": {
-    "id": "gen:console-0001",
+    "id": "gen:console-new-0002",
     "createdUtc": "2026-05-22T00:00:00Z",
-    "description": "Krust native console shell test generation",
-    "parent": null,
+    "description": "Krust native console shell update target generation",
+    "parent": "gen:console-0001",
     "manifestHash": null
   },
   "kernel": {
