@@ -64,6 +64,97 @@ fn run_with_fake_supervisor(args: &[&str], fake: &Path) -> Output {
         .expect("run vertexctl")
 }
 
+fn write_missing_executable_manifest(path: &Path) {
+    let manifest = serde_json::json!({
+        "schema": "vertex.ir.v0",
+        "generation": {
+            "id": "gen:missing-executable-artifact",
+            "createdUtc": "2026-05-27T00:00:00Z",
+            "description": "missing native executable artifact test",
+            "parent": null,
+            "manifestHash": null
+        },
+        "kernel": {
+            "id": "kernel:krust-placeholder",
+            "kind": "krust-native",
+            "storeObject": "store:kernel-placeholder",
+            "abi": "krust.v0",
+            "target": "x86_64-unknown-none"
+        },
+        "init": {
+            "id": "init:vertex-init",
+            "executable": "exe:missing",
+            "mode": "krust-native"
+        },
+        "store": [
+            {
+                "id": "store:kernel-placeholder",
+                "name": "kernel-placeholder",
+                "kind": "kernel-image",
+                "path": "/vertex/store/kernel-placeholder",
+                "hashAlgorithm": "blake3",
+                "hash": "demo-not-a-real-hash-kernel",
+                "sizeBytes": 0,
+                "references": []
+            },
+            {
+                "id": "store:missing-demo",
+                "name": "missing-demo",
+                "kind": "executable",
+                "path": "/vertex/store/definitely-missing-executable-for-test",
+                "hashAlgorithm": "blake3",
+                "hash": "demo-not-a-real-hash-missing",
+                "sizeBytes": 65536,
+                "references": []
+            }
+        ],
+        "executables": [
+            {
+                "id": "exe:missing",
+                "storeObject": "store:missing-demo",
+                "entrypoint": "bin/definitely-missing-executable-for-test",
+                "abi": "krust-native-process.v0"
+            }
+        ],
+        "devices": [],
+        "stateVolumes": [],
+        "secrets": [],
+        "capabilities": [],
+        "services": [
+            {
+                "id": "svc:vertex-supervisor",
+                "name": "vertex-init",
+                "executable": "exe:missing",
+                "restart": "never",
+                "health": null,
+                "lifecycle": {
+                    "startAfter": [],
+                    "stopBefore": []
+                }
+            }
+        ],
+        "activation": {
+            "rootService": "svc:vertex-supervisor",
+            "startOrder": ["svc:vertex-supervisor"],
+            "rollbackPolicy": {},
+            "onFailure": "stop-activation"
+        },
+        "policies": {
+            "defaultAuthority": "deny",
+            "allowAmbientFilesystem": false,
+            "allowAmbientNetwork": false,
+            "allowAmbientDevices": false,
+            "capabilityDelegation": "explicit-only",
+            "unknownReferences": "reject"
+        }
+    });
+    fs::write(
+        path,
+        serde_json::to_string_pretty(&manifest).expect("serialize missing artifact manifest"),
+    )
+    .expect("write missing artifact manifest");
+}
+
 fn assert_success(output: Output) -> String {
     if !output.status.success() {
         panic!(
@@ -275,6 +366,40 @@ fn compile_boot_manifest_emits_krustboot_plan() {
     assert!(contains_bytes(&bytes, b"cap:irq.virtio-blk0"));
     assert!(contains_bytes(&bytes, b"cap:dma.virtio-blk0"));
     assert!(contains_bytes(&bytes, b"cap:net.tcp.8080"));
+}
+
+#[test]
+fn compile_boot_manifest_rejects_missing_executable_artifact() {
+    let dir = temp_dir("krustboot-missing-artifact");
+    let manifest_path = dir.join("missing.vertex.json");
+    let output_path = dir.join("missing.krustboot");
+    write_missing_executable_manifest(&manifest_path);
+    let manifest_arg = manifest_path.to_string_lossy().to_string();
+    let output_arg = output_path.to_string_lossy().to_string();
+
+    let stderr = assert_failure(run(&["compile-boot-manifest", &manifest_arg, &output_arg]));
+
+    assert!(
+        stderr.contains("native store artifact definitely-missing-executable-for-test missing")
+    );
+    assert!(!output_path.exists());
+}
+
+#[test]
+fn create_vertex_disk_rejects_missing_executable_artifact() {
+    let dir = temp_dir("vertexdisk-missing-artifact");
+    let manifest_path = dir.join("missing.vertex.json");
+    let output_path = dir.join("missing.img");
+    write_missing_executable_manifest(&manifest_path);
+    let manifest_arg = manifest_path.to_string_lossy().to_string();
+    let output_arg = output_path.to_string_lossy().to_string();
+
+    let stderr = assert_failure(run(&["create-vertex-disk", &output_arg, &manifest_arg]));
+
+    assert!(
+        stderr.contains("native store artifact definitely-missing-executable-for-test missing")
+    );
+    assert!(!output_path.exists());
 }
 
 #[test]

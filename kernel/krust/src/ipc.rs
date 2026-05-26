@@ -228,6 +228,7 @@ pub struct BootGrantConfig {
 #[derive(Clone, Copy)]
 pub struct BootRuntimeConfig {
     generation_id: &'static str,
+    manifest_hash: [u8; 64],
     processes: [Option<BootProcessConfig>; MAX_PROCESSES],
     process_count: usize,
     endpoints: [Option<BootEndpointConfig>; MAX_OBJECTS],
@@ -1585,6 +1586,7 @@ impl BootRuntimeConfig {
     pub const fn new() -> Self {
         Self {
             generation_id: "",
+            manifest_hash: [0; 64],
             processes: [None; MAX_PROCESSES],
             process_count: 0,
             endpoints: [None; MAX_OBJECTS],
@@ -1609,6 +1611,10 @@ impl BootRuntimeConfig {
 
     pub fn set_generation_id(&mut self, generation_id: &'static str) {
         self.generation_id = generation_id;
+    }
+
+    pub fn set_manifest_hash(&mut self, hash: [u8; 64]) {
+        self.manifest_hash = hash;
     }
 
     pub fn add_process(&mut self, process: BootProcessConfig) -> Result<(), InitError> {
@@ -2557,6 +2563,13 @@ pub fn activate_generation(
         return Ok(());
     }
 
+    if verify_generation_transaction(target).is_err() {
+        serial::write_str("Native update transaction selected_generation unchanged: ");
+        serial::write_str(previous_generation);
+        serial::write_str("\n");
+        return Err(IpcError::BadCapability);
+    }
+
     if let Some(previous_config) = previous_config {
         set_rollback_runtime(GenerationRuntime {
             generation_id: previous_generation,
@@ -2564,8 +2577,6 @@ pub fn activate_generation(
         });
     }
 
-    serial::write_str("Native update transaction verifies manifest hash\n");
-    serial::write_str("Native update transaction verifies store closure\n");
     serial::write_str("Native update transaction journal commit\n");
     boot_manager().install_selected(previous_generation, target.generation_id);
 
@@ -2590,6 +2601,87 @@ pub fn activate_generation(
     unsafe {
         gdt::enter_user_mode(context.cr3, context.entry, context.stack_top);
     }
+}
+
+fn verify_generation_transaction(target: GenerationRuntime) -> Result<(), IpcError> {
+    verify_generation_manifest(target.config)?;
+    verify_generation_store_closure(target.config)?;
+    Ok(())
+}
+
+fn verify_generation_manifest(config: &BootRuntimeConfig) -> Result<(), IpcError> {
+    let Some(module) = config.manifest_module else {
+        serial::write_str("Native update transaction rejected: missing manifest\n");
+        return Err(IpcError::BadCapability);
+    };
+    let Ok(len) = usize::try_from(module.length) else {
+        serial::write_str("Native update transaction rejected: manifest too large\n");
+        return Err(IpcError::MessageTooLarge);
+    };
+    if len == 0 {
+        serial::write_str("Native update transaction rejected: empty manifest\n");
+        return Err(IpcError::BadCapability);
+    }
+
+    let bytes = unsafe { core::slice::from_raw_parts(module.base as *const u8, len) };
+    let mut actual = [0u8; 64];
+    store_hash_hex(blake3::hash(bytes).as_bytes(), &mut actual);
+    if actual != config.manifest_hash {
+        serial::write_str("Native update transaction rejected: manifest hash mismatch\n");
+        return Err(IpcError::BadCapability);
+    }
+
+    serial::write_str("Native update transaction verifies manifest hash: generation=");
+    serial::write_str(config.generation_id);
+    serial::write_str(" identity=store:blake3:");
+    serial::write_ascii_bytes(&config.manifest_hash);
+    serial::write_str("\n");
+    Ok(())
+}
+
+fn verify_generation_store_closure(config: &BootRuntimeConfig) -> Result<(), IpcError> {
+    if config.store_object_count == 0 {
+        serial::write_str("Native update transaction rejected: missing store closure\n");
+        return Err(IpcError::BadCapability);
+    }
+
+    let mut index = 0;
+    while index < config.store_object_count {
+        let Some(object) = config.store_objects[index] else {
+            serial::write_str("Native update transaction rejected: store closure gap\n");
+            return Err(IpcError::BadCapability);
+        };
+        let Ok(len) = usize::try_from(object.length) else {
+            serial::write_str("Native update transaction rejected: store object too large object=");
+            serial::write_str(object.id);
+            serial::write_str("\n");
+            return Err(IpcError::MessageTooLarge);
+        };
+        if len == 0 {
+            serial::write_str("Native update transaction rejected: missing store object object=");
+            serial::write_str(object.id);
+            serial::write_str("\n");
+            return Err(IpcError::BadCapability);
+        }
+        let bytes = unsafe { core::slice::from_raw_parts(object.base as *const u8, len) };
+        if !store_hash_matches(bytes, object.hash) {
+            serial::write_str("Native update transaction rejected: store hash mismatch object=");
+            serial::write_str(object.id);
+            serial::write_str("\n");
+            serial::write_str("vertex-inspect security event: store hash mismatch object=");
+            serial::write_str(object.id);
+            serial::write_str("\n");
+            return Err(IpcError::BadCapability);
+        }
+        index += 1;
+    }
+
+    serial::write_str("Native update transaction verifies store closure: generation=");
+    serial::write_str(config.generation_id);
+    serial::write_str(" objects=");
+    serial::write_u64_dec(config.store_object_count as u64);
+    serial::write_str("\n");
+    Ok(())
 }
 
 pub fn rollback_generation(

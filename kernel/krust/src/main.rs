@@ -704,6 +704,16 @@ fn prepare_native_boot_config(
     let config = unsafe { &mut *config_slot.0.get() };
     *config = ipc::BootRuntimeConfig::new();
     config.set_generation_id(boot_manifest.generation_id());
+    let Ok(source_len) = usize::try_from(boot_manifest.source_len()) else {
+        serial::write_str("KrustBoot runtime plan failed: manifest size overflow\n");
+        return None;
+    };
+    let source_bytes = unsafe {
+        core::slice::from_raw_parts(boot_manifest.source_base() as *const u8, source_len)
+    };
+    let mut manifest_hash = [0u8; 64];
+    store_hash_hex(blake3::hash(source_bytes).as_bytes(), &mut manifest_hash);
+    config.set_manifest_hash(manifest_hash);
     build_boot_runtime_config(
         boot_manifest,
         &images,
