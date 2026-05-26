@@ -17,6 +17,7 @@ const CAP_IRQ: u64 = 5;
 const CAP_DMA: u64 = 6;
 const CAP_VIRTIO_IO: u64 = 7;
 const CAP_FAULT_INJECTION: u64 = 8;
+const FAULT_INJECTION_TOKEN: &[u8] = b"krust-block-driver-fault\n";
 
 const PROTOCOL_HEALTH_V0: u16 = 2;
 const MESSAGE_READY: u16 = 1;
@@ -110,15 +111,19 @@ pub extern "C" fn _start() -> ! {
 }
 
 fn maybe_trigger_fault_injection() {
-    if sys::process_attempt() <= 1
-        && sys::cap_inspect(CAP_FAULT_INJECTION) != sys::STATUS_BAD_CAPABILITY
-    {
+    if sys::process_attempt() <= 1 && has_fault_injection_token() {
         log(b"block-driver fault injection triggers direct invalid load");
         unsafe {
             let fault = 0x0000_0000_dead_4200 as *const u64;
             let _ = fault.read_volatile();
         }
     }
+}
+
+fn has_fault_injection_token() -> bool {
+    let mut token = [0u8; FAULT_INJECTION_TOKEN.len()];
+    let len = sys::object_read(CAP_FAULT_INJECTION, &mut token);
+    len == FAULT_INJECTION_TOKEN.len() as u64 && bytes_eq(&token, FAULT_INJECTION_TOKEN)
 }
 
 struct VirtioBlock {
@@ -164,11 +169,11 @@ impl VirtioBlock {
         self.write_status(0)?;
         self.write_status(VIRTIO_STATUS_ACKNOWLEDGE)?;
         self.write_status(VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER)?;
-        let _features = self.read32(VIRTIO_PCI_HOST_FEATURES);
+        let _features = self.read32(VIRTIO_PCI_HOST_FEATURES)?;
         self.write32(VIRTIO_PCI_GUEST_FEATURES, 0)?;
         self.write16(VIRTIO_PCI_QUEUE_SEL, 0)?;
 
-        if self.read16(VIRTIO_PCI_QUEUE_NUM) < QUEUE_SIZE {
+        if self.read16(VIRTIO_PCI_QUEUE_NUM)? < QUEUE_SIZE {
             log(b"virtio-blk queue too small");
             let _ = self.write_status(VIRTIO_STATUS_FAILED);
             return None;
@@ -271,16 +276,16 @@ impl VirtioBlock {
         write_dma_u16(self.dma_virtual, offset + 14, next);
     }
 
-    fn read8(&self, offset: u16) -> u8 {
-        io_read8(CAP_VIRTIO_IO, self.io_base + offset).unwrap_or(0xff)
+    fn read8(&self, offset: u16) -> Option<u8> {
+        io_read8(CAP_VIRTIO_IO, self.io_base + offset)
     }
 
-    fn read16(&self, offset: u16) -> u16 {
-        io_read16(CAP_VIRTIO_IO, self.io_base + offset).unwrap_or(u16::MAX)
+    fn read16(&self, offset: u16) -> Option<u16> {
+        io_read16(CAP_VIRTIO_IO, self.io_base + offset)
     }
 
-    fn read32(&self, offset: u16) -> u32 {
-        io_read32(CAP_VIRTIO_IO, self.io_base + offset).unwrap_or(u32::MAX)
+    fn read32(&self, offset: u16) -> Option<u32> {
+        io_read32(CAP_VIRTIO_IO, self.io_base + offset)
     }
 
     fn write16(&self, offset: u16, value: u16) -> Option<()> {

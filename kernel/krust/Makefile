@@ -138,6 +138,7 @@ iso: build boot-manifest block-image check-tools check-limine-dir
 	cp $(HOG_ELF) $(ISO_ROOT)/boot/hog.elf
 	cp $(FAULTY_ELF) $(ISO_ROOT)/boot/faulty.elf
 	cp assets/hello-text.txt $(ISO_ROOT)/boot/hello-text.txt
+	cp assets/block-driver-fault-token.txt $(ISO_ROOT)/boot/block-driver-fault-token.txt
 	cp $(BOOT_MANIFEST) $(ISO_ROOT)/boot/hello-generation.krustboot
 	cp $(FALLBACK_BOOT_MANIFEST) $(ISO_ROOT)/boot/fallback-generation.krustboot
 	cp $(BAD_GENERATION_BOOT_MANIFEST) $(ISO_ROOT)/boot/bad-generation.krustboot

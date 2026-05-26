@@ -264,7 +264,9 @@ Native service activation ok
         required_lines='
 Boot generation: gen:block-driver-fault-0001
 KrustBoot grants: 44
-proc=block-driver cap[8] timer=monotonic-timer rights=control
+KrustBoot store objects: 1
+proc=block-driver cap[8] store-object=store:block-driver-fault-token rights=read
+Object read accepted: proc=block-driver object=store:block-driver-fault-token bytes=25
 block-driver fault injection triggers direct invalid load
 User page fault: proc=block-driver
 User process fault contained: proc=block-driver

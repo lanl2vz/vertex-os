@@ -169,6 +169,16 @@
       "hash": "demo-not-a-real-hash-hello-text",
       "sizeBytes": 22,
       "references": []
+    },
+    {
+      "id": "store:block-driver-fault-token",
+      "name": "store-block-driver-fault-token",
+      "kind": "data",
+      "path": "/vertex/store/demo-block-driver-fault-token",
+      "hashAlgorithm": "blake3",
+      "hash": "demo-not-a-real-hash-block-driver-fault-token",
+      "sizeBytes": 25,
+      "references": []
     }
   ],
   "executables": [
@@ -529,6 +539,18 @@
       "properties": {
         "clock": "monotonic"
       }
+    },
+    {
+      "id": "cap:block-driver.fault-token",
+      "kind": "store-object",
+      "provider": "store:block-driver-fault-token",
+      "rights": [
+        "read"
+      ],
+      "properties": {
+        "object": "store:block-driver-fault-token",
+        "purpose": "m42-driver-fault-injection"
+      }
     }
   ],
   "services": [
@@ -713,9 +735,9 @@
           ]
         },
         {
-          "capability": "cap:timer.sleep",
+          "capability": "cap:block-driver.fault-token",
           "rights": [
-            "control"
+            "read"
           ]
         }
       ],
