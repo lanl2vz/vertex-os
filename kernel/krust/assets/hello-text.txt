@@ -1,1 +1,1 @@
-hello from store blob
+hello from Krust store

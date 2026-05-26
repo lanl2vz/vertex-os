@@ -18,7 +18,7 @@ const MAX_BOOT_MODULES: usize = 16;
 const MAX_PROCESSES: usize = 16;
 const MAX_ENDPOINTS: usize = 16;
 const MAX_GRANTS: usize = 64;
-const MAX_STORE_OBJECTS: usize = 4;
+const MAX_STORE_OBJECTS: usize = 32;
 const MAX_STATE_VOLUMES: usize = 4;
 const MAX_NETWORK_PORTS: usize = 4;
 const MAX_IO_PORT_RANGES: usize = 4;
@@ -692,7 +692,7 @@ fn validate_manifest(manifest: &Manifest<'_>) -> Result<(), ParseError> {
         if process.initial {
             initial_count += 1;
         }
-        if !has_boot_module(manifest, process.module_string) {
+        if !has_store_object_module(manifest, process.module_string) {
             return Err(ParseError::InvalidReference);
         }
         validate_process_refs(
@@ -806,11 +806,11 @@ fn validate_process_refs(
     Ok(())
 }
 
-fn has_boot_module(manifest: &Manifest<'_>, module_string: &str) -> bool {
+fn has_store_object_module(manifest: &Manifest<'_>, module_string: &str) -> bool {
     let mut index = 0;
-    while index < manifest.boot_module_count {
-        if let Some(module) = manifest.boot_module(index)
-            && module.module_string == module_string
+    while index < manifest.store_object_count {
+        if let Some(object) = manifest.store_object(index)
+            && object.module_string == module_string
         {
             return true;
         }

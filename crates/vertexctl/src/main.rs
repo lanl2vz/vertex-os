@@ -215,11 +215,28 @@ fn explain_krustboot_cmd(args: &[String]) -> Result<(), String> {
 }
 
 fn create_vertex_disk_cmd(args: &[String]) -> Result<(), String> {
-    let [output_path] = args else {
-        return Err("usage: vertexctl create-vertex-disk <output>".to_owned());
+    let Some((output_path, manifest_paths)) = args.split_first() else {
+        return Err("usage: vertexctl create-vertex-disk <output> <manifest>...".to_owned());
     };
+    if manifest_paths.is_empty() {
+        return Err("usage: vertexctl create-vertex-disk <output> <manifest>...".to_owned());
+    }
 
-    let image = vertexdisk::create_image();
+    let mut manifests = Vec::new();
+    for manifest_path in manifest_paths {
+        let manifest = load_manifest(manifest_path).map_err(|error| error.to_string())?;
+        let report = validate_manifest(&manifest);
+        if !report.is_valid() {
+            print_report(&report);
+            return Err(format!(
+                "manifest {} is invalid; VertexDisk image suppressed",
+                manifest.generation.id
+            ));
+        }
+        manifests.push(manifest);
+    }
+
+    let image = vertexdisk::create_image(&manifests)?;
     fs::write(output_path, &image)
         .map_err(|source| format!("failed to write {output_path}: {source}"))?;
     println!(
@@ -505,7 +522,7 @@ fn print_usage() {
            vertexctl materialize-demo <manifest> <output-dir>\n\
            vertexctl compile-boot-manifest <manifest> <output>\n\
            vertexctl explain-krustboot <manifest>\n\
-           vertexctl create-vertex-disk <output>\n\
+           vertexctl create-vertex-disk <output> <manifest>...\n\
            vertexctl corrupt-vertex-disk <mode> <input> <output>\n\
            vertexctl activate <manifest> [--state-root <dir>] [--run-once]\n\
            vertexctl switch <manifest> [--state-root <dir>] [--run-once]\n\

@@ -1,5 +1,7 @@
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
+use std::fs;
+use std::path::PathBuf;
 use vertex_ir::{GenerationManifest, Service};
 
 const COMPACT_MAGIC: &[u8; 16] = b"KRUSTBOOTV0\0\0\0\0\0";
@@ -31,7 +33,7 @@ const MAX_BOOT_MODULES: usize = 16;
 const MAX_PROCESSES: usize = 16;
 const MAX_ENDPOINTS: usize = 16;
 const MAX_GRANTS: usize = 64;
-const MAX_STORE_OBJECTS: usize = 4;
+const MAX_STORE_OBJECTS: usize = 32;
 const MAX_STATE_VOLUMES: usize = 4;
 const MAX_NETWORK_PORTS: usize = 4;
 const MAX_IO_PORT_RANGES: usize = 4;
@@ -79,6 +81,8 @@ const INIT_READINESS_CAP_SLOT: u16 = 3;
 const INIT_ENDPOINT_AUTH_BASE_SLOT: u16 = 4;
 const SERIAL_RESERVED_CAP_SLOT: u16 = 1;
 const READINESS_RESERVED_CAP_SLOT: u16 = 2;
+const VERTEX_STORE_LOGD_OBJECT_CAP_SLOT: u16 = 7;
+const VERTEX_STORE_ECHO_OBJECT_CAP_SLOT: u16 = 8;
 
 pub fn compile(manifest: &GenerationManifest) -> Result<Vec<u8>, String> {
     let plan = derive_plan(manifest)?;
@@ -432,7 +436,14 @@ fn derive_plan(manifest: &GenerationManifest) -> Result<BootPlan, String> {
     let service_order = native_service_closure(manifest, &root_service.id)?;
 
     let mut processes = Vec::new();
+    let mut executable_store_objects = Vec::new();
     let init_name = module_basename(&init_executable.entrypoint);
+    push_executable_store_object(
+        &mut executable_store_objects,
+        manifest,
+        &init_executable.store_object,
+        &init_name,
+    )?;
     processes.push(NativeProcess {
         name: init_name.clone(),
         module_string: init_name.clone(),
@@ -460,9 +471,16 @@ fn derive_plan(manifest: &GenerationManifest) -> Result<BootPlan, String> {
         })?;
 
         let process_name = service_label(service);
+        let module_string = module_basename(&executable.entrypoint);
+        push_executable_store_object(
+            &mut executable_store_objects,
+            manifest,
+            &executable.store_object,
+            &module_string,
+        )?;
         processes.push(NativeProcess {
             name: process_name,
-            module_string: module_basename(&executable.entrypoint),
+            module_string,
             initial: false,
             service_id: service.id.clone(),
             start_after: Vec::new(),
@@ -631,7 +649,7 @@ fn derive_plan(manifest: &GenerationManifest) -> Result<BootPlan, String> {
         }
     }
 
-    let mut store_objects = Vec::new();
+    let mut store_objects = executable_store_objects;
     let state_volumes = Vec::new();
     let mut network_ports = Vec::new();
     let mut io_ports = Vec::new();
@@ -639,6 +657,8 @@ fn derive_plan(manifest: &GenerationManifest) -> Result<BootPlan, String> {
     let mut interrupt_lines = Vec::new();
     let mut dma_regions = Vec::new();
     let mut next_object_slots = initial_object_cap_slots(&processes);
+    add_vertex_store_verifier_grants(&mut grants, &store_objects, &processes);
+    reserve_vertex_store_verifier_slots(&mut next_object_slots, &processes);
     for service in &manifest.services {
         let Some(process_name) = native_process_for_service(&processes, &service.id) else {
             continue;
@@ -661,7 +681,7 @@ fn derive_plan(manifest: &GenerationManifest) -> Result<BootPlan, String> {
                             capability.id, capability.provider
                         )
                     })?;
-                    push_unique_store_object(&mut store_objects, store);
+                    push_unique_store_object(&mut store_objects, store)?;
                     grants.push(Grant {
                         process: process_name.clone(),
                         object_kind: OBJECT_STORE,
@@ -861,17 +881,148 @@ fn push_unique_service(services: &mut Vec<String>, service_id: String) {
     }
 }
 
-fn push_unique_store_object(objects: &mut Vec<StoreObject>, store: &vertex_ir::StoreObject) {
-    if objects.iter().any(|object| object.id == store.id) {
+fn add_vertex_store_verifier_grants(
+    grants: &mut Vec<Grant>,
+    store_objects: &[StoreObject],
+    processes: &[NativeProcess],
+) {
+    let Some(process) = native_process_for_service(processes, "svc:vertex-store") else {
         return;
+    };
+
+    if store_objects
+        .iter()
+        .any(|object| object.id == "store:logd-demo")
+    {
+        grants.push(Grant {
+            process: process.clone(),
+            object_kind: OBJECT_STORE,
+            object_name: "store:logd-demo".to_owned(),
+            cap_slot: VERTEX_STORE_LOGD_OBJECT_CAP_SLOT,
+            rights: RIGHT_READ,
+        });
     }
+
+    let echo_object = ["store:echo-server-demo", "store:echo-demo"]
+        .iter()
+        .find(|id| store_objects.iter().any(|object| object.id == **id));
+    if let Some(object_name) = echo_object {
+        grants.push(Grant {
+            process,
+            object_kind: OBJECT_STORE,
+            object_name: (*object_name).to_owned(),
+            cap_slot: VERTEX_STORE_ECHO_OBJECT_CAP_SLOT,
+            rights: RIGHT_READ,
+        });
+    }
+}
+
+fn reserve_vertex_store_verifier_slots(
+    slots: &mut BTreeMap<String, u16>,
+    processes: &[NativeProcess],
+) {
+    let Some(process) = native_process_for_service(processes, "svc:vertex-store") else {
+        return;
+    };
+    let Some(slot) = slots.get_mut(&process) else {
+        return;
+    };
+    let next_after_verifier = VERTEX_STORE_ECHO_OBJECT_CAP_SLOT + 1;
+    if *slot < next_after_verifier {
+        *slot = next_after_verifier;
+    }
+}
+
+fn push_executable_store_object(
+    objects: &mut Vec<StoreObject>,
+    manifest: &GenerationManifest,
+    store_id: &str,
+    module_string: &str,
+) -> Result<(), String> {
+    if objects.iter().any(|object| object.id == store_id) {
+        return Ok(());
+    }
+    let store = manifest
+        .store_object(store_id)
+        .ok_or_else(|| format!("executable references unknown store object {store_id}"))?;
+    let bytes = native_store_bytes(module_string)?;
+    objects.push(StoreObject {
+        id: store.id.clone(),
+        module_string: module_string.to_owned(),
+        hash: store_hash_hex(&bytes),
+        size: bytes.len() as u64,
+    });
+    Ok(())
+}
+
+fn push_unique_store_object(
+    objects: &mut Vec<StoreObject>,
+    store: &vertex_ir::StoreObject,
+) -> Result<(), String> {
+    if objects.iter().any(|object| object.id == store.id) {
+        return Ok(());
+    }
+
+    let bytes = native_store_bytes(&store.name)?;
 
     objects.push(StoreObject {
         id: store.id.clone(),
         module_string: store.name.clone(),
-        hash: store.hash.clone(),
-        size: store.size_bytes,
+        hash: store_hash_hex(&bytes),
+        size: bytes.len() as u64,
     });
+    Ok(())
+}
+
+fn native_store_bytes(module_string: &str) -> Result<Vec<u8>, String> {
+    let mut candidates = Vec::new();
+    for path in native_store_candidate_paths(module_string) {
+        candidates.push(path.display().to_string());
+        if let Ok(bytes) = fs::read(&path) {
+            return Ok(bytes);
+        }
+    }
+    Err(format!(
+        "native store artifact {module_string} missing; checked {}",
+        candidates.join(", ")
+    ))
+}
+
+fn native_store_candidate_paths(module_string: &str) -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    if module_string == "store-hello-text" {
+        paths.push(PathBuf::from("assets/hello-text.txt"));
+        paths.push(PathBuf::from("kernel/krust/assets/hello-text.txt"));
+        return paths;
+    }
+    if module_string == "store-block-driver-fault-token" {
+        paths.push(PathBuf::from("assets/block-driver-fault-token.txt"));
+        paths.push(PathBuf::from(
+            "kernel/krust/assets/block-driver-fault-token.txt",
+        ));
+        return paths;
+    }
+
+    let crate_dir = match module_string {
+        "vertex-init" => "init",
+        other => other,
+    };
+    paths.push(PathBuf::from(format!(
+        "user/{crate_dir}/target/x86_64-unknown-none/debug/{module_string}"
+    )));
+    paths.push(PathBuf::from(format!(
+        "kernel/krust/user/{crate_dir}/target/x86_64-unknown-none/debug/{module_string}"
+    )));
+    paths
+}
+
+fn store_hash_hex(bytes: &[u8]) -> String {
+    let digest = blake3::hash(bytes);
+    let mut out = String::with_capacity(64);
+    for byte in digest.as_bytes() {
+        out.push_str(&format!("{byte:02x}"));
+    }
+    out
 }
 
 fn push_unique_network_port(ports: &mut Vec<NetworkPort>, port_id: String) {
@@ -1943,11 +2094,11 @@ fn v1_checksum(bytes: &[u8]) -> u32 {
 }
 
 fn push_fixed_str(bytes: &mut Vec<u8>, value: &str) -> Result<(), String> {
-    if value.len() >= STRING_LEN {
+    if value.len() > STRING_LEN {
         return Err(format!(
             "KrustBoot string is too long: {value} is {} bytes, max {}",
             value.len(),
-            STRING_LEN - 1
+            STRING_LEN
         ));
     }
     if !value.is_ascii() {

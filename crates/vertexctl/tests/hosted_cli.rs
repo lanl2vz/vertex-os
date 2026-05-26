@@ -232,8 +232,8 @@ fn compile_boot_manifest_emits_krustboot_plan() {
     assert!(stdout.contains("boot_modules: 13"));
     assert!(stdout.contains("processes: 13"));
     assert!(stdout.contains("endpoints: 12"));
-    assert!(stdout.contains("grants: 46"));
-    assert!(stdout.contains("store_objects: 0"));
+    assert!(stdout.contains("grants: 48"));
+    assert!(stdout.contains("store_objects: 13"));
     assert!(stdout.contains("state_volumes: 0"));
     assert!(stdout.contains("network_ports: 1"));
     assert!(stdout.contains("io_ports: 3"));

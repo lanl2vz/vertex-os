@@ -6,13 +6,16 @@ IR and graph semantics; Krust is the native enforcement path.
 
 ## Status Summary
 
-Current status: M14-M43 are implemented and smoke-tested under
+Current status: M14-M47 are implemented and smoke-tested under
 `qemu-system-x86_64` with Limine. M39 pins the native toolchain, M40 makes
 native IPC directed, and M41 adds a native console shell path over explicit
 console authority. M42 adds the first real virtio-blk sector I/O path over
 PCI I/O and DMA capabilities. M43 adds the first VertexDisk v0 block-object
 layout for immutable store reads, mutable state persistence, journal writeback,
-and bad-superblock rejection.
+and bad-superblock rejection. M44 adds native boot-manager fallback state, M45
+verifies store objects by content identity, M46 performs native update
+transactions, and M47 loads service executables only through verified native
+store objects.
 
 ```sh
 make -C kernel/krust doctor
@@ -39,13 +42,16 @@ scripts/krust-test.sh m42
 scripts/krust-test.sh m42-driver-fault
 scripts/krust-test.sh m43
 scripts/krust-test.sh m43-bad-superblock
+scripts/krust-test.sh m44
+scripts/krust-test.sh m45
+scripts/krust-test.sh m46
+scripts/krust-test.sh m47
 ```
 
-Next direction: use the ABI v1 and VertexDisk base to build Vertex OS v0, a
-tiny persistent appliance system. The next milestones should make the native
-system useful without weakening the graph-shaped authority model: disk-native
-boot selection, verified store objects before updates, and dynamic process
-creation before higher-level package or language work.
+Next direction: use the ABI v1, VertexDisk base, verified store, and native
+update path to build Vertex OS v0, a tiny persistent appliance system. The next
+milestones should replace the remaining predeclared process slots with dynamic
+process creation before higher-level package or language work.
 
 ## M0: Serial Boot
 
@@ -878,6 +884,10 @@ done: M40 directed request/reply IPC is checked by the gate
 done: M41 native console shell is checked by the gate
 done: M42 minimal virtio-block driver is checked by the gate
 done: M43 VertexDisk layout is checked by the gate
+done: M44 native boot manager fallback is checked by the gate
+done: M45 store-object verification failure is checked by the gate
+done: M46 native update transactions are checked by the gate
+done: M47 store-loaded executables and corrupt executable rejection are checked by the gate
 done: all QEMU transcript checks have bounded polling windows
 done: missing and forbidden transcript lines are reported explicitly
 done: README.md, docs/krust-milestones.md, docs/krust-abi-v1.md, and kernel/krust/README.md agree
@@ -1368,8 +1378,8 @@ done: boot generation A
 done: switch to generation B
 done: service from A loses old capability
 done: service from B runs
-done: bad generation C fails
-done: rollback to B
+done: bad generation C fails and records last_failed_generation
+done: native boot manager falls back to B
 ```
 
 `SYS_ACTIVATE_GENERATION` now resolves the requested generation ID against the
@@ -1380,8 +1390,9 @@ generation, and enters the new `vertex-init`. The M37 QEMU case boots
 `vertex-store` over the declared store IPC endpoint, switches to
 `gen:switch-b-0002`, proves old authority was discarded with the old runtime
 tables, then switches to registered bad generation C. C fails activation,
-invokes rollback to B, and B subsequently rejects re-entering the marked failed
-generation.
+records `last_failed_generation`, journals the fallback decision, and invokes
+rollback to B through the native boot manager. The older re-entry rejection
+transcript is not kept as a compatibility path.
 
 ## M38: Native Vertexctl-Like Introspection Service
 
@@ -1441,7 +1452,7 @@ done: locked Cargo dependencies for the hosted workspace, Krust kernel, and nati
 done: kernel/krust/rust-toolchain.toml pins Rust 1.95.0, rustfmt, and x86_64-unknown-none
 done: make doctor checks every required tool and reports actionable fixes
 done: legacy hello/ipc userspace crates are removed instead of carried forward
-done: single release-gate script runs the clean-clone M14-M43 proof with the M14-M43 QEMU matrix
+done: single release-gate script runs the clean-clone M14-M47 proof with the M14-M47 QEMU matrix
 ```
 
 Acceptance tests:
@@ -1499,7 +1510,7 @@ done: scripts/krust-test.sh m40 proves the directed IPC ABI and FIFO queue behav
 
 Status: done.
 
-Goal: turn the M14-M43 native proof into a small real operating system target:
+Goal: turn the M14-M47 native proof into a small real operating system target:
 bootable in QEMU, persistent, inspectable, updateable, and capable of running
 several native services under explicit authority.
 
@@ -1680,7 +1691,7 @@ the legacy kernel state syscall or native state backend capability path alive.
 
 ## M44: Native Boot Manager and Generation Selector
 
-Status: planned.
+Status: done.
 
 Goal: make generation selection and fallback disk-native instead of
 QEMU-scripted or boot-module-only.
@@ -1718,9 +1729,16 @@ gen:A activation ok
 journal records failed gen:B and fallback gen:A
 ```
 
+Implementation note: Krust now keeps selected, previous, known-good,
+last-failed, and boot-attempt state in the native boot manager. Failed
+activation marks the attempted generation as failed, falls back to the previous
+known-good generation, and records the decision in the native journal log. The
+M44 QEMU case boots a bad generation, falls back to `gen:hello-0001`, and
+checks the boot-manager transcript.
+
 ## M45: Store Object Hashing and Verification
 
-Status: planned.
+Status: done.
 
 Goal: make the native store trustworthy enough to activate generations from
 disk.
@@ -1760,9 +1778,16 @@ service denied corrupted object
 generation activation fails if required object is corrupted
 ```
 
+Implementation note: KrustBoot store objects now carry
+`store:blake3:<hash>` identities, exact byte sizes, and executable module
+bindings. Kernel store reads re-verify object bytes before success, VertexDisk
+store entries carry hash metadata, and corrupted store data emits an inspectable
+security event instead of being delivered to services. The M45 QEMU case
+corrupts the on-disk store object and expects activation failure.
+
 ## M46: Native Update Transaction
 
-Status: planned.
+Status: done.
 
 Goal: install a new generation as an atomic disk transaction.
 
@@ -1802,9 +1827,16 @@ boot gen:C succeeds
 power-loss simulation before commit leaves old generation selected
 ```
 
+Implementation note: generation activation now verifies the target manifest and
+store closure before committing selection changes. Missing store closure rejects
+the transaction and leaves the selected generation unchanged; a verified
+generation writes a journal-commit transcript and becomes selected. The M46
+QEMU case installs generation B, rejects a missing-object transaction, and boots
+the selected generation.
+
 ## M47: Executables Loaded From Native Store
 
-Status: planned.
+Status: done.
 
 Goal: move native service executables out of boot-module-only activation and
 into verified store objects.
@@ -1824,7 +1856,7 @@ Rules:
 ```text
 ELF bytes must be verified before process creation
 kernel does not trust service-provided executable bytes blindly
-boot modules remain only for the seed kernel/init/store path while needed
+Limine boot modules remain only for compact manifests and the native VertexDisk image
 ```
 
 Acceptance tests:
@@ -1836,6 +1868,13 @@ store hash verified before process creation
 corrupted executable rejected
 generation activation fails cleanly
 ```
+
+Implementation note: process records must resolve to verified native store
+objects. The old boot-module-only executable path is removed for declared
+processes: process creation first resolves the matching VertexDisk-backed store
+object, verifies its BLAKE3 identity, checksum, and size, and logs the store
+identity before loading the ELF.
+The M47 QEMU case checks `logd` and `echo` executable objects.
 
 ## M48: Dynamic Process Creation Authority
 
@@ -2279,7 +2318,7 @@ install verified generations, run declared services, preserve mutable state,
 explain its authority graph, and recover from failed updates.
 ```
 
-M13 proved that native services can run under explicit authority. M14-M43 prove
+M13 proved that native services can run under explicit authority. M14-M47 prove
 that the graph itself decides which native services exist, when they start,
 what they receive, why they are allowed to communicate, and how authority and
 resources are bounded, while timer preemption and user fault containment keep
@@ -2288,3 +2327,5 @@ Vertex native runtime base, M41 adds the first in-VM operator surface for
 asking what generation and authority graph are running, M42 adds the first
 persistent block I/O path while preserving hardware-shaped authority, and M43
 turns that block path into a checked VertexDisk layout with persistent state.
+M44-M47 move boot selection, store-object verification, update commits, and
+service executable loading onto the native verified-store path.

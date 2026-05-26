@@ -1,9 +1,11 @@
 # Krust Kernel
 
-Krust now covers the M14-M43 native graph-activation proof path, substrate
+Krust now covers the M14-M47 native graph-activation proof path, substrate
 hardening, reproducible build environment, directed IPC ABI v1, and native
-console shell plus minimal virtio-blk sector I/O and VertexDisk v0 persistence.
-M43 is tracked in `../../docs/krust-milestones.md`.
+console shell plus minimal virtio-blk sector I/O, VertexDisk v0 persistence,
+native boot selection, verified store objects, native update transactions, and
+store-loaded service executables. M44-M47 are tracked in
+`../../docs/krust-milestones.md`.
 
 The target is intentionally small:
 
@@ -26,8 +28,8 @@ Krust writes and reads through the mapped virtual pages
 Krust allocates typed endpoint and process arenas from the kernel heap and checks capacity failure paths
 Krust creates fixed kernel objects and boot capabilities
 Krust prints the boot capability table
-Limine loads native service ELFs for vertex-init, serial-driver, console-driver, console-shell, logd, netstack, block-driver, vertex-store, vertex-state, vertex-inspect, echo, model-reader, counter, state-reader, timer, flaky-service, cpu-hog, and faulty-service
-Krust loads each declared process into a fresh low-half address space
+Limine loads the native VertexDisk image plus compact generation manifests
+Krust resolves each declared process executable from the native store, verifies its BLAKE3 identity and checksum, and then loads it into a fresh low-half address space
 Krust creates a runtime process table and endpoint table from the KrustBoot manifest
 Krust allocates runtime process IDs and states from KrustBoot process records
 Krust grants vertex-init cap[0] read rights to the manifest module
@@ -58,6 +60,8 @@ block-driver owns virtio-blk PCI I/O, IRQ, and DMA authority and serves separate
 model-reader reads an immutable object through vertex-store and VertexDisk/block-driver
 counter-service and reader-service access mutable state through vertex-state persisted on VertexDisk
 vertex-inspect reads the generation graph and asks the kernel for a process/capability graph through inspect-only authority
+the native boot manager records selected, previous, known-good, last-failed, and boot-attempt state for generation fallback
+native update transactions verify manifest/store closure before committing selected_generation
 console-driver owns COM1 in the M41 generation, and console-shell prints runtime-inspect backed commands through directed console request/reply IPC
 timer-service sleeps through its own timer capability without monopolizing the scheduler
 cpu-hog proves a CPU-bound userspace loop cannot starve logd
@@ -173,8 +177,8 @@ KrustBoot Manifest v1 records: 9
 KrustBoot boot modules: 13
 KrustBoot processes: 13
 KrustBoot endpoints: 12
-KrustBoot grants: 46
-KrustBoot store objects: 0
+KrustBoot grants: 48
+KrustBoot store objects: 13
 KrustBoot state volumes: 0
 KrustBoot network ports: 1
 KrustBoot io port ranges: 3
@@ -246,9 +250,9 @@ vertex-init manifest generation: gen:hello-0001
 vertex-init boot modules: 13
 vertex-init processes: 13
 vertex-init endpoints: 12
-vertex-init grants: 46
+vertex-init grants: 48
 vertex-init network ports: 1
-vertex-init store objects: 0
+vertex-init store objects: 13
 vertex-init state volumes: 0
 vertex-init io ports: 3
 vertex-init mmio regions: 0
@@ -356,15 +360,16 @@ make smoke
 ```
 
 The smoke test boots QEMU headlessly, captures serial output to
-`build/serial.log`, and passes when it sees the M14-M43 directed IPC, console,
-virtio-block, and VertexDisk transcript. The same check is available from the repository
+`build/serial.log`, and passes when it sees the M14-M47 directed IPC, console,
+virtio-block, VertexDisk, verified store, update, and store-executable
+transcript. The same check is available from the repository
 root:
 
 ```sh
 scripts/krust-smoke.sh
 ```
 
-## M26-M43 Substrate Gate
+## M26-M47 Substrate Gate
 
 Run the clean-clone gate from the repository root:
 
@@ -379,16 +384,17 @@ make release-gate
 ```
 
 The gate checks script executability and shell syntax, verifies Makefile recipe
-parsing, checks Rust formatting and Markdown whitespace, confirms the M14-M43
+parsing, checks Rust formatting and Markdown whitespace, confirms the M14-M47
 documentation anchors, checks the pinned M39 toolchain and Cargo lockfiles, runs
 `cargo metadata --locked --offline` and `cargo build --locked --offline`,
 validates `examples/hello-generation.vertex.json`, runs `make doctor`, rebuilds
-from `make clean`, runs `make smoke`, and then runs the M14-M43 QEMU cases:
+from `make clean`, runs `make smoke`, and then runs the M14-M47 QEMU cases:
 `m14`,
 `manifest-cycle`, `bad-cap`, `readiness-timeout`, `rollback`, `store-state-services`,
 `timer`, `preemption`, `user-fault`, `restart`, `manifest-v1`, `cap-lifecycle`,
 `typed-arenas`, `quotas`, `m32`, `m33`, `m34`, `m35`, `m36`, `m37`, `m38`, `m40`,
-`m41`, `m42`, `m42-driver-fault`, `m43`, `m43-bad-superblock`, and the
+`m41`, `m42`, `m42-driver-fault`, `m43`, `m43-bad-superblock`, `m44`, `m45`,
+`m46`, `m47`, and the
 malformed-manifest cases. If the offline build
 fails, the gate prints the Cargo cache or vendoring prerequisite explicitly.
 
@@ -402,7 +408,7 @@ KrustBoot Manifest v1 records: 9
 KrustBoot boot modules: 13
 KrustBoot processes: 13
 KrustBoot endpoints: 12
-KrustBoot grants: 46
+KrustBoot grants: 48
 KrustBoot network ports: 1
 KrustBoot io port ranges: 3
 KrustBoot mmio regions: 0

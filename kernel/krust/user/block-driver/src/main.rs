@@ -132,6 +132,8 @@ struct VirtioBlock {
     dma_physical: u64,
     avail_idx: u16,
     used_idx: u16,
+    store_read_logged: bool,
+    state_read_logged: bool,
 }
 
 impl VirtioBlock {
@@ -158,6 +160,8 @@ impl VirtioBlock {
             dma_physical: dma.physical_base,
             avail_idx: 0,
             used_idx: 0,
+            store_read_logged: false,
+            state_read_logged: false,
         };
         if device.setup_legacy_queue().is_none() {
             return None;
@@ -534,7 +538,20 @@ struct BlockRequest {
 }
 
 fn serve_read_request(device: &mut VirtioBlock, client: BlockClient, request: BlockRequest) {
-    log(b"block-driver received block-read request");
+    let log_request = match client {
+        BlockClient::Store if !device.store_read_logged => {
+            device.store_read_logged = true;
+            true
+        }
+        BlockClient::State if !device.state_read_logged => {
+            device.state_read_logged = true;
+            true
+        }
+        _ => false,
+    };
+    if log_request {
+        log(b"block-driver received block-read request");
+    }
 
     let mut sector_bytes = [0u8; SECTOR_SIZE];
     if !device.read_sector(request.sector, &mut sector_bytes) {
@@ -547,7 +564,9 @@ fn serve_read_request(device: &mut VirtioBlock, client: BlockClient, request: Bl
         log(b"block-driver response failed");
         sys::exit(1);
     }
-    log(b"block-driver returns bytes");
+    if log_request {
+        log(b"block-driver returns bytes");
+    }
 }
 
 fn serve_write_request(

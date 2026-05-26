@@ -5,7 +5,7 @@ native Krust QEMU/Limine milestone. It is intentionally small and unstable. Its
 current job is to boot native `vertex-init`, start a tiny declared service
 graph, and enforce explicit process-local capabilities.
 
-Milestone status: ABI v1 now covers the M14-M43 native activation and substrate
+Milestone status: ABI v1 now covers the M14-M47 native activation and substrate
 proof. M25 adds the release gate. M26-M29 add Manifest v1 parsing, capability
 provenance/revocation, typed arena allocation checks, and resource quotas.
 M30-M31 add PIT-backed preemption and user page-fault containment. M32-M36 add
@@ -17,8 +17,10 @@ right. M39 pins the reproducible native build environment and release gate.
 M40 freezes ABI v1 with directed request/reply IPC. M41 adds the console shell
 path, M42 adds minimal virtio-blk sector I/O over PCI I/O and DMA
 capabilities, and M43 adds VertexDisk v0 block-object persistence for store,
-state, and journal data. The ABI is still intentionally small, but this subset
-is the current native contract.
+state, and journal data. M44-M47 add native boot-manager state, verified store
+object identities, native update transactions, and process executable loading
+through verified store objects. The ABI is still intentionally small, but this
+subset is the current native contract.
 
 ## Machine ABI
 
@@ -134,7 +136,7 @@ becoming uncontrolled kernel faults.
 Capabilities are process-local. A capability slot number is meaningful only in
 the current process's capability space.
 
-Current M14-M43 layout:
+Current M14-M47 layout:
 
 ```text
 vertex-init:
@@ -494,7 +496,7 @@ Limine loads:
 krust.elf
 hello-generation.krustboot
 fallback-generation.krustboot
-userspace ELF modules
+krust-block.img
 ```
 
 Krust consumes a KrustBoot Manifest v1 wrapper around the compact payload rather

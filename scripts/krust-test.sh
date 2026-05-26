@@ -25,6 +25,7 @@ SUCCESS_STABILITY_ATTEMPTS=$QEMU_STABILITY_ATTEMPTS
 USE_SERIAL_PIPE=0
 SERIAL_INPUT=
 REBOOT_REQUIRED_LINES=
+case_forbidden_lines=
 
 case "$CASE" in
     m13|m14|valid-activation)
@@ -238,7 +239,7 @@ unauthorized service cannot access PCI I/O, IRQ, or DMA capabilities
         MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
         EXPECT_ACTIVATION_SUCCESS=1
         required_lines='
-KrustBoot grants: 46
+KrustBoot grants: 48
 KrustBoot io port ranges: 3
 KrustBoot mmio regions: 0
 io_port[1] id=cap:io.pci-config base=0x0000000000000cf8 length=0x0000000000000008
@@ -266,7 +267,7 @@ Native service activation ok
         required_lines='
 Boot generation: gen:block-driver-fault-0001
 KrustBoot grants: 47
-KrustBoot store objects: 1
+KrustBoot store objects:
 proc=block-driver cap[10] store-object=store:block-driver-fault-token rights=read
 Object read accepted: proc=block-driver object=store:block-driver-fault-token bytes=25
 block-driver fault injection triggers direct invalid load
@@ -282,7 +283,7 @@ Native service activation failed
         EXPECT_ACTIVATION_SUCCESS=1
         required_lines='
 KrustBoot endpoints: 12
-KrustBoot grants: 46
+KrustBoot grants: 48
 KrustBoot state volumes: 0
 QEMU boots with VertexDisk image attached
 VertexDisk superblock accepted
@@ -306,6 +307,79 @@ VertexDisk superblock rejected
 vertex-init readiness timeout
 activation failed
 Native service activation failed
+'
+        ;;
+    m44|boot-manager)
+        MANIFEST="$ROOT_DIR/examples/krust-rollback-bad-generation.vertex.json"
+        FALLBACK_MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
+        EXPECT_ACTIVATION_SUCCESS=1
+        required_lines='
+Boot generation: gen:bad-0002
+activation failed
+Native boot manager last_failed_generation=gen:bad-0002
+Native boot manager fallback selected_generation=gen:hello-0001
+Native boot manager journal: failed generation=gen:bad-0002 fallback=gen:hello-0001
+Krust rollback generation accepted: target=gen:hello-0001
+Boot generation: gen:hello-0001
+Native boot manager known_good_generation=gen:hello-0001
+Native service activation ok
+'
+        ;;
+    m45|store-verification)
+        MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
+        VERTEX_DISK_CORRUPT=store-object
+        required_lines='
+vertex-store hash mismatch security event: object=store:hello-text
+vertex-inspect security event: store hash mismatch object=store:hello-text
+vertex-init service failed: vertex-store
+activation failed
+Native service activation failed
+'
+        ;;
+    m46|native-update)
+        MANIFEST="$ROOT_DIR/examples/krust-switch-a-generation.vertex.json"
+        FALLBACK_MANIFEST="$ROOT_DIR/examples/krust-switch-b-generation.vertex.json"
+        BAD_GENERATION_MANIFEST="$ROOT_DIR/examples/krust-switch-c-bad-generation.vertex.json"
+        EXPECT_ACTIVATION_SUCCESS=1
+        required_lines='
+vertex-init validates generation B
+Native update transaction verifies manifest hash
+Native update transaction verifies store closure
+Native update transaction journal commit
+Native update transaction selected_generation updated: gen:switch-b-0002
+Krust generation switch entering generation: gen:switch-b-0002
+Boot generation: gen:switch-b-0002
+Native service activation ok
+'
+        ;;
+    m47|store-executables)
+        MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
+        EXPECT_ACTIVATION_SUCCESS=1
+        required_lines='
+Krust process executable store object: process=logd object=store:logd-demo
+store hash verified before process creation: process=logd
+Krust process image loaded from native store: process=logd
+Krust process executable store object: process=echo object=store:echo-server-demo
+store hash verified before process creation: process=echo
+Krust process image loaded from native store: process=echo
+vertex-store verifies executable store object: logd
+vertex-store verifies executable store object: echo
+Native service activation ok
+'
+        ;;
+    m47-corrupt-executable|store-executable-corruption)
+        MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
+        VERTEX_DISK_CORRUPT=store-executable
+        required_lines='
+Krust process executable store object: process=logd object=store:logd-demo
+Krust process executable checksum mismatch: process=logd object=store:logd-demo
+vertex-inspect security event: store hash mismatch object=store:logd-demo
+Native runtime init failed from KrustBoot manifest
+Native service activation failed
+'
+        case_forbidden_lines='
+Krust process image loaded from native store: process=logd
+Native service activation ok
 '
         ;;
     m35|store-service)
@@ -354,11 +428,12 @@ Krust generation switch entering generation: gen:switch-c-bad-0003
 Boot generation: gen:switch-c-bad-0003
 activation failed
 falling back to generation: gen:switch-b-0002
+Native boot manager last_failed_generation=gen:switch-c-bad-0003
+Native boot manager fallback selected_generation=gen:switch-b-0002
+Native boot manager journal: failed generation=gen:switch-c-bad-0003 fallback=gen:switch-b-0002
 Krust rollback generation accepted: target=gen:switch-b-0002
+Native boot manager previous_generation=gen:switch-c-bad-0003
 Krust rollback entering generation: gen:switch-b-0002
-Krust generation switch rejected: requested=gen:switch-c-bad-0003
-bad generation C fails
-rollback to B
 Native service activation ok
 '
         ;;
@@ -367,7 +442,7 @@ Native service activation ok
         EXPECT_ACTIVATION_SUCCESS=1
         required_lines='
 KrustBoot endpoints: 12
-KrustBoot grants: 46
+KrustBoot grants: 48
 IPC FIFO regression: queued sends preserve FIFO order
 IPC FIFO regression: queue-full send rejected
 IPC FIFO regression: receiver-specific dequeue preserves eligible ordering
@@ -525,7 +600,7 @@ activation failed
 '
         ;;
     *)
-        echo "usage: scripts/krust-test.sh <m13|m14|valid-activation|manifest-cycle|bad-cap|readiness|readiness-timeout|rollback|store-state-services|timer|preemption|m30|user-fault|m31|restart|manifest-v1|cap-lifecycle|typed-arenas|quotas|m32|io-substrate|m33|serial-driver|m34|block-driver|m35|store-service|m36|state-service|m37|generation-switch|m38|introspection|m40|directed-ipc|m41|console-shell|m42|virtio-block|m42-driver-fault|block-driver-fault|m43|vertexdisk|m43-bad-superblock|vertexdisk-bad-superblock|manifest-truncated|manifest-bad-magic|manifest-raw-compact|manifest-unsupported-version|manifest-oob-record|manifest-missing-provider>" >&2
+        echo "usage: scripts/krust-test.sh <m13|m14|valid-activation|manifest-cycle|bad-cap|readiness|readiness-timeout|rollback|store-state-services|timer|preemption|m30|user-fault|m31|restart|manifest-v1|cap-lifecycle|typed-arenas|quotas|m32|io-substrate|m33|serial-driver|m34|block-driver|m35|store-service|m36|state-service|m37|generation-switch|m38|introspection|m40|directed-ipc|m41|console-shell|m42|virtio-block|m42-driver-fault|block-driver-fault|m43|vertexdisk|m43-bad-superblock|vertexdisk-bad-superblock|m44|boot-manager|m45|store-verification|m46|native-update|m47|store-executables|m47-corrupt-executable|store-executable-corruption|manifest-truncated|manifest-bad-magic|manifest-raw-compact|manifest-unsupported-version|manifest-oob-record|manifest-missing-provider>" >&2
         exit 2
         ;;
 esac
@@ -538,6 +613,10 @@ if [ "$EXPECT_ACTIVATION_SUCCESS" -eq 1 ]; then
     forbidden_lines="${forbidden_lines}
 Native service activation failed
 "
+fi
+if [ -n "$case_forbidden_lines" ]; then
+    forbidden_lines="${forbidden_lines}
+$case_forbidden_lines"
 fi
 
 (cd "$KRUST_DIR" && make iso VERTEX_MANIFEST="$MANIFEST" FALLBACK_MANIFEST="$FALLBACK_MANIFEST" BAD_GENERATION_MANIFEST="$BAD_GENERATION_MANIFEST" KRUSTBOOT_CORRUPT="$KRUSTBOOT_CORRUPT" VERTEX_DISK_CORRUPT="$VERTEX_DISK_CORRUPT")

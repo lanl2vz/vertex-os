@@ -95,7 +95,7 @@ user:
 	cd user/hog && $(CARGO) build --locked --target $(KRUST_TARGET)
 	cd user/faulty && $(CARGO) build --locked --target $(KRUST_TARGET)
 
-boot-manifest:
+boot-manifest: user
 	mkdir -p $(BUILD_DIR)
 	$(VERTEXCTL) compile-boot-manifest $(VERTEX_MANIFEST) $(BOOT_MANIFEST)
 	@if [ -n "$(KRUSTBOOT_CORRUPT)" ]; then \
@@ -112,9 +112,9 @@ boot-manifest:
 		cp $(BOOT_MANIFEST) $(BAD_GENERATION_BOOT_MANIFEST); \
 	fi
 
-block-image:
+block-image: user
 	mkdir -p $(BUILD_DIR)
-	$(VERTEXCTL) create-vertex-disk $(BLOCK_IMAGE)
+	$(VERTEXCTL) create-vertex-disk $(BLOCK_IMAGE) $(VERTEX_MANIFEST) $(FALLBACK_MANIFEST) $(BAD_GENERATION_MANIFEST)
 	@if [ -n "$(VERTEX_DISK_CORRUPT)" ]; then \
 		$(VERTEXCTL) corrupt-vertex-disk $(VERTEX_DISK_CORRUPT) $(BLOCK_IMAGE) $(BLOCK_IMAGE); \
 	fi
@@ -123,29 +123,10 @@ iso: build boot-manifest block-image check-tools check-limine-dir
 	rm -rf $(ISO_ROOT) $(ISO_IMAGE)
 	mkdir -p $(ISO_ROOT)/boot $(ISO_ROOT)/EFI/BOOT
 	cp $(KERNEL_ELF) $(ISO_ROOT)/boot/krust.elf
-	cp $(VERTEX_INIT_ELF) $(ISO_ROOT)/boot/vertex-init.elf
-	cp $(SERIAL_DRIVER_ELF) $(ISO_ROOT)/boot/serial-driver.elf
-	cp $(CONSOLE_DRIVER_ELF) $(ISO_ROOT)/boot/console-driver.elf
-	cp $(CONSOLE_SHELL_ELF) $(ISO_ROOT)/boot/console-shell.elf
-	cp $(LOGD_ELF) $(ISO_ROOT)/boot/logd.elf
-	cp $(ECHO_ELF) $(ISO_ROOT)/boot/echo.elf
-	cp $(NETSTACK_ELF) $(ISO_ROOT)/boot/netstack.elf
-	cp $(BLOCK_DRIVER_ELF) $(ISO_ROOT)/boot/block-driver.elf
-	cp $(VERTEX_STORE_ELF) $(ISO_ROOT)/boot/vertex-store.elf
-	cp $(VERTEX_STATE_ELF) $(ISO_ROOT)/boot/vertex-state.elf
-	cp $(VERTEX_INSPECT_ELF) $(ISO_ROOT)/boot/vertex-inspect.elf
-	cp $(MODEL_READER_ELF) $(ISO_ROOT)/boot/model-reader.elf
-	cp $(COUNTER_ELF) $(ISO_ROOT)/boot/counter.elf
-	cp $(STATE_READER_ELF) $(ISO_ROOT)/boot/state-reader.elf
-	cp $(TIMER_ELF) $(ISO_ROOT)/boot/timer.elf
-	cp $(FLAKY_ELF) $(ISO_ROOT)/boot/flaky.elf
-	cp $(HOG_ELF) $(ISO_ROOT)/boot/hog.elf
-	cp $(FAULTY_ELF) $(ISO_ROOT)/boot/faulty.elf
-	cp assets/hello-text.txt $(ISO_ROOT)/boot/hello-text.txt
-	cp assets/block-driver-fault-token.txt $(ISO_ROOT)/boot/block-driver-fault-token.txt
 	cp $(BOOT_MANIFEST) $(ISO_ROOT)/boot/hello-generation.krustboot
 	cp $(FALLBACK_BOOT_MANIFEST) $(ISO_ROOT)/boot/fallback-generation.krustboot
 	cp $(BAD_GENERATION_BOOT_MANIFEST) $(ISO_ROOT)/boot/bad-generation.krustboot
+	cp $(BLOCK_IMAGE) $(ISO_ROOT)/boot/krust-block.img
 	cp limine.conf $(ISO_ROOT)/boot/limine.conf
 	cp $(LIMINE_DIR)/limine-bios.sys $(ISO_ROOT)/boot/limine-bios.sys
 	cp $(LIMINE_DIR)/limine-bios-cd.bin $(ISO_ROOT)/boot/limine-bios-cd.bin
@@ -190,7 +171,7 @@ doctor: check-tools check-tool-versions check-cargo-locks check-rust-target chec
 	@echo "limine: $$(command -v $(LIMINE)) ($$($(LIMINE) --version | sed -n '1p'))"
 	@echo "xorriso: $$(command -v $(XORRISO)) ($$($(XORRISO) --version 2>/dev/null | sed -n '1p'))"
 	@echo "LIMINE_DIR: $(LIMINE_DIR)"
-	@echo "Krust M14-M43 toolchain is ready."
+	@echo "Krust M14-M47 toolchain is ready."
 
 release-gate:
 	../../scripts/krust-release-gate.sh

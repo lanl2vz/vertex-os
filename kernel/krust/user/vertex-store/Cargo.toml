@@ -7,12 +7,18 @@ publish = false
 
 [workspace]
 
+[dependencies]
+blake3 = { version = "1.8.3", default-features = false, features = ["pure"] }
+
 [[bin]]
 name = "vertex-store"
 path = "src/main.rs"
 
 [profile.dev]
 panic = "abort"
+
+[profile.dev.package.blake3]
+opt-level = 3
 
 [profile.release]
 panic = "abort"

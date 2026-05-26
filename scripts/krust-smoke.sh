@@ -57,8 +57,8 @@ KrustBoot Manifest v1 records: 9
 KrustBoot boot modules: 13
 KrustBoot processes: 13
 KrustBoot endpoints: 12
-KrustBoot grants: 46
-KrustBoot store objects: 0
+KrustBoot grants: 48
+KrustBoot store objects: 13
 KrustBoot state volumes: 0
 KrustBoot network ports: 1
 KrustBoot io port ranges: 3
@@ -213,9 +213,15 @@ vertex-init manifest generation: gen:hello-0001
 vertex-init boot modules: 13
 vertex-init processes: 13
 vertex-init endpoints: 12
-vertex-init grants: 46
+vertex-init grants: 48
 vertex-init network ports: 1
-vertex-init store objects: 0
+vertex-init store objects: 13
+Krust process executable store object: process=logd object=store:logd-demo
+store hash verified before process creation: process=logd
+Krust process image loaded from native store: process=logd
+Krust process executable store object: process=echo object=store:echo-server-demo
+store hash verified before process creation: process=echo
+Krust process image loaded from native store: process=echo
 vertex-init state volumes: 0
 vertex-init io ports: 3
 vertex-init mmio regions: 0
@@ -414,7 +420,7 @@ while [ "$attempt" -le "$QEMU_ATTEMPTS" ]; do
     if check_transcript; then
         cleanup
         pid=
-        echo "smoke ok: Krust completed manifest v1, directed IPC, typed arenas, cap lifecycle, quotas, service-local store/state/timer access, restart, and native service activation"
+        echo "smoke ok: Krust completed manifest v1, directed IPC, typed arenas, cap lifecycle, quotas, service-local store/state/timer access, restart, verified store execution, update checks, and native service activation"
         exit 0
     fi
 
@@ -424,7 +430,7 @@ done
 
 cleanup
 pid=
-echo "smoke failed: serial output did not contain the full M14-M43 native activation transcript after $QEMU_ATTEMPTS checks"
+echo "smoke failed: serial output did not contain the full M14-M47 native activation transcript after $QEMU_ATTEMPTS checks"
 echo "serial log: $SERIAL_LOG"
 if [ -n "$missing_required" ]; then
     echo "missing required transcript lines:"

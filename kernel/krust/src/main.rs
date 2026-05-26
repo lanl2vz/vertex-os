@@ -22,6 +22,19 @@ use core::{arch::asm, cell::UnsafeCell};
 
 const MAX_BOOT_PROCESSES: usize = 16;
 const DMA_KERNEL_ALLOCATED_BASE: u64 = u64::MAX;
+const VERTEXDISK_MODULE_STRING: &[u8] = b"vertexdisk-store";
+const VERTEX_DISK_MAGIC: &[u8; 16] = b"VERTEXDISKV0\0\0\0\0";
+const STORE_INDEX_MAGIC: &[u8; 16] = b"VDISKSTOREV0\0\0\0\0";
+const VERTEX_DISK_VERSION: u16 = 1;
+const VERTEX_DISK_SECTOR_SIZE: usize = 512;
+const VERTEX_DISK_CHECKSUM_OFFSET: usize = 20;
+const VERTEX_DISK_TOTAL_SECTORS_OFFSET: usize = 24;
+const VERTEX_DISK_SECTION_TABLE_OFFSET: usize = 32;
+const VERTEX_DISK_SECTION_RECORD_LEN: usize = 16;
+const VERTEX_DISK_STORE_INDEX_SECTION: usize = 1;
+const VERTEX_DISK_STORE_DATA_SECTION: usize = 2;
+const STORE_ENTRY_OFFSET: usize = 32;
+const STORE_ENTRY_LEN: usize = 144;
 
 struct Global<T>(UnsafeCell<T>);
 
@@ -575,6 +588,8 @@ fn run_native_boot(allocator: &mut memory::FrameAllocator, boot_manifests: &Boot
         "krustboot-manifest",
         &SELECTED_BOOT_CONFIG,
     ) else {
+        serial::write_str("Native runtime init failed from KrustBoot manifest\n");
+        serial::write_str("Native service activation failed\n");
         return;
     };
     if ipc::register_generation_config(config).is_err() {
@@ -672,11 +687,14 @@ fn prepare_native_boot_config(
             serial::write_str("KrustBoot IPC plan failed: process gap\n");
             return None;
         };
-        let Some(image) = load_boot_process_image(process, hhdm_offset, allocator) else {
+        let Some(image) = load_boot_process_image(boot_manifest, process, hhdm_offset, allocator)
+        else {
             return None;
         };
         images[index] = Some(image);
-        let Some(restart_image) = load_boot_process_image(process, hhdm_offset, allocator) else {
+        let Some(restart_image) =
+            load_boot_process_image(boot_manifest, process, hhdm_offset, allocator)
+        else {
             return None;
         };
         restart_images[index] = Some(restart_image);
@@ -707,33 +725,78 @@ fn prepare_native_boot_config(
 }
 
 fn load_boot_process_image(
+    boot_manifest: &boot_manifest::Manifest<'static>,
     process: boot_manifest::Process<'static>,
     hhdm_offset: u64,
     allocator: &mut memory::FrameAllocator,
 ) -> Option<userspace::UserImage> {
-    let Some(module) = find_module_by_string(process.module_string.as_bytes()) else {
-        serial::write_str("KrustBoot process module unavailable: process=");
+    let Some(object) = store_object_for_module(boot_manifest, process.module_string) else {
+        serial::write_str("KrustBoot process store object unavailable: process=");
         serial::write_str(process.name);
         serial::write_str(" module=");
         serial::write_str(process.module_string);
         serial::write_str("\n");
         return None;
     };
+    let Some(store_object) = load_native_store_object(object.id) else {
+        serial::write_str("KrustBoot native store object unavailable for process: process=");
+        serial::write_str(process.name);
+        serial::write_str(" object=");
+        serial::write_str(object.id);
+        serial::write_str("\n");
+        return None;
+    };
+    if store_object.bytes.len() as u64 != object.size {
+        serial::write_str("Krust process executable size mismatch: process=");
+        serial::write_str(process.name);
+        serial::write_str(" object=");
+        serial::write_str(object.id);
+        serial::write_str(" expected=");
+        serial::write_u64_dec(object.size);
+        serial::write_str(" actual=");
+        serial::write_u64_dec(store_object.bytes.len() as u64);
+        serial::write_str("\n");
+        return None;
+    }
 
-    serial::write_str("KrustBoot process module: process=");
+    serial::write_str("Krust process executable store object: process=");
     serial::write_str(process.name);
-    serial::write_str(" path=");
-    serial::write_c_string(module.path);
-    serial::write_str(" string=");
-    serial::write_str(process.module_string);
+    serial::write_str(" object=");
+    serial::write_str(object.id);
+    serial::write_str(" identity=store:blake3:");
+    serial::write_str(object.hash);
     serial::write_str(" bytes=");
-    serial::write_u64_dec(module.size);
+    serial::write_u64_dec(store_object.bytes.len() as u64);
     serial::write_str("\n");
 
-    let bytes = unsafe { core::slice::from_raw_parts(module.address, module.size as usize) };
-    match userspace::load(bytes, hhdm_offset, allocator) {
+    if checksum32(store_object.bytes) != store_object.checksum {
+        serial::write_str("Krust process executable checksum mismatch: process=");
+        serial::write_str(process.name);
+        serial::write_str(" object=");
+        serial::write_str(object.id);
+        serial::write_str("\n");
+        serial::write_str("vertex-inspect security event: store hash mismatch object=");
+        serial::write_str(object.id);
+        serial::write_str("\n");
+        return None;
+    }
+    if !store_hash_matches(store_object.bytes, object.hash) {
+        serial::write_str("Krust process executable hash mismatch: process=");
+        serial::write_str(process.name);
+        serial::write_str(" object=");
+        serial::write_str(object.id);
+        serial::write_str("\n");
+        serial::write_str("vertex-inspect security event: store hash mismatch object=");
+        serial::write_str(object.id);
+        serial::write_str("\n");
+        return None;
+    }
+    serial::write_str("store hash verified before process creation: process=");
+    serial::write_str(process.name);
+    serial::write_str("\n");
+    match userspace::load(store_object.bytes, hhdm_offset, allocator) {
         Ok(image) => {
-            serial::write_str("KrustBoot process ELF loaded: process=");
+            serial::write_str("Krust process image loaded from native store: process=");
             serial::write_str(process.name);
             serial::write_str(" entry=");
             serial::write_u64_hex(image.entry);
@@ -811,19 +874,35 @@ fn build_boot_runtime_config(
     index = 0;
     while index < boot_manifest.store_object_count() {
         let object = boot_manifest.store_object(index)?;
-        let Some(module) = find_module_by_string(object.module_string.as_bytes()) else {
-            serial::write_str("KrustBoot store module unavailable: object=");
+        let Some(store_object) = load_native_store_object(object.id) else {
+            serial::write_str("KrustBoot native store object unavailable: object=");
             serial::write_str(object.id);
-            serial::write_str(" module=");
-            serial::write_str(object.module_string);
             serial::write_str("\n");
             return None;
         };
+        if store_object.bytes.len() as u64 != object.size {
+            serial::write_str("Krust native store size mismatch: object=");
+            serial::write_str(object.id);
+            serial::write_str(" expected=");
+            serial::write_u64_dec(object.size);
+            serial::write_str(" actual=");
+            serial::write_u64_dec(store_object.bytes.len() as u64);
+            serial::write_str("\n");
+            return None;
+        }
+        serial::write_str("Krust native store indexed object: object=");
+        serial::write_str(object.id);
+        serial::write_str(" identity=store:blake3:");
+        serial::write_str(object.hash);
+        serial::write_str(" bytes=");
+        serial::write_u64_dec(store_object.bytes.len() as u64);
+        serial::write_str("\n");
         if config
             .add_store_object(ipc::BootStoreObjectConfig {
                 id: object.id,
-                base: module.address as u64,
-                length: module.size,
+                base: store_object.bytes.as_ptr() as u64,
+                length: store_object.bytes.len() as u64,
+                hash: object.hash,
             })
             .is_err()
         {
@@ -1106,6 +1185,261 @@ fn find_module_by_string(expected: &[u8]) -> Option<&'static limine::File> {
     }
 
     None
+}
+
+fn store_object_for_module(
+    manifest: &boot_manifest::Manifest<'static>,
+    module_string: &str,
+) -> Option<boot_manifest::StoreObject<'static>> {
+    let mut index = 0;
+    while index < manifest.store_object_count() {
+        if let Some(object) = manifest.store_object(index)
+            && object.module_string == module_string
+        {
+            return Some(object);
+        }
+        index += 1;
+    }
+    None
+}
+
+struct NativeStoreObject {
+    bytes: &'static [u8],
+    checksum: u32,
+}
+
+fn load_native_store_object(id: &str) -> Option<NativeStoreObject> {
+    let disk = native_vertexdisk_bytes()?;
+    let superblock = disk.get(..VERTEX_DISK_SECTOR_SIZE)?;
+    if !valid_vertexdisk_superblock(superblock) {
+        serial::write_str("Krust native VertexDisk superblock rejected\n");
+        return None;
+    }
+
+    let (store_index_start, store_index_count) =
+        vertexdisk_section(superblock, VERTEX_DISK_STORE_INDEX_SECTION)?;
+    let (store_data_start, store_data_count) =
+        vertexdisk_section(superblock, VERTEX_DISK_STORE_DATA_SECTION)?;
+    let index = vertexdisk_section_bytes(disk, store_index_start, store_index_count)?;
+    if !valid_store_index(index) {
+        serial::write_str("Krust native store index rejected\n");
+        return None;
+    }
+
+    let count = read_u16(index, 18) as usize;
+    let mut item = 0;
+    while item < count {
+        let offset = STORE_ENTRY_OFFSET + item * STORE_ENTRY_LEN;
+        if offset + STORE_ENTRY_LEN > index.len() {
+            serial::write_str("Krust native store index bounds invalid\n");
+            return None;
+        }
+        if fixed_string_eq(index, offset, id.as_bytes()) {
+            let data_sector = read_u64(index, offset + 64);
+            let byte_len = read_u32(index, offset + 72) as usize;
+            let checksum = read_u32(index, offset + 76);
+            if !store_entry_bounds_valid(data_sector, byte_len, store_data_start, store_data_count)
+            {
+                serial::write_str("Krust native store object bounds invalid: object=");
+                serial::write_str(id);
+                serial::write_str("\n");
+                return None;
+            }
+            let data_offset = sector_byte_offset(data_sector)?;
+            let bytes = disk.get(data_offset..data_offset.checked_add(byte_len)?)?;
+            return Some(NativeStoreObject { bytes, checksum });
+        }
+        item += 1;
+    }
+
+    serial::write_str("Krust native store object missing: object=");
+    serial::write_str(id);
+    serial::write_str("\n");
+    None
+}
+
+fn native_vertexdisk_bytes() -> Option<&'static [u8]> {
+    let module = find_module_by_string(VERTEXDISK_MODULE_STRING)?;
+    Some(unsafe { core::slice::from_raw_parts(module.address, module.size as usize) })
+}
+
+fn valid_vertexdisk_superblock(sector: &[u8]) -> bool {
+    if sector.len() < VERTEX_DISK_SECTOR_SIZE
+        || !starts_with(sector, VERTEX_DISK_MAGIC)
+        || read_u16(sector, 16) != VERTEX_DISK_VERSION
+        || read_u16(sector, 18) != VERTEX_DISK_SECTOR_SIZE as u16
+        || !metadata_checksum_valid(sector)
+    {
+        return false;
+    }
+
+    let total_sectors = read_u32(sector, VERTEX_DISK_TOTAL_SECTORS_OFFSET) as u64;
+    let mut section = 0;
+    while section <= VERTEX_DISK_STORE_DATA_SECTION {
+        let Some((start, count)) = vertexdisk_section(sector, section) else {
+            return false;
+        };
+        if count == 0
+            || start
+                .checked_add(count)
+                .is_none_or(|end| end > total_sectors)
+        {
+            return false;
+        }
+        section += 1;
+    }
+    true
+}
+
+fn valid_store_index(index: &[u8]) -> bool {
+    starts_with(index, STORE_INDEX_MAGIC)
+        && read_u16(index, 16) == VERTEX_DISK_VERSION
+        && metadata_checksum_valid(index)
+}
+
+fn vertexdisk_section(sector: &[u8], section: usize) -> Option<(u64, u64)> {
+    let offset = VERTEX_DISK_SECTION_TABLE_OFFSET + section * VERTEX_DISK_SECTION_RECORD_LEN;
+    if offset + 16 > sector.len() {
+        return None;
+    }
+    Some((read_u64(sector, offset), read_u64(sector, offset + 8)))
+}
+
+fn vertexdisk_section_bytes(disk: &'static [u8], start: u64, count: u64) -> Option<&'static [u8]> {
+    let offset = sector_byte_offset(start)?;
+    let len = usize::try_from(count)
+        .ok()?
+        .checked_mul(VERTEX_DISK_SECTOR_SIZE)?;
+    disk.get(offset..offset.checked_add(len)?)
+}
+
+fn store_entry_bounds_valid(
+    data_sector: u64,
+    byte_len: usize,
+    store_data_start: u64,
+    store_data_count: u64,
+) -> bool {
+    if byte_len == 0 {
+        return false;
+    }
+    let sectors = sectors_for_len(byte_len) as u64;
+    data_sector >= store_data_start
+        && data_sector
+            .checked_add(sectors)
+            .is_some_and(|end| end <= store_data_start + store_data_count)
+}
+
+fn sector_byte_offset(sector: u64) -> Option<usize> {
+    usize::try_from(sector)
+        .ok()?
+        .checked_mul(VERTEX_DISK_SECTOR_SIZE)
+}
+
+fn sectors_for_len(len: usize) -> usize {
+    len.div_ceil(VERTEX_DISK_SECTOR_SIZE).max(1)
+}
+
+fn metadata_checksum_valid(bytes: &[u8]) -> bool {
+    if bytes.len() < VERTEX_DISK_CHECKSUM_OFFSET + 4 {
+        return false;
+    }
+    let stored = read_u32(bytes, VERTEX_DISK_CHECKSUM_OFFSET);
+    let mut checksum = 0u32;
+    let mut index = 0;
+    while index < bytes.len() {
+        let byte =
+            if index >= VERTEX_DISK_CHECKSUM_OFFSET && index < VERTEX_DISK_CHECKSUM_OFFSET + 4 {
+                0
+            } else {
+                bytes[index]
+            };
+        checksum = checksum.wrapping_add((byte as u32).wrapping_mul(index as u32 + 1));
+        index += 1;
+    }
+    checksum == stored
+}
+
+fn checksum32(bytes: &[u8]) -> u32 {
+    let mut checksum = 0u32;
+    let mut index = 0;
+    while index < bytes.len() {
+        checksum = checksum.wrapping_add((bytes[index] as u32).wrapping_mul(index as u32 + 1));
+        index += 1;
+    }
+    checksum
+}
+
+fn fixed_string_eq(buffer: &[u8], offset: usize, value: &[u8]) -> bool {
+    if offset + 64 > buffer.len() || value.len() > 64 {
+        return false;
+    }
+    let mut index = 0;
+    while index < value.len() {
+        if buffer[offset + index] != value[index] {
+            return false;
+        }
+        index += 1;
+    }
+    value.len() == 64 || buffer[offset + value.len()] == 0
+}
+
+fn starts_with(bytes: &[u8], prefix: &[u8]) -> bool {
+    if bytes.len() < prefix.len() {
+        return false;
+    }
+    let mut index = 0;
+    while index < prefix.len() {
+        if bytes[index] != prefix[index] {
+            return false;
+        }
+        index += 1;
+    }
+    true
+}
+
+fn read_u16(bytes: &[u8], offset: usize) -> u16 {
+    u16::from_le_bytes([bytes[offset], bytes[offset + 1]])
+}
+
+fn read_u32(bytes: &[u8], offset: usize) -> u32 {
+    u32::from_le_bytes([
+        bytes[offset],
+        bytes[offset + 1],
+        bytes[offset + 2],
+        bytes[offset + 3],
+    ])
+}
+
+fn read_u64(bytes: &[u8], offset: usize) -> u64 {
+    u64::from_le_bytes([
+        bytes[offset],
+        bytes[offset + 1],
+        bytes[offset + 2],
+        bytes[offset + 3],
+        bytes[offset + 4],
+        bytes[offset + 5],
+        bytes[offset + 6],
+        bytes[offset + 7],
+    ])
+}
+
+fn store_hash_matches(bytes: &[u8], expected: &str) -> bool {
+    if expected.len() != 64 {
+        return false;
+    }
+    let mut actual = [0u8; 64];
+    store_hash_hex(blake3::hash(bytes).as_bytes(), &mut actual);
+    actual == expected.as_bytes()
+}
+
+fn store_hash_hex(bytes: &[u8; 32], out: &mut [u8; 64]) {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut index = 0;
+    while index < bytes.len() {
+        out[index * 2] = HEX[(bytes[index] >> 4) as usize];
+        out[index * 2 + 1] = HEX[(bytes[index] & 0xf) as usize];
+        index += 1;
+    }
 }
 
 fn parse_boot_manifest_module(

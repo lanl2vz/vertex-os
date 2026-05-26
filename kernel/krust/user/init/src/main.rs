@@ -41,6 +41,7 @@ const READINESS_TIMEOUT_MS: u64 = 50;
 const M37_GENERATION_A: &[u8] = b"gen:switch-a-0001";
 const M37_GENERATION_B: &[u8] = b"gen:switch-b-0002";
 const M37_GENERATION_C_BAD: &[u8] = b"gen:switch-c-bad-0003";
+const M46_MISSING_GENERATION: &[u8] = b"gen:missing-store-object";
 const M37_STORE_ENDPOINT: &[u8] = b"store-hello-text-request";
 const M37_GENERATION_B_STORE_REQUEST: &[u8] = b"store:generation-b-manifest";
 const M37_GENERATION_B_STORE_RESPONSE: &[u8] = b"krustboot:gen:switch-b-0002";
@@ -183,6 +184,7 @@ pub extern "C" fn _start() -> ! {
     log(b"Native manifest-driven activation ok");
     log(b"Native readiness activation ok");
     log(b"Native service activation ok");
+    maybe_run_update_negative_test(generation);
     maybe_switch_generation(generation);
     sys::exit(0)
 }
@@ -651,6 +653,10 @@ fn activation_failed(parent_generation: &[u8]) -> ! {
 }
 
 fn maybe_switch_generation(generation: &[u8]) {
+    if bytes_eq(generation, b"gen:hello-0001") {
+        return;
+    }
+
     if bytes_eq(generation, M37_GENERATION_A) {
         let status = sys::activate_generation(M37_GENERATION_B);
         if status != sys::STATUS_OK {
@@ -674,6 +680,20 @@ fn maybe_switch_generation(generation: &[u8]) {
         log(b"bad generation C unexpectedly switched");
         sys::exit(1);
     }
+}
+
+fn maybe_run_update_negative_test(generation: &[u8]) {
+    if !bytes_eq(generation, b"gen:hello-0001") {
+        return;
+    }
+    let status = sys::activate_generation(M46_MISSING_GENERATION);
+    if status == sys::STATUS_BAD_CAPABILITY {
+        log(b"Native update transaction install rejected: missing store object");
+        log(b"Native update transaction selected_generation unchanged");
+        return;
+    }
+    log(b"Native update transaction missing-object negative failed");
+    sys::exit(1);
 }
 
 fn fetch_generation_b_manifest(

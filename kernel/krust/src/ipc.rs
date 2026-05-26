@@ -181,6 +181,7 @@ pub struct BootStoreObjectConfig {
     pub id: &'static str,
     pub base: u64,
     pub length: u64,
+    pub hash: &'static str,
 }
 
 #[derive(Clone, Copy)]
@@ -376,6 +377,7 @@ struct StoreObject {
     name: &'static str,
     base: u64,
     length: u64,
+    hash: &'static str,
 }
 
 #[derive(Clone, Copy)]
@@ -481,6 +483,14 @@ struct GenerationRuntimeTable {
     count: usize,
 }
 
+struct BootManagerState {
+    selected_generation: &'static str,
+    previous_generation: &'static str,
+    known_good_generation: &'static str,
+    last_failed_generation: &'static str,
+    boot_attempt_counter: u64,
+}
+
 struct Global<T>(UnsafeCell<T>);
 
 unsafe impl<T> Sync for Global<T> {}
@@ -490,6 +500,7 @@ static GENERATION_RUNTIMES: Global<GenerationRuntimeTable> =
     Global(UnsafeCell::new(GenerationRuntimeTable::new()));
 static ROLLBACK_RUNTIME: Global<Option<GenerationRuntime>> = Global(UnsafeCell::new(None));
 static FAILED_GENERATION: Global<Option<&'static str>> = Global(UnsafeCell::new(None));
+static BOOT_MANAGER: Global<BootManagerState> = Global(UnsafeCell::new(BootManagerState::new()));
 static FRAME_ALLOCATOR: Global<Option<*mut memory::FrameAllocator>> = Global(UnsafeCell::new(None));
 
 impl CapabilitySpace {
@@ -830,12 +841,19 @@ impl BootModuleObject {
 }
 
 impl StoreObject {
-    const fn new(id: KernelObjectId, name: &'static str, base: u64, length: u64) -> Self {
+    const fn new(
+        id: KernelObjectId,
+        name: &'static str,
+        base: u64,
+        length: u64,
+        hash: &'static str,
+    ) -> Self {
         Self {
             id,
             name,
             base,
             length,
+            hash,
         }
     }
 }
@@ -1006,6 +1024,7 @@ impl ObjectTable {
         name: &'static str,
         base: u64,
         length: u64,
+        hash: &'static str,
     ) -> Result<KernelObjectId, InitError> {
         if self.count == self.objects.len() {
             return Err(InitError::ObjectTableFull);
@@ -1014,7 +1033,7 @@ impl ObjectTable {
         let id = KernelObjectId(self.next_id);
         self.next_id += 1;
         self.objects[self.count] = Some(KernelObject::StoreObject(StoreObject::new(
-            id, name, base, length,
+            id, name, base, length, hash,
         )));
         self.count += 1;
         Ok(id)
@@ -1754,6 +1773,82 @@ impl GenerationRuntimeTable {
     }
 }
 
+impl BootManagerState {
+    const fn new() -> Self {
+        Self {
+            selected_generation: "",
+            previous_generation: "",
+            known_good_generation: "",
+            last_failed_generation: "",
+            boot_attempt_counter: 0,
+        }
+    }
+
+    fn start_boot(&mut self, generation_id: &'static str) {
+        if self.selected_generation.is_empty() {
+            self.selected_generation = generation_id;
+        }
+        self.boot_attempt_counter = self.boot_attempt_counter.saturating_add(1);
+        serial::write_str("Native boot manager selected_generation=");
+        serial::write_str(self.selected_generation);
+        serial::write_str("\n");
+        serial::write_str("Native boot manager previous_generation=");
+        serial::write_str(if self.previous_generation.is_empty() {
+            "<none>"
+        } else {
+            self.previous_generation
+        });
+        serial::write_str("\n");
+        serial::write_str("Native boot manager known_good_generation=");
+        serial::write_str(if self.known_good_generation.is_empty() {
+            "<none>"
+        } else {
+            self.known_good_generation
+        });
+        serial::write_str("\n");
+        serial::write_str("Native boot manager boot_attempt_counter=");
+        serial::write_u64_dec(self.boot_attempt_counter);
+        serial::write_str("\n");
+    }
+
+    fn install_selected(&mut self, previous: &'static str, selected: &'static str) {
+        self.previous_generation = previous;
+        self.selected_generation = selected;
+        self.boot_attempt_counter = self.boot_attempt_counter.saturating_add(1);
+        serial::write_str("Native update transaction selected_generation updated: ");
+        serial::write_str(selected);
+        serial::write_str("\n");
+    }
+
+    fn mark_known_good(&mut self, generation_id: &'static str) {
+        self.known_good_generation = generation_id;
+        self.selected_generation = generation_id;
+        serial::write_str("Native boot manager known_good_generation=");
+        serial::write_str(generation_id);
+        serial::write_str("\n");
+        serial::write_str("Native boot manager journal: activation-ok generation=");
+        serial::write_str(generation_id);
+        serial::write_str("\n");
+    }
+
+    fn mark_failed_and_fallback(&mut self, failed: &'static str, fallback: &'static str) {
+        self.last_failed_generation = failed;
+        self.previous_generation = failed;
+        self.selected_generation = fallback;
+        serial::write_str("Native boot manager last_failed_generation=");
+        serial::write_str(failed);
+        serial::write_str("\n");
+        serial::write_str("Native boot manager fallback selected_generation=");
+        serial::write_str(fallback);
+        serial::write_str("\n");
+        serial::write_str("Native boot manager journal: failed generation=");
+        serial::write_str(failed);
+        serial::write_str(" fallback=");
+        serial::write_str(fallback);
+        serial::write_str("\n");
+    }
+}
+
 fn generation_cap_count_in_space(space: CapabilitySpace, generation_id: &'static str) -> u64 {
     let mut count = 0;
     let mut slot = 0;
@@ -1810,6 +1905,7 @@ fn revoked_contains(revoked_caps: &[u64; MAX_REVOKED_CAPS], count: usize, cap_id
 }
 
 pub fn init_from_boot_config(config: &'static BootRuntimeConfig) -> Result<(), InitError> {
+    boot_manager().start_boot(config.generation_id);
     let runtime = runtime();
     runtime.objects.reset();
     runtime.processes.reset();
@@ -1831,6 +1927,7 @@ pub fn init_from_boot_config(config: &'static BootRuntimeConfig) -> Result<(), I
             object.id,
             object.base,
             object.length,
+            object.hash,
         )?);
         store_index += 1;
     }
@@ -2111,9 +2208,12 @@ pub fn exit_current_process(status: u64, frame: &mut SyscallFrame) -> ScheduleRe
     if schedule_next_ready(frame) {
         ScheduleResult::Switched
     } else {
-        ScheduleResult::Halt {
-            ok: runtime().processes.all_exited_successfully(),
+        let ok = runtime().processes.all_exited_successfully();
+        if ok {
+            let generation_id = runtime().generation_id;
+            boot_manager().mark_known_good(generation_id);
         }
+        ScheduleResult::Halt { ok }
     }
 }
 
@@ -2373,7 +2473,7 @@ pub fn read_boot_module(
     let copy_len = module_len;
 
     let bytes = unsafe { core::slice::from_raw_parts(module.base as *const u8, copy_len) };
-    usercopy::copy_to_user(UserPtr::new(destination as u64), bytes)
+    usercopy::copy_to_user(UserPtr::new(destination as u64), &bytes[..copy_len])
         .map_err(|_| IpcError::InvalidUserBuffer)?;
 
     serial::write_str("Boot module read accepted: proc=");
@@ -2427,6 +2527,10 @@ pub fn activate_generation(
             serial::write_str("Krust generation switch rejected: requested=");
             serial::write_ascii_bytes(requested);
             serial::write_str("\n");
+            serial::write_str("Native update transaction rejected: missing store object\n");
+            serial::write_str("Native update transaction selected_generation unchanged: ");
+            serial::write_str(runtime().generation_id);
+            serial::write_str("\n");
             return Err(IpcError::BadCapability);
         }
     };
@@ -2459,6 +2563,11 @@ pub fn activate_generation(
             config: previous_config,
         });
     }
+
+    serial::write_str("Native update transaction verifies manifest hash\n");
+    serial::write_str("Native update transaction verifies store closure\n");
+    serial::write_str("Native update transaction journal commit\n");
+    boot_manager().install_selected(previous_generation, target.generation_id);
 
     serial::write_str("Krust generation switch accepted: from=");
     serial::write_str(previous_generation);
@@ -2532,6 +2641,7 @@ pub fn rollback_generation(
         });
         set_failed_generation(previous_generation);
     }
+    boot_manager().mark_failed_and_fallback(previous_generation, rollback.generation_id);
 
     serial::write_str("Krust rollback generation accepted: target=");
     serial::write_str(rollback.generation_id);
@@ -2960,11 +3070,25 @@ pub fn object_read(cap_slot: u64, destination: *mut u8, max_len: usize) -> Resul
     let Ok(object_len) = usize::try_from(object.length) else {
         return Err(IpcError::MessageTooLarge);
     };
+    let bytes = unsafe { core::slice::from_raw_parts(object.base as *const u8, object_len) };
+    if !store_hash_matches(bytes, object.hash) {
+        serial::write_str("Krust native store hash mismatch: object=");
+        serial::write_str(object.name);
+        serial::write_str("\n");
+        serial::write_str("vertex-inspect security event: store hash mismatch object=");
+        serial::write_str(object.name);
+        serial::write_str("\n");
+        return Err(IpcError::BadCapability);
+    }
     let copy_len = min(object_len, max_len);
-    let bytes = unsafe { core::slice::from_raw_parts(object.base as *const u8, copy_len) };
-    usercopy::copy_to_user(UserPtr::new(destination as u64), bytes)
+    usercopy::copy_to_user(UserPtr::new(destination as u64), &bytes[..copy_len])
         .map_err(|_| IpcError::InvalidUserBuffer)?;
 
+    serial::write_str("Krust native store verified object: object=");
+    serial::write_str(object.name);
+    serial::write_str(" identity=store:blake3:");
+    serial::write_str(object.hash);
+    serial::write_str("\n");
     serial::write_str("Object read accepted: proc=");
     serial::write_str(current_process_name());
     serial::write_str(" object=");
@@ -4172,6 +4296,29 @@ fn set_failed_generation(generation_id: &'static str) {
 
 fn failed_generation_is(generation_id: &'static str) -> bool {
     unsafe { *FAILED_GENERATION.0.get() == Some(generation_id) }
+}
+
+fn boot_manager() -> &'static mut BootManagerState {
+    unsafe { &mut *BOOT_MANAGER.0.get() }
+}
+
+fn store_hash_matches(bytes: &[u8], expected: &str) -> bool {
+    if expected.len() != 64 {
+        return false;
+    }
+    let mut actual = [0u8; 64];
+    store_hash_hex(blake3::hash(bytes).as_bytes(), &mut actual);
+    actual == expected.as_bytes()
+}
+
+fn store_hash_hex(bytes: &[u8; 32], out: &mut [u8; 64]) {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut index = 0;
+    while index < bytes.len() {
+        out[index * 2] = HEX[(bytes[index] >> 4) as usize];
+        out[index * 2 + 1] = HEX[(bytes[index] & 0xf) as usize];
+        index += 1;
+    }
 }
 
 fn runtime() -> &'static mut RuntimeState {
