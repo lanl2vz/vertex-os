@@ -2,10 +2,10 @@
 
 This document describes the current experimental userspace ABI used by the
 native Krust QEMU/Limine milestone. It is intentionally small and unstable. Its
-current job is to boot native `vertex-init`, start a tiny declared service
-graph, and enforce explicit process-local capabilities.
+current job is to boot native `vertex-init`, create services from verified
+process templates, and enforce explicit process-local capabilities.
 
-Milestone status: ABI v1 now covers the M14-M47 native activation and substrate
+Milestone status: ABI v1 now covers the M14-M54 native activation and substrate
 proof. M25 adds the release gate. M26-M29 add Manifest v1 parsing, capability
 provenance/revocation, typed arena allocation checks, and resource quotas.
 M30-M31 add PIT-backed preemption and user page-fault containment. M32-M36 add
@@ -19,8 +19,10 @@ path, M42 adds minimal virtio-blk sector I/O over PCI I/O and DMA
 capabilities, and M43 adds VertexDisk v0 block-object persistence for store,
 state, and journal data. M44-M47 add native boot-manager state, verified store
 object identities, native update transactions, and process executable loading
-through verified store objects. The ABI is still intentionally small, but this
-subset is the current native contract.
+through verified store objects. M48-M54 replace fixed runtime process slots
+with PID-based process creation, add native config and secret authority,
+and add the first package/link/build/appliance surface. The ABI is still
+intentionally small, but this subset is the current native contract.
 
 ## Machine ABI
 
@@ -69,15 +71,15 @@ process frame, switch CR3, and return into another userspace process through
 | 6 | `SYS_BOOT_READ` | `arg0 = cap_slot`, `arg1 = user_ptr`, `arg2 = max_len` | byte count or error status |
 | 7 | `SYS_LOG_WRITE` | `arg0 = cap_slot`, `arg1 = user_ptr`, `arg2 = len` | status |
 | 8 | `SYS_ACTIVATE_GENERATION` | `arg0 = cap_slot`, `arg1 = user_ptr`, `arg2 = len` | does not return on switch success; status on rejection |
-| 9 | `SYS_PROCESS_START` | `arg0 = process_control_cap_slot`, `arg1 = process_index`, `arg2 = 0` | status |
+| 9 | `SYS_PROCESS_CREATE` | `arg0 = process_control_cap_slot`, `arg1 = process_template_index`, `arg2 = 0` | new process id or error status |
 | 10 | `SYS_CAP_DERIVE` | `arg0 = parent_cap_slot`, `arg1 = new_cap_slot`, `arg2 = rights_mask` | status |
 | 11 | `SYS_CAP_DROP` | `arg0 = cap_slot` | status |
-| 12 | `SYS_CAP_TRANSFER` | `arg0 = process_control_cap_slot`, `arg1 = target_process_index`, `arg2 = packed transfer` | status |
+| 12 | `SYS_CAP_TRANSFER` | `arg0 = process_control_cap_slot`, `arg1 = target_pid`, `arg2 = packed transfer` | status |
 | 13 | `SYS_OBJECT_READ` | `arg0 = cap_slot`, `arg1 = user_ptr`, `arg2 = max_len` | byte count or error status |
 | 14 | reserved | removed M43 native state syscall slot | `u64::MAX` |
 | 15 | reserved | removed M43 native state syscall slot | `u64::MAX` |
 | 16 | `SYS_SLEEP_MS` | `arg0 = timer_cap_slot`, `arg1 = milliseconds`, `arg2 = 0` | status |
-| 17 | `SYS_PROCESS_STATUS` | `arg0 = process_control_cap_slot`, `arg1 = process_index`, `arg2 = 0` | exit status, running marker, or error status |
+| 17 | `SYS_PROCESS_WAIT` | `arg0 = process_control_cap_slot`, `arg1 = pid`, `arg2 = 0` | exit status, running marker, or error status |
 | 18 | `SYS_ROLLBACK_GENERATION` | `arg0 = process_control_cap_slot`, `arg1 = generation_ptr`, `arg2 = len` | switches to the prepared fallback generation or returns error |
 | 19 | `SYS_IPC_RECV_TIMEOUT` | `arg0 = cap_slot`, `arg1 = user_ptr`, `arg2 = timeout_ms << 32 \| max_len` | byte count, `STATUS_TIMEOUT`, or error status |
 | 20 | `SYS_PROCESS_ATTEMPT` | none | current process start attempt count |
@@ -86,7 +88,7 @@ process frame, switch CR3, and return into another userspace process through
 | 23 | `SYS_CAP_MOVE` | `arg0 = source_cap_slot`, `arg1 = target_cap_slot` | status |
 | 24 | `SYS_CAP_COPY` | `arg0 = source_cap_slot`, `arg1 = target_cap_slot`, `arg2 = rights_mask` | status |
 | 25 | `SYS_ENDPOINT_CREATE` | `arg0 = process_control_cap_slot`, `arg1 = target_cap_slot` | status |
-| 26 | `SYS_QUOTA_DELEGATE` | `arg0 = process_control_cap_slot`, `arg1 = target_process_index`, `arg2 = max_endpoints` | status |
+| 26 | `SYS_QUOTA_DELEGATE` | `arg0 = process_control_cap_slot`, `arg1 = target_pid`, `arg2 = max_endpoints` | status |
 | 27 | `SYS_IO_READ` | `arg0 = io_port_cap_slot`, `arg1 = port`, `arg2 = 0` | byte value or error status |
 | 28 | `SYS_IO_WRITE` | `arg0 = io_port_cap_slot`, `arg1 = port`, `arg2 = byte value` | status |
 | 29 | `SYS_IRQ_WAIT` | `arg0 = interrupt_line_cap_slot`, `arg1 = timeout_ms`, `arg2 = 0` | status |
@@ -97,6 +99,9 @@ process frame, switch CR3, and return into another userspace process through
 | 34 | `SYS_IO_WRITE16` | `arg0 = io_port_cap_slot`, `arg1 = port`, `arg2 = 16-bit value` | status |
 | 35 | `SYS_IO_READ32` | `arg0 = io_port_cap_slot`, `arg1 = port`, `arg2 = 0` | 32-bit value or error status |
 | 36 | `SYS_IO_WRITE32` | `arg0 = io_port_cap_slot`, `arg1 = port`, `arg2 = 32-bit value` | status |
+| 37 | `SYS_PROCESS_START` | `arg0 = process_control_cap_slot`, `arg1 = pid`, `arg2 = 0` | status |
+| 38 | `SYS_PROCESS_KILL` | `arg0 = process_control_cap_slot`, `arg1 = pid`, `arg2 = status` | status |
+| 39 | `SYS_SECRET_READ` | `arg0 = secret_cap_slot`, `arg1 = user_ptr`, `arg2 = max_len` | byte count or error status |
 
 ## Return Status Values
 
@@ -107,7 +112,7 @@ process frame, switch CR3, and return into another userspace process through
 | `STATUS_BAD_BUFFER` | `u64::MAX - 2` | The user pointer/range failed validation before copying. |
 | `STATUS_TOO_LARGE` | `u64::MAX - 3` | IPC message length exceeded the kernel's fixed message buffer. |
 | `STATUS_EMPTY` | `u64::MAX - 4` | Endpoint had no message and no process could be scheduled after blocking. |
-| `STATUS_RUNNING` | `u64::MAX - 8` | `SYS_PROCESS_STATUS` target has not exited. |
+| `STATUS_RUNNING` | `u64::MAX - 8` | `SYS_PROCESS_WAIT` target has not exited. |
 | `STATUS_TIMEOUT` | `u64::MAX - 9` | A timed IPC receive expired before a message arrived. |
 | `STATUS_PROCESS_FAULT` | `u64::MAX - 10` | The target exited because of a contained userspace fault. |
 | `u64::MAX` | `u64::MAX` | Unknown syscall number. |
@@ -136,13 +141,13 @@ becoming uncontrolled kernel faults.
 Capabilities are process-local. A capability slot number is meaningful only in
 the current process's capability space.
 
-Current M14-M47 layout:
+Current M14-M54 layout:
 
 ```text
 vertex-init:
   cap[0] = boot module krustboot-manifest, rights=read
   cap[1] = endpoint serial-log, rights=send
-  cap[2] = process-control object, rights=control|allocate|delegate|revoke|inspect
+  cap[2] = process-control object, rights=control|allocate|delegate|revoke|inspect|create|start|kill|wait
   cap[3] = endpoint readiness, rights=receive
   cap[4+] = endpoint authority caps, rights=send, one per declared
            graph endpoint beyond serial-log/readiness
@@ -152,6 +157,8 @@ logd:
   cap[1] = endpoint serial-log, rights=send
   cap[2] = endpoint readiness, rights=send
   cap[3] = endpoint serial-console, rights=send after vertex-init derives and transfers it
+  cap[4] = config config:logd, rights=read
+  cap[5] = secret secret:logd-token, rights=read|inspect-metadata
 
 serial-driver:
   cap[0] = endpoint serial-console, rights=receive
@@ -225,8 +232,8 @@ special-case process names; it resolves:
 current process -> cap slot -> kernel object -> required rights
 ```
 
-M40 removes the legacy shared bidirectional request/reply pattern. A service
-request endpoint is a one-way FIFO: clients hold `send`, the provider holds
+M40 uses directed request/reply IPC. A service request endpoint is a one-way
+FIFO: clients hold `send`, the provider holds
 `receive`, and replies go to a separate reply endpoint where the client holds
 `receive` and the provider receives a delegated `send` cap. Native endpoint
 requirements are send-only; provider receive authority is derived from
@@ -240,14 +247,17 @@ The native activation path uses the same rule:
 SYS_BOOT_READ requires cap[0] read rights to the manifest boot module.
 SYS_LOG_WRITE requires cap[1] send rights to the serial-log endpoint.
 SYS_ACTIVATE_GENERATION requires cap[2] control and revoke rights to process-control.
-SYS_PROCESS_START requires cap[2] control rights to process-control.
-SYS_PROCESS_STATUS requires cap[2] control rights to process-control.
+SYS_PROCESS_CREATE requires create rights on process-control.
+SYS_PROCESS_START requires start rights on process-control and a live pid.
+SYS_PROCESS_KILL requires kill rights on process-control and a live pid.
+SYS_PROCESS_WAIT requires wait rights on process-control and a live pid.
 SYS_ROLLBACK_GENERATION requires cap[2] control and revoke rights to process-control.
 SYS_RUNTIME_INSPECT requires inspect rights on process-control.
 SYS_CAP_TRANSFER requires a caller-supplied process-control cap slot and applies the packed rights mask.
 SYS_ENDPOINT_CREATE requires allocate rights on process-control and available endpoint quota.
 SYS_QUOTA_DELEGATE requires delegate rights on process-control and cannot exceed the caller quota.
-SYS_OBJECT_READ requires read rights on a store-object cap.
+SYS_OBJECT_READ requires read rights on a store-object or config cap.
+SYS_SECRET_READ requires read rights on a secret cap and logs metadata only.
 Native state reads and writes are service IPC to `vertex-state`.
 `vertex-state` persists those operations through the VertexDisk block protocol
 served by `block-driver`. Store and state traffic use separate block request
@@ -347,19 +357,40 @@ switches. A context switch can happen when a syscall explicitly yields, exits,
 or blocks on IPC, and also when PIT IRQ0 interrupts a running userspace process
 while another process is ready.
 
-Non-initial processes loaded from the compact manifest start in `Declared`.
-They are not scheduler candidates until `SYS_PROCESS_START` changes them to
-`Ready`.
+Only the initial process is installed in the runtime process table at boot.
+Non-initial compact-manifest process records are process templates. A holder of
+process-control `create` authority turns a template into a runtime process with
+a fresh pid and an explicit initial capability table.
+
+`SYS_PROCESS_CREATE` semantics:
+
+```text
+requires create rights on the process-control cap
+target process template index must exist in the compact manifest process table
+the template executable must resolve to a verified native store object
+the initial capability table is assembled from explicit grants and transfers
+on success: returns a fresh pid in Declared state
+on failure: STATUS_BAD_CAPABILITY
+```
 
 `SYS_PROCESS_START` semantics:
 
 ```text
-requires control rights on the process-control cap
-target process index must exist in the compact manifest process table
+requires start rights on the process-control cap
+target pid must name a created runtime process
 target process state must be Declared or Exited
 on success: Declared -> Ready
 restart success: Exited -> Ready with the restart context and initial caps restored
 on failure: STATUS_BAD_CAPABILITY
+```
+
+`SYS_PROCESS_WAIT` semantics:
+
+```text
+requires wait rights on the process-control cap
+target pid must name a created runtime process
+returns STATUS_RUNNING until the target exits
+returns the target exit status once available
 ```
 
 Restart uses the same syscall; restarting an exited process resets its saved
@@ -420,7 +451,7 @@ the original receive call site with `rax = delivered_len`.
 ## Native vertex-init Semantics
 
 The current hello generation boots one initial userspace process and twelve
-declared service processes:
+service templates:
 
 ```text
 process[0] = vertex-init
@@ -450,13 +481,16 @@ SYS_LOG_WRITE(cap[1], message, len)
 SYS_ACTIVATE_GENERATION(cap[2], generation_id, len)
   switches to a registered native generation and enters its vertex-init
 
-SYS_PROCESS_START(cap[2], process_index, 0)
-  starts a declared process from the compact manifest
+SYS_PROCESS_CREATE(cap[2], process_template_index, 0)
+  creates a runtime process from a verified compact-manifest template and returns a pid
+
+SYS_PROCESS_START(cap[2], pid, 0)
+  starts a created runtime process
 
 SYS_CAP_DERIVE(cap[4], cap[31], send)
   derives attenuated endpoint authority for echo
 
-SYS_CAP_TRANSFER(cap[2], echo_process_index, packed(cap[31], target_cap[0], send))
+SYS_CAP_TRANSFER(cap[2], echo_pid, packed(cap[31], target_cap[0], send))
   transfers the attenuated endpoint authority before echo starts
 
 SYS_CAP_INSPECT(cap[31])
@@ -465,10 +499,10 @@ SYS_CAP_INSPECT(cap[31])
 SYS_ENDPOINT_CREATE(cap[2], cap[29])
   creates one dynamic endpoint when endpoint quota is available
 
-SYS_QUOTA_DELEGATE(cap[2], target_process_index, max_endpoints)
+SYS_QUOTA_DELEGATE(cap[2], target_pid, max_endpoints)
   delegates a bounded endpoint quota to a target process
 
-SYS_PROCESS_STATUS(cap[2], process_index, 0)
+SYS_PROCESS_WAIT(cap[2], pid, 0)
   observes exits for supervision and restart policy
 
 SYS_ROLLBACK_GENERATION(cap[2], parent_generation_id, len)
@@ -480,13 +514,14 @@ SYS_IPC_RECV_TIMEOUT(cap[3], buffer, packed(timeout_ms, len))
 ```
 
 `vertex-init` reads the compact manifest, computes the activation order from
-manifest dependencies, waits for logd readiness, derives and transfers endpoint
-caps with the rights requested by each consumer, starts the declared services,
-and observes their exit status. Negative capability tests prove echo cannot
-receive on its send-only cap, logd and echo cannot write COM1 directly, echo
-cannot talk to block-driver or device objects without authority, logd cannot
-start processes without process-control, and reader-service write attempts are
-denied by `vertex-state`.
+manifest dependencies, creates each service dynamically, waits for logd
+readiness, derives and transfers endpoint caps with the rights requested by
+each consumer, starts the created services, and observes their exit status.
+Negative capability tests prove echo cannot receive on its send-only cap, logd
+and echo cannot write COM1 directly, echo cannot talk to block-driver or
+device objects without authority, logd cannot create processes without
+process-control, services cannot read ungranted config or secret objects, and
+reader-service write attempts are denied by `vertex-state`.
 
 ## Boot ABI
 
@@ -523,8 +558,8 @@ dma_regions
 ```
 
 Manifest v1 adds a fixed header, record table, checksum, and record bounds
-validation. The current record kinds are boot modules, processes, endpoints,
-grants, store objects, empty legacy state table, timer, generation, and policy. The kernel
+validation. The current record kinds are boot modules, process templates,
+endpoints, grants, store objects, state volumes, timer, generation, and policy. The kernel
 requires the v1 wrapper at the boot-module boundary and rejects an unwrapped
 compact payload. After validating the wrapper, the kernel exposes the compact
 payload to `vertex-init` through cap[0] so existing userspace parsing stays
@@ -535,17 +570,18 @@ Krust also creates fixed boot caps for native `vertex-init`:
 ```text
 cap[0] manifest module read
 cap[1] serial-log send
-cap[2] process-control control|allocate|delegate|revoke
+cap[2] process-control control|allocate|delegate|revoke|inspect|create|start|kill|wait
 cap[3] readiness receive
 cap[4+] endpoint authority for graph-delegated endpoints, one authority cap per
 declared endpoint beyond the fixed serial-log/readiness endpoints
 ```
 
-Endpoint, hardware, store-object, network, device, and timer grants for declared services
-come from the compact manifest. Endpoint consumers do not receive static boot
-send grants for delegated authority; vertex-init derives and transfers the
-attenuated cap before starting the consumer. A transfer to a still-declared
-process becomes part of that process's restart baseline, so the one ABI v1
+Endpoint, hardware, store-object, config, secret, network, device, and timer
+grants for service templates come from the compact manifest and native object
+registry. Endpoint consumers do not receive static boot send grants for
+delegated authority; vertex-init derives and transfers the attenuated cap after
+creating the target process and before starting it. A transfer to a Declared
+process becomes part of that process's restart baseline, so the bounded ABI v1
 restart restores the delegated endpoint cap along with static grants. If a
 service both provides an endpoint and consumes delegated endpoint authority, the
 provided endpoint keeps cap[0] and delegated endpoint caps start at cap[3] to

@@ -51,7 +51,7 @@ activation failed
 negative test: echo receive rejected: bad capability
 echo read rejected: bad capability
 echo send after drop rejected
-negative test: logd process-start rejected: bad capability
+negative test: logd process-create rejected: bad capability
 reader-service write rejected
 '
         ;;
@@ -191,7 +191,7 @@ Typed object arenas no silent overwrite ok
         MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
         EXPECT_ACTIVATION_SUCCESS=1
         required_lines='
-proc=vertex-init cap[2] process-control=process-control rights=control|allocate|delegate|revoke|inspect
+proc=vertex-init cap[2] process-control=process-control rights=control|allocate|delegate|revoke|inspect|create|start|kill|wait
 service with quota=1 endpoint can create one endpoint
 second endpoint creation fails
 init can delegate smaller quota
@@ -239,7 +239,7 @@ unauthorized service cannot access PCI I/O, IRQ, or DMA capabilities
         MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
         EXPECT_ACTIVATION_SUCCESS=1
         required_lines='
-KrustBoot grants: 48
+KrustBoot grants: 49
 KrustBoot io port ranges: 3
 KrustBoot mmio regions: 0
 io_port[1] id=cap:io.pci-config base=0x0000000000000cf8 length=0x0000000000000008
@@ -266,7 +266,7 @@ Native service activation ok
         MANIFEST="$ROOT_DIR/examples/krust-block-driver-fault-generation.vertex.json"
         required_lines='
 Boot generation: gen:block-driver-fault-0001
-KrustBoot grants: 47
+KrustBoot grants: 48
 KrustBoot store objects:
 proc=block-driver cap[10] store-object=store:block-driver-fault-token rights=read
 Object read accepted: proc=block-driver object=store:block-driver-fault-token bytes=25
@@ -283,7 +283,7 @@ Native service activation failed
         EXPECT_ACTIVATION_SUCCESS=1
         required_lines='
 KrustBoot endpoints: 12
-KrustBoot grants: 48
+KrustBoot grants: 49
 KrustBoot state volumes: 0
 QEMU boots with VertexDisk image attached
 VertexDisk superblock accepted
@@ -442,7 +442,7 @@ Native service activation ok
         EXPECT_ACTIVATION_SUCCESS=1
         required_lines='
 KrustBoot endpoints: 12
-KrustBoot grants: 48
+KrustBoot grants: 49
 IPC FIFO regression: queued sends preserve FIFO order
 IPC FIFO regression: queue-full send rejected
 IPC FIFO regression: receiver-specific dequeue preserves eligible ordering
@@ -497,7 +497,7 @@ Boot generation: gen:console-0001
 KrustBoot boot modules: 15
 KrustBoot processes: 15
 KrustBoot endpoints: 14
-KrustBoot grants: 53
+KrustBoot grants: 56
 proc=console-driver cap[0] endpoint=console-output rights=receive
 proc=console-driver cap[3] endpoint=console-driver-control rights=receive
 proc=console-shell cap[0] endpoint=console-shell-request rights=receive
@@ -511,7 +511,7 @@ Runtime inspect accepted: proc=console-shell
 console-driver wrote console output
 Vertex shell ready
 console-driver forwarded serial command: help
-commands: generation services why halt
+commands: generation services counter increment install rollback why halt
 console-driver forwarded serial command: generation
 current generation: gen:console-0001
 console-driver forwarded serial command: services
@@ -523,6 +523,94 @@ console-shell service state: console-shell=
 console-driver forwarded serial command: why svc:echo cap:log.sink
 console-shell why result: svc:echo cap:log.sink send slot 0
 console-driver forwarded serial command: halt
+Native console shell ok
+Native service activation ok
+'
+        ;;
+    m48|dynamic-process)
+        MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
+        EXPECT_ACTIVATION_SUCCESS=1
+        required_lines='
+Process table entries: 1
+proc=vertex-init cap[2] process-control=process-control rights=control|allocate|delegate|revoke|inspect|create|start|kill|wait
+Krust process create accepted: proc=vertex-init target=logd
+vertex-init dynamically created service: logd
+initial capability grants supplied explicitly: process=logd
+SYS_PROCESS_CREATE rejected: bad capability
+unprivileged service calls SYS_PROCESS_CREATE
+Krust process wait observed exit: proc=logd
+vertex-init waits for service exit status
+Native service activation ok
+'
+        ;;
+    m49|config-objects)
+        MANIFEST="$ROOT_DIR/examples/krust-inspect-generation.vertex.json"
+        EXPECT_ACTIVATION_SUCCESS=1
+        required_lines='
+Krust native config hash verified: config=config:logd
+Config object read accepted: proc=logd config=config:logd
+logd reads config object
+echo cannot read logd config
+vertex-inspect shows config authority without dumping content
+Native service activation ok
+'
+        ;;
+    m49-config-corrupt|config-hash-mismatch)
+        MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
+        VERTEX_DISK_CORRUPT=config-object
+        required_lines='
+Krust native config hash mismatch: config=config:logd
+vertex-inspect security event: store hash mismatch object=config:logd
+vertex-init service failed: logd
+activation failed
+Native service activation failed
+'
+        ;;
+    m50|secrets)
+        MANIFEST="$ROOT_DIR/examples/krust-inspect-generation.vertex.json"
+        EXPECT_ACTIVATION_SUCCESS=1
+        required_lines='
+Native secret object registered: secret:logd-token storage=in-memory
+Native secret grant: process=logd secret=secret:logd-token rights=read|inspect-metadata
+Secret read accepted: proc=logd secret=secret:logd-token bytes=<redacted>
+service with secret cap reads secret
+service without secret cap rejected
+vertex-inspect shows which services have secret access
+vertex-inspect does not print secret value
+Native service activation ok
+'
+        case_forbidden_lines='
+native-secret-value
+'
+        ;;
+    m54|appliance)
+        MANIFEST="$ROOT_DIR/examples/krust-console-generation.vertex.json"
+        EXPECT_ACTIVATION_SUCCESS=1
+        USE_SERIAL_PIPE=1
+        SERIAL_INPUT='counter
+increment
+install generation gen:new
+rollback to gen:old
+why svc:counter state:counter
+halt
+'
+        required_lines='
+QEMU boots with VertexDisk image attached
+Vertex OS v0 appliance booted
+Vertex shell ready
+console-driver forwarded serial command: counter
+counter value: 41
+console-driver forwarded serial command: increment
+increment -> 42
+console-driver forwarded serial command: install generation gen:new
+install generation gen:new
+console-driver forwarded serial command: rollback to gen:old
+rollback to gen:old
+counter state policy: preserve
+counter value: 42
+console-driver forwarded serial command: why svc:counter state:counter
+why svc:counter state:counter
+svc:counter has state authority from generation graph
 Native console shell ok
 Native service activation ok
 '
@@ -600,7 +688,7 @@ activation failed
 '
         ;;
     *)
-        echo "usage: scripts/krust-test.sh <m13|m14|valid-activation|manifest-cycle|bad-cap|readiness|readiness-timeout|rollback|store-state-services|timer|preemption|m30|user-fault|m31|restart|manifest-v1|cap-lifecycle|typed-arenas|quotas|m32|io-substrate|m33|serial-driver|m34|block-driver|m35|store-service|m36|state-service|m37|generation-switch|m38|introspection|m40|directed-ipc|m41|console-shell|m42|virtio-block|m42-driver-fault|block-driver-fault|m43|vertexdisk|m43-bad-superblock|vertexdisk-bad-superblock|m44|boot-manager|m45|store-verification|m46|native-update|m47|store-executables|m47-corrupt-executable|store-executable-corruption|manifest-truncated|manifest-bad-magic|manifest-raw-compact|manifest-unsupported-version|manifest-oob-record|manifest-missing-provider>" >&2
+        echo "usage: scripts/krust-test.sh <m13|m14|valid-activation|manifest-cycle|bad-cap|readiness|readiness-timeout|rollback|store-state-services|timer|preemption|m30|user-fault|m31|restart|manifest-v1|cap-lifecycle|typed-arenas|quotas|m32|io-substrate|m33|serial-driver|m34|block-driver|m35|store-service|m36|state-service|m37|generation-switch|m38|introspection|m40|directed-ipc|m41|console-shell|m42|virtio-block|m42-driver-fault|block-driver-fault|m43|vertexdisk|m43-bad-superblock|vertexdisk-bad-superblock|m44|boot-manager|m45|store-verification|m46|native-update|m47|store-executables|m47-corrupt-executable|store-executable-corruption|m48|dynamic-process|m49|config-objects|m49-config-corrupt|config-hash-mismatch|m50|secrets|m54|appliance|manifest-truncated|manifest-bad-magic|manifest-raw-compact|manifest-unsupported-version|manifest-oob-record|manifest-missing-provider>" >&2
         exit 2
         ;;
 esac

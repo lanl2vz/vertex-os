@@ -9,6 +9,8 @@ const CAP_LOG_SINK: u64 = 0;
 const CAP_SERIAL_LOG: u64 = 1;
 const CAP_READINESS: u64 = 2;
 const CAP_SERIAL_DRIVER: u64 = 3;
+const CAP_CONFIG: u64 = 4;
+const CAP_SECRET: u64 = 5;
 const ECHO_PROCESS_INDEX: u64 = 2;
 const PROTOCOL_HEALTH_V0: u16 = 2;
 const MESSAGE_READY: u16 = 1;
@@ -35,6 +37,25 @@ pub extern "C" fn _start() -> ! {
         sys::exit(1);
     }
 
+    let mut config = [0u8; 64];
+    let config_len = sys::object_read(CAP_CONFIG, &mut config);
+    if config_len == sys::STATUS_BAD_CAPABILITY || config_len > config.len() as u64 {
+        log(b"logd config read failed");
+        sys::exit(1);
+    }
+    log(b"logd reads config object");
+
+    let mut secret = [0u8; 64];
+    let secret_len = sys::secret_read(CAP_SECRET, &mut secret);
+    if secret_len == sys::STATUS_BAD_CAPABILITY
+        || secret_len == 0
+        || secret_len > secret.len() as u64
+    {
+        log(b"logd secret read failed");
+        sys::exit(1);
+    }
+    log(b"service with secret cap reads secret");
+
     let mut buffer = [0u8; 64];
     let received = sys::ipc_recv(CAP_LOG_SINK, &mut buffer);
     if received > buffer.len() as u64 {
@@ -44,10 +65,11 @@ pub extern "C" fn _start() -> ! {
 
     log_prefix(b"logd received: ", &buffer[..received as usize]);
 
-    if sys::process_start(CAP_LOG_SINK, ECHO_PROCESS_INDEX) == sys::STATUS_BAD_CAPABILITY {
-        log(b"negative test: logd process-start rejected: bad capability");
+    if sys::process_create(CAP_LOG_SINK, ECHO_PROCESS_INDEX) == sys::STATUS_BAD_CAPABILITY {
+        log(b"unprivileged service calls SYS_PROCESS_CREATE");
+        log(b"negative test: logd process-create rejected: bad capability");
     } else {
-        log(b"logd negative process-start failed");
+        log(b"logd negative process-create failed");
         sys::exit(1);
     }
 

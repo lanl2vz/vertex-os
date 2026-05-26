@@ -18,13 +18,13 @@ const SYS_YIELD: u64 = 5;
 const SYS_BOOT_READ: u64 = 6;
 const SYS_LOG_WRITE: u64 = 7;
 const SYS_ACTIVATE_GENERATION: u64 = 8;
-const SYS_PROCESS_START: u64 = 9;
+const SYS_PROCESS_CREATE: u64 = 9;
 const SYS_CAP_DERIVE: u64 = 10;
 const SYS_CAP_DROP: u64 = 11;
 const SYS_CAP_TRANSFER: u64 = 12;
 const SYS_OBJECT_READ: u64 = 13;
 const SYS_SLEEP_MS: u64 = 16;
-const SYS_PROCESS_STATUS: u64 = 17;
+const SYS_PROCESS_WAIT: u64 = 17;
 const SYS_ROLLBACK_GENERATION: u64 = 18;
 const SYS_IPC_RECV_TIMEOUT: u64 = 19;
 const SYS_PROCESS_ATTEMPT: u64 = 20;
@@ -44,6 +44,9 @@ const SYS_IO_READ16: u64 = 33;
 const SYS_IO_WRITE16: u64 = 34;
 const SYS_IO_READ32: u64 = 35;
 const SYS_IO_WRITE32: u64 = 36;
+const SYS_PROCESS_START: u64 = 37;
+const SYS_PROCESS_KILL: u64 = 38;
+const SYS_SECRET_READ: u64 = 39;
 
 const STATUS_OK: u64 = 0;
 const STATUS_BAD_CAPABILITY: u64 = u64::MAX - 1;
@@ -206,9 +209,9 @@ pub extern "C" fn krust_syscall_dispatch(
             Ok(()) => frame.rax = STATUS_OK,
             Err(error) => frame.rax = ipc_error_status("SYS_ACTIVATE_GENERATION", error),
         },
-        SYS_PROCESS_START => match ipc::start_process(arg0, arg1) {
-            Ok(()) => frame.rax = STATUS_OK,
-            Err(error) => frame.rax = ipc_error_status("SYS_PROCESS_START", error),
+        SYS_PROCESS_CREATE => match ipc::create_process(arg0, arg1) {
+            Ok(pid) => frame.rax = pid,
+            Err(error) => frame.rax = ipc_error_status("SYS_PROCESS_CREATE", error),
         },
         SYS_CAP_DERIVE => match ipc::cap_derive(arg0, arg1, arg2) {
             Ok(()) => frame.rax = STATUS_OK,
@@ -234,9 +237,9 @@ pub extern "C" fn krust_syscall_dispatch(
             Ok(()) => {}
             Err(error) => frame.rax = ipc_error_status("SYS_SLEEP_MS", error),
         },
-        SYS_PROCESS_STATUS => match ipc::process_status(arg0, arg1) {
+        SYS_PROCESS_WAIT => match ipc::process_wait(arg0, arg1) {
             Ok(status) => frame.rax = status,
-            Err(error) => frame.rax = ipc_error_status("SYS_PROCESS_STATUS", error),
+            Err(error) => frame.rax = ipc_error_status("SYS_PROCESS_WAIT", error),
         },
         SYS_ROLLBACK_GENERATION => match ipc::rollback_generation(
             arg0,
@@ -306,6 +309,22 @@ pub extern "C" fn krust_syscall_dispatch(
         SYS_IO_WRITE32 => match ipc::io_write32(arg0, arg1, arg2) {
             Ok(()) => frame.rax = STATUS_OK,
             Err(error) => frame.rax = ipc_error_status("SYS_IO_WRITE32", error),
+        },
+        SYS_PROCESS_START => match ipc::start_process(arg0, arg1) {
+            Ok(()) => frame.rax = STATUS_OK,
+            Err(error) => frame.rax = ipc_error_status("SYS_PROCESS_START", error),
+        },
+        SYS_PROCESS_KILL => match ipc::kill_process(arg0, arg1) {
+            Ok(()) => frame.rax = STATUS_OK,
+            Err(error) => frame.rax = ipc_error_status("SYS_PROCESS_KILL", error),
+        },
+        SYS_SECRET_READ => match ipc::secret_read(
+            arg0,
+            arg1 as *mut u8,
+            usize::try_from(arg2).unwrap_or(usize::MAX),
+        ) {
+            Ok(len) => frame.rax = len as u64,
+            Err(error) => frame.rax = ipc_error_status("SYS_SECRET_READ", error),
         },
         SYS_IRQ_WAIT => match ipc::irq_wait(arg0, arg1) {
             Ok(()) => frame.rax = STATUS_OK,

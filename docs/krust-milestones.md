@@ -6,7 +6,7 @@ IR and graph semantics; Krust is the native enforcement path.
 
 ## Status Summary
 
-Current status: M14-M47 are implemented and smoke-tested under
+Current status: M14-M54 are implemented and smoke-tested under
 `qemu-system-x86_64` with Limine. M39 pins the native toolchain, M40 makes
 native IPC directed, and M41 adds a native console shell path over explicit
 console authority. M42 adds the first real virtio-blk sector I/O path over
@@ -15,7 +15,9 @@ layout for immutable store reads, mutable state persistence, journal writeback,
 and bad-superblock rejection. M44 adds native boot-manager fallback state, M45
 verifies store objects by content identity, M46 performs native update
 transactions, and M47 loads service executables only through verified native
-store objects.
+store objects. M48 adds PID-based dynamic process creation, M49 adds immutable
+config objects, M50 adds native secret authority, M51-M53 add package/link/build
+graph CLI boundaries, and M54 boots the first stateful appliance transcript.
 
 ```sh
 make -C kernel/krust doctor
@@ -46,12 +48,15 @@ scripts/krust-test.sh m44
 scripts/krust-test.sh m45
 scripts/krust-test.sh m46
 scripts/krust-test.sh m47
+scripts/krust-test.sh m48
+scripts/krust-test.sh m49
+scripts/krust-test.sh m49-config-corrupt
+scripts/krust-test.sh m50
+scripts/krust-test.sh m54
 ```
 
-Next direction: use the ABI v1, VertexDisk base, verified store, and native
-update path to build Vertex OS v0, a tiny persistent appliance system. The next
-milestones should replace the remaining predeclared process slots with dynamic
-process creation before higher-level package or language work.
+Next direction: formalize native drivers, device discovery, and the higher
+level language boundary on top of the M54 appliance baseline.
 
 ## M0: Serial Boot
 
@@ -250,11 +255,11 @@ Limine
   -> Krust
   -> Krust reads KrustBootManifest
   -> Krust loads vertex-init, logd, netstack, echo, and the M19-M23 service ELFs
-  -> Krust marks non-initial services Declared
+  -> Krust records non-initial services as creation templates
   -> vertex-init reads the manifest
-  -> vertex-init starts logd through SYS_PROCESS_START
-  -> vertex-init starts netstack and other declared services through SYS_PROCESS_START
-  -> vertex-init starts echo through SYS_PROCESS_START
+  -> vertex-init creates logd and starts its pid through SYS_PROCESS_START
+  -> vertex-init creates netstack and other services and starts their pids through SYS_PROCESS_START
+  -> vertex-init creates echo and starts its pid through SYS_PROCESS_START
   -> echo sends one message to logd
   -> denial tests prove missing authority is rejected
 ```
@@ -292,7 +297,7 @@ Krust process start accepted: proc=vertex-init target=echo
 echo sent message to logd
 logd received: hello from echo
 negative test: echo receive rejected: bad capability
-negative test: logd process-start rejected: bad capability
+negative test: logd process-create rejected: bad capability
 Native service activation ok
 ```
 
@@ -311,7 +316,7 @@ M13 proved:
 
 - Krust can boot.
 - `vertex-init` can run natively.
-- `vertex-init` can start declared services.
+- `vertex-init` can create and start services.
 - Services communicate only through granted capabilities.
 - Denied authority fails.
 
@@ -413,7 +418,6 @@ Exited     -- service completed intentionally
 Possible kernel/user ABI additions:
 
 ```text
-SYS_PROCESS_STATUS
 SYS_PROCESS_WAIT
 ```
 
@@ -1135,7 +1139,7 @@ Behavior:
 ```text
 userspace page fault identifies current process
 bad userspace fault marks only that process Failed or Exited
-init observes failure through SYS_PROCESS_STATUS
+init observes failure through SYS_PROCESS_WAIT
 restart policy can restart the failed service
 kernel continues running
 ```
@@ -1452,7 +1456,7 @@ done: locked Cargo dependencies for the hosted workspace, Krust kernel, and nati
 done: kernel/krust/rust-toolchain.toml pins Rust 1.95.0, rustfmt, and x86_64-unknown-none
 done: make doctor checks every required tool and reports actionable fixes
 done: legacy hello/ipc userspace crates are removed instead of carried forward
-done: single release-gate script runs the clean-clone M14-M47 proof with the M14-M47 QEMU matrix
+done: single release-gate script runs the clean-clone M14-M54 proof with the M14-M54 QEMU matrix
 ```
 
 Acceptance tests:
@@ -1510,7 +1514,7 @@ done: scripts/krust-test.sh m40 proves the directed IPC ABI and FIFO queue behav
 
 Status: done.
 
-Goal: turn the M14-M47 native proof into a small real operating system target:
+Goal: turn the M14-M54 native proof into a small real operating system target:
 bootable in QEMU, persistent, inspectable, updateable, and capable of running
 several native services under explicit authority.
 
@@ -1878,9 +1882,9 @@ The M47 QEMU case checks `logd` and `echo` executable objects.
 
 ## M48: Dynamic Process Creation Authority
 
-Status: planned.
+Status: done.
 
-Goal: replace predeclared process slots with capability-controlled process
+Goal: replace fixed process slots with capability-controlled process
 creation from vertex-init.
 
 Add:
@@ -1921,9 +1925,16 @@ request rejected: bad capability
 vertex-init waits for service exit status
 ```
 
+Implementation note: Krust now boots only `vertex-init` into the runtime process
+table. Non-initial manifest process records are templates; `vertex-init` calls
+`SYS_PROCESS_CREATE`, receives a pid, transfers or delegates only the declared
+authority for that pid, then calls `SYS_PROCESS_START` and `SYS_PROCESS_WAIT`.
+
+done: M48 dynamic process creation authority is checked by the gate
+
 ## M49: Immutable Config Objects
 
-Status: planned.
+Status: done.
 
 Goal: make service configuration explicit, immutable, hashable, and
 inspectable without returning to ambient config files.
@@ -1955,9 +1966,16 @@ config hash mismatch fails activation
 vertex-inspect shows config authority without dumping large content
 ```
 
+Implementation note: `config:logd` is a native immutable object carried in
+KrustBoot/VertexDisk metadata and granted only to logd. Reads verify the
+content identity before returning bytes; the corrupt-config QEMU case rejects a
+hash mismatch during activation.
+
+done: M49 immutable config objects and hash-mismatch rejection are checked by the gate
+
 ## M50: Native Secrets Model
 
-Status: planned.
+Status: done.
 
 Goal: add first-class secret authority without treating secrets as normal
 config or store content.
@@ -1991,9 +2009,16 @@ vertex-inspect shows which services have secret access
 vertex-inspect does not print secret value
 ```
 
+Implementation note: `secret:logd-token` is registered as an in-memory native
+secret object. `SYS_SECRET_READ` requires explicit secret authority, logs only
+metadata, and runtime inspection redacts the value while showing which process
+holds the secret cap.
+
+done: M50 native secret authority is checked by the gate
+
 ## M51: Native Package Boundary
 
-Status: planned.
+Status: done.
 
 Goal: define the metadata boundary for reusable Vertex-native software without
 building a full package manager yet.
@@ -2017,9 +2042,15 @@ vertexctl package instantiate logd.vertexpkg
 output graph fragment contains service, executable, config, and cap needs
 ```
 
+Implementation note: `vertexctl package inspect` and `vertexctl package
+instantiate` read `.vertexpkg` metadata and expose the package boundary used by
+the current package examples.
+
+done: M51 package inspection and instantiation are checked by the gate
+
 ## M52: Vertex Graph Linker
 
-Status: planned.
+Status: done.
 
 Goal: link package graph fragments into a concrete generation graph and store
 closure.
@@ -2042,9 +2073,15 @@ output: KrustBoot or disk generation metadata
 linked graph boots in QEMU
 ```
 
+Implementation note: `vertexctl graph-link` accepts package fragments and emits
+a concrete generation graph, store closure, and KrustBoot metadata seed for the
+current package proof.
+
+done: M52 graph linking is checked by the gate
+
 ## M53: Reproducible Build Graph Interface
 
-Status: planned.
+Status: done.
 
 Goal: define Vertex's own build graph boundary so external builders can feed
 verified artifacts into Vertex without making Vertex depend on any one build
@@ -2082,9 +2119,15 @@ produces bootable QEMU target
 optional Nix adapter produces the same build-output.json shape
 ```
 
+Implementation note: `vertexctl build-import` imports a declared
+`build-output.json`, materializes store objects and generation metadata, emits
+`krust.elf`, creates a VertexDisk image, and writes a QEMU target descriptor.
+
+done: M53 build graph import is checked by the gate
+
 ## M54: First Appliance Release Target
 
-Status: planned.
+Status: done.
 
 Goal: ship one tiny appliance that demonstrates the whole model with polish.
 
@@ -2116,6 +2159,12 @@ counter value: 42
 why svc:counter state:counter
 svc:counter has state authority from generation graph
 ```
+
+Implementation note: the M54 QEMU case boots the console generation, drives the
+native shell over serial input, and verifies the counter, install, rollback, and
+authority-explanation transcript.
+
+done: M54 appliance transcript is checked by the gate
 
 ## M55: User-Space Driver Framework
 
@@ -2314,11 +2363,11 @@ They matter eventually, but they distract from the next core proof:
 
 ```text
 A native booted Vertex system should be able to boot from persistent storage,
-install verified generations, run declared services, preserve mutable state,
-explain its authority graph, and recover from failed updates.
+install verified generations, run dynamically created services, preserve
+mutable state, explain its authority graph, and recover from failed updates.
 ```
 
-M13 proved that native services can run under explicit authority. M14-M47 prove
+M13 proved that native services can run under explicit authority. M14-M54 prove
 that the graph itself decides which native services exist, when they start,
 what they receive, why they are allowed to communicate, and how authority and
 resources are bounded, while timer preemption and user fault containment keep
@@ -2328,4 +2377,6 @@ asking what generation and authority graph are running, M42 adds the first
 persistent block I/O path while preserving hardware-shaped authority, and M43
 turns that block path into a checked VertexDisk layout with persistent state.
 M44-M47 move boot selection, store-object verification, update commits, and
-service executable loading onto the native verified-store path.
+service executable loading onto the native verified-store path. M48-M54 move
+process creation, config, secrets, package/link/build boundaries, and the first
+appliance transcript onto that same native path.

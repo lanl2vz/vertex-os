@@ -20,6 +20,7 @@ const SYS_IO_READ: u64 = 27;
 const SYS_IO_WRITE: u64 = 28;
 const SYS_IRQ_WAIT: u64 = 29;
 const SYS_DMA_MAP: u64 = 32;
+const SYS_SECRET_READ: u64 = 39;
 
 pub fn ipc_send(cap_slot: u64, message: &[u8]) -> u64 {
     syscall3(
@@ -96,6 +97,15 @@ pub fn dma_map(cap_slot: u64, buffer: &mut [u8; 24]) -> u64 {
 pub fn object_read(cap_slot: u64, buffer: &mut [u8]) -> u64 {
     syscall3(
         SYS_OBJECT_READ,
+        cap_slot,
+        buffer.as_mut_ptr() as u64,
+        buffer.len() as u64,
+    )
+}
+
+pub fn secret_read(cap_slot: u64, buffer: &mut [u8]) -> u64 {
+    syscall3(
+        SYS_SECRET_READ,
         cap_slot,
         buffer.as_mut_ptr() as u64,
         buffer.len() as u64,

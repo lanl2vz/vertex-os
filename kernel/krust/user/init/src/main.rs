@@ -116,7 +116,7 @@ pub extern "C" fn _start() -> ! {
     log_count(b"vertex-init mmio regions: ", mmio_regions);
     log_count(b"vertex-init interrupt lines: ", interrupt_lines);
     log_count(b"vertex-init dma regions: ", dma_regions);
-    run_resource_quota_tests(processes, parent_generation);
+    run_endpoint_quota_tests(parent_generation);
 
     let mut order = [0u16; MAX_PROCESSES];
     let Some(order_len) = activation_plan(
@@ -137,33 +137,43 @@ pub extern "C" fn _start() -> ! {
         index += 1;
     }
 
+    let mut pids = [0u64; MAX_PROCESSES];
+    let mut quota_delegate_test_done = false;
     index = 0;
     while index < order_len {
         let process_index = order[index] as usize;
         let name = process_name(&manifest[..manifest_len], boot_modules, process_index);
+        let pid = create_service(name, process_index as u64, parent_generation);
+        pids[process_index] = pid;
+        if !quota_delegate_test_done {
+            run_quota_delegate_tests(pid, parent_generation);
+            quota_delegate_test_done = true;
+        }
         if process_requires_endpoint(&manifest[..manifest_len], boot_modules, process_index) {
             transfer_endpoint_requirements(
                 &manifest[..manifest_len],
                 boot_modules,
                 process_index,
+                pid,
                 name,
                 parent_generation,
             );
         }
 
         if bytes_eq(name, M38_PROCESS_NAME) {
-            grant_introspection_authority(process_index as u64, parent_generation);
+            grant_introspection_authority(pid, parent_generation);
         }
         if bytes_eq(name, M41_PROCESS_NAME) {
-            grant_console_shell_authority(process_index as u64, parent_generation);
+            grant_console_shell_authority(pid, parent_generation);
         }
-        start_service(name, process_index as u64, parent_generation);
+        start_service(name, pid, parent_generation);
         if bytes_eq(generation, M37_GENERATION_A) && bytes_eq(name, b"vertex-store") {
             fetch_generation_b_manifest(
                 &manifest[..manifest_len],
                 boot_modules,
                 processes,
                 endpoints,
+                &pids,
                 parent_generation,
             );
         }
@@ -178,6 +188,7 @@ pub extern "C" fn _start() -> ! {
         boot_modules,
         &order,
         order_len,
+        &pids,
         parent_generation,
     );
 
@@ -448,6 +459,7 @@ fn transfer_endpoint_requirements(
     manifest: &[u8],
     boot_modules: u16,
     process_index: usize,
+    pid: u64,
     name: &[u8],
     parent_generation: &[u8],
 ) {
@@ -473,13 +485,7 @@ fn transfer_endpoint_requirements(
             log(b"vertex-init cap inspect failed");
             activation_failed(parent_generation);
         }
-        if sys::cap_transfer(
-            process_index as u64,
-            sys::CAP_DERIVED,
-            target_slot,
-            sys_rights,
-        ) != sys::STATUS_OK
-        {
+        if sys::cap_transfer(pid, sys::CAP_DERIVED, target_slot, sys_rights) != sys::STATUS_OK {
             log(b"vertex-init cap transfer failed");
             activation_failed(parent_generation);
         }
@@ -491,7 +497,7 @@ fn transfer_endpoint_requirements(
     }
 }
 
-fn run_resource_quota_tests(processes: u16, parent_generation: &[u8]) {
+fn run_endpoint_quota_tests(parent_generation: &[u8]) {
     if sys::endpoint_create(sys::CAP_CREATED_ENDPOINT) != sys::STATUS_OK {
         log(b"vertex-init endpoint quota create failed");
         activation_failed(parent_generation);
@@ -504,15 +510,17 @@ fn run_resource_quota_tests(processes: u16, parent_generation: &[u8]) {
         log(b"vertex-init endpoint quota second create failed");
         activation_failed(parent_generation);
     }
+}
 
-    if processes > 1 && sys::quota_delegate(1, 1) == sys::STATUS_OK {
+fn run_quota_delegate_tests(target_pid: u64, parent_generation: &[u8]) {
+    if sys::quota_delegate(target_pid, 1) == sys::STATUS_OK {
         log(b"init can delegate smaller quota");
     } else {
         log(b"vertex-init quota delegate failed");
         activation_failed(parent_generation);
     }
 
-    if processes > 1 && sys::quota_delegate(1, 2) == sys::STATUS_BAD_CAPABILITY {
+    if sys::quota_delegate(target_pid, 2) == sys::STATUS_BAD_CAPABILITY {
         log(b"delegated quota cannot exceed parent quota");
     } else {
         log(b"vertex-init quota over-delegate failed");
@@ -545,9 +553,19 @@ fn endpoint_rights_to_sys(rights: u16) -> Option<u64> {
     }
 }
 
-fn start_service(name: &[u8], process_index: u64, parent_generation: &[u8]) {
+fn create_service(name: &[u8], process_index: u64, parent_generation: &[u8]) -> u64 {
+    let pid = sys::process_create(process_index);
+    if pid == sys::STATUS_BAD_CAPABILITY {
+        log_prefix(b"vertex-init service create failed: ", name);
+        activation_failed(parent_generation);
+    }
+    log_created_service(name, pid);
+    pid
+}
+
+fn start_service(name: &[u8], pid: u64, parent_generation: &[u8]) {
     log_prefix(b"vertex-init starting service: ", name);
-    if sys::process_start(process_index) != sys::STATUS_OK {
+    if sys::process_start(pid) != sys::STATUS_OK {
         log_prefix(b"vertex-init service start failed: ", name);
         activation_failed(parent_generation);
     }
@@ -558,6 +576,7 @@ fn supervise_services(
     boot_modules: u16,
     order: &[u16; MAX_PROCESSES],
     order_len: usize,
+    pids: &[u64; MAX_PROCESSES],
     parent_generation: &[u8],
 ) {
     let mut complete = [false; MAX_PROCESSES];
@@ -575,9 +594,10 @@ fn supervise_services(
                 continue;
             }
 
-            let status = sys::process_status(process_index as u64);
+            let pid = pids[process_index];
+            let status = sys::process_wait(pid);
             if status == sys::STATUS_BAD_CAPABILITY {
-                log(b"vertex-init process status failed");
+                log(b"vertex-init process wait failed");
                 activation_failed(parent_generation);
             }
             if status == STATUS_RUNNING {
@@ -604,7 +624,7 @@ fn supervise_services(
                     }
                 }
                 log_restart_once(name);
-                if sys::process_start(process_index as u64) != sys::STATUS_OK {
+                if sys::process_start(pid) != sys::STATUS_OK {
                     log_prefix(b"vertex-init service restart failed: ", name);
                     activation_failed(parent_generation);
                 }
@@ -616,6 +636,7 @@ fn supervise_services(
             }
 
             if status == 0 {
+                log(b"vertex-init waits for service exit status");
                 complete[process_index] = true;
                 complete_count += 1;
                 made_progress = true;
@@ -701,6 +722,7 @@ fn fetch_generation_b_manifest(
     boot_modules: u16,
     processes: u16,
     endpoints: u16,
+    pids: &[u64; MAX_PROCESSES],
     parent_generation: &[u8],
 ) {
     let Some(store_endpoint) = endpoint_index_by_name(
@@ -725,8 +747,13 @@ fn fetch_generation_b_manifest(
         log(b"vertex-init generation B store service missing");
         activation_failed(parent_generation);
     };
+    let vertex_store_pid = pids[vertex_store_index];
+    if vertex_store_pid == 0 {
+        log(b"vertex-init generation B store service not created");
+        activation_failed(parent_generation);
+    }
     if sys::cap_transfer(
-        vertex_store_index as u64,
+        vertex_store_pid,
         sys::CAP_CREATED_ENDPOINT,
         M40_VERTEX_STORE_INIT_REPLY_SLOT,
         sys::RIGHT_SEND,
@@ -883,6 +910,15 @@ fn log_plan_entry(index: usize, value: &[u8]) {
     let len = append_decimal(&mut buffer, len, index as u64);
     let len = append(&mut buffer, len, b". ");
     let len = append(&mut buffer, len, value);
+    log(&buffer[..len]);
+}
+
+fn log_created_service(value: &[u8], pid: u64) {
+    let mut buffer = [0u8; 128];
+    let len = append(&mut buffer, 0, b"vertex-init dynamically created service: ");
+    let len = append(&mut buffer, len, value);
+    let len = append(&mut buffer, len, b" pid=");
+    let len = append_decimal(&mut buffer, len, pid);
     log(&buffer[..len]);
 }
 

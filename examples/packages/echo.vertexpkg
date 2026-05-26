@@ -1,0 +1,46 @@
+{
+  "schema": "vertex.package.v0",
+  "id": "pkg:echo",
+  "name": "echo",
+  "version": "0.1.0",
+  "executables": [
+    {
+      "id": "exe:echo-server",
+      "storeObject": "store:echo-server-demo",
+      "entrypoint": "bin/echo",
+      "abi": "krust-native.v0"
+    }
+  ],
+  "libraryStoreObjects": [],
+  "configs": [],
+  "runtimeNeeds": [
+    {
+      "capability": "cap:log.sink",
+      "rights": [
+        "send"
+      ]
+    }
+  ],
+  "serviceTemplates": [
+    {
+      "id": "svc:echo-server",
+      "name": "echo",
+      "executable": "exe:echo-server",
+      "provides": [
+        "cap:echo.api"
+      ],
+      "requires": [
+        {
+          "capability": "cap:log.sink",
+          "rights": [
+            "send"
+          ]
+        }
+      ]
+    }
+  ],
+  "provenance": {
+    "source": "examples/packages/echo.vertexpkg",
+    "builder": "vertex-demo"
+  }
+}

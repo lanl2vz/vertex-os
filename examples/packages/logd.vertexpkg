@@ -1,0 +1,56 @@
+{
+  "schema": "vertex.package.v0",
+  "id": "pkg:logd",
+  "name": "logd",
+  "version": "0.1.0",
+  "executables": [
+    {
+      "id": "exe:logd",
+      "storeObject": "store:logd-demo",
+      "entrypoint": "bin/logd",
+      "abi": "krust-native.v0"
+    }
+  ],
+  "libraryStoreObjects": [],
+  "configs": [
+    {
+      "id": "config:logd",
+      "schema": "vertex.logd.config.v0",
+      "hashAlgorithm": "blake3",
+      "hash": "native-logd-config-v0"
+    }
+  ],
+  "runtimeNeeds": [
+    {
+      "capability": "cap:serial.console",
+      "rights": [
+        "send"
+      ]
+    }
+  ],
+  "serviceTemplates": [
+    {
+      "id": "svc:logd",
+      "name": "logd",
+      "executable": "exe:logd",
+      "provides": [
+        "cap:log.sink"
+      ],
+      "requires": [
+        {
+          "capability": "cap:serial.console",
+          "rights": [
+            "send"
+          ]
+        }
+      ],
+      "configs": [
+        "config:logd"
+      ]
+    }
+  ],
+  "provenance": {
+    "source": "examples/packages/logd.vertexpkg",
+    "builder": "vertex-demo"
+  }
+}

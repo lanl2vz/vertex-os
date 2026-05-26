@@ -1,10 +1,12 @@
 # Krust Kernel
 
-Krust now covers the M14-M47 native graph-activation proof path, substrate
+Krust now covers the M14-M54 native graph-activation proof path, substrate
 hardening, reproducible build environment, directed IPC ABI v1, and native
 console shell plus minimal virtio-blk sector I/O, VertexDisk v0 persistence,
 native boot selection, verified store objects, native update transactions, and
-store-loaded service executables. M44-M47 are tracked in
+store-loaded service executables, dynamic process creation, native config and
+secret authority, package/link/build import boundaries, and the first appliance
+transcript. M44-M54 are tracked in
 `../../docs/krust-milestones.md`.
 
 The target is intentionally small:
@@ -30,12 +32,12 @@ Krust creates fixed kernel objects and boot capabilities
 Krust prints the boot capability table
 Limine loads the native VertexDisk image plus compact generation manifests
 Krust resolves each declared process executable from the native store, verifies its BLAKE3 identity and checksum, and then loads it into a fresh low-half address space
-Krust creates a runtime process table and endpoint table from the KrustBoot manifest
-Krust allocates runtime process IDs and states from KrustBoot process records
+Krust creates a runtime endpoint table and one initial runtime process from the KrustBoot manifest
+Krust records non-initial KrustBoot process records as templates and allocates runtime process IDs only through SYS_PROCESS_CREATE
 Krust grants vertex-init cap[0] read rights to the manifest module
 Krust grants vertex-init cap[1] send rights to the serial-log endpoint
-Krust grants vertex-init cap[2] process-control authority with control, allocate, delegate, revoke, and inspect rights; cap[3] readiness receive authority; and per-endpoint attenuable endpoint authority starting at cap[4]
-Krust grants I/O port, IRQ, DMA, store-object, endpoint, and timer authority only to services that declare those capabilities
+Krust grants vertex-init cap[2] process-control authority with control, allocate, delegate, revoke, inspect, create, start, kill, and wait rights; cap[3] readiness receive authority; and per-endpoint attenuable endpoint authority starting at cap[4]
+Krust applies I/O port, IRQ, DMA, store-object, config, secret, endpoint, and timer authority only when a service is dynamically created from a matching template
 Krust installs a minimal IDT for #UD, #GP, #PF, and PIT IRQ0
 Krust installs a TSS-backed ring-0 interrupt stack for user traps
 Krust programs the PIT/PIC timer path and preempts CPU-bound userspace
@@ -44,7 +46,7 @@ Krust tracks Declared, Ready, Running, BlockedOnEndpoint, Sleeping, and Exited p
 Krust validates syscall user buffers by walking user page tables
 vertex-init reads the compact manifest through cap[0]
 vertex-init logs through cap[1]
-vertex-init computes a manifest-driven activation order and starts declared services through cap[2]
+vertex-init computes a manifest-driven activation order, creates services dynamically through cap[2], starts them by pid, and waits for exits by pid
 vertex-init proves endpoint quota enforcement and quota delegation bounds
 logd reports readiness before echo starts
 serial-driver, block-driver, vertex-store, vertex-state, and logd report
@@ -60,6 +62,7 @@ block-driver owns virtio-blk PCI I/O, IRQ, and DMA authority and serves separate
 model-reader reads an immutable object through vertex-store and VertexDisk/block-driver
 counter-service and reader-service access mutable state through vertex-state persisted on VertexDisk
 vertex-inspect reads the generation graph and asks the kernel for a process/capability graph through inspect-only authority
+logd reads immutable config and secret caps, echo proves those objects stay inaccessible without explicit grants, and runtime inspection redacts secret values
 the native boot manager records selected, previous, known-good, last-failed, and boot-attempt state for generation fallback
 native update transactions verify manifest/store closure before committing selected_generation
 console-driver owns COM1 in the M41 generation, and console-shell prints runtime-inspect backed commands through directed console request/reply IPC
@@ -177,8 +180,8 @@ KrustBoot Manifest v1 records: 9
 KrustBoot boot modules: 13
 KrustBoot processes: 13
 KrustBoot endpoints: 12
-KrustBoot grants: 48
-KrustBoot store objects: 13
+KrustBoot grants: 49
+KrustBoot store objects: 14
 KrustBoot state volumes: 0
 KrustBoot network ports: 1
 KrustBoot io port ranges: 3
@@ -202,7 +205,7 @@ Capability table demo ok
 Kernel heap arena allocation ok
 Typed endpoint arena created 32 endpoints
 Typed process arena created 32 processes
-Process table entries: 13
+Process table entries: 1
 Endpoint table entries: 12
 endpoint[0] id=1 name=serial-log
 endpoint[1] id=2 name=readiness
@@ -217,15 +220,9 @@ endpoint[9] id=10 name=model-reader-store-reply
 endpoint[10] id=11 name=state-counter-request
 endpoint[11] id=12 name=state-reader-state-reply
 process[0] id=1 name=vertex-init state=running
-process[1] id=2 name=serial-driver state=declared
-process[2] id=3 name=logd state=declared
-process[3] id=4 name=netstack state=declared
-process[4] id=5 name=block-driver state=declared
-process[5] id=6 name=vertex-store state=declared
-process[6] id=7 name=vertex-state state=declared
 proc=vertex-init cap[0] boot-module=krustboot-manifest rights=read
 proc=vertex-init cap[1] endpoint=serial-log rights=send
-proc=vertex-init cap[2] process-control=process-control rights=control|allocate|delegate|revoke|inspect
+proc=vertex-init cap[2] process-control=process-control rights=control|allocate|delegate|revoke|inspect|create|start|kill|wait
 proc=vertex-init cap[3] endpoint=readiness rights=receive
 proc=vertex-init cap[4] endpoint=log-sink rights=send
 proc=serial-driver cap[3] io-port=cap:io.com1 rights=read|write
@@ -250,9 +247,9 @@ vertex-init manifest generation: gen:hello-0001
 vertex-init boot modules: 13
 vertex-init processes: 13
 vertex-init endpoints: 12
-vertex-init grants: 48
+vertex-init grants: 49
 vertex-init network ports: 1
-vertex-init store objects: 13
+vertex-init store objects: 14
 vertex-init state volumes: 0
 vertex-init io ports: 3
 vertex-init mmio regions: 0
@@ -288,7 +285,7 @@ Krust process start accepted: proc=vertex-init target=netstack
 vertex-init derives endpoint cap for echo from endpoint[2] rights=send
 Capability derive accepted: proc=vertex-init parent=4 new=31 rights=send
 Capability inspect: proc=vertex-init
-Capability transfer accepted: proc=vertex-init target=echo slot=0 rights=send
+Capability transfer accepted: proc=vertex-init target=echo
 vertex-init starting service: echo
 Krust process start accepted: proc=vertex-init target=echo
 vertex-init starting service: model-reader
@@ -306,7 +303,7 @@ logd received: hello from echo
 negative test: echo receive rejected: bad capability
 echo read rejected: bad capability
 echo send after drop rejected
-negative test: logd process-start rejected: bad capability
+negative test: logd process-create rejected: bad capability
 virtio-blk PCI device discovered
 DMA map accepted: proc=block-driver dma-region=cap:dma.virtio-blk0
 virtio-blk driver ready
@@ -360,16 +357,17 @@ make smoke
 ```
 
 The smoke test boots QEMU headlessly, captures serial output to
-`build/serial.log`, and passes when it sees the M14-M47 directed IPC, console,
-virtio-block, VertexDisk, verified store, update, and store-executable
-transcript. The same check is available from the repository
+`build/serial.log`, and passes when it sees the M14-M54 directed IPC, console,
+virtio-block, VertexDisk, verified store, update, store-executable, dynamic
+process, config, secret, package-boundary, and appliance transcript. The same
+check is available from the repository
 root:
 
 ```sh
 scripts/krust-smoke.sh
 ```
 
-## M26-M47 Substrate Gate
+## M26-M54 Substrate Gate
 
 Run the clean-clone gate from the repository root:
 
@@ -384,17 +382,19 @@ make release-gate
 ```
 
 The gate checks script executability and shell syntax, verifies Makefile recipe
-parsing, checks Rust formatting and Markdown whitespace, confirms the M14-M47
+parsing, checks Rust formatting and Markdown whitespace, confirms the M14-M54
 documentation anchors, checks the pinned M39 toolchain and Cargo lockfiles, runs
 `cargo metadata --locked --offline` and `cargo build --locked --offline`,
 validates `examples/hello-generation.vertex.json`, runs `make doctor`, rebuilds
-from `make clean`, runs `make smoke`, and then runs the M14-M47 QEMU cases:
+from `make clean`, runs `make smoke`, checks package/link/build import commands,
+and then runs the M14-M54 QEMU cases:
 `m14`,
 `manifest-cycle`, `bad-cap`, `readiness-timeout`, `rollback`, `store-state-services`,
 `timer`, `preemption`, `user-fault`, `restart`, `manifest-v1`, `cap-lifecycle`,
 `typed-arenas`, `quotas`, `m32`, `m33`, `m34`, `m35`, `m36`, `m37`, `m38`, `m40`,
 `m41`, `m42`, `m42-driver-fault`, `m43`, `m43-bad-superblock`, `m44`, `m45`,
-`m46`, `m47`, and the
+`m46`, `m47`, `m47-corrupt-executable`, `m48`, `m49`,
+`m49-config-corrupt`, `m50`, `m54`, and the
 malformed-manifest cases. If the offline build
 fails, the gate prints the Cargo cache or vendoring prerequisite explicitly.
 
@@ -408,7 +408,8 @@ KrustBoot Manifest v1 records: 9
 KrustBoot boot modules: 13
 KrustBoot processes: 13
 KrustBoot endpoints: 12
-KrustBoot grants: 48
+KrustBoot grants: 49
+KrustBoot store objects: 14
 KrustBoot network ports: 1
 KrustBoot io port ranges: 3
 KrustBoot mmio regions: 0
@@ -433,24 +434,22 @@ Kernel heap arena allocation ok
 Typed endpoint arena created 32 endpoints
 Typed process arena created 32 processes
 IDT initialized: #UD #GP #PF IRQ0
-Process table entries: 13
+Process table entries: 1
 Endpoint table entries: 12
 endpoint[0] id=1 name=serial-log
 endpoint[1] id=2 name=readiness
 endpoint[2] id=3 name=log-sink
 process[0] id=1 name=vertex-init state=running
-process[1] id=2 name=serial-driver state=declared
-process[2] id=3 name=logd state=declared
-process[3] id=4 name=netstack state=declared
-process[...] name=block-driver state=declared
-process[...] name=vertex-store state=declared
-process[...] name=vertex-state state=declared
 proc=vertex-init cap[0] boot-module=krustboot-manifest rights=read
 proc=vertex-init cap[1] endpoint=serial-log rights=send
-proc=vertex-init cap[2] process-control=process-control rights=control|allocate|delegate|revoke|inspect
+proc=vertex-init cap[2] process-control=process-control rights=control|allocate|delegate|revoke|inspect|create|start|kill|wait
 proc=vertex-init cap[3] endpoint=readiness rights=receive
 proc=vertex-init cap[4] endpoint=log-sink rights=send
+Krust process create accepted: proc=vertex-init target=logd
+vertex-init dynamically created service: logd
 proc=logd cap[0] endpoint=log-sink rights=receive
+proc=logd cap[4] config=config:logd rights=read
+proc=logd cap[5] secret=secret:logd-token value=<redacted> rights=read|inspect-metadata
 proc=serial-driver cap[3] io-port=cap:io.com1 rights=read|write
 proc=block-driver cap[6] io-port=cap:io.pci-config rights=read|write
 proc=block-driver cap[7] interrupt-line=cap:irq.virtio-blk0 rights=listen
@@ -496,7 +495,7 @@ unauthorized service cannot access PCI I/O, IRQ, or DMA capabilities
 logd received: hello from echo
 negative test: echo receive rejected: bad capability
 echo send after drop rejected
-negative test: logd process-start rejected: bad capability
+negative test: logd process-create rejected: bad capability
 store-service requests block read
 virtio-blk PCI device discovered
 DMA map accepted: proc=block-driver dma-region=cap:dma.virtio-blk0

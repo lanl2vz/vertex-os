@@ -30,6 +30,8 @@ const HELLO_OBJECT: &[u8] = b"hello from Krust store\n";
 const HELLO_OBJECT_ID: &str = "store:hello-text";
 const BLOCK_DRIVER_FAULT_OBJECT: &[u8] = b"krust-block-driver-fault\n";
 const LOGD_OBJECT_ID: &str = "store:logd-demo";
+const LOGD_CONFIG_OBJECT_ID: &str = "config:logd";
+const LOGD_CONFIG_BYTES: &[u8] = b"{\"level\":\"info\",\"sink\":\"serial\"}\n";
 const STATE_VOLUME_ID: &str = "state:counter";
 
 pub fn create_image(manifests: &[GenerationManifest]) -> Result<Vec<u8>, String> {
@@ -58,6 +60,7 @@ pub fn corrupt(bytes: &[u8], mode: &str) -> Result<Vec<u8>, String> {
         }
         "store-object" => corrupt_store_payload(&mut out, HELLO_OBJECT_ID)?,
         "store-executable" => corrupt_store_payload(&mut out, LOGD_OBJECT_ID)?,
+        "config-object" => corrupt_store_payload(&mut out, LOGD_CONFIG_OBJECT_ID)?,
         "missing-store-object" => {
             let index = store_index_mut(&mut out)?;
             write_u16(index, 18, 0);
@@ -65,7 +68,7 @@ pub fn corrupt(bytes: &[u8], mode: &str) -> Result<Vec<u8>, String> {
         }
         other => {
             return Err(format!(
-                "unknown VertexDisk corruption mode {other}; expected bad-superblock, store-object, store-executable, or missing-store-object"
+                "unknown VertexDisk corruption mode {other}; expected bad-superblock, store-object, store-executable, config-object, or missing-store-object"
             ));
         }
     }
@@ -107,6 +110,9 @@ fn store_payloads(manifests: &[GenerationManifest]) -> Result<Vec<StorePayload>,
         for executable in &manifest.executables {
             required.insert(executable.store_object.clone());
         }
+        if manifest.service("svc:logd").is_some() {
+            required.insert(LOGD_CONFIG_OBJECT_ID.to_owned());
+        }
         for capability in &manifest.capabilities {
             if capability.kind == "store-object" {
                 required.insert(capability.provider.clone());
@@ -130,6 +136,14 @@ fn store_payloads(manifests: &[GenerationManifest]) -> Result<Vec<StorePayload>,
 }
 
 fn store_payload(manifests: &[GenerationManifest], id: &str) -> Result<StorePayload, String> {
+    if id == LOGD_CONFIG_OBJECT_ID {
+        return Ok(StorePayload {
+            id: LOGD_CONFIG_OBJECT_ID.to_owned(),
+            bytes: LOGD_CONFIG_BYTES.to_vec(),
+            sector: 0,
+        });
+    }
+
     let store = manifests
         .iter()
         .find_map(|manifest| manifest.store_object(id))

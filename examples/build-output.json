@@ -1,0 +1,22 @@
+{
+  "schema": "vertex.build-output.v0",
+  "generationManifest": "examples/hello-generation.vertex.json",
+  "kernel": null,
+  "artifacts": [
+    {
+      "id": "kernel:krust",
+      "kind": "kernel-image",
+      "hashAlgorithm": "blake3",
+      "hash": "declared-by-demo-build-output"
+    }
+  ],
+  "packages": [
+    "examples/packages/serial-driver.vertexpkg",
+    "examples/packages/logd.vertexpkg",
+    "examples/packages/echo.vertexpkg"
+  ],
+  "provenance": {
+    "builder": "external-reproducible-demo",
+    "adapter": "none"
+  }
+}

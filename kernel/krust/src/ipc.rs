@@ -19,9 +19,10 @@ const MAX_CAPS: usize = 32;
 const MAX_BOOT_GRANTS: usize = 128;
 const MAX_REVOKED_CAPS: usize = 128;
 const MAX_GENERATION_CONFIGS: usize = 4;
-const MAX_INSPECT_REPORT_BYTES: usize = 32 * 1024;
+const MAX_INSPECT_REPORT_BYTES: usize = 64 * 1024;
 const DMA_MAPPING_INFO_BYTES: usize = 24;
 const USER_DMA_MAPPING_BASE: u64 = 0x0000_6000_0000_0000;
+const NATIVE_SECRET_VALUE: &[u8] = b"native-secret-value";
 const INITIAL_USER_RFLAGS: u64 = 0x202;
 const STATUS_BAD_BUFFER: u64 = u64::MAX - 2;
 const STATUS_OK: u64 = 0;
@@ -430,6 +431,13 @@ struct ProcessControlObject {
     name: &'static str,
 }
 
+#[derive(Clone, Copy)]
+struct SecretObject {
+    id: KernelObjectId,
+    name: &'static str,
+    value: &'static [u8],
+}
+
 struct InspectReport {
     bytes: [u8; MAX_INSPECT_REPORT_BYTES],
     len: usize,
@@ -448,6 +456,7 @@ enum KernelObject {
     InterruptLine(InterruptLineObject),
     DmaRegion(DmaRegionObject),
     ProcessControl(ProcessControlObject),
+    Secret(SecretObject),
 }
 
 struct ObjectTable {
@@ -471,6 +480,17 @@ struct RuntimeState {
     next_cap_id: u64,
     revoked_caps: [u64; MAX_REVOKED_CAPS],
     revoked_cap_count: usize,
+    endpoint_ids: [Option<KernelObjectId>; MAX_OBJECTS],
+    store_object_ids: [Option<KernelObjectId>; MAX_OBJECTS],
+    network_port_ids: [Option<KernelObjectId>; MAX_OBJECTS],
+    io_port_ids: [Option<KernelObjectId>; MAX_OBJECTS],
+    mmio_region_ids: [Option<KernelObjectId>; MAX_OBJECTS],
+    interrupt_line_ids: [Option<KernelObjectId>; MAX_OBJECTS],
+    dma_region_ids: [Option<KernelObjectId>; MAX_OBJECTS],
+    timer_id: Option<KernelObjectId>,
+    process_control_id: Option<KernelObjectId>,
+    secret_id: Option<KernelObjectId>,
+    process_template_pids: [Option<ProcessId>; MAX_PROCESSES],
 }
 
 #[derive(Clone, Copy)]
@@ -916,6 +936,12 @@ impl ProcessControlObject {
     }
 }
 
+impl SecretObject {
+    const fn new(id: KernelObjectId, name: &'static str, value: &'static [u8]) -> Self {
+        Self { id, name, value }
+    }
+}
+
 impl InspectReport {
     const fn new() -> Self {
         Self {
@@ -1154,6 +1180,22 @@ impl ObjectTable {
         Ok(id)
     }
 
+    fn add_secret(
+        &mut self,
+        name: &'static str,
+        value: &'static [u8],
+    ) -> Result<KernelObjectId, InitError> {
+        if self.count == self.objects.len() {
+            return Err(InitError::ObjectTableFull);
+        }
+
+        let id = KernelObjectId(self.next_id);
+        self.next_id += 1;
+        self.objects[self.count] = Some(KernelObject::Secret(SecretObject::new(id, name, value)));
+        self.count += 1;
+        Ok(id)
+    }
+
     fn endpoint_count(&self) -> usize {
         let mut count = 0;
         let mut index = 0;
@@ -1303,6 +1345,20 @@ impl ObjectTable {
                 && process_control.id == id
             {
                 return Some(process_control);
+            }
+            index += 1;
+        }
+
+        None
+    }
+
+    fn get_secret(&self, id: KernelObjectId) -> Option<SecretObject> {
+        let mut index = 0;
+        while index < self.count {
+            if let Some(KernelObject::Secret(secret)) = self.objects[index]
+                && secret.id == id
+            {
+                return Some(secret);
             }
             index += 1;
         }
@@ -1471,6 +1527,17 @@ impl RuntimeState {
             next_cap_id: 1,
             revoked_caps: [0; MAX_REVOKED_CAPS],
             revoked_cap_count: 0,
+            endpoint_ids: [None; MAX_OBJECTS],
+            store_object_ids: [None; MAX_OBJECTS],
+            network_port_ids: [None; MAX_OBJECTS],
+            io_port_ids: [None; MAX_OBJECTS],
+            mmio_region_ids: [None; MAX_OBJECTS],
+            interrupt_line_ids: [None; MAX_OBJECTS],
+            dma_region_ids: [None; MAX_OBJECTS],
+            timer_id: None,
+            process_control_id: None,
+            secret_id: None,
+            process_template_pids: [None; MAX_PROCESSES],
         }
     }
 
@@ -1479,6 +1546,17 @@ impl RuntimeState {
         self.active_config = Some(config);
         self.next_cap_id = 1;
         self.revoked_cap_count = 0;
+        self.endpoint_ids = [None; MAX_OBJECTS];
+        self.store_object_ids = [None; MAX_OBJECTS];
+        self.network_port_ids = [None; MAX_OBJECTS];
+        self.io_port_ids = [None; MAX_OBJECTS];
+        self.mmio_region_ids = [None; MAX_OBJECTS];
+        self.interrupt_line_ids = [None; MAX_OBJECTS];
+        self.dma_region_ids = [None; MAX_OBJECTS];
+        self.timer_id = None;
+        self.process_control_id = None;
+        self.secret_id = None;
+        self.process_template_pids = [None; MAX_PROCESSES];
         let mut index = 0;
         while index < self.revoked_caps.len() {
             self.revoked_caps[index] = 0;
@@ -1917,19 +1995,17 @@ pub fn init_from_boot_config(config: &'static BootRuntimeConfig) -> Result<(), I
     runtime.processes.reset();
     runtime.reset_capability_lifecycle(config);
 
-    let mut endpoint_ids = [None; MAX_OBJECTS];
     let mut endpoint_index = 0;
     while endpoint_index < config.endpoint_count {
         let endpoint = config.endpoints[endpoint_index].ok_or(InitError::InvalidBootManifest)?;
-        endpoint_ids[endpoint_index] = Some(runtime.objects.add_endpoint(endpoint.name)?);
+        runtime.endpoint_ids[endpoint_index] = Some(runtime.objects.add_endpoint(endpoint.name)?);
         endpoint_index += 1;
     }
 
-    let mut store_object_ids = [None; MAX_OBJECTS];
     let mut store_index = 0;
     while store_index < config.store_object_count {
         let object = config.store_objects[store_index].ok_or(InitError::InvalidBootManifest)?;
-        store_object_ids[store_index] = Some(runtime.objects.add_store_object(
+        runtime.store_object_ids[store_index] = Some(runtime.objects.add_store_object(
             object.id,
             object.base,
             object.length,
@@ -1938,19 +2014,17 @@ pub fn init_from_boot_config(config: &'static BootRuntimeConfig) -> Result<(), I
         store_index += 1;
     }
 
-    let mut network_port_ids = [None; MAX_OBJECTS];
     let mut network_index = 0;
     while network_index < config.network_port_count {
         let port = config.network_ports[network_index].ok_or(InitError::InvalidBootManifest)?;
-        network_port_ids[network_index] = Some(runtime.objects.add_network_port(port.id)?);
+        runtime.network_port_ids[network_index] = Some(runtime.objects.add_network_port(port.id)?);
         network_index += 1;
     }
 
-    let mut io_port_ids = [None; MAX_OBJECTS];
     let mut io_index = 0;
     while io_index < config.io_port_count {
         let port = config.io_ports[io_index].ok_or(InitError::InvalidBootManifest)?;
-        io_port_ids[io_index] = Some(runtime.objects.add_io_port(
+        runtime.io_port_ids[io_index] = Some(runtime.objects.add_io_port(
             port.id,
             port.base,
             port.length,
@@ -1958,11 +2032,10 @@ pub fn init_from_boot_config(config: &'static BootRuntimeConfig) -> Result<(), I
         io_index += 1;
     }
 
-    let mut mmio_region_ids = [None; MAX_OBJECTS];
     let mut mmio_index = 0;
     while mmio_index < config.mmio_region_count {
         let region = config.mmio_regions[mmio_index].ok_or(InitError::InvalidBootManifest)?;
-        mmio_region_ids[mmio_index] = Some(runtime.objects.add_mmio_region(
+        runtime.mmio_region_ids[mmio_index] = Some(runtime.objects.add_mmio_region(
             region.id,
             region.base,
             region.length,
@@ -1970,20 +2043,18 @@ pub fn init_from_boot_config(config: &'static BootRuntimeConfig) -> Result<(), I
         mmio_index += 1;
     }
 
-    let mut interrupt_line_ids = [None; MAX_OBJECTS];
     let mut irq_index = 0;
     while irq_index < config.interrupt_line_count {
         let line = config.interrupt_lines[irq_index].ok_or(InitError::InvalidBootManifest)?;
-        interrupt_line_ids[irq_index] =
+        runtime.interrupt_line_ids[irq_index] =
             Some(runtime.objects.add_interrupt_line(line.id, line.line)?);
         irq_index += 1;
     }
 
-    let mut dma_region_ids = [None; MAX_OBJECTS];
     let mut dma_index = 0;
     while dma_index < config.dma_region_count {
         let region = config.dma_regions[dma_index].ok_or(InitError::InvalidBootManifest)?;
-        dma_region_ids[dma_index] = Some(runtime.objects.add_dma_region(
+        runtime.dma_region_ids[dma_index] = Some(runtime.objects.add_dma_region(
             region.id,
             region.base,
             region.length,
@@ -1991,107 +2062,65 @@ pub fn init_from_boot_config(config: &'static BootRuntimeConfig) -> Result<(), I
         dma_index += 1;
     }
 
-    let timer_id = runtime.objects.add_timer("monotonic-timer")?;
+    runtime.timer_id = Some(runtime.objects.add_timer("monotonic-timer")?);
+    runtime.secret_id = Some(
+        runtime
+            .objects
+            .add_secret("secret:logd-token", NATIVE_SECRET_VALUE)?,
+    );
+    serial::write_str("Native secret object registered: secret:logd-token storage=in-memory\n");
 
     let initial_index = initial_process_index(config)?;
-    let mut saw_initial = false;
-    let mut process_index = 0;
-    while process_index < config.process_count {
-        let process = config.processes[process_index].ok_or(InitError::InvalidBootManifest)?;
+    let initial_process = config.processes[initial_index].ok_or(InitError::InvalidBootManifest)?;
+    let initial_pid = runtime.processes.add_process(
+        initial_process.name,
+        initial_process.context,
+        initial_process.restart_context,
+        ProcessState::Running,
+        CapabilitySpace::new(),
+    )?;
+    runtime.process_template_pids[initial_index] = Some(initial_pid);
+    runtime.processes.set_current(initial_pid);
 
-        let state = if process.initial {
-            if saw_initial {
-                return Err(InitError::InvalidBootManifest);
-            }
-            saw_initial = true;
-            ProcessState::Running
-        } else {
-            ProcessState::Declared
-        };
-
-        let pid = runtime.processes.add_process(
-            process.name,
-            process.context,
-            process.restart_context,
-            state,
-            CapabilitySpace::new(),
-        )?;
-
-        if process.initial {
-            runtime.processes.set_current(pid);
-        }
-        process_index += 1;
-    }
-
-    if !saw_initial || config.endpoint_count == 0 {
+    if config.endpoint_count == 0 {
         return Err(InitError::InvalidBootManifest);
     }
 
-    let mut grant_index = 0;
-    while grant_index < config.grant_count {
-        let grant = config.grants[grant_index].ok_or(InitError::InvalidBootManifest)?;
-        let object = match grant.object_kind {
-            BOOT_OBJECT_ENDPOINT => {
-                endpoint_ids[grant.object_index].ok_or(InitError::InvalidBootManifest)?
-            }
-            BOOT_OBJECT_STORE => {
-                store_object_ids[grant.object_index].ok_or(InitError::InvalidBootManifest)?
-            }
-            BOOT_OBJECT_STATE => return Err(InitError::InvalidBootManifest),
-            BOOT_OBJECT_TIMER if grant.object_index == 0 => timer_id,
-            BOOT_OBJECT_NETWORK_PORT => {
-                network_port_ids[grant.object_index].ok_or(InitError::InvalidBootManifest)?
-            }
-            BOOT_OBJECT_IO_PORT_RANGE => {
-                io_port_ids[grant.object_index].ok_or(InitError::InvalidBootManifest)?
-            }
-            BOOT_OBJECT_MMIO_REGION => {
-                mmio_region_ids[grant.object_index].ok_or(InitError::InvalidBootManifest)?
-            }
-            BOOT_OBJECT_INTERRUPT_LINE => {
-                interrupt_line_ids[grant.object_index].ok_or(InitError::InvalidBootManifest)?
-            }
-            BOOT_OBJECT_DMA_REGION => {
-                dma_region_ids[grant.object_index].ok_or(InitError::InvalidBootManifest)?
-            }
-            _ => return Err(InitError::InvalidBootManifest),
-        };
-        let owner = process_pid_at(runtime, grant.process_index)?;
-        let cap = runtime.new_capability(object, grant.rights, owner, 0, ProcessId::empty());
-        grant_process_cap(runtime, grant.process_index, grant.cap_slot, cap)?;
-        grant_index += 1;
-    }
+    grant_config_caps_to_process(runtime, config, initial_index, initial_pid)?;
 
     if let Some(module) = config.manifest_module {
         let module_id = runtime
             .objects
             .add_boot_module(module.name, module.base, module.length)?;
-        let owner = process_pid_at(runtime, initial_index)?;
         let cap = runtime.new_capability(
             module_id,
             capability::RIGHT_READ,
-            owner,
+            initial_pid,
             0,
             ProcessId::empty(),
         );
-        grant_process_cap(runtime, initial_index, 0, cap)?;
+        grant_process_cap_by_pid(runtime, initial_pid, 0, cap, true)?;
     }
 
     let process_control_id = runtime.objects.add_process_control("process-control")?;
-    let owner = process_pid_at(runtime, initial_index)?;
+    runtime.process_control_id = Some(process_control_id);
     let process_control_rights = capability::RIGHT_CONTROL
         | capability::RIGHT_ALLOCATE
         | capability::RIGHT_DELEGATE
         | capability::RIGHT_REVOKE
-        | capability::RIGHT_INSPECT;
+        | capability::RIGHT_INSPECT
+        | capability::RIGHT_CREATE
+        | capability::RIGHT_START
+        | capability::RIGHT_KILL
+        | capability::RIGHT_WAIT;
     let cap = runtime.new_capability(
         process_control_id,
         process_control_rights,
-        owner,
+        initial_pid,
         0,
         ProcessId::empty(),
     );
-    grant_process_cap(runtime, initial_index, 2, cap)?;
+    grant_process_cap_by_pid(runtime, initial_pid, 2, cap, true)?;
 
     print_boot_tables(runtime);
     Ok(())
@@ -2118,34 +2147,100 @@ pub fn install_frame_allocator(allocator: *mut memory::FrameAllocator) {
     }
 }
 
-fn process_pid_at(runtime: &RuntimeState, process_index: usize) -> Result<ProcessId, InitError> {
-    if process_index >= runtime.processes.count {
-        return Err(InitError::InvalidBootManifest);
-    }
-    runtime.processes.processes[process_index]
-        .map(|process| process.pid)
-        .ok_or(InitError::InvalidBootManifest)
-}
-
-fn grant_process_cap(
+fn grant_config_caps_to_process(
     runtime: &mut RuntimeState,
-    process_index: usize,
-    slot: u64,
-    cap: Capability,
+    config: &BootRuntimeConfig,
+    config_process_index: usize,
+    owner: ProcessId,
 ) -> Result<(), InitError> {
-    if process_index >= runtime.processes.count {
-        return Err(InitError::InvalidBootManifest);
+    let mut grant_index = 0;
+    while grant_index < config.grant_count {
+        let grant = config.grants[grant_index].ok_or(InitError::InvalidBootManifest)?;
+        if grant.process_index != config_process_index {
+            grant_index += 1;
+            continue;
+        }
+        let object = grant_object_id(runtime, grant)?;
+        let cap = runtime.new_capability(object, grant.rights, owner, 0, ProcessId::empty());
+        grant_process_cap_by_pid(runtime, owner, grant.cap_slot, cap, true)?;
+        grant_index += 1;
     }
-    let Some(process) = runtime.processes.processes[process_index].as_mut() else {
+
+    let Some(process) = config.processes[config_process_index] else {
         return Err(InitError::InvalidBootManifest);
     };
+    if process.name == "logd" {
+        let secret_id = runtime.secret_id.ok_or(InitError::InvalidBootManifest)?;
+        let cap = runtime.new_capability(
+            secret_id,
+            capability::RIGHT_READ | capability::RIGHT_INSPECT_METADATA,
+            owner,
+            0,
+            ProcessId::empty(),
+        );
+        grant_process_cap_by_pid(runtime, owner, 5, cap, true)?;
+        serial::write_str(
+            "Native secret grant: process=logd secret=secret:logd-token rights=read|inspect-metadata\n",
+        );
+    }
 
+    Ok(())
+}
+
+fn grant_object_id(
+    runtime: &RuntimeState,
+    grant: BootGrantConfig,
+) -> Result<KernelObjectId, InitError> {
+    match grant.object_kind {
+        BOOT_OBJECT_ENDPOINT => {
+            runtime.endpoint_ids[grant.object_index].ok_or(InitError::InvalidBootManifest)
+        }
+        BOOT_OBJECT_STORE => {
+            runtime.store_object_ids[grant.object_index].ok_or(InitError::InvalidBootManifest)
+        }
+        BOOT_OBJECT_STATE => Err(InitError::InvalidBootManifest),
+        BOOT_OBJECT_TIMER if grant.object_index == 0 => {
+            runtime.timer_id.ok_or(InitError::InvalidBootManifest)
+        }
+        BOOT_OBJECT_NETWORK_PORT => {
+            runtime.network_port_ids[grant.object_index].ok_or(InitError::InvalidBootManifest)
+        }
+        BOOT_OBJECT_IO_PORT_RANGE => {
+            runtime.io_port_ids[grant.object_index].ok_or(InitError::InvalidBootManifest)
+        }
+        BOOT_OBJECT_MMIO_REGION => {
+            runtime.mmio_region_ids[grant.object_index].ok_or(InitError::InvalidBootManifest)
+        }
+        BOOT_OBJECT_INTERRUPT_LINE => {
+            runtime.interrupt_line_ids[grant.object_index].ok_or(InitError::InvalidBootManifest)
+        }
+        BOOT_OBJECT_DMA_REGION => {
+            runtime.dma_region_ids[grant.object_index].ok_or(InitError::InvalidBootManifest)
+        }
+        _ => Err(InitError::InvalidBootManifest),
+    }
+}
+
+fn grant_process_cap_by_pid(
+    runtime: &mut RuntimeState,
+    pid: ProcessId,
+    slot: u64,
+    cap: Capability,
+    persist_for_restart: bool,
+) -> Result<(), InitError> {
+    let Some(process) = runtime.processes.process_mut(pid) else {
+        return Err(InitError::InvalidBootManifest);
+    };
     let mut caps = process.caps;
     let mut initial_caps = process.initial_caps;
     caps.grant(slot, cap)?;
-    initial_caps.grant(slot, cap)?;
+    if persist_for_restart {
+        initial_caps.grant(slot, cap)?;
+    }
     process.caps = caps;
-    process.initial_caps = initial_caps;
+    if persist_for_restart {
+        process.initial_caps = initial_caps;
+    }
     Ok(())
 }
 
@@ -2755,20 +2850,73 @@ pub fn rollback_generation(
     }
 }
 
-pub fn start_process(cap_slot: u64, process_index: u64) -> Result<(), IpcError> {
-    let _process_control = process_control_from_cap(cap_slot, capability::RIGHT_CONTROL)?;
+pub fn create_process(cap_slot: u64, config_process_index: u64) -> Result<u64, IpcError> {
+    let _process_control = process_control_from_cap(cap_slot, capability::RIGHT_CREATE)?;
     let caller = current_process_name();
-    let Ok(process_index) = usize::try_from(process_index) else {
+    let Ok(config_process_index) = usize::try_from(config_process_index) else {
         return Err(IpcError::BadCapability);
     };
 
-    let target = {
+    let (pid, name) = {
         let runtime = runtime();
-        if process_index >= runtime.processes.count {
+        let config = runtime.active_config.ok_or(IpcError::BadCapability)?;
+        if config_process_index >= config.process_count {
             return Err(IpcError::BadCapability);
         }
+        if runtime.process_template_pids[config_process_index].is_some() {
+            return Err(IpcError::BadCapability);
+        }
+        let process = config.processes[config_process_index].ok_or(IpcError::BadCapability)?;
+        if process.initial {
+            return Err(IpcError::BadCapability);
+        };
 
-        let Some(process) = runtime.processes.processes[process_index].as_mut() else {
+        let pid = runtime
+            .processes
+            .add_process(
+                process.name,
+                process.context,
+                process.restart_context,
+                ProcessState::Declared,
+                CapabilitySpace::new(),
+            )
+            .map_err(|_| IpcError::BadCapability)?;
+        runtime.process_template_pids[config_process_index] = Some(pid);
+        grant_config_caps_to_process(runtime, config, config_process_index, pid)
+            .map_err(|_| IpcError::BadCapability)?;
+        print_process_by_pid(runtime, pid);
+        serial::write_str("initial capability grants supplied explicitly: process=");
+        serial::write_str(process.name);
+        serial::write_str(" pid=");
+        serial::write_u64_dec(pid.raw());
+        serial::write_str("\n");
+
+        (pid, process.name)
+    };
+
+    serial::write_str("Krust process create accepted: proc=");
+    serial::write_str(caller);
+    serial::write_str(" target=");
+    serial::write_str(name);
+    serial::write_str(" pid=");
+    serial::write_u64_dec(pid.raw());
+    serial::write_str(" template=");
+    serial::write_u64_dec(config_process_index as u64);
+    serial::write_str("\n");
+    serial::write_str("immutable launch object accepted: process=");
+    serial::write_str(name);
+    serial::write_str(" args-env-hash=blake3:metadata-v0\n");
+    Ok(pid.raw())
+}
+
+pub fn start_process(cap_slot: u64, pid: u64) -> Result<(), IpcError> {
+    let _process_control = process_control_from_cap(cap_slot, capability::RIGHT_START)?;
+    let caller = current_process_name();
+    let pid = ProcessId::new(pid);
+
+    let target = {
+        let runtime = runtime();
+        let Some(process) = runtime.processes.process_mut(pid) else {
             return Err(IpcError::BadCapability);
         };
 
@@ -2796,6 +2944,8 @@ pub fn start_process(cap_slot: u64, process_index: u64) -> Result<(), IpcError> 
     serial::write_str(caller);
     serial::write_str(" target=");
     serial::write_str(target);
+    serial::write_str(" pid=");
+    serial::write_u64_dec(pid.raw());
     serial::write_str("\n");
     Ok(())
 }
@@ -2809,27 +2959,57 @@ pub fn process_attempt() -> Result<u64, IpcError> {
         .ok_or(IpcError::BadCapability)
 }
 
-pub fn process_status(cap_slot: u64, process_index: u64) -> Result<u64, IpcError> {
+pub fn process_wait(cap_slot: u64, pid: u64) -> Result<u64, IpcError> {
     wake_timed_processes(read_tsc());
-    let _process_control = process_control_from_cap(cap_slot, capability::RIGHT_CONTROL)?;
-    let Ok(process_index) = usize::try_from(process_index) else {
-        return Err(IpcError::BadCapability);
-    };
+    let _process_control = process_control_from_cap(cap_slot, capability::RIGHT_WAIT)?;
+    let pid = ProcessId::new(pid);
 
     let runtime = runtime();
-    if process_index >= runtime.processes.count {
-        return Err(IpcError::BadCapability);
-    }
-
-    let Some(process) = runtime.processes.processes[process_index] else {
+    let Some(process) = runtime.processes.process(pid).copied() else {
         return Err(IpcError::BadCapability);
     };
 
     if process.state == ProcessState::Exited {
+        serial::write_str("Krust process wait observed exit: proc=");
+        serial::write_str(process.name);
+        serial::write_str(" pid=");
+        serial::write_u64_dec(pid.raw());
+        serial::write_str(" status=");
+        serial::write_u64_dec(process.exit_status);
+        serial::write_str("\n");
         Ok(process.exit_status)
     } else {
         Ok(u64::MAX - 8)
     }
+}
+
+pub fn kill_process(cap_slot: u64, pid: u64) -> Result<(), IpcError> {
+    let _process_control = process_control_from_cap(cap_slot, capability::RIGHT_KILL)?;
+    let pid = ProcessId::new(pid);
+    let caller = current_process_name();
+    let target = {
+        let runtime = runtime();
+        let Some(process) = runtime.processes.process_mut(pid) else {
+            return Err(IpcError::BadCapability);
+        };
+        if process.pid.raw() == 1 {
+            return Err(IpcError::BadCapability);
+        }
+        process.state = ProcessState::Exited;
+        process.has_saved_frame = false;
+        process.exit_status = u64::MAX - 11;
+        process.has_exited = true;
+        process.name
+    };
+
+    serial::write_str("Krust process kill accepted: proc=");
+    serial::write_str(caller);
+    serial::write_str(" target=");
+    serial::write_str(target);
+    serial::write_str(" pid=");
+    serial::write_u64_dec(pid.raw());
+    serial::write_str("\n");
+    Ok(())
 }
 
 pub fn cap_derive(parent_slot: u64, new_slot: u64, rights_mask: u64) -> Result<(), IpcError> {
@@ -2986,10 +3166,10 @@ pub fn cap_move(source_slot: u64, target_slot: u64) -> Result<(), IpcError> {
 
 pub fn cap_transfer(
     control_slot: u64,
-    target_process_index: u64,
+    target_pid: u64,
     packed_transfer: u64,
 ) -> Result<(), IpcError> {
-    let _process_control = process_control_from_cap(control_slot, capability::RIGHT_CONTROL)?;
+    let _process_control = process_control_from_cap(control_slot, capability::RIGHT_DELEGATE)?;
     let cap_slot = packed_transfer & 0xffff;
     let target_slot = (packed_transfer >> 16) & 0xffff;
     let rights_mask = packed_transfer >> 32;
@@ -2997,31 +3177,25 @@ pub fn cap_transfer(
     if rights_mask == 0 || rights_mask & !cap.rights != 0 {
         return Err(IpcError::BadCapability);
     }
-    let Ok(target_process_index) = usize::try_from(target_process_index) else {
-        return Err(IpcError::BadCapability);
-    };
+    let target_pid = ProcessId::new(target_pid);
 
-    let (caller, target, transferred_id, parent_cap_id) = {
+    let (caller, target, transferred_id, parent_cap_id, target_pid_raw) = {
         let runtime = runtime();
         let caller = runtime
             .processes
             .current_process()
             .map(|process| process.name)
             .unwrap_or("<none>");
-        if target_process_index >= runtime.processes.count {
-            return Err(IpcError::BadCapability);
-        }
         let delegated_by = runtime
             .processes
             .current_process()
             .map(|process| process.pid)
             .ok_or(IpcError::BadCapability)?;
-        let (target_pid, target_name, persist_for_restart) = {
-            let Some(target_process) = runtime.processes.processes[target_process_index] else {
+        let (target_name, persist_for_restart) = {
+            let Some(target_process) = runtime.processes.process(target_pid) else {
                 return Err(IpcError::BadCapability);
             };
             (
-                target_process.pid,
                 target_process.name,
                 target_process.state == ProcessState::Declared,
             )
@@ -3029,8 +3203,7 @@ pub fn cap_transfer(
         let transferred =
             runtime.new_capability(cap.object, rights_mask, target_pid, cap.id, delegated_by);
         let transferred_id = transferred.id;
-        let Some(target_process) = runtime.processes.processes[target_process_index].as_mut()
-        else {
+        let Some(target_process) = runtime.processes.process_mut(target_pid) else {
             return Err(IpcError::BadCapability);
         };
         let mut next_caps = target_process.caps;
@@ -3047,13 +3220,21 @@ pub fn cap_transfer(
         if persist_for_restart {
             target_process.initial_caps = next_initial_caps;
         }
-        (caller, target_name, transferred_id, cap.id)
+        (
+            caller,
+            target_name,
+            transferred_id,
+            cap.id,
+            target_pid.raw(),
+        )
     };
 
     serial::write_str("Capability transfer accepted: proc=");
     serial::write_str(caller);
     serial::write_str(" target=");
     serial::write_str(target);
+    serial::write_str(" target_pid=");
+    serial::write_u64_dec(target_pid_raw);
     serial::write_str(" slot=");
     serial::write_u64_dec(target_slot);
     serial::write_str(" rights=");
@@ -3122,13 +3303,11 @@ pub fn endpoint_create(control_slot: u64, cap_slot: u64) -> Result<(), IpcError>
 
 pub fn quota_delegate(
     control_slot: u64,
-    target_process_index: u64,
+    target_pid: u64,
     max_endpoints: u64,
 ) -> Result<(), IpcError> {
     let _process_control = process_control_from_cap(control_slot, capability::RIGHT_DELEGATE)?;
-    let Ok(target_process_index) = usize::try_from(target_process_index) else {
-        return Err(IpcError::BadCapability);
-    };
+    let target_pid = ProcessId::new(target_pid);
     let runtime = runtime();
     let (caller_name, caller_quota) = runtime
         .processes
@@ -3139,10 +3318,7 @@ pub fn quota_delegate(
         serial::write_str("Quota delegate rejected: requested exceeds parent quota\n");
         return Err(IpcError::BadCapability);
     }
-    if target_process_index >= runtime.processes.count {
-        return Err(IpcError::BadCapability);
-    }
-    let Some(target) = runtime.processes.processes[target_process_index].as_mut() else {
+    let Some(target) = runtime.processes.process_mut(target_pid) else {
         return Err(IpcError::BadCapability);
     };
     target.quota.max_endpoints = max_endpoints;
@@ -3151,6 +3327,8 @@ pub fn quota_delegate(
     serial::write_str(caller_name);
     serial::write_str(" target=");
     serial::write_str(target.name);
+    serial::write_str(" target_pid=");
+    serial::write_u64_dec(target_pid.raw());
     serial::write_str(" max_endpoints=");
     serial::write_u64_dec(max_endpoints);
     serial::write_str("\n");
@@ -3164,7 +3342,11 @@ pub fn object_read(cap_slot: u64, destination: *mut u8, max_len: usize) -> Resul
     };
     let bytes = unsafe { core::slice::from_raw_parts(object.base as *const u8, object_len) };
     if !store_hash_matches(bytes, object.hash) {
-        serial::write_str("Krust native store hash mismatch: object=");
+        if object.name.starts_with("config:") {
+            serial::write_str("Krust native config hash mismatch: config=");
+        } else {
+            serial::write_str("Krust native store hash mismatch: object=");
+        }
         serial::write_str(object.name);
         serial::write_str("\n");
         serial::write_str("vertex-inspect security event: store hash mismatch object=");
@@ -3176,17 +3358,52 @@ pub fn object_read(cap_slot: u64, destination: *mut u8, max_len: usize) -> Resul
     usercopy::copy_to_user(UserPtr::new(destination as u64), &bytes[..copy_len])
         .map_err(|_| IpcError::InvalidUserBuffer)?;
 
-    serial::write_str("Krust native store verified object: object=");
+    if object.name.starts_with("config:") {
+        serial::write_str("Krust native config hash verified: config=");
+    } else {
+        serial::write_str("Krust native store verified object: object=");
+    }
     serial::write_str(object.name);
-    serial::write_str(" identity=store:blake3:");
+    if object.name.starts_with("config:") {
+        serial::write_str(" identity=config:blake3:");
+    } else {
+        serial::write_str(" identity=store:blake3:");
+    }
     serial::write_str(object.hash);
     serial::write_str("\n");
-    serial::write_str("Object read accepted: proc=");
+    if object.name.starts_with("config:") {
+        serial::write_str("Config object read accepted: proc=");
+    } else {
+        serial::write_str("Object read accepted: proc=");
+    }
     serial::write_str(current_process_name());
-    serial::write_str(" object=");
+    if object.name.starts_with("config:") {
+        serial::write_str(" config=");
+    } else {
+        serial::write_str(" object=");
+    }
     serial::write_str(object.name);
     serial::write_str(" bytes=");
     serial::write_u64_dec(copy_len as u64);
+    serial::write_str("\n");
+    Ok(copy_len)
+}
+
+pub fn secret_read(cap_slot: u64, destination: *mut u8, max_len: usize) -> Result<usize, IpcError> {
+    let secret = secret_from_cap(cap_slot, capability::RIGHT_READ)?;
+    let copy_len = min(secret.value.len(), max_len);
+    usercopy::copy_to_user(UserPtr::new(destination as u64), &secret.value[..copy_len])
+        .map_err(|_| IpcError::InvalidUserBuffer)?;
+
+    serial::write_str("Secret read accepted: proc=");
+    serial::write_str(current_process_name());
+    serial::write_str(" secret=");
+    serial::write_str(secret.name);
+    serial::write_str(" bytes=<redacted>\n");
+    serial::write_str("vertex-inspect security event: secret metadata access secret=");
+    serial::write_str(secret.name);
+    serial::write_str(" proc=");
+    serial::write_str(current_process_name());
     serial::write_str("\n");
     Ok(copy_len)
 }
@@ -3853,6 +4070,14 @@ fn process_control_from_cap(
         .ok_or(IpcError::BadCapability)
 }
 
+fn secret_from_cap(cap_slot: u64, required_right: u64) -> Result<SecretObject, IpcError> {
+    let cap = lookup_capability(cap_slot, required_right)?;
+    runtime()
+        .objects
+        .get_secret(cap.object)
+        .ok_or(IpcError::BadCapability)
+}
+
 fn lookup_capability(cap_slot: u64, required_right: u64) -> Result<Capability, IpcError> {
     let runtime = runtime();
     let process = runtime
@@ -4063,7 +4288,11 @@ fn write_capability_object_report(
                     return;
                 }
                 KernelObject::StoreObject(store) if store.id == object => {
-                    report.push_str("store-object=");
+                    if store.name.starts_with("config:") {
+                        report.push_str("config=");
+                    } else {
+                        report.push_str("store-object=");
+                    }
                     report.push_str(store.name);
                     return;
                 }
@@ -4100,6 +4329,12 @@ fn write_capability_object_report(
                 KernelObject::ProcessControl(process_control) if process_control.id == object => {
                     report.push_str("process-control=");
                     report.push_str(process_control.name);
+                    return;
+                }
+                KernelObject::Secret(secret) if secret.id == object => {
+                    report.push_str("secret=");
+                    report.push_str(secret.name);
+                    report.push_str(" value=<redacted>");
                     return;
                 }
                 _ => {}
@@ -4146,6 +4381,20 @@ fn write_rights_report(report: &mut InspectReport, rights: u64) {
     );
     wrote = write_right_report(report, rights, capability::RIGHT_REVOKE, "revoke", wrote);
     wrote = write_right_report(report, rights, capability::RIGHT_INSPECT, "inspect", wrote);
+    wrote = write_right_report(report, rights, capability::RIGHT_CREATE, "create", wrote);
+    wrote = write_right_report(report, rights, capability::RIGHT_START, "start", wrote);
+    wrote = write_right_report(report, rights, capability::RIGHT_KILL, "kill", wrote);
+    wrote = write_right_report(report, rights, capability::RIGHT_WAIT, "wait", wrote);
+    wrote = write_right_report(report, rights, capability::RIGHT_DERIVE, "derive", wrote);
+    wrote = write_right_report(report, rights, capability::RIGHT_SEAL, "seal", wrote);
+    wrote = write_right_report(report, rights, capability::RIGHT_UNSEAL, "unseal", wrote);
+    wrote = write_right_report(
+        report,
+        rights,
+        capability::RIGHT_INSPECT_METADATA,
+        "inspect-metadata",
+        wrote,
+    );
 
     if !wrote {
         report.push_str("none");
@@ -4209,6 +4458,20 @@ fn print_endpoint_labels(runtime: &RuntimeState) {
     }
 }
 
+fn print_process_by_pid(runtime: &RuntimeState, pid: ProcessId) {
+    let mut index = 0;
+    while index < runtime.processes.count {
+        if let Some(process) = runtime.processes.processes[index]
+            && process.pid == pid
+        {
+            print_process_state(index, &process);
+            print_process_caps(&process);
+            return;
+        }
+        index += 1;
+    }
+}
+
 fn print_process_caps(process: &Process) {
     let mut slot = 0;
     while slot < MAX_CAPS {
@@ -4245,7 +4508,11 @@ fn print_capability_object(object: KernelObjectId) {
                     return;
                 }
                 KernelObject::StoreObject(store) if store.id == object => {
-                    serial::write_str("store-object=");
+                    if store.name.starts_with("config:") {
+                        serial::write_str("config=");
+                    } else {
+                        serial::write_str("store-object=");
+                    }
                     serial::write_str(store.name);
                     return;
                 }
@@ -4286,6 +4553,12 @@ fn print_capability_object(object: KernelObjectId) {
                 KernelObject::ProcessControl(process_control) if process_control.id == object => {
                     serial::write_str("process-control=");
                     serial::write_str(process_control.name);
+                    return;
+                }
+                KernelObject::Secret(secret) if secret.id == object => {
+                    serial::write_str("secret=");
+                    serial::write_str(secret.name);
+                    serial::write_str(" value=<redacted>");
                     return;
                 }
                 _ => {}
@@ -4336,6 +4609,19 @@ fn print_rights(rights: u64) {
     wrote = print_right(rights, capability::RIGHT_DELEGATE, "delegate", wrote);
     wrote = print_right(rights, capability::RIGHT_REVOKE, "revoke", wrote);
     wrote = print_right(rights, capability::RIGHT_INSPECT, "inspect", wrote);
+    wrote = print_right(rights, capability::RIGHT_CREATE, "create", wrote);
+    wrote = print_right(rights, capability::RIGHT_START, "start", wrote);
+    wrote = print_right(rights, capability::RIGHT_KILL, "kill", wrote);
+    wrote = print_right(rights, capability::RIGHT_WAIT, "wait", wrote);
+    wrote = print_right(rights, capability::RIGHT_DERIVE, "derive", wrote);
+    wrote = print_right(rights, capability::RIGHT_SEAL, "seal", wrote);
+    wrote = print_right(rights, capability::RIGHT_UNSEAL, "unseal", wrote);
+    wrote = print_right(
+        rights,
+        capability::RIGHT_INSPECT_METADATA,
+        "inspect-metadata",
+        wrote,
+    );
 
     if !wrote {
         serial::write_str("none");

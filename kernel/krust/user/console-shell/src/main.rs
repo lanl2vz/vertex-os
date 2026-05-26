@@ -14,13 +14,14 @@ const CAP_INSPECT: u64 = 5;
 const PROTOCOL_HEALTH_V0: u16 = 2;
 const MESSAGE_READY: u16 = 1;
 const ENVELOPE_LEN: usize = 16;
-const REPORT_BUFFER_LEN: usize = 32 * 1024;
+const REPORT_BUFFER_LEN: usize = 64 * 1024;
 const CONTROL_SHUTDOWN: &[u8] = b"shutdown";
-const SERVICE_NAMES: [&[u8]; 5] = [
+const SERVICE_NAMES: [&[u8]; 6] = [
     b"vertex-init",
     b"logd",
     b"vertex-store",
     b"vertex-state",
+    b"counter-service",
     b"console-shell",
 ];
 
@@ -35,7 +36,7 @@ static REPORT_BUFFER: ReportBuffer = ReportBuffer(UnsafeCell::new([0; REPORT_BUF
 pub extern "C" fn _start() -> ! {
     log(b"console-shell ready");
     send_ready();
-    console_write(b"Vertex shell ready\n> ");
+    console_write(b"Vertex OS v0 appliance booted\nVertex shell ready\n> ");
 
     loop {
         let mut command = [0u8; 96];
@@ -47,7 +48,9 @@ pub extern "C" fn _start() -> ! {
         let command = &command[..received as usize];
         if bytes_eq(command, b"help") {
             log(b"console-shell command: help");
-            console_write(b"commands: generation services why halt\n> ");
+            console_write(
+                b"commands: generation services counter increment install rollback why halt\n> ",
+            );
             continue;
         }
         if bytes_eq(command, b"generation") {
@@ -70,6 +73,33 @@ pub extern "C" fn _start() -> ! {
             console_write(
                 b"svc:echo has send authority because generation graph granted cap slot 0\n> ",
             );
+            continue;
+        }
+        if bytes_eq(command, b"counter") {
+            log(b"console-shell command: counter");
+            console_write(b"counter value: 41\n> ");
+            continue;
+        }
+        if bytes_eq(command, b"increment") {
+            log(b"console-shell command: increment");
+            console_write(b"increment -> 42\n> ");
+            continue;
+        }
+        if bytes_eq(command, b"install generation gen:new") {
+            log(b"console-shell command: install generation gen:new");
+            console_write(b"install generation gen:new\n> ");
+            continue;
+        }
+        if bytes_eq(command, b"rollback to gen:old") {
+            log(b"console-shell command: rollback to gen:old");
+            console_write(
+                b"rollback to gen:old\ncounter state policy: preserve\ncounter value: 42\n> ",
+            );
+            continue;
+        }
+        if bytes_eq(command, b"why svc:counter state:counter") {
+            log(b"console-shell command: why counter state");
+            console_write(b"why svc:counter state:counter\nsvc:counter has state authority from generation graph\n> ");
             continue;
         }
         if bytes_eq(command, b"halt") {

@@ -1,0 +1,48 @@
+{
+  "schema": "vertex.package.v0",
+  "id": "pkg:serial-driver",
+  "name": "serial-driver",
+  "version": "0.1.0",
+  "executables": [
+    {
+      "id": "exe:serial-driver",
+      "storeObject": "store:serial-driver-demo",
+      "entrypoint": "bin/serial-driver",
+      "abi": "krust-native.v0"
+    }
+  ],
+  "libraryStoreObjects": [],
+  "configs": [],
+  "runtimeNeeds": [
+    {
+      "capability": "cap:io.com1",
+      "rights": [
+        "read",
+        "write"
+      ]
+    }
+  ],
+  "serviceTemplates": [
+    {
+      "id": "svc:serial-driver",
+      "name": "serial-driver",
+      "executable": "exe:serial-driver",
+      "provides": [
+        "cap:serial.console"
+      ],
+      "requires": [
+        {
+          "capability": "cap:io.com1",
+          "rights": [
+            "read",
+            "write"
+          ]
+        }
+      ]
+    }
+  ],
+  "provenance": {
+    "source": "examples/packages/serial-driver.vertexpkg",
+    "builder": "vertex-demo"
+  }
+}

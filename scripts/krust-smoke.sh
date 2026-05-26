@@ -57,8 +57,8 @@ KrustBoot Manifest v1 records: 9
 KrustBoot boot modules: 13
 KrustBoot processes: 13
 KrustBoot endpoints: 12
-KrustBoot grants: 48
-KrustBoot store objects: 13
+KrustBoot grants: 49
+KrustBoot store objects: 14
 KrustBoot state volumes: 0
 KrustBoot network ports: 1
 KrustBoot io port ranges: 3
@@ -143,7 +143,8 @@ IPC FIFO regression: receiver-specific dequeue preserves eligible ordering
 IPC FIFO regression: multiple blocked receivers match eligible messages
 IPC FIFO regression ok
 IDT initialized: #UD #GP #PF
-Process table entries: 13
+Native secret object registered: secret:logd-token storage=in-memory
+Process table entries: 1
 Endpoint table entries: 12
 endpoint[0] id=1 name=serial-log
 endpoint[1] id=2 name=readiness
@@ -172,7 +173,7 @@ process[11] id=12 name=timer-service state=declared
 process[12] id=13 name=flaky-service state=declared
 proc=vertex-init cap[0] boot-module=krustboot-manifest rights=read
 proc=vertex-init cap[1] endpoint=serial-log rights=send
-proc=vertex-init cap[2] process-control=process-control rights=control|allocate|delegate|revoke|inspect
+proc=vertex-init cap[2] process-control=process-control rights=control|allocate|delegate|revoke|inspect|create|start|kill|wait
 proc=vertex-init cap[3] endpoint=readiness rights=receive
 proc=vertex-init cap[4] endpoint=serial-console rights=send
 proc=vertex-init cap[5] endpoint=log-sink rights=send
@@ -213,9 +214,9 @@ vertex-init manifest generation: gen:hello-0001
 vertex-init boot modules: 13
 vertex-init processes: 13
 vertex-init endpoints: 12
-vertex-init grants: 48
+vertex-init grants: 49
 vertex-init network ports: 1
-vertex-init store objects: 13
+vertex-init store objects: 14
 Krust process executable store object: process=logd object=store:logd-demo
 store hash verified before process creation: process=logd
 Krust process image loaded from native store: process=logd
@@ -245,21 +246,45 @@ vertex-init activation plan:
   11. timer-service
   12. flaky-service
 vertex-init starting service: serial-driver
+initial capability grants supplied explicitly: process=serial-driver
+Krust process create accepted: proc=vertex-init target=serial-driver
+immutable launch object accepted: process=serial-driver
+vertex-init dynamically created service: serial-driver
 Krust process start accepted: proc=vertex-init target=serial-driver
 vertex-init observed ready: serial-driver
 vertex-init starting service: logd
+Native secret grant: process=logd secret=secret:logd-token rights=read|inspect-metadata
+proc=logd cap[4] config=config:logd rights=read
+proc=logd cap[5] secret=secret:logd-token value=<redacted> rights=read|inspect-metadata
+initial capability grants supplied explicitly: process=logd
+Krust process create accepted: proc=vertex-init target=logd
+immutable launch object accepted: process=logd
+vertex-init dynamically created service: logd
 Krust process start accepted: proc=vertex-init target=logd
 logd ready
+Krust native config hash verified: config=config:logd
+Config object read accepted: proc=logd config=config:logd bytes=33
+logd reads config object
+Secret read accepted: proc=logd secret=secret:logd-token bytes=<redacted>
+service with secret cap reads secret
 vertex-init observed ready: logd
 vertex-init starting service: netstack
+Krust process create accepted: proc=vertex-init target=netstack
+vertex-init dynamically created service: netstack
 Krust process start accepted: proc=vertex-init target=netstack
 vertex-init starting service: block-driver
+Krust process create accepted: proc=vertex-init target=block-driver
+vertex-init dynamically created service: block-driver
 Krust process start accepted: proc=vertex-init target=block-driver
 vertex-init observed ready: block-driver
 vertex-init starting service: vertex-store
+Krust process create accepted: proc=vertex-init target=vertex-store
+vertex-init dynamically created service: vertex-store
 Krust process start accepted: proc=vertex-init target=vertex-store
 vertex-init observed ready: vertex-store
 vertex-init starting service: vertex-state
+Krust process create accepted: proc=vertex-init target=vertex-state
+vertex-init dynamically created service: vertex-state
 Krust process start accepted: proc=vertex-init target=vertex-state
 vertex-init observed ready: vertex-state
 vertex-init derives endpoint cap for logd from endpoint[2] rights=send
@@ -274,8 +299,10 @@ vertex-init derives endpoint cap for model-reader from endpoint[8] rights=send
 vertex-init derives endpoint cap for counter-service from endpoint[10] rights=send
 vertex-init derives endpoint cap for reader-service from endpoint[10] rights=send
 Capability inspect: proc=vertex-init
-Capability transfer accepted: proc=vertex-init target=echo slot=0 rights=send
+Capability transfer accepted: proc=vertex-init target=echo
 vertex-init starting service: echo
+Krust process create accepted: proc=vertex-init target=echo
+vertex-init dynamically created service: echo
 Krust process start accepted: proc=vertex-init target=echo
 serial-driver ready
 serial-driver has COM1 I/O port capability
@@ -302,7 +329,10 @@ negative test: echo receive rejected: bad capability
 echo read rejected: bad capability
 echo drops cap
 echo send after drop rejected
-negative test: logd process-start rejected: bad capability
+unprivileged service calls SYS_PROCESS_CREATE
+negative test: logd process-create rejected: bad capability
+echo cannot read logd config
+service without secret cap rejected
 netstack ready
 virtio-blk driver ready
 virtio-blk PCI device discovered
@@ -360,6 +390,8 @@ restart policy = on-failure
 vertex-init restarts flaky-service once
 Krust process restart reload: proc=flaky-service
 flaky-service exits 0
+Krust process wait observed exit: proc=logd
+vertex-init waits for service exit status
 Native restart policy ok
 Native manifest-driven activation ok
 Native readiness activation ok
@@ -420,7 +452,7 @@ while [ "$attempt" -le "$QEMU_ATTEMPTS" ]; do
     if check_transcript; then
         cleanup
         pid=
-        echo "smoke ok: Krust completed manifest v1, directed IPC, typed arenas, cap lifecycle, quotas, service-local store/state/timer access, restart, verified store execution, update checks, and native service activation"
+        echo "smoke ok: Krust completed manifest v1, directed IPC, typed arenas, cap lifecycle, quotas, service-local store/state/timer access, restart, verified store execution, update checks, dynamic process creation, config/secret authority, and native service activation"
         exit 0
     fi
 
@@ -430,7 +462,7 @@ done
 
 cleanup
 pid=
-echo "smoke failed: serial output did not contain the full M14-M47 native activation transcript after $QEMU_ATTEMPTS checks"
+echo "smoke failed: serial output did not contain the full M14-M54 native activation transcript after $QEMU_ATTEMPTS checks"
 echo "serial log: $SERIAL_LOG"
 if [ -n "$missing_required" ]; then
     echo "missing required transcript lines:"

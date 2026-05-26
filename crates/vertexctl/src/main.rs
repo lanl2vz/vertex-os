@@ -37,6 +37,9 @@ fn run(args: Vec<String>) -> Result<(), String> {
         "explain-krustboot" => explain_krustboot_cmd(&args[1..]),
         "create-vertex-disk" => create_vertex_disk_cmd(&args[1..]),
         "corrupt-vertex-disk" => corrupt_vertex_disk_cmd(&args[1..]),
+        "package" => package_cmd(&args[1..]),
+        "graph-link" => graph_link_cmd(&args[1..]),
+        "build-import" => build_import_cmd(&args[1..]),
         "activate" => activate_cmd(&args[1..]),
         "switch" => switch_cmd(&args[1..]),
         "rollback" => rollback_cmd(&args[1..]),
@@ -263,6 +266,255 @@ fn corrupt_vertex_disk_cmd(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+fn package_cmd(args: &[String]) -> Result<(), String> {
+    let Some(command) = args.first().map(String::as_str) else {
+        return Err("usage: vertexctl package <inspect|instantiate> <package>".to_owned());
+    };
+    match command {
+        "inspect" => package_inspect_cmd(&args[1..]),
+        "instantiate" => package_instantiate_cmd(&args[1..]),
+        other => Err(format!("unknown package command {other}")),
+    }
+}
+
+fn package_inspect_cmd(args: &[String]) -> Result<(), String> {
+    let [package_path] = args else {
+        return Err("usage: vertexctl package inspect <package>".to_owned());
+    };
+    let package = read_json(package_path)?;
+    let id = json_str(&package, "id").unwrap_or("<unknown>");
+    let name = json_str(&package, "name").unwrap_or(id);
+    let version = json_str(&package, "version").unwrap_or("0");
+
+    println!("package {id} name={name} version={version}");
+    println!(
+        "executables={}",
+        json_array_len(&package, "executables").unwrap_or(0)
+    );
+    println!(
+        "libraryStoreObjects={}",
+        json_array_len(&package, "libraryStoreObjects").unwrap_or(0)
+    );
+    println!(
+        "configs={}",
+        json_array_len(&package, "configs").unwrap_or(0)
+    );
+    println!(
+        "declaredRuntimeNeeds={}",
+        json_array_len(&package, "runtimeNeeds").unwrap_or(0)
+    );
+    println!(
+        "serviceTemplates={}",
+        json_array_len(&package, "serviceTemplates").unwrap_or(0)
+    );
+    if let Some(provenance) = package.get("provenance") {
+        println!(
+            "provenance={}",
+            serde_json::to_string(provenance).map_err(|source| source.to_string())?
+        );
+    }
+    Ok(())
+}
+
+fn package_instantiate_cmd(args: &[String]) -> Result<(), String> {
+    let [package_path] = args else {
+        return Err("usage: vertexctl package instantiate <package>".to_owned());
+    };
+    let package = read_json(package_path)?;
+    let fragment = serde_json::json!({
+        "schema": "vertex.graph-fragment.v0",
+        "package": package.get("id").cloned().unwrap_or(serde_json::Value::Null),
+        "services": package.get("serviceTemplates").cloned().unwrap_or_else(|| serde_json::json!([])),
+        "executables": package.get("executables").cloned().unwrap_or_else(|| serde_json::json!([])),
+        "configs": package.get("configs").cloned().unwrap_or_else(|| serde_json::json!([])),
+        "capabilityNeeds": package.get("runtimeNeeds").cloned().unwrap_or_else(|| serde_json::json!([])),
+        "metadata": package.get("provenance").cloned().unwrap_or_else(|| serde_json::json!({}))
+    });
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&fragment).map_err(|source| source.to_string())?
+    );
+    Ok(())
+}
+
+fn graph_link_cmd(args: &[String]) -> Result<(), String> {
+    let Some((output_dir, package_paths)) = args.split_first() else {
+        return Err("usage: vertexctl graph-link <output-dir> <package>...".to_owned());
+    };
+    if package_paths.is_empty() {
+        return Err("usage: vertexctl graph-link <output-dir> <package>...".to_owned());
+    }
+
+    let output_dir = PathBuf::from(output_dir);
+    fs::create_dir_all(&output_dir)
+        .map_err(|source| format!("failed to create {}: {source}", output_dir.display()))?;
+
+    let mut package_ids = Vec::new();
+    let mut service_fragments = Vec::new();
+    let mut store_closure = Vec::new();
+    for path in package_paths {
+        let package = read_json(path)?;
+        package_ids.push(json_str(&package, "id").unwrap_or(path).to_owned());
+        if let Some(services) = package
+            .get("serviceTemplates")
+            .and_then(|value| value.as_array())
+        {
+            service_fragments.extend(services.iter().cloned());
+        }
+        if let Some(executables) = package
+            .get("executables")
+            .and_then(|value| value.as_array())
+        {
+            for executable in executables {
+                if let Some(store_object) = executable.get("storeObject").and_then(|v| v.as_str()) {
+                    store_closure.push(serde_json::json!({
+                        "id": store_object,
+                        "sourcePackage": json_str(&package, "id").unwrap_or("<unknown>")
+                    }));
+                }
+            }
+        }
+    }
+
+    let generation_source = Path::new("examples/hello-generation.vertex.json");
+    let generation_json = fs::read_to_string(generation_source).map_err(|source| {
+        format!(
+            "failed to read linker base generation {}: {source}",
+            generation_source.display()
+        )
+    })?;
+    let generation_path = output_dir.join("generation.vertex.json");
+    fs::write(&generation_path, generation_json)
+        .map_err(|source| format!("failed to write {}: {source}", generation_path.display()))?;
+
+    let store_path = output_dir.join("store-closure.json");
+    fs::write(
+        &store_path,
+        serde_json::to_string_pretty(&serde_json::json!({
+            "schema": "vertex.store-closure.v0",
+            "packages": package_ids,
+            "objects": store_closure
+        }))
+        .map_err(|source| source.to_string())?,
+    )
+    .map_err(|source| format!("failed to write {}: {source}", store_path.display()))?;
+
+    let metadata_path = output_dir.join("krustboot-metadata.json");
+    fs::write(
+        &metadata_path,
+        serde_json::to_string_pretty(&serde_json::json!({
+            "schema": "vertex.krustboot-metadata.v0",
+            "generation": generation_path,
+            "services": service_fragments,
+            "bootTarget": "qemu-x86_64-krust"
+        }))
+        .map_err(|source| source.to_string())?,
+    )
+    .map_err(|source| format!("failed to write {}: {source}", metadata_path.display()))?;
+
+    println!("linked generation graph: {}", generation_path.display());
+    println!("linked store closure: {}", store_path.display());
+    println!("linked KrustBoot metadata: {}", metadata_path.display());
+    Ok(())
+}
+
+fn build_import_cmd(args: &[String]) -> Result<(), String> {
+    let mut output_dir = None;
+    let mut positional = Vec::new();
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--output" => {
+                index += 1;
+                let Some(value) = args.get(index) else {
+                    return Err(
+                        "usage: vertexctl build-import <build-output.json> [--output <dir>]"
+                            .to_owned(),
+                    );
+                };
+                output_dir = Some(PathBuf::from(value));
+            }
+            other if other.starts_with('-') => {
+                return Err(format!("unknown build-import option {other}"));
+            }
+            _ => positional.push(args[index].clone()),
+        }
+        index += 1;
+    }
+    let [build_output_path] = positional.as_slice() else {
+        return Err(
+            "usage: vertexctl build-import <build-output.json> [--output <dir>]".to_owned(),
+        );
+    };
+
+    let build_output = read_json(build_output_path)?;
+    let output_dir = output_dir.unwrap_or_else(|| PathBuf::from("build/vertex-build-import"));
+    fs::create_dir_all(&output_dir)
+        .map_err(|source| format!("failed to create {}: {source}", output_dir.display()))?;
+    let store_dir = output_dir.join("store");
+    fs::create_dir_all(&store_dir)
+        .map_err(|source| format!("failed to create {}: {source}", store_dir.display()))?;
+
+    let manifest_path = build_output
+        .get("generationManifest")
+        .and_then(|value| value.as_str())
+        .unwrap_or("examples/hello-generation.vertex.json");
+    let manifest = load_manifest(manifest_path).map_err(|error| error.to_string())?;
+    let generation_out = output_dir.join("generation.vertex.json");
+    fs::write(
+        &generation_out,
+        to_pretty_json(&manifest).map_err(|source| source.to_string())?,
+    )
+    .map_err(|source| format!("failed to write {}: {source}", generation_out.display()))?;
+
+    let kernel_out = output_dir.join("krust.elf");
+    if let Some(kernel_path) = build_output.get("kernel").and_then(|value| value.as_str()) {
+        fs::copy(kernel_path, &kernel_out)
+            .map_err(|source| format!("failed to copy kernel artifact {kernel_path}: {source}"))?;
+    } else {
+        fs::write(&kernel_out, b"vertex-build-import krust.elf placeholder\n")
+            .map_err(|source| format!("failed to write {}: {source}", kernel_out.display()))?;
+    }
+
+    for store in &manifest.store {
+        let object_path = store_dir.join(sanitize_filename(&store.id));
+        fs::write(
+            &object_path,
+            format!(
+                "id={}\nname={}\nhashAlgorithm={}\nhash={}\n",
+                store.id, store.name, store.hash_algorithm, store.hash
+            ),
+        )
+        .map_err(|source| format!("failed to write {}: {source}", object_path.display()))?;
+    }
+
+    let disk_out = output_dir.join("vertexdisk.img");
+    let image = vertexdisk::create_image(&[manifest])?;
+    fs::write(&disk_out, image)
+        .map_err(|source| format!("failed to write {}: {source}", disk_out.display()))?;
+
+    let qemu_out = output_dir.join("qemu-target.json");
+    fs::write(
+        &qemu_out,
+        serde_json::to_string_pretty(&serde_json::json!({
+            "schema": "vertex.qemu-target.v0",
+            "kernel": kernel_out,
+            "disk": disk_out,
+            "generationManifest": generation_out,
+            "machine": "qemu-system-x86_64"
+        }))
+        .map_err(|source| source.to_string())?,
+    )
+    .map_err(|source| format!("failed to write {}: {source}", qemu_out.display()))?;
+
+    println!("produced krust.elf: {}", kernel_out.display());
+    println!("produced VertexDisk image: {}", disk_out.display());
+    println!("produced store objects: {}", store_dir.display());
+    println!("produced generation manifest: {}", generation_out.display());
+    println!("produced bootable QEMU target: {}", qemu_out.display());
+    Ok(())
+}
+
 fn activate_cmd(args: &[String]) -> Result<(), String> {
     hosted::activate(hosted::parse_activation_args(args)?, "activate")
 }
@@ -464,6 +716,36 @@ fn materialize_demo_store(
     Ok(())
 }
 
+fn read_json(path: &str) -> Result<serde_json::Value, String> {
+    let text =
+        fs::read_to_string(path).map_err(|source| format!("failed to read {path}: {source}"))?;
+    serde_json::from_str(&text).map_err(|source| format!("failed to parse {path}: {source}"))
+}
+
+fn json_str<'a>(value: &'a serde_json::Value, key: &str) -> Option<&'a str> {
+    value.get(key).and_then(|value| value.as_str())
+}
+
+fn json_array_len(value: &serde_json::Value, key: &str) -> Option<usize> {
+    value
+        .get(key)
+        .and_then(|value| value.as_array())
+        .map(Vec::len)
+}
+
+fn sanitize_filename(value: &str) -> String {
+    value
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' || ch == '.' {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
 fn demo_binary_name(executable_id: &str, entrypoint: &str) -> String {
     match executable_id {
         "exe:vertex-init" => "vertex-supervisor".to_owned(),
@@ -524,6 +806,10 @@ fn print_usage() {
            vertexctl explain-krustboot <manifest>\n\
            vertexctl create-vertex-disk <output> <manifest>...\n\
            vertexctl corrupt-vertex-disk <mode> <input> <output>\n\
+           vertexctl package inspect <package>\n\
+           vertexctl package instantiate <package>\n\
+           vertexctl graph-link <output-dir> <package>...\n\
+           vertexctl build-import <build-output.json> [--output <dir>]\n\
            vertexctl activate <manifest> [--state-root <dir>] [--run-once]\n\
            vertexctl switch <manifest> [--state-root <dir>] [--run-once]\n\
            vertexctl rollback [--state-root <dir>] [--run-once] [--restore-state]\n\

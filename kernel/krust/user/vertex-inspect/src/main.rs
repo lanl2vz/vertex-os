@@ -11,7 +11,7 @@ const CAP_MANIFEST: u64 = 3;
 const KRUSTBOOT_MAGIC: &[u8; 16] = b"KRUSTBOOTV0\0\0\0\0\0";
 const KRUSTBOOT_VERSION: u16 = 4;
 const MANIFEST_BUFFER_LEN: usize = 16 * 1024;
-const REPORT_BUFFER_LEN: usize = 32 * 1024;
+const REPORT_BUFFER_LEN: usize = 64 * 1024;
 const OFFSET_VERSION: usize = 16;
 const OFFSET_PROCESSES: usize = 20;
 const OFFSET_ENDPOINTS: usize = 22;
@@ -60,6 +60,8 @@ pub extern "C" fn _start() -> ! {
     explain_vertex_inspect_generation(report, &generation.id[..generation.id_len]);
     explain_derived_endpoint_caps(report);
     explain_cap_provenance(report);
+    explain_config_authority(report);
+    explain_secret_authority(report);
 
     log(b"Native introspection service ok");
     sys::exit(0)
@@ -210,6 +212,43 @@ fn explain_cap_provenance(report: &[u8]) {
     }
 
     log(b"vertex-inspect provenance query failed");
+    sys::exit(1);
+}
+
+fn explain_config_authority(report: &[u8]) {
+    let needles: [&[u8]; 4] = [
+        b"space=initial proc=logd cap[4] config=config:logd",
+        b"rights=read",
+        b"owner=logd",
+        b"revoked=no",
+    ];
+    if find_line_contains_all(report, &needles).is_some()
+        && !contains(report, b"\"level\":\"info\"")
+    {
+        log(b"vertex-inspect shows config authority without dumping content");
+        return;
+    }
+
+    log(b"vertex-inspect config authority query failed");
+    sys::exit(1);
+}
+
+fn explain_secret_authority(report: &[u8]) {
+    let needles: [&[u8]; 4] = [
+        b"space=initial proc=logd cap[5] secret=secret:logd-token",
+        b"rights=read|inspect-metadata",
+        b"owner=logd",
+        b"revoked=no",
+    ];
+    if find_line_contains_all(report, &needles).is_some()
+        && !contains(report, b"native-secret-value")
+    {
+        log(b"vertex-inspect shows which services have secret access");
+        log(b"vertex-inspect does not print secret value");
+        return;
+    }
+
+    log(b"vertex-inspect secret authority query failed");
     sys::exit(1);
 }
 

@@ -108,6 +108,21 @@ pub extern "C" fn _start() -> ! {
         sys::exit(1);
     }
 
+    if sys::object_read(25, &mut object_buffer) == sys::STATUS_BAD_CAPABILITY {
+        log(b"echo cannot read logd config");
+    } else {
+        log(b"echo config-read denial failed");
+        sys::exit(1);
+    }
+
+    let mut secret_buffer = [0u8; 16];
+    if sys::secret_read(25, &mut secret_buffer) == sys::STATUS_BAD_CAPABILITY {
+        log(b"service without secret cap rejected");
+    } else {
+        log(b"echo secret-read denial failed");
+        sys::exit(1);
+    }
+
     if sys::cap_drop(CAP_LOG_SINK) != sys::STATUS_OK {
         log(b"echo drop cap failed");
         sys::exit(1);
