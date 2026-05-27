@@ -1414,6 +1414,27 @@ impl ProcessTable {
         Ok(pid)
     }
 
+    fn remove_last_process(&mut self, pid: ProcessId) -> Result<(), InitError> {
+        if self.count == 0 {
+            return Err(InitError::InvalidBootManifest);
+        }
+
+        let index = self.count - 1;
+        let Some(process) = self.processes[index] else {
+            return Err(InitError::InvalidBootManifest);
+        };
+        if process.pid != pid {
+            return Err(InitError::InvalidBootManifest);
+        }
+
+        self.processes[index] = Some(Process::empty());
+        self.count -= 1;
+        if self.next_id == pid.raw() + 1 {
+            self.next_id = pid.raw();
+        }
+        Ok(())
+    }
+
     fn set_current(&mut self, pid: ProcessId) {
         self.current = Some(pid);
     }
@@ -2147,6 +2168,46 @@ pub fn install_frame_allocator(allocator: *mut memory::FrameAllocator) {
     }
 }
 
+fn validate_config_caps_for_process(
+    runtime: &RuntimeState,
+    config: &BootRuntimeConfig,
+    config_process_index: usize,
+) -> Result<(), InitError> {
+    let process = config.processes[config_process_index].ok_or(InitError::InvalidBootManifest)?;
+    let mut occupied_slots = [false; MAX_CAPS];
+    let mut grant_index = 0;
+    while grant_index < config.grant_count {
+        let grant = config.grants[grant_index].ok_or(InitError::InvalidBootManifest)?;
+        if grant.process_index != config_process_index {
+            grant_index += 1;
+            continue;
+        }
+
+        grant_object_id(runtime, grant)?;
+        let Ok(slot) = usize::try_from(grant.cap_slot) else {
+            return Err(InitError::CapabilityTableFull);
+        };
+        if slot >= MAX_CAPS {
+            return Err(InitError::CapabilityTableFull);
+        }
+        if occupied_slots[slot] {
+            return Err(InitError::InvalidBootManifest);
+        }
+        occupied_slots[slot] = true;
+        grant_index += 1;
+    }
+
+    if process.name == "logd" {
+        runtime.secret_id.ok_or(InitError::InvalidBootManifest)?;
+        let secret_slot = 5usize;
+        if secret_slot >= MAX_CAPS || occupied_slots[secret_slot] {
+            return Err(InitError::InvalidBootManifest);
+        }
+    }
+
+    Ok(())
+}
+
 fn grant_config_caps_to_process(
     runtime: &mut RuntimeState,
     config: &BootRuntimeConfig,
@@ -2870,6 +2931,8 @@ pub fn create_process(cap_slot: u64, config_process_index: u64) -> Result<u64, I
         if process.initial {
             return Err(IpcError::BadCapability);
         };
+        validate_config_caps_for_process(runtime, config, config_process_index)
+            .map_err(|_| IpcError::BadCapability)?;
 
         let pid = runtime
             .processes
@@ -2881,9 +2944,11 @@ pub fn create_process(cap_slot: u64, config_process_index: u64) -> Result<u64, I
                 CapabilitySpace::new(),
             )
             .map_err(|_| IpcError::BadCapability)?;
+        if grant_config_caps_to_process(runtime, config, config_process_index, pid).is_err() {
+            let _ = runtime.processes.remove_last_process(pid);
+            return Err(IpcError::BadCapability);
+        }
         runtime.process_template_pids[config_process_index] = Some(pid);
-        grant_config_caps_to_process(runtime, config, config_process_index, pid)
-            .map_err(|_| IpcError::BadCapability)?;
         print_process_by_pid(runtime, pid);
         serial::write_str("initial capability grants supplied explicitly: process=");
         serial::write_str(process.name);

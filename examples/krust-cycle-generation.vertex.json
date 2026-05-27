@@ -59,6 +59,16 @@
       "hash": "demo-not-a-real-hash-echo",
       "sizeBytes": 65536,
       "references": []
+    },
+    {
+      "id": "config:logd",
+      "name": "config-logd-v0",
+      "kind": "config",
+      "path": "/vertex/store/config-logd-v0",
+      "hashAlgorithm": "blake3",
+      "hash": "native-logd-config-v0",
+      "sizeBytes": 33,
+      "references": []
     }
   ],
   "executables": [
@@ -89,7 +99,9 @@
       "id": "cap:log.sink",
       "kind": "ipc-endpoint",
       "provider": "svc:logd",
-      "rights": ["send"],
+      "rights": [
+        "send"
+      ],
       "properties": {
         "protocol": "vertex.log.v1"
       }
@@ -111,16 +123,23 @@
       "id": "svc:logd",
       "name": "logd",
       "executable": "exe:logd",
-      "provides": ["cap:log.sink"],
+      "provides": [
+        "cap:log.sink"
+      ],
       "restart": "on-failure",
       "health": {
         "kind": "ipc-ping",
         "target": "cap:log.sink"
       },
       "lifecycle": {
-        "startAfter": ["svc:echo-server"],
+        "startAfter": [
+          "svc:echo-server"
+        ],
         "stopBefore": []
-      }
+      },
+      "configs": [
+        "config:logd"
+      ]
     },
     {
       "id": "svc:echo-server",
@@ -129,20 +148,28 @@
       "requires": [
         {
           "capability": "cap:log.sink",
-          "rights": ["send"]
+          "rights": [
+            "send"
+          ]
         }
       ],
       "restart": "on-failure",
       "health": null,
       "lifecycle": {
-        "startAfter": ["svc:logd"],
+        "startAfter": [
+          "svc:logd"
+        ],
         "stopBefore": []
       }
     }
   ],
   "activation": {
     "rootService": "svc:vertex-supervisor",
-    "startOrder": ["svc:vertex-supervisor", "svc:logd", "svc:echo-server"],
+    "startOrder": [
+      "svc:vertex-supervisor",
+      "svc:logd",
+      "svc:echo-server"
+    ],
     "rollbackPolicy": {
       "default": "system-only",
       "state": "preserve-unless-explicit"

@@ -59,6 +59,16 @@
       "hash": "demo-not-a-real-hash-echo",
       "sizeBytes": 65536,
       "references": []
+    },
+    {
+      "id": "config:logd",
+      "name": "config-logd-v0",
+      "kind": "config",
+      "path": "/vertex/store/config-logd-v0",
+      "hashAlgorithm": "blake3",
+      "hash": "native-logd-config-v0",
+      "sizeBytes": 33,
+      "references": []
     }
   ],
   "executables": [
@@ -104,9 +114,14 @@
       "restart": "never",
       "health": null,
       "lifecycle": {
-        "startAfter": ["svc:echo-server"],
+        "startAfter": [
+          "svc:echo-server"
+        ],
         "stopBefore": []
-      }
+      },
+      "configs": [
+        "config:logd"
+      ]
     },
     {
       "id": "svc:echo-server",
@@ -115,14 +130,20 @@
       "restart": "never",
       "health": null,
       "lifecycle": {
-        "startAfter": ["svc:logd"],
+        "startAfter": [
+          "svc:logd"
+        ],
         "stopBefore": []
       }
     }
   ],
   "activation": {
     "rootService": "svc:vertex-supervisor",
-    "startOrder": ["svc:vertex-supervisor", "svc:logd", "svc:echo-server"],
+    "startOrder": [
+      "svc:vertex-supervisor",
+      "svc:logd",
+      "svc:echo-server"
+    ],
     "rollbackPolicy": {
       "default": "system-only",
       "state": "preserve-unless-explicit"

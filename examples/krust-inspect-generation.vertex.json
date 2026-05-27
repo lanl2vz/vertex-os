@@ -179,6 +179,16 @@
       "hash": "demo-not-a-real-hash-hello-text",
       "sizeBytes": 22,
       "references": []
+    },
+    {
+      "id": "config:logd",
+      "name": "config-logd-v0",
+      "kind": "config",
+      "path": "/vertex/store/config-logd-v0",
+      "hashAlgorithm": "blake3",
+      "hash": "native-logd-config-v0",
+      "sizeBytes": 33,
+      "references": []
     }
   ],
   "executables": [
@@ -676,7 +686,10 @@
           "svc:serial-driver"
         ],
         "stopBefore": []
-      }
+      },
+      "configs": [
+        "config:logd"
+      ]
     },
     {
       "id": "svc:netstack",

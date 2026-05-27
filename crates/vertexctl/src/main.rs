@@ -379,7 +379,15 @@ fn graph_link_cmd(args: &[String]) -> Result<(), String> {
             }
         }
         if let Some(configs) = package.get("configs").and_then(|value| value.as_array()) {
-            package_configs.extend(configs.iter().cloned());
+            for config in configs {
+                package_configs.push(config.clone());
+                if let Some(id) = config.get("id").and_then(|value| value.as_str()) {
+                    store_closure.push(serde_json::json!({
+                        "id": id,
+                        "sourcePackage": json_str(&package, "id").unwrap_or("<unknown>")
+                    }));
+                }
+            }
         }
     }
 
@@ -584,6 +592,7 @@ fn link_package_generation(
     let base_capabilities = index_json_array(&base, "capabilities", "id")?;
     let base_devices = index_json_array(&base, "devices", "id")?;
     let package_executable_map = index_values(package_executables, "id")?;
+    let package_config_map = index_values(package_configs, "id")?;
 
     let mut selected_service_ids = BTreeSet::new();
     selected_service_ids.insert(root_service_id.to_owned());
@@ -681,10 +690,15 @@ fn link_package_generation(
     for executable in &executables {
         store_ids.insert(json_required_str(executable, "storeObject")?.to_owned());
     }
+    for service in &services {
+        collect_string_array(service, "configs", &mut store_ids);
+    }
     let mut store = Vec::new();
     for store_id in &store_ids {
         if let Some(object) = base_store.get(store_id.as_str()) {
             store.push(object.clone());
+        } else if let Some(config) = package_config_map.get(store_id.as_str()) {
+            store.push(linked_config_store_object(config)?);
         } else {
             store.push(linked_store_object(store_id, package_ids));
         }
@@ -755,6 +769,7 @@ fn enrich_service_template(template: &serde_json::Value) -> Result<serde_json::V
         "provides": template.get("provides").cloned().unwrap_or_else(|| serde_json::json!([])),
         "state": template.get("state").cloned().unwrap_or_else(|| serde_json::json!([])),
         "secrets": template.get("secrets").cloned().unwrap_or_else(|| serde_json::json!([])),
+        "configs": template.get("configs").cloned().unwrap_or_else(|| serde_json::json!([])),
         "restart": template.get("restart").and_then(|value| value.as_str()).unwrap_or("never"),
         "resources": template.get("resources").cloned().unwrap_or_else(|| serde_json::json!({
             "memoryMaxBytes": 33554432,
@@ -781,6 +796,27 @@ fn linked_store_object(store_id: &str, package_ids: &[String]) -> serde_json::Va
         "sizeBytes": 0,
         "references": []
     })
+}
+
+fn linked_config_store_object(config: &serde_json::Value) -> Result<serde_json::Value, String> {
+    let id = json_required_str(config, "id")?;
+    let schema = json_required_str(config, "schema")?;
+    let name = config
+        .get("storeObject")
+        .and_then(|value| value.as_str())
+        .or_else(|| config.get("name").and_then(|value| value.as_str()))
+        .map(str::to_owned)
+        .unwrap_or_else(|| sanitize_filename(id.trim_start_matches("config:")));
+    Ok(serde_json::json!({
+        "id": id,
+        "name": name,
+        "kind": "config",
+        "path": format!("/vertex/store/{name}"),
+        "hashAlgorithm": config.get("hashAlgorithm").and_then(|value| value.as_str()).unwrap_or("blake3"),
+        "hash": config.get("hash").and_then(|value| value.as_str()).unwrap_or(schema),
+        "sizeBytes": config.get("sizeBytes").and_then(|value| value.as_u64()).unwrap_or(0),
+        "references": []
+    }))
 }
 
 fn linked_generation_id(package_ids: &[String], service_ids: &[String]) -> String {

@@ -154,6 +154,8 @@ pub struct Service {
     pub state: Vec<Id>,
     #[serde(default)]
     pub secrets: Vec<Id>,
+    #[serde(default)]
+    pub configs: Vec<Id>,
     pub restart: String,
     #[serde(default)]
     pub resources: Value,

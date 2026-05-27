@@ -235,6 +235,22 @@ fn validate_services(manifest: &GenerationManifest, report: &mut ValidationRepor
             }
         }
 
+        for config in &service.configs {
+            let Some(store) = manifest.store_object(config) else {
+                report.error(format!(
+                    "service {} references unknown config object {}",
+                    service.id, config
+                ));
+                continue;
+            };
+            if store.kind != "config" {
+                report.error(format!(
+                    "service {} config {} references store object kind {}",
+                    service.id, config, store.kind
+                ));
+            }
+        }
+
         for dependency in &service.lifecycle.start_after {
             if manifest.service(dependency).is_none() {
                 report.error(format!(
@@ -426,6 +442,11 @@ fn warn_for_unreachable_store_objects(
             && manifest.store_object(object).is_some()
         {
             queue.push_back(object);
+        }
+    }
+    for service in &manifest.services {
+        for config in &service.configs {
+            queue.push_back(config.as_str());
         }
     }
 

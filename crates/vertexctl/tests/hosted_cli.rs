@@ -369,6 +369,77 @@ fn compile_boot_manifest_emits_krustboot_plan() {
 }
 
 #[test]
+fn validate_rejects_service_config_without_config_store_object() {
+    let dir = temp_dir("missing-config-store");
+    let input_path = dir.join("missing-config.vertex.json");
+    let mut manifest: Value = serde_json::from_str(
+        &fs::read_to_string(repo_root().join("examples/hello-generation.vertex.json"))
+            .expect("read hello manifest"),
+    )
+    .expect("hello manifest should be json");
+
+    let store = manifest["store"]
+        .as_array_mut()
+        .expect("store should be an array");
+    store.retain(|object| object["id"] != "config:logd");
+
+    fs::write(
+        &input_path,
+        serde_json::to_string_pretty(&manifest).expect("serialize bad config manifest"),
+    )
+    .expect("write bad config manifest");
+
+    let stderr = assert_failure(run(&["validate", &input_path.to_string_lossy()]));
+
+    assert!(stderr.contains("references unknown config object config:logd"));
+}
+
+#[test]
+fn compile_boot_manifest_does_not_inject_implicit_logd_config() {
+    let dir = temp_dir("krustboot-no-implicit-logd-config");
+    let input_path = dir.join("no-logd-config.vertex.json");
+    let output_path = dir.join("no-logd-config.krustboot");
+    let mut manifest: Value = serde_json::from_str(
+        &fs::read_to_string(repo_root().join("examples/hello-generation.vertex.json"))
+            .expect("read hello manifest"),
+    )
+    .expect("hello manifest should be json");
+
+    let services = manifest["services"]
+        .as_array_mut()
+        .expect("services should be an array");
+    let logd = services
+        .iter_mut()
+        .find(|service| service["id"] == "svc:logd")
+        .expect("logd service should exist");
+    logd.as_object_mut()
+        .expect("service should be an object")
+        .remove("configs");
+    let store = manifest["store"]
+        .as_array_mut()
+        .expect("store should be an array");
+    store.retain(|object| object["id"] != "config:logd");
+
+    fs::write(
+        &input_path,
+        serde_json::to_string_pretty(&manifest).expect("serialize no-config manifest"),
+    )
+    .expect("write no-config manifest");
+
+    let stdout = assert_success(run(&[
+        "compile-boot-manifest",
+        &input_path.to_string_lossy(),
+        &output_path.to_string_lossy(),
+    ]));
+
+    assert!(stdout.contains("grants: 48"));
+    assert!(stdout.contains("store_objects: 13"));
+    let bytes = fs::read(&output_path).expect("read krustboot output");
+    assert!(!contains_bytes(&bytes, b"config:logd"));
+    assert!(!contains_bytes(&bytes, b"config-logd-v0"));
+}
+
+#[test]
 fn compile_boot_manifest_rejects_missing_executable_artifact() {
     let dir = temp_dir("krustboot-missing-artifact");
     let manifest_path = dir.join("missing.vertex.json");
@@ -629,9 +700,32 @@ fn graph_link_resolves_package_service_closure() {
     assert!(capabilities.iter().any(
         |capability| capability["id"] == "cap:log.sink" && capability["provider"] == "svc:logd"
     ));
+    let logd = services
+        .iter()
+        .find(|service| service["id"] == "svc:logd")
+        .expect("logd service should be linked");
+    assert_eq!(logd["configs"], serde_json::json!(["config:logd"]));
+    let store = linked["store"].as_array().expect("store array");
+    assert!(
+        store
+            .iter()
+            .any(|object| object["id"] == "config:logd" && object["kind"] == "config")
+    );
 
     let validation = assert_success(run(&["validate", &generation_path.to_string_lossy()]));
     assert!(validation.contains("valid: gen:linked-"));
+
+    let store_closure: Value = serde_json::from_str(
+        &fs::read_to_string(dir.join("store-closure.json")).expect("read store closure"),
+    )
+    .expect("store closure should be json");
+    assert!(
+        store_closure["objects"]
+            .as_array()
+            .expect("store closure objects")
+            .iter()
+            .any(|object| object["id"] == "config:logd")
+    );
 }
 
 #[test]

@@ -81,10 +81,8 @@ const INIT_READINESS_CAP_SLOT: u16 = 3;
 const INIT_ENDPOINT_AUTH_BASE_SLOT: u16 = 4;
 const SERIAL_RESERVED_CAP_SLOT: u16 = 1;
 const READINESS_RESERVED_CAP_SLOT: u16 = 2;
-const LOGD_CONFIG_CAP_SLOT: u16 = 4;
 const VERTEX_STORE_LOGD_OBJECT_CAP_SLOT: u16 = 7;
 const VERTEX_STORE_ECHO_OBJECT_CAP_SLOT: u16 = 8;
-const LOGD_CONFIG_OBJECT_ID: &str = "config:logd";
 const LOGD_CONFIG_MODULE: &str = "config-logd-v0";
 const LOGD_CONFIG_BYTES: &[u8] = b"{\"level\":\"info\",\"sink\":\"serial\"}\n";
 
@@ -662,7 +660,6 @@ fn derive_plan(manifest: &GenerationManifest) -> Result<BootPlan, String> {
     let mut dma_regions = Vec::new();
     let mut next_object_slots = initial_object_cap_slots(&processes);
     add_vertex_store_verifier_grants(&mut grants, &store_objects, &processes);
-    add_logd_config_grant(&mut grants, &mut store_objects, &processes);
     reserve_vertex_store_verifier_slots(&mut next_object_slots, &processes);
     for service in &manifest.services {
         let Some(process_name) = native_process_for_service(&processes, &service.id) else {
@@ -797,6 +794,29 @@ fn derive_plan(manifest: &GenerationManifest) -> Result<BootPlan, String> {
                 }
             }
         }
+
+        for config_id in &service.configs {
+            let store = manifest.store_object(config_id).ok_or_else(|| {
+                format!(
+                    "service {} references unknown native config object {}",
+                    service.id, config_id
+                )
+            })?;
+            if store.kind != "config" {
+                return Err(format!(
+                    "service {} config {} references store object kind {}",
+                    service.id, config_id, store.kind
+                ));
+            }
+            push_unique_store_object(&mut store_objects, store)?;
+            grants.push(Grant {
+                process: process_name.clone(),
+                object_kind: OBJECT_STORE,
+                object_name: store.id.clone(),
+                cap_slot: next_object_cap_slot(&mut next_object_slots, &process_name)?,
+                rights: RIGHT_READ,
+            });
+        }
     }
 
     let mut boot_modules = Vec::new();
@@ -825,34 +845,6 @@ fn derive_plan(manifest: &GenerationManifest) -> Result<BootPlan, String> {
         interrupt_lines,
         dma_regions,
     })
-}
-
-fn add_logd_config_grant(
-    grants: &mut Vec<Grant>,
-    store_objects: &mut Vec<StoreObject>,
-    processes: &[NativeProcess],
-) {
-    let Some(process) = native_process_for_service(processes, "svc:logd") else {
-        return;
-    };
-    if !store_objects
-        .iter()
-        .any(|object| object.id == LOGD_CONFIG_OBJECT_ID)
-    {
-        store_objects.push(StoreObject {
-            id: LOGD_CONFIG_OBJECT_ID.to_owned(),
-            module_string: LOGD_CONFIG_MODULE.to_owned(),
-            hash: store_hash_hex(LOGD_CONFIG_BYTES),
-            size: LOGD_CONFIG_BYTES.len() as u64,
-        });
-    }
-    grants.push(Grant {
-        process,
-        object_kind: OBJECT_STORE,
-        object_name: LOGD_CONFIG_OBJECT_ID.to_owned(),
-        cap_slot: LOGD_CONFIG_CAP_SLOT,
-        rights: RIGHT_READ,
-    });
 }
 
 fn native_service_closure(

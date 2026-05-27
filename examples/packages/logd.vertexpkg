@@ -15,6 +15,7 @@
   "configs": [
     {
       "id": "config:logd",
+      "storeObject": "config-logd-v0",
       "schema": "vertex.logd.config.v0",
       "hashAlgorithm": "blake3",
       "hash": "native-logd-config-v0"

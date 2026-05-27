@@ -69,6 +69,16 @@
       "hash": "demo-not-a-real-hash-echo-server",
       "sizeBytes": 65536,
       "references": []
+    },
+    {
+      "id": "config:logd",
+      "name": "config-logd-v0",
+      "kind": "config",
+      "path": "/vertex/store/config-logd-v0",
+      "hashAlgorithm": "blake3",
+      "hash": "native-logd-config-v0",
+      "sizeBytes": 33,
+      "references": []
     }
   ],
   "executables": [
@@ -217,7 +227,10 @@
           "svc:vertex-supervisor"
         ],
         "stopBefore": []
-      }
+      },
+      "configs": [
+        "config:logd"
+      ]
     },
     {
       "id": "svc:netstack",

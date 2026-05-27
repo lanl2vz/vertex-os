@@ -31,6 +31,7 @@ const HELLO_OBJECT_ID: &str = "store:hello-text";
 const BLOCK_DRIVER_FAULT_OBJECT: &[u8] = b"krust-block-driver-fault\n";
 const LOGD_OBJECT_ID: &str = "store:logd-demo";
 const LOGD_CONFIG_OBJECT_ID: &str = "config:logd";
+const LOGD_CONFIG_MODULE: &str = "config-logd-v0";
 const LOGD_CONFIG_BYTES: &[u8] = b"{\"level\":\"info\",\"sink\":\"serial\"}\n";
 const STATE_VOLUME_ID: &str = "state:counter";
 
@@ -110,8 +111,10 @@ fn store_payloads(manifests: &[GenerationManifest]) -> Result<Vec<StorePayload>,
         for executable in &manifest.executables {
             required.insert(executable.store_object.clone());
         }
-        if manifest.service("svc:logd").is_some() {
-            required.insert(LOGD_CONFIG_OBJECT_ID.to_owned());
+        for service in &manifest.services {
+            for config in &service.configs {
+                required.insert(config.clone());
+            }
         }
         for capability in &manifest.capabilities {
             if capability.kind == "store-object" {
@@ -136,19 +139,12 @@ fn store_payloads(manifests: &[GenerationManifest]) -> Result<Vec<StorePayload>,
 }
 
 fn store_payload(manifests: &[GenerationManifest], id: &str) -> Result<StorePayload, String> {
-    if id == LOGD_CONFIG_OBJECT_ID {
-        return Ok(StorePayload {
-            id: LOGD_CONFIG_OBJECT_ID.to_owned(),
-            bytes: LOGD_CONFIG_BYTES.to_vec(),
-            sector: 0,
-        });
-    }
-
     let store = manifests
         .iter()
         .find_map(|manifest| manifest.store_object(id))
         .ok_or_else(|| format!("VertexDisk store object {id} missing from manifests"))?;
     let bytes = match store.kind.as_str() {
+        "config" => native_store_bytes(&store.name)?,
         "data" => data_store_bytes(&store.name)?,
         "executable" => executable_store_bytes(manifests, id)?,
         other => {
@@ -330,6 +326,10 @@ fn write_fixed_str(buffer: &mut [u8], offset: usize, value: &str) {
 }
 
 fn native_store_bytes(module_string: &str) -> Result<Vec<u8>, String> {
+    if module_string == LOGD_CONFIG_MODULE {
+        return Ok(LOGD_CONFIG_BYTES.to_vec());
+    }
+
     let mut candidates = Vec::new();
     for path in native_store_candidate_paths(module_string) {
         candidates.push(path.display().to_string());

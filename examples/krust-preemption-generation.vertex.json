@@ -79,6 +79,16 @@
       "hash": "demo-not-a-real-hash-hog",
       "sizeBytes": 65536,
       "references": []
+    },
+    {
+      "id": "config:logd",
+      "name": "config-logd-v0",
+      "kind": "config",
+      "path": "/vertex/store/config-logd-v0",
+      "hashAlgorithm": "blake3",
+      "hash": "native-logd-config-v0",
+      "sizeBytes": 33,
+      "references": []
     }
   ],
   "executables": [
@@ -137,7 +147,9 @@
       "id": "cap:log.sink",
       "kind": "ipc-endpoint",
       "provider": "svc:logd",
-      "rights": ["send"],
+      "rights": [
+        "send"
+      ],
       "properties": {
         "protocol": "vertex.log.v1"
       }
@@ -146,7 +158,10 @@
       "id": "cap:io.com1",
       "kind": "io-port",
       "provider": "device:serial-com1",
-      "rights": ["read", "write"],
+      "rights": [
+        "read",
+        "write"
+      ],
       "properties": {
         "base": "0x3f8",
         "length": 8
@@ -156,7 +171,9 @@
       "id": "cap:serial.console",
       "kind": "ipc-endpoint",
       "provider": "svc:serial-driver",
-      "rights": ["send"],
+      "rights": [
+        "send"
+      ],
       "properties": {
         "protocol": "vertex.serial.v1"
       }
@@ -191,9 +208,16 @@
       "args": [],
       "env": {},
       "requires": [
-        { "capability": "cap:serial.console", "rights": ["send"] }
+        {
+          "capability": "cap:serial.console",
+          "rights": [
+            "send"
+          ]
+        }
       ],
-      "provides": ["cap:log.sink"],
+      "provides": [
+        "cap:log.sink"
+      ],
       "state": [],
       "secrets": [],
       "restart": "on-failure",
@@ -206,9 +230,14 @@
         "target": "cap:log.sink"
       },
       "lifecycle": {
-        "startAfter": ["svc:serial-driver"],
+        "startAfter": [
+          "svc:serial-driver"
+        ],
         "stopBefore": []
-      }
+      },
+      "configs": [
+        "config:logd"
+      ]
     },
     {
       "id": "svc:serial-driver",
@@ -217,9 +246,17 @@
       "args": [],
       "env": {},
       "requires": [
-        { "capability": "cap:io.com1", "rights": ["read", "write"] }
+        {
+          "capability": "cap:io.com1",
+          "rights": [
+            "read",
+            "write"
+          ]
+        }
       ],
-      "provides": ["cap:serial.console"],
+      "provides": [
+        "cap:serial.console"
+      ],
       "state": [],
       "secrets": [],
       "restart": "never",
@@ -232,7 +269,9 @@
         "target": "cap:serial.console"
       },
       "lifecycle": {
-        "startAfter": ["svc:vertex-supervisor"],
+        "startAfter": [
+          "svc:vertex-supervisor"
+        ],
         "stopBefore": []
       }
     },
@@ -253,7 +292,9 @@
       },
       "health": null,
       "lifecycle": {
-        "startAfter": ["svc:logd"],
+        "startAfter": [
+          "svc:logd"
+        ],
         "stopBefore": []
       }
     },
@@ -264,7 +305,12 @@
       "args": [],
       "env": {},
       "requires": [
-        { "capability": "cap:log.sink", "rights": ["send"] }
+        {
+          "capability": "cap:log.sink",
+          "rights": [
+            "send"
+          ]
+        }
       ],
       "provides": [],
       "state": [],
@@ -276,7 +322,9 @@
       },
       "health": null,
       "lifecycle": {
-        "startAfter": ["svc:cpu-hog"],
+        "startAfter": [
+          "svc:cpu-hog"
+        ],
         "stopBefore": []
       }
     }
