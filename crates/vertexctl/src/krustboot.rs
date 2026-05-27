@@ -4,8 +4,8 @@ use std::fs;
 use std::path::PathBuf;
 use vertex_ir::{GenerationManifest, Service};
 
-const COMPACT_MAGIC: &[u8; 16] = b"KRUSTBOOTV0\0\0\0\0\0";
-const COMPACT_VERSION: u16 = 4;
+const COMPACT_MAGIC: &[u8; 16] = b"KRUSTBOOTM55\0\0\0\0";
+const COMPACT_VERSION: u16 = 5;
 const V1_MAGIC: &[u8; 16] = b"KRUSTBOOTV1\0\0\0\0\0";
 const V1_VERSION: u16 = 1;
 const V1_HEADER_SIZE: usize = 164;
@@ -13,7 +13,7 @@ const V1_CHECKSUM_OFFSET: usize = 32;
 const V1_RECORD_SIZE: usize = 12;
 const V1_RECORD_COUNT: usize = 9;
 const V1_PAYLOAD_OFFSET: usize = V1_HEADER_SIZE + V1_RECORD_COUNT * V1_RECORD_SIZE;
-const COMPACT_HEADER_SIZE: usize = 168;
+const COMPACT_HEADER_SIZE: usize = 172;
 const STRING_LEN: usize = 64;
 const BOOT_MODULE_RECORD_LEN: usize = STRING_LEN * 2;
 const PROCESS_REF_LIST_LEN: usize = 2 + MAX_PROCESS_REFS * 2;
@@ -29,6 +29,8 @@ const IO_PORT_RECORD_LEN: usize = STRING_LEN + 16;
 const MMIO_REGION_RECORD_LEN: usize = STRING_LEN + 16;
 const INTERRUPT_LINE_RECORD_LEN: usize = STRING_LEN + 8;
 const DMA_REGION_RECORD_LEN: usize = STRING_LEN + 16;
+const PCI_DEVICE_RECORD_LEN: usize = STRING_LEN * 2;
+const VIRTIO_DEVICE_RECORD_LEN: usize = STRING_LEN * 2;
 const MAX_BOOT_MODULES: usize = 16;
 const MAX_PROCESSES: usize = 16;
 const MAX_ENDPOINTS: usize = 16;
@@ -40,6 +42,8 @@ const MAX_IO_PORT_RANGES: usize = 4;
 const MAX_MMIO_REGIONS: usize = 4;
 const MAX_INTERRUPT_LINES: usize = 4;
 const MAX_DMA_REGIONS: usize = 4;
+const MAX_PCI_DEVICES: usize = 4;
+const MAX_VIRTIO_DEVICES: usize = 4;
 const MAX_PROCESS_REFS: usize = 4;
 const DMA_KERNEL_ALLOCATED_BASE: u64 = u64::MAX;
 const RIGHT_SEND: u16 = 1 << 0;
@@ -61,6 +65,8 @@ const OBJECT_IO_PORT_RANGE: u16 = 6;
 const OBJECT_MMIO_REGION: u16 = 7;
 const OBJECT_INTERRUPT_LINE: u16 = 8;
 const OBJECT_DMA_REGION: u16 = 9;
+const OBJECT_PCI_DEVICE: u16 = 10;
+const OBJECT_VIRTIO_DEVICE: u16 = 11;
 const RECORD_BOOT_MODULE: u16 = 1;
 const RECORD_PROCESS: u16 = 2;
 const RECORD_ENDPOINT: u16 = 3;
@@ -104,6 +110,8 @@ pub fn compile(manifest: &GenerationManifest) -> Result<Vec<u8>, String> {
     push_count(&mut body, plan.mmio_regions.len(), "mmio_regions")?;
     push_count(&mut body, plan.interrupt_lines.len(), "interrupt_lines")?;
     push_count(&mut body, plan.dma_regions.len(), "dma_regions")?;
+    push_count(&mut body, plan.pci_devices.len(), "pci_devices")?;
+    push_count(&mut body, plan.virtio_devices.len(), "virtio_devices")?;
     push_fixed_str(&mut body, &manifest.generation.id)?;
     push_fixed_str(
         &mut body,
@@ -178,6 +186,16 @@ pub fn compile(manifest: &GenerationManifest) -> Result<Vec<u8>, String> {
         push_u64(&mut body, region.length);
     }
 
+    for device in &plan.pci_devices {
+        push_fixed_str(&mut body, &device.id)?;
+        push_fixed_str(&mut body, &device.kind)?;
+    }
+
+    for device in &plan.virtio_devices {
+        push_fixed_str(&mut body, &device.id)?;
+        push_fixed_str(&mut body, &device.transport)?;
+    }
+
     wrap_v1(manifest, &plan, &body)
 }
 
@@ -200,6 +218,8 @@ pub fn summary(manifest: &GenerationManifest, output_path: &str, byte_len: usize
          mmio_regions: {}\n\
          interrupt_lines: {}\n\
          dma_regions: {}\n\
+         pci_devices: {}\n\
+         virtio_devices: {}\n\
          bytes: {byte_len}",
         manifest.generation.id,
         manifest.generation.parent.as_deref().unwrap_or("<none>"),
@@ -213,7 +233,9 @@ pub fn summary(manifest: &GenerationManifest, output_path: &str, byte_len: usize
         plan.io_ports.len(),
         plan.mmio_regions.len(),
         plan.interrupt_lines.len(),
-        plan.dma_regions.len()
+        plan.dma_regions.len(),
+        plan.pci_devices.len(),
+        plan.virtio_devices.len()
     )
 }
 
@@ -331,6 +353,8 @@ struct BootPlan {
     mmio_regions: Vec<MmioRegion>,
     interrupt_lines: Vec<InterruptLine>,
     dma_regions: Vec<DmaRegion>,
+    pci_devices: Vec<PciDevice>,
+    virtio_devices: Vec<VirtioDevice>,
 }
 
 #[derive(Debug, Clone)]
@@ -415,6 +439,18 @@ struct DmaRegion {
     id: String,
     base: u64,
     length: u64,
+}
+
+#[derive(Debug, Clone)]
+struct PciDevice {
+    id: String,
+    kind: String,
+}
+
+#[derive(Debug, Clone)]
+struct VirtioDevice {
+    id: String,
+    transport: String,
 }
 
 fn derive_plan(manifest: &GenerationManifest) -> Result<BootPlan, String> {
@@ -658,6 +694,8 @@ fn derive_plan(manifest: &GenerationManifest) -> Result<BootPlan, String> {
     let mut mmio_regions = Vec::new();
     let mut interrupt_lines = Vec::new();
     let mut dma_regions = Vec::new();
+    let mut pci_devices = Vec::new();
+    let mut virtio_devices = Vec::new();
     let mut next_object_slots = initial_object_cap_slots(&processes);
     add_vertex_store_verifier_grants(&mut grants, &store_objects, &processes);
     reserve_vertex_store_verifier_slots(&mut next_object_slots, &processes);
@@ -819,6 +857,16 @@ fn derive_plan(manifest: &GenerationManifest) -> Result<BootPlan, String> {
         }
     }
 
+    grant_native_driver_devices(
+        manifest,
+        &processes,
+        &mut grants,
+        &mut pci_devices,
+        &mut virtio_devices,
+        &mut next_object_slots,
+        &root_service.id,
+    )?;
+
     let mut boot_modules = Vec::new();
     for process in &processes {
         if !boot_modules
@@ -844,6 +892,8 @@ fn derive_plan(manifest: &GenerationManifest) -> Result<BootPlan, String> {
         mmio_regions,
         interrupt_lines,
         dma_regions,
+        pci_devices,
+        virtio_devices,
     })
 }
 
@@ -1227,6 +1277,88 @@ fn push_unique_dma_region(
     Ok(())
 }
 
+fn grant_native_driver_devices(
+    manifest: &GenerationManifest,
+    processes: &[NativeProcess],
+    grants: &mut Vec<Grant>,
+    pci_devices: &mut Vec<PciDevice>,
+    virtio_devices: &mut Vec<VirtioDevice>,
+    next_object_slots: &mut BTreeMap<String, u16>,
+    root_service_id: &str,
+) -> Result<(), String> {
+    for device in &manifest.devices {
+        if device.driver == root_service_id {
+            return Err(format!(
+                "device {} cannot be driven by activation root service {}",
+                device.id, root_service_id
+            ));
+        }
+        let Some(process_name) = native_process_for_service(processes, &device.driver) else {
+            continue;
+        };
+
+        if is_pci_device(device) {
+            push_unique_pci_device(pci_devices, device);
+            grants.push(Grant {
+                process: process_name.clone(),
+                object_kind: OBJECT_PCI_DEVICE,
+                object_name: device.id.clone(),
+                cap_slot: next_object_cap_slot(next_object_slots, &process_name)?,
+                rights: RIGHT_CONTROL,
+            });
+        }
+
+        if is_virtio_device(device) {
+            push_unique_virtio_device(virtio_devices, device);
+            grants.push(Grant {
+                process: process_name.clone(),
+                object_kind: OBJECT_VIRTIO_DEVICE,
+                object_name: device.id.clone(),
+                cap_slot: next_object_cap_slot(next_object_slots, &process_name)?,
+                rights: RIGHT_CONTROL,
+            });
+        }
+    }
+
+    Ok(())
+}
+
+fn push_unique_pci_device(devices: &mut Vec<PciDevice>, device: &vertex_ir::Device) {
+    if devices.iter().any(|existing| existing.id == device.id) {
+        return;
+    }
+    devices.push(PciDevice {
+        id: device.id.clone(),
+        kind: device.kind.clone(),
+    });
+}
+
+fn push_unique_virtio_device(devices: &mut Vec<VirtioDevice>, device: &vertex_ir::Device) {
+    if devices.iter().any(|existing| existing.id == device.id) {
+        return;
+    }
+    devices.push(VirtioDevice {
+        id: device.id.clone(),
+        transport: value_str(&device.properties, "transport")
+            .unwrap_or("virtio-pci-io")
+            .to_owned(),
+    });
+}
+
+fn is_pci_device(device: &vertex_ir::Device) -> bool {
+    device.kind.contains("pci")
+        || value_str(&device.properties, "transport")
+            .map(|transport| transport.contains("pci"))
+            .unwrap_or(false)
+}
+
+fn is_virtio_device(device: &vertex_ir::Device) -> bool {
+    device.kind.starts_with("virtio")
+        || value_str(&device.properties, "transport")
+            .map(|transport| transport.starts_with("virtio"))
+            .unwrap_or(false)
+}
+
 fn value_u64(value: &Value, key: &str) -> Option<u64> {
     value.get(key).and_then(|value| {
         value
@@ -1375,6 +1507,16 @@ fn validate_plan(plan: &BootPlan) -> Result<(), String> {
             "native boot plan exceeds {MAX_DMA_REGIONS} dma regions"
         ));
     }
+    if plan.pci_devices.len() > MAX_PCI_DEVICES {
+        return Err(format!(
+            "native boot plan exceeds {MAX_PCI_DEVICES} pci devices"
+        ));
+    }
+    if plan.virtio_devices.len() > MAX_VIRTIO_DEVICES {
+        return Err(format!(
+            "native boot plan exceeds {MAX_VIRTIO_DEVICES} virtio devices"
+        ));
+    }
 
     let initial_count = plan
         .processes
@@ -1442,6 +1584,20 @@ fn validate_plan(plan: &BootPlan) -> Result<(), String> {
     for endpoint in &plan.endpoints {
         if !endpoint_names.insert(endpoint.name.as_str()) {
             return Err(format!("duplicate endpoint {}", endpoint.name));
+        }
+    }
+
+    let mut pci_device_names = BTreeSet::new();
+    for device in &plan.pci_devices {
+        if !pci_device_names.insert(device.id.as_str()) {
+            return Err(format!("duplicate pci device {}", device.id));
+        }
+    }
+
+    let mut virtio_device_names = BTreeSet::new();
+    for device in &plan.virtio_devices {
+        if !virtio_device_names.insert(device.id.as_str()) {
+            return Err(format!("duplicate virtio device {}", device.id));
         }
     }
 
@@ -1778,6 +1934,20 @@ fn dma_region_index(plan: &BootPlan, id: &str) -> Result<usize, String> {
         .ok_or_else(|| format!("unknown dma region {id}"))
 }
 
+fn pci_device_index(plan: &BootPlan, id: &str) -> Result<usize, String> {
+    plan.pci_devices
+        .iter()
+        .position(|device| device.id == id)
+        .ok_or_else(|| format!("unknown pci device {id}"))
+}
+
+fn virtio_device_index(plan: &BootPlan, id: &str) -> Result<usize, String> {
+    plan.virtio_devices
+        .iter()
+        .position(|device| device.id == id)
+        .ok_or_else(|| format!("unknown virtio device {id}"))
+}
+
 fn object_index(plan: &BootPlan, grant: &Grant) -> Result<usize, String> {
     match grant.object_kind {
         OBJECT_ENDPOINT => endpoint_index(plan, &grant.object_name),
@@ -1789,6 +1959,8 @@ fn object_index(plan: &BootPlan, grant: &Grant) -> Result<usize, String> {
         OBJECT_MMIO_REGION => mmio_region_index(plan, &grant.object_name),
         OBJECT_INTERRUPT_LINE => interrupt_line_index(plan, &grant.object_name),
         OBJECT_DMA_REGION => dma_region_index(plan, &grant.object_name),
+        OBJECT_PCI_DEVICE => pci_device_index(plan, &grant.object_name),
+        OBJECT_VIRTIO_DEVICE => virtio_device_index(plan, &grant.object_name),
         other => Err(format!("unsupported native object kind {other}")),
     }
 }
@@ -1886,6 +2058,8 @@ struct BodySections {
     mmio_regions: (usize, usize),
     interrupt_lines: (usize, usize),
     dma_regions: (usize, usize),
+    pci_devices: (usize, usize),
+    virtio_devices: (usize, usize),
 }
 
 fn wrap_v1(manifest: &GenerationManifest, plan: &BootPlan, body: &[u8]) -> Result<Vec<u8>, String> {
@@ -1973,7 +2147,9 @@ fn wrap_v1(manifest: &GenerationManifest, plan: &BootPlan, body: &[u8]) -> Resul
             + sections.io_ports.1
             + sections.mmio_regions.1
             + sections.interrupt_lines.1
-            + sections.dma_regions.1,
+            + sections.dma_regions.1
+            + sections.pci_devices.1
+            + sections.virtio_devices.1,
     )?;
     debug_assert_eq!(bytes.len(), payload_offset);
 
@@ -1984,7 +2160,7 @@ fn wrap_v1(manifest: &GenerationManifest, plan: &BootPlan, body: &[u8]) -> Resul
 
 impl BodySections {
     fn new(plan: &BootPlan) -> Self {
-        let generation = (40, STRING_LEN * 2);
+        let generation = (44, STRING_LEN * 2);
         let boot_modules = (
             COMPACT_HEADER_SIZE,
             plan.boot_modules.len() * BOOT_MODULE_RECORD_LEN,
@@ -2029,6 +2205,14 @@ impl BodySections {
             interrupt_lines.0 + interrupt_lines.1,
             plan.dma_regions.len() * DMA_REGION_RECORD_LEN,
         );
+        let pci_devices = (
+            dma_regions.0 + dma_regions.1,
+            plan.pci_devices.len() * PCI_DEVICE_RECORD_LEN,
+        );
+        let virtio_devices = (
+            pci_devices.0 + pci_devices.1,
+            plan.virtio_devices.len() * VIRTIO_DEVICE_RECORD_LEN,
+        );
 
         Self {
             generation,
@@ -2043,6 +2227,8 @@ impl BodySections {
             mmio_regions,
             interrupt_lines,
             dma_regions,
+            pci_devices,
+            virtio_devices,
         }
     }
 }
@@ -2188,6 +2374,8 @@ mod tests {
             mmio_regions: Vec::new(),
             interrupt_lines: Vec::new(),
             dma_regions: Vec::new(),
+            pci_devices: Vec::new(),
+            virtio_devices: Vec::new(),
         };
 
         let error = validate_plan(&plan).expect_err("duplicate cap slot should fail");

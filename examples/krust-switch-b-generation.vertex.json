@@ -297,7 +297,7 @@
       },
       "driver": "svc:block-driver",
       "properties": {
-        "transport": "virtio-pci-legacy"
+        "transport": "virtio-pci-io"
       }
     }
   ],

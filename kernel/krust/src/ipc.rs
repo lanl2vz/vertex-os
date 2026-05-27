@@ -38,6 +38,8 @@ pub const BOOT_OBJECT_IO_PORT_RANGE: u16 = 6;
 pub const BOOT_OBJECT_MMIO_REGION: u16 = 7;
 pub const BOOT_OBJECT_INTERRUPT_LINE: u16 = 8;
 pub const BOOT_OBJECT_DMA_REGION: u16 = 9;
+pub const BOOT_OBJECT_PCI_DEVICE: u16 = 10;
+pub const BOOT_OBJECT_VIRTIO_DEVICE: u16 = 11;
 
 pub const FRAME_R15: usize = 0;
 pub const FRAME_R14: usize = 8;
@@ -218,6 +220,18 @@ pub struct BootDmaRegionConfig {
 }
 
 #[derive(Clone, Copy)]
+pub struct BootPciDeviceConfig {
+    pub id: &'static str,
+    pub kind: &'static str,
+}
+
+#[derive(Clone, Copy)]
+pub struct BootVirtioDeviceConfig {
+    pub id: &'static str,
+    pub transport: &'static str,
+}
+
+#[derive(Clone, Copy)]
 pub struct BootGrantConfig {
     pub process_index: usize,
     pub cap_slot: u64,
@@ -247,6 +261,10 @@ pub struct BootRuntimeConfig {
     interrupt_line_count: usize,
     dma_regions: [Option<BootDmaRegionConfig>; MAX_OBJECTS],
     dma_region_count: usize,
+    pci_devices: [Option<BootPciDeviceConfig>; MAX_OBJECTS],
+    pci_device_count: usize,
+    virtio_devices: [Option<BootVirtioDeviceConfig>; MAX_OBJECTS],
+    virtio_device_count: usize,
     grants: [Option<BootGrantConfig>; MAX_BOOT_GRANTS],
     grant_count: usize,
 }
@@ -426,6 +444,20 @@ struct DmaRegionObject {
 }
 
 #[derive(Clone, Copy)]
+struct PciDeviceObject {
+    id: KernelObjectId,
+    name: &'static str,
+    kind: &'static str,
+}
+
+#[derive(Clone, Copy)]
+struct VirtioDeviceObject {
+    id: KernelObjectId,
+    name: &'static str,
+    transport: &'static str,
+}
+
+#[derive(Clone, Copy)]
 struct ProcessControlObject {
     id: KernelObjectId,
     name: &'static str,
@@ -455,6 +487,8 @@ enum KernelObject {
     MmioRegion(MmioRegionObject),
     InterruptLine(InterruptLineObject),
     DmaRegion(DmaRegionObject),
+    PciDevice(PciDeviceObject),
+    VirtioDevice(VirtioDeviceObject),
     ProcessControl(ProcessControlObject),
     Secret(SecretObject),
 }
@@ -487,6 +521,8 @@ struct RuntimeState {
     mmio_region_ids: [Option<KernelObjectId>; MAX_OBJECTS],
     interrupt_line_ids: [Option<KernelObjectId>; MAX_OBJECTS],
     dma_region_ids: [Option<KernelObjectId>; MAX_OBJECTS],
+    pci_device_ids: [Option<KernelObjectId>; MAX_OBJECTS],
+    virtio_device_ids: [Option<KernelObjectId>; MAX_OBJECTS],
     timer_id: Option<KernelObjectId>,
     process_control_id: Option<KernelObjectId>,
     secret_id: Option<KernelObjectId>,
@@ -930,6 +966,22 @@ impl DmaRegionObject {
     }
 }
 
+impl PciDeviceObject {
+    const fn new(id: KernelObjectId, name: &'static str, kind: &'static str) -> Self {
+        Self { id, name, kind }
+    }
+}
+
+impl VirtioDeviceObject {
+    const fn new(id: KernelObjectId, name: &'static str, transport: &'static str) -> Self {
+        Self {
+            id,
+            name,
+            transport,
+        }
+    }
+}
+
 impl ProcessControlObject {
     const fn new(id: KernelObjectId, name: &'static str) -> Self {
         Self { id, name }
@@ -1161,6 +1213,42 @@ impl ObjectTable {
         self.next_id += 1;
         self.objects[self.count] = Some(KernelObject::DmaRegion(DmaRegionObject::new(
             id, name, base, length,
+        )));
+        self.count += 1;
+        Ok(id)
+    }
+
+    fn add_pci_device(
+        &mut self,
+        name: &'static str,
+        kind: &'static str,
+    ) -> Result<KernelObjectId, InitError> {
+        if self.count == self.objects.len() {
+            return Err(InitError::ObjectTableFull);
+        }
+
+        let id = KernelObjectId(self.next_id);
+        self.next_id += 1;
+        self.objects[self.count] = Some(KernelObject::PciDevice(PciDeviceObject::new(
+            id, name, kind,
+        )));
+        self.count += 1;
+        Ok(id)
+    }
+
+    fn add_virtio_device(
+        &mut self,
+        name: &'static str,
+        transport: &'static str,
+    ) -> Result<KernelObjectId, InitError> {
+        if self.count == self.objects.len() {
+            return Err(InitError::ObjectTableFull);
+        }
+
+        let id = KernelObjectId(self.next_id);
+        self.next_id += 1;
+        self.objects[self.count] = Some(KernelObject::VirtioDevice(VirtioDeviceObject::new(
+            id, name, transport,
         )));
         self.count += 1;
         Ok(id)
@@ -1555,6 +1643,8 @@ impl RuntimeState {
             mmio_region_ids: [None; MAX_OBJECTS],
             interrupt_line_ids: [None; MAX_OBJECTS],
             dma_region_ids: [None; MAX_OBJECTS],
+            pci_device_ids: [None; MAX_OBJECTS],
+            virtio_device_ids: [None; MAX_OBJECTS],
             timer_id: None,
             process_control_id: None,
             secret_id: None,
@@ -1574,6 +1664,8 @@ impl RuntimeState {
         self.mmio_region_ids = [None; MAX_OBJECTS];
         self.interrupt_line_ids = [None; MAX_OBJECTS];
         self.dma_region_ids = [None; MAX_OBJECTS];
+        self.pci_device_ids = [None; MAX_OBJECTS];
+        self.virtio_device_ids = [None; MAX_OBJECTS];
         self.timer_id = None;
         self.process_control_id = None;
         self.secret_id = None;
@@ -1703,6 +1795,10 @@ impl BootRuntimeConfig {
             interrupt_line_count: 0,
             dma_regions: [None; MAX_OBJECTS],
             dma_region_count: 0,
+            pci_devices: [None; MAX_OBJECTS],
+            pci_device_count: 0,
+            virtio_devices: [None; MAX_OBJECTS],
+            virtio_device_count: 0,
             grants: [None; MAX_BOOT_GRANTS],
             grant_count: 0,
         }
@@ -1792,6 +1888,24 @@ impl BootRuntimeConfig {
         Ok(())
     }
 
+    pub fn add_pci_device(&mut self, device: BootPciDeviceConfig) -> Result<(), InitError> {
+        if self.pci_device_count == self.pci_devices.len() {
+            return Err(InitError::ObjectTableFull);
+        }
+        self.pci_devices[self.pci_device_count] = Some(device);
+        self.pci_device_count += 1;
+        Ok(())
+    }
+
+    pub fn add_virtio_device(&mut self, device: BootVirtioDeviceConfig) -> Result<(), InitError> {
+        if self.virtio_device_count == self.virtio_devices.len() {
+            return Err(InitError::ObjectTableFull);
+        }
+        self.virtio_devices[self.virtio_device_count] = Some(device);
+        self.virtio_device_count += 1;
+        Ok(())
+    }
+
     pub fn add_grant(&mut self, grant: BootGrantConfig) -> Result<(), InitError> {
         if self.grant_count == self.grants.len() {
             return Err(InitError::CapabilityTableFull);
@@ -1818,6 +1932,8 @@ impl BootRuntimeConfig {
             BOOT_OBJECT_MMIO_REGION if grant.object_index < self.mmio_region_count => {}
             BOOT_OBJECT_INTERRUPT_LINE if grant.object_index < self.interrupt_line_count => {}
             BOOT_OBJECT_DMA_REGION if grant.object_index < self.dma_region_count => {}
+            BOOT_OBJECT_PCI_DEVICE if grant.object_index < self.pci_device_count => {}
+            BOOT_OBJECT_VIRTIO_DEVICE if grant.object_index < self.virtio_device_count => {}
             BOOT_OBJECT_ENDPOINT
             | BOOT_OBJECT_STORE
             | BOOT_OBJECT_STATE
@@ -1826,7 +1942,9 @@ impl BootRuntimeConfig {
             | BOOT_OBJECT_IO_PORT_RANGE
             | BOOT_OBJECT_MMIO_REGION
             | BOOT_OBJECT_INTERRUPT_LINE
-            | BOOT_OBJECT_DMA_REGION => return Err(InitError::InvalidBootManifest),
+            | BOOT_OBJECT_DMA_REGION
+            | BOOT_OBJECT_PCI_DEVICE
+            | BOOT_OBJECT_VIRTIO_DEVICE => return Err(InitError::InvalidBootManifest),
             _ => return Err(InitError::InvalidBootManifest),
         }
         self.grants[self.grant_count] = Some(grant);
@@ -2083,6 +2201,25 @@ pub fn init_from_boot_config(config: &'static BootRuntimeConfig) -> Result<(), I
         dma_index += 1;
     }
 
+    let mut pci_index = 0;
+    while pci_index < config.pci_device_count {
+        let device = config.pci_devices[pci_index].ok_or(InitError::InvalidBootManifest)?;
+        runtime.pci_device_ids[pci_index] =
+            Some(runtime.objects.add_pci_device(device.id, device.kind)?);
+        pci_index += 1;
+    }
+
+    let mut virtio_index = 0;
+    while virtio_index < config.virtio_device_count {
+        let device = config.virtio_devices[virtio_index].ok_or(InitError::InvalidBootManifest)?;
+        runtime.virtio_device_ids[virtio_index] = Some(
+            runtime
+                .objects
+                .add_virtio_device(device.id, device.transport)?,
+        );
+        virtio_index += 1;
+    }
+
     runtime.timer_id = Some(runtime.objects.add_timer("monotonic-timer")?);
     runtime.secret_id = Some(
         runtime
@@ -2277,6 +2414,12 @@ fn grant_object_id(
         }
         BOOT_OBJECT_DMA_REGION => {
             runtime.dma_region_ids[grant.object_index].ok_or(InitError::InvalidBootManifest)
+        }
+        BOOT_OBJECT_PCI_DEVICE => {
+            runtime.pci_device_ids[grant.object_index].ok_or(InitError::InvalidBootManifest)
+        }
+        BOOT_OBJECT_VIRTIO_DEVICE => {
+            runtime.virtio_device_ids[grant.object_index].ok_or(InitError::InvalidBootManifest)
         }
         _ => Err(InitError::InvalidBootManifest),
     }
@@ -4391,6 +4534,20 @@ fn write_capability_object_report(
                     report.push_str(region.name);
                     return;
                 }
+                KernelObject::PciDevice(device) if device.id == object => {
+                    report.push_str("pci-device=");
+                    report.push_str(device.name);
+                    report.push_str(" kind=");
+                    report.push_str(device.kind);
+                    return;
+                }
+                KernelObject::VirtioDevice(device) if device.id == object => {
+                    report.push_str("virtio-device=");
+                    report.push_str(device.name);
+                    report.push_str(" transport=");
+                    report.push_str(device.transport);
+                    return;
+                }
                 KernelObject::ProcessControl(process_control) if process_control.id == object => {
                     report.push_str("process-control=");
                     report.push_str(process_control.name);
@@ -4613,6 +4770,20 @@ fn print_capability_object(object: KernelObjectId) {
                     serial::write_u64_hex(region.base);
                     serial::write_str(" length=");
                     serial::write_u64_hex(region.length);
+                    return;
+                }
+                KernelObject::PciDevice(device) if device.id == object => {
+                    serial::write_str("pci-device=");
+                    serial::write_str(device.name);
+                    serial::write_str(" kind=");
+                    serial::write_str(device.kind);
+                    return;
+                }
+                KernelObject::VirtioDevice(device) if device.id == object => {
+                    serial::write_str("virtio-device=");
+                    serial::write_str(device.name);
+                    serial::write_str(" transport=");
+                    serial::write_str(device.transport);
                     return;
                 }
                 KernelObject::ProcessControl(process_control) if process_control.id == object => {

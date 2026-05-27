@@ -5,8 +5,8 @@ mod sys;
 
 use core::panic::PanicInfo;
 
-const KRUSTBOOT_MAGIC: &[u8; 16] = b"KRUSTBOOTV0\0\0\0\0\0";
-const KRUSTBOOT_VERSION: u16 = 4;
+const KRUSTBOOT_MAGIC: &[u8; 16] = b"KRUSTBOOTM55\0\0\0\0";
+const KRUSTBOOT_VERSION: u16 = 5;
 const MANIFEST_BUFFER_LEN: usize = 16 * 1024;
 const OFFSET_VERSION: usize = 16;
 const OFFSET_BOOT_MODULES: usize = 18;
@@ -20,7 +20,9 @@ const OFFSET_IO_PORTS: usize = 32;
 const OFFSET_MMIO_REGIONS: usize = 34;
 const OFFSET_INTERRUPT_LINES: usize = 36;
 const OFFSET_DMA_REGIONS: usize = 38;
-const OFFSET_GENERATION_ID: usize = 40;
+const OFFSET_PCI_DEVICES: usize = 40;
+const OFFSET_VIRTIO_DEVICES: usize = 42;
+const OFFSET_GENERATION_ID: usize = 44;
 const STRING_LEN: usize = 64;
 const OFFSET_PARENT_GENERATION_ID: usize = OFFSET_GENERATION_ID + STRING_LEN;
 const BOOT_MODULE_RECORD_LEN: usize = STRING_LEN * 2;
@@ -37,7 +39,7 @@ const RESTART_ON_FAILURE: u16 = 1;
 const RESTART_ALWAYS: u16 = 2;
 const MAX_NATIVE_RESTARTS: u16 = 1;
 const STATUS_RUNNING: u64 = u64::MAX - 8;
-const READINESS_TIMEOUT_MS: u64 = 50;
+const READINESS_TIMEOUT_MS: u64 = 500;
 const M37_GENERATION_A: &[u8] = b"gen:switch-a-0001";
 const M37_GENERATION_B: &[u8] = b"gen:switch-b-0002";
 const M37_GENERATION_C_BAD: &[u8] = b"gen:switch-c-bad-0003";
@@ -105,6 +107,8 @@ pub extern "C" fn _start() -> ! {
     let mmio_regions = read_u16(&manifest, OFFSET_MMIO_REGIONS);
     let interrupt_lines = read_u16(&manifest, OFFSET_INTERRUPT_LINES);
     let dma_regions = read_u16(&manifest, OFFSET_DMA_REGIONS);
+    let pci_devices = read_u16(&manifest, OFFSET_PCI_DEVICES);
+    let virtio_devices = read_u16(&manifest, OFFSET_VIRTIO_DEVICES);
 
     log_count(b"vertex-init boot modules: ", boot_modules);
     log_count(b"vertex-init processes: ", processes);
@@ -117,6 +121,8 @@ pub extern "C" fn _start() -> ! {
     log_count(b"vertex-init mmio regions: ", mmio_regions);
     log_count(b"vertex-init interrupt lines: ", interrupt_lines);
     log_count(b"vertex-init dma regions: ", dma_regions);
+    log_count(b"vertex-init pci devices: ", pci_devices);
+    log_count(b"vertex-init virtio devices: ", virtio_devices);
     run_endpoint_quota_tests(parent_generation);
 
     let mut order = [0u16; MAX_PROCESSES];
@@ -193,6 +199,9 @@ pub extern "C" fn _start() -> ! {
         parent_generation,
     );
 
+    if pci_devices > 0 || virtio_devices > 0 {
+        log(b"Native driver framework ok");
+    }
     log(b"Native manifest-driven activation ok");
     log(b"Native readiness activation ok");
     log(b"Native service activation ok");

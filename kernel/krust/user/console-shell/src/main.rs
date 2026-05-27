@@ -50,6 +50,7 @@ pub extern "C" fn _start() -> ! {
         let command = &command[..received as usize];
         if bytes_eq(command, b"help") {
             log(b"console-shell command: help");
+            log(b"commands: generation services counter increment install rollback why halt");
             console_write(
                 b"commands: generation services counter increment install rollback why halt\n> ",
             );
@@ -178,6 +179,7 @@ fn console_write_generation(generation: &[u8]) {
     let mut len = 0;
     append(&mut payload, &mut len, b"current generation: ");
     append(&mut payload, &mut len, generation);
+    log(&payload[..len]);
     append(&mut payload, &mut len, b"\n> ");
     console_write(&payload[..len]);
 }

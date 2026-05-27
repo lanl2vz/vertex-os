@@ -241,15 +241,19 @@ unauthorized service cannot access PCI I/O, IRQ, or DMA capabilities
         MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
         EXPECT_ACTIVATION_SUCCESS=1
         required_lines='
-KrustBoot grants: 49
+KrustBoot grants: 51
 KrustBoot io port ranges: 3
 KrustBoot mmio regions: 0
+KrustBoot pci devices: 1
+KrustBoot virtio devices: 1
 io_port[1] id=cap:io.pci-config base=0x0000000000000cf8 length=0x0000000000000008
 io_port[2] id=cap:io.virtio-blk0 base=0x000000000000c000 length=0x0000000000001000
 interrupt_line[0] id=cap:irq.virtio-blk0 line=11
 dma_region[0] id=cap:dma.virtio-blk0 base=
 proc=block-driver cap[6] io-port=cap:io.pci-config rights=read|write
 proc=block-driver cap[9] io-port=cap:io.virtio-blk0 rights=read|write
+proc=block-driver cap[10] pci-device=device:virtio-blk0 kind=virtio-blk-pci rights=control
+proc=block-driver cap[11] virtio-device=device:virtio-blk0 transport=virtio-pci-io rights=control
 virtio-blk PCI device discovered
 DMA map accepted: proc=block-driver dma-region=cap:dma.virtio-blk0
 virtio-blk driver ready
@@ -268,7 +272,7 @@ Native service activation ok
         MANIFEST="$ROOT_DIR/examples/krust-block-driver-fault-generation.vertex.json"
         required_lines='
 Boot generation: gen:block-driver-fault-0001
-KrustBoot grants: 48
+KrustBoot grants: 52
 KrustBoot store objects:
 proc=block-driver cap[10] store-object=store:block-driver-fault-token rights=read
 Object read accepted: proc=block-driver object=store:block-driver-fault-token bytes=25
@@ -285,7 +289,7 @@ Native service activation failed
         EXPECT_ACTIVATION_SUCCESS=1
         required_lines='
 KrustBoot endpoints: 12
-KrustBoot grants: 49
+KrustBoot grants: 51
 KrustBoot state volumes: 0
 QEMU boots with VertexDisk image attached
 VertexDisk superblock accepted
@@ -306,8 +310,8 @@ Native service activation ok
         VERTEX_DISK_CORRUPT=bad-superblock
         required_lines='
 VertexDisk superblock rejected
-vertex-init readiness timeout
-activation failed
+KrustBoot native store object unavailable for process: process=vertex-init object=store:vertex-init-demo
+Native runtime init failed from KrustBoot manifest
 Native service activation failed
 '
         ;;
@@ -444,7 +448,7 @@ Native service activation ok
         EXPECT_ACTIVATION_SUCCESS=1
         required_lines='
 KrustBoot endpoints: 12
-KrustBoot grants: 49
+KrustBoot grants: 51
 IPC FIFO regression: queued sends preserve FIFO order
 IPC FIFO regression: queue-full send rejected
 IPC FIFO regression: receiver-specific dequeue preserves eligible ordering
@@ -499,7 +503,7 @@ Boot generation: gen:console-0001
 KrustBoot boot modules: 14
 KrustBoot processes: 14
 KrustBoot endpoints: 15
-KrustBoot grants: 57
+KrustBoot grants: 59
 proc=console-driver cap[0] endpoint=console-output rights=receive
 proc=console-driver cap[3] endpoint=console-driver-control rights=receive
 proc=console-shell cap[0] endpoint=console-shell-request rights=receive
@@ -591,6 +595,7 @@ native-secret-value
         EXPECT_ACTIVATION_SUCCESS=1
         USE_SERIAL_PIPE=1
         SERIAL_INPUT_DELAYED=1
+        QEMU_ATTEMPTS=${QEMU_APPLIANCE_ATTEMPTS:-45}
         SERIAL_INPUT='install generation gen:new
 counter
 increment
@@ -622,6 +627,26 @@ console-driver forwarded serial command: why svc:counter state:counter
 why svc:counter state:counter
 svc:counter has state authority from generation graph
 Native console shell ok
+Native service activation ok
+'
+        ;;
+    m55|driver-framework)
+        MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
+        EXPECT_ACTIVATION_SUCCESS=1
+        required_lines='
+KrustBoot pci devices: 1
+KrustBoot virtio devices: 1
+pci_device[0] id=device:virtio-blk0 kind=virtio-blk-pci
+virtio_device[0] id=device:virtio-blk0 transport=virtio-pci-io
+process[1] name=serial-driver module=serial-driver initial=no service=svc:serial-driver restart=0 health=ipc-ping
+process[4] name=block-driver module=block-driver initial=no service=svc:block-driver restart=0 health=ipc-ping
+proc=serial-driver cap[3] io-port=cap:io.com1 rights=read|write
+proc=block-driver cap[10] pci-device=device:virtio-blk0 kind=virtio-blk-pci rights=control
+proc=block-driver cap[11] virtio-device=device:virtio-blk0 transport=virtio-pci-io rights=control
+serial-driver ready
+virtio-blk driver ready
+unauthorized service cannot access PCI I/O, IRQ, or DMA capabilities
+Native driver framework ok
 Native service activation ok
 '
         ;;
@@ -698,7 +723,7 @@ activation failed
 '
         ;;
     *)
-        echo "usage: scripts/krust-test.sh <m13|m14|valid-activation|manifest-cycle|bad-cap|readiness|readiness-timeout|rollback|store-state-services|timer|preemption|m30|user-fault|m31|restart|manifest-v1|cap-lifecycle|typed-arenas|quotas|m32|io-substrate|m33|serial-driver|m34|block-driver|m35|store-service|m36|state-service|m37|generation-switch|m38|introspection|m40|directed-ipc|m41|console-shell|m42|virtio-block|m42-driver-fault|block-driver-fault|m43|vertexdisk|m43-bad-superblock|vertexdisk-bad-superblock|m44|boot-manager|m45|store-verification|m46|native-update|m47|store-executables|m47-corrupt-executable|store-executable-corruption|m48|dynamic-process|m49|config-objects|m49-config-corrupt|config-hash-mismatch|m50|secrets|m54|appliance|manifest-truncated|manifest-bad-magic|manifest-raw-compact|manifest-unsupported-version|manifest-oob-record|manifest-missing-provider>" >&2
+        echo "usage: scripts/krust-test.sh <m13|m14|valid-activation|manifest-cycle|bad-cap|readiness|readiness-timeout|rollback|store-state-services|timer|preemption|m30|user-fault|m31|restart|manifest-v1|cap-lifecycle|typed-arenas|quotas|m32|io-substrate|m33|serial-driver|m34|block-driver|m35|store-service|m36|state-service|m37|generation-switch|m38|introspection|m40|directed-ipc|m41|console-shell|m42|virtio-block|m42-driver-fault|block-driver-fault|m43|vertexdisk|m43-bad-superblock|vertexdisk-bad-superblock|m44|boot-manager|m45|store-verification|m46|native-update|m47|store-executables|m47-corrupt-executable|store-executable-corruption|m48|dynamic-process|m49|config-objects|m49-config-corrupt|config-hash-mismatch|m50|secrets|m54|appliance|m55|driver-framework|manifest-truncated|manifest-bad-magic|manifest-raw-compact|manifest-unsupported-version|manifest-oob-record|manifest-missing-provider>" >&2
         exit 2
         ;;
 esac

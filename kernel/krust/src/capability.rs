@@ -44,8 +44,11 @@ pub enum KernelObjectKind {
     Thread,
     BootModule,
     IoPortRange,
+    MmioRegion,
     InterruptLine,
     DmaRegion,
+    PciDevice,
+    VirtioDevice,
 }
 
 impl KernelObjectKind {
@@ -57,8 +60,11 @@ impl KernelObjectKind {
             Self::Thread => "Thread",
             Self::BootModule => "BootModule",
             Self::IoPortRange => "IoPortRange",
+            Self::MmioRegion => "MmioRegion",
             Self::InterruptLine => "InterruptLine",
             Self::DmaRegion => "DmaRegion",
+            Self::PciDevice => "PciDevice",
+            Self::VirtioDevice => "VirtioDevice",
         }
     }
 }

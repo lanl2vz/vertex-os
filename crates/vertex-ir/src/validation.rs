@@ -268,6 +268,13 @@ fn validate_services(manifest: &GenerationManifest, report: &mut ValidationRepor
                 ));
             }
         }
+
+        if !matches!(service.restart.as_str(), "never" | "on-failure" | "always") {
+            report.error(format!(
+                "service {} has unsupported restart policy {}",
+                service.id, service.restart
+            ));
+        }
     }
 }
 
@@ -337,12 +344,81 @@ fn validate_state_volumes(
 
 fn validate_devices(manifest: &GenerationManifest, report: &mut ValidationReport) {
     for device in &manifest.devices {
-        if manifest.service(&device.driver).is_none() {
+        let Some(driver) = manifest.service(&device.driver) else {
             report.error(format!(
                 "device {} references unknown driver service {}",
                 device.id, device.driver
             ));
+            continue;
+        };
+
+        if driver.health.is_none() {
+            report.error(format!(
+                "device {} driver {} must declare a health check",
+                device.id, device.driver
+            ));
         }
+
+        if contains_legacy_transport(&device.selector)
+            || contains_legacy_transport(&device.properties)
+        {
+            report.error(format!(
+                "device {} declares a legacy transport; upgrade the device declaration instead of keeping compatibility mode",
+                device.id
+            ));
+        }
+    }
+
+    validate_hardware_capability_ownership(manifest, report);
+}
+
+fn validate_hardware_capability_ownership(
+    manifest: &GenerationManifest,
+    report: &mut ValidationReport,
+) {
+    for service in &manifest.services {
+        for requirement in &service.requires {
+            let Some(capability) = manifest.capability(&requirement.capability) else {
+                continue;
+            };
+            if !is_hardware_capability_kind(&capability.kind) {
+                continue;
+            }
+            let Some(device) = manifest
+                .devices
+                .iter()
+                .find(|device| device.id == capability.provider)
+            else {
+                continue;
+            };
+            if device.driver != service.id {
+                report.error(format!(
+                    "service {} requires hardware capability {} owned by driver {}; hardware authority is granted only to the declared driver",
+                    service.id, capability.id, device.driver
+                ));
+            }
+        }
+    }
+}
+
+fn is_hardware_capability_kind(kind: &str) -> bool {
+    matches!(
+        kind,
+        "io-port"
+            | "mmio-region"
+            | "interrupt-line"
+            | "dma-region"
+            | "pci-device"
+            | "virtio-device"
+    )
+}
+
+fn contains_legacy_transport(value: &Value) -> bool {
+    match value {
+        Value::String(text) => text.contains("legacy"),
+        Value::Array(values) => values.iter().any(contains_legacy_transport),
+        Value::Object(map) => map.values().any(contains_legacy_transport),
+        _ => false,
     }
 }
 

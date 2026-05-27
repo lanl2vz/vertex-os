@@ -6,7 +6,7 @@ IR and graph semantics; Krust is the native enforcement path.
 
 ## Status Summary
 
-Current status: M14-M54 are implemented and smoke-tested under
+Current status: M14-M55 are implemented and smoke-tested under
 `qemu-system-x86_64` with Limine. M39 pins the native toolchain, M40 makes
 native IPC directed, and M41 adds a native console shell path over explicit
 console authority. M42 adds the first real virtio-blk sector I/O path over
@@ -17,7 +17,8 @@ verifies store objects by content identity, M46 performs native update
 transactions, and M47 loads service executables only through verified native
 store objects. M48 adds PID-based dynamic process creation, M49 adds immutable
 config objects, M50 adds native secret authority, M51-M53 add package/link/build
-graph CLI boundaries, and M54 boots the first stateful appliance transcript.
+graph CLI boundaries, M54 boots the first stateful appliance transcript, and
+M55 formalizes user-space driver objects and native device ownership.
 
 ```sh
 make -C kernel/krust doctor
@@ -53,10 +54,11 @@ scripts/krust-test.sh m49
 scripts/krust-test.sh m49-config-corrupt
 scripts/krust-test.sh m50
 scripts/krust-test.sh m54
+scripts/krust-test.sh m55
 ```
 
-Next direction: formalize native drivers, device discovery, and the higher
-level language boundary on top of the M54 appliance baseline.
+Next direction: grow the virtio device stack, networking, and the higher level
+language boundary on top of the M55 appliance and driver baseline.
 
 ## M0: Serial Boot
 
@@ -1456,7 +1458,7 @@ done: locked Cargo dependencies for the hosted workspace, Krust kernel, and nati
 done: kernel/krust/rust-toolchain.toml pins Rust 1.95.0, rustfmt, and x86_64-unknown-none
 done: make doctor checks every required tool and reports actionable fixes
 done: legacy hello/ipc userspace crates are removed instead of carried forward
-done: single release-gate script runs the clean-clone M14-M54 proof with the M14-M54 QEMU matrix
+done: single release-gate script runs the clean-clone M14-M55 proof with the M14-M55 QEMU matrix
 ```
 
 Acceptance tests:
@@ -1514,7 +1516,7 @@ done: scripts/krust-test.sh m40 proves the directed IPC ABI and FIFO queue behav
 
 Status: done.
 
-Goal: turn the M14-M54 native proof into a small real operating system target:
+Goal: turn the M14-M55 native proof into a small real operating system target:
 bootable in QEMU, persistent, inspectable, updateable, and capable of running
 several native services under explicit authority.
 
@@ -2171,7 +2173,7 @@ done: M54 appliance transcript is checked by the gate
 
 ## M55: User-Space Driver Framework
 
-Status: planned.
+Status: done.
 
 Goal: formalize native drivers as capability-bound services.
 
@@ -2205,6 +2207,22 @@ unprivileged service cannot access hardware authority
 driver crash does not crash kernel
 driver restart preserves or reinitializes protocol state explicitly
 ```
+
+Implementation notes:
+
+- KrustBoot payload version 5 removes the old compact payload identity and adds
+  first-class `PciDevice` and `VirtioDevice` object records.
+- `vertexctl` derives PCI and virtio device caps only for the declared native
+  driver service; non-driver services are rejected if they request hardware
+  authority.
+- Native validation rejects driver devices without health checks and rejects
+  legacy transport declarations instead of keeping compatibility modes.
+- The M55 QEMU case checks COM1 ownership, virtio-blk PCI/virtio ownership,
+  mandatory driver health, explicit restart policy, hardware denial for
+  unprivileged services, and the existing user-fault containment path for a
+  crashing block driver.
+
+done: M55 user-space driver framework is checked by the gate
 
 ## M56: Virtio Device Stack
 
@@ -2370,7 +2388,7 @@ install verified generations, run dynamically created services, preserve
 mutable state, explain its authority graph, and recover from failed updates.
 ```
 
-M13 proved that native services can run under explicit authority. M14-M54 prove
+M13 proved that native services can run under explicit authority. M14-M55 prove
 that the graph itself decides which native services exist, when they start,
 what they receive, why they are allowed to communicate, and how authority and
 resources are bounded, while timer preemption and user fault containment keep
@@ -2380,6 +2398,6 @@ asking what generation and authority graph are running, M42 adds the first
 persistent block I/O path while preserving hardware-shaped authority, and M43
 turns that block path into a checked VertexDisk layout with persistent state.
 M44-M47 move boot selection, store-object verification, update commits, and
-service executable loading onto the native verified-store path. M48-M54 move
+service executable loading onto the native verified-store path. M48-M55 move
 process creation, config, secrets, package/link/build boundaries, and the first
 appliance transcript onto that same native path.

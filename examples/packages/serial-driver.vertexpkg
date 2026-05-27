@@ -38,7 +38,16 @@
             "write"
           ]
         }
-      ]
+      ],
+      "restart": "never",
+      "health": {
+        "kind": "ipc-ping",
+        "target": "cap:serial.console"
+      },
+      "lifecycle": {
+        "startAfter": [],
+        "stopBefore": []
+      }
     }
   ],
   "provenance": {

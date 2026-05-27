@@ -4,8 +4,8 @@ pub const MODULE_STRING: &[u8] = b"krustboot-manifest";
 pub const FALLBACK_MODULE_STRING: &[u8] = b"krustboot-fallback-manifest";
 pub const BAD_GENERATION_MODULE_STRING: &[u8] = b"krustboot-bad-generation-manifest";
 
-const COMPACT_MAGIC: &[u8; 16] = b"KRUSTBOOTV0\0\0\0\0\0";
-const COMPACT_VERSION: u16 = 4;
+const COMPACT_MAGIC: &[u8; 16] = b"KRUSTBOOTM55\0\0\0\0";
+const COMPACT_VERSION: u16 = 5;
 const V1_MAGIC: &[u8; 16] = b"KRUSTBOOTV1\0\0\0\0\0";
 const V1_VERSION: u16 = 1;
 const V1_HEADER_SIZE: usize = 164;
@@ -25,6 +25,8 @@ const MAX_IO_PORT_RANGES: usize = 4;
 const MAX_MMIO_REGIONS: usize = 4;
 const MAX_INTERRUPT_LINES: usize = 4;
 const MAX_DMA_REGIONS: usize = 4;
+const MAX_PCI_DEVICES: usize = 4;
+const MAX_VIRTIO_DEVICES: usize = 4;
 pub const MAX_PROCESS_REFS: usize = 4;
 
 pub const RIGHT_SEND: u16 = 1 << 0;
@@ -47,6 +49,8 @@ pub const OBJECT_IO_PORT_RANGE: u16 = 6;
 pub const OBJECT_MMIO_REGION: u16 = 7;
 pub const OBJECT_INTERRUPT_LINE: u16 = 8;
 pub const OBJECT_DMA_REGION: u16 = 9;
+pub const OBJECT_PCI_DEVICE: u16 = 10;
+pub const OBJECT_VIRTIO_DEVICE: u16 = 11;
 
 #[derive(Clone, Copy)]
 pub struct BootModule<'a> {
@@ -130,6 +134,18 @@ pub struct DmaRegion<'a> {
     pub length: u64,
 }
 
+#[derive(Clone, Copy)]
+pub struct PciDevice<'a> {
+    pub id: &'a str,
+    pub kind: &'a str,
+}
+
+#[derive(Clone, Copy)]
+pub struct VirtioDevice<'a> {
+    pub id: &'a str,
+    pub transport: &'a str,
+}
+
 pub struct Manifest<'a> {
     generation_id: &'a str,
     parent_generation_id: &'a str,
@@ -159,6 +175,10 @@ pub struct Manifest<'a> {
     interrupt_line_count: usize,
     dma_regions: [Option<DmaRegion<'a>>; MAX_DMA_REGIONS],
     dma_region_count: usize,
+    pci_devices: [Option<PciDevice<'a>>; MAX_PCI_DEVICES],
+    pci_device_count: usize,
+    virtio_devices: [Option<VirtioDevice<'a>>; MAX_VIRTIO_DEVICES],
+    virtio_device_count: usize,
 }
 
 struct Global<T>(UnsafeCell<T>);
@@ -186,6 +206,8 @@ pub enum ParseError {
     TooManyMmioRegions,
     TooManyInterruptLines,
     TooManyDmaRegions,
+    TooManyPciDevices,
+    TooManyVirtioDevices,
     InvalidString,
     InvalidReference,
     InvalidRights,
@@ -228,6 +250,10 @@ impl<'a> Manifest<'a> {
             interrupt_line_count: 0,
             dma_regions: [None; MAX_DMA_REGIONS],
             dma_region_count: 0,
+            pci_devices: [None; MAX_PCI_DEVICES],
+            pci_device_count: 0,
+            virtio_devices: [None; MAX_VIRTIO_DEVICES],
+            virtio_device_count: 0,
         }
     }
 
@@ -297,6 +323,14 @@ impl<'a> Manifest<'a> {
 
     pub fn dma_region_count(&self) -> usize {
         self.dma_region_count
+    }
+
+    pub fn pci_device_count(&self) -> usize {
+        self.pci_device_count
+    }
+
+    pub fn virtio_device_count(&self) -> usize {
+        self.virtio_device_count
     }
 
     pub fn boot_module(&self, index: usize) -> Option<BootModule<'a>> {
@@ -382,6 +416,22 @@ impl<'a> Manifest<'a> {
     pub fn dma_region(&self, index: usize) -> Option<DmaRegion<'a>> {
         if index < self.dma_region_count {
             self.dma_regions[index]
+        } else {
+            None
+        }
+    }
+
+    pub fn pci_device(&self, index: usize) -> Option<PciDevice<'a>> {
+        if index < self.pci_device_count {
+            self.pci_devices[index]
+        } else {
+            None
+        }
+    }
+
+    pub fn virtio_device(&self, index: usize) -> Option<VirtioDevice<'a>> {
+        if index < self.virtio_device_count {
+            self.virtio_devices[index]
         } else {
             None
         }
@@ -519,6 +569,9 @@ fn parse_compact_into(
     let interrupt_line_count =
         reader.read_count(MAX_INTERRUPT_LINES, ParseError::TooManyInterruptLines)?;
     let dma_region_count = reader.read_count(MAX_DMA_REGIONS, ParseError::TooManyDmaRegions)?;
+    let pci_device_count = reader.read_count(MAX_PCI_DEVICES, ParseError::TooManyPciDevices)?;
+    let virtio_device_count =
+        reader.read_count(MAX_VIRTIO_DEVICES, ParseError::TooManyVirtioDevices)?;
     let generation_id = reader.read_fixed_str()?;
     let parent_generation_id = reader.read_fixed_str_allow_empty()?;
 
@@ -538,6 +591,8 @@ fn parse_compact_into(
     manifest.mmio_region_count = mmio_region_count;
     manifest.interrupt_line_count = interrupt_line_count;
     manifest.dma_region_count = dma_region_count;
+    manifest.pci_device_count = pci_device_count;
+    manifest.virtio_device_count = virtio_device_count;
 
     let mut index = 0;
     while index < boot_module_count {
@@ -673,6 +728,24 @@ fn parse_compact_into(
         index += 1;
     }
 
+    index = 0;
+    while index < pci_device_count {
+        manifest.pci_devices[index] = Some(PciDevice {
+            id: reader.read_fixed_str()?,
+            kind: reader.read_fixed_str()?,
+        });
+        index += 1;
+    }
+
+    index = 0;
+    while index < virtio_device_count {
+        manifest.virtio_devices[index] = Some(VirtioDevice {
+            id: reader.read_fixed_str()?,
+            transport: reader.read_fixed_str()?,
+        });
+        index += 1;
+    }
+
     validate_manifest(manifest)?;
 
     if !reader.finished() {
@@ -737,13 +810,17 @@ fn validate_manifest(manifest: &Manifest<'_>) -> Result<(), ParseError> {
             OBJECT_MMIO_REGION if grant.object_index < manifest.mmio_region_count => {}
             OBJECT_INTERRUPT_LINE if grant.object_index < manifest.interrupt_line_count => {}
             OBJECT_DMA_REGION if grant.object_index < manifest.dma_region_count => {}
+            OBJECT_PCI_DEVICE if grant.object_index < manifest.pci_device_count => {}
+            OBJECT_VIRTIO_DEVICE if grant.object_index < manifest.virtio_device_count => {}
             OBJECT_ENDPOINT | OBJECT_STORE | OBJECT_TIMER | OBJECT_NETWORK_PORT => {
                 return Err(ParseError::InvalidReference);
             }
             OBJECT_IO_PORT_RANGE
             | OBJECT_MMIO_REGION
             | OBJECT_INTERRUPT_LINE
-            | OBJECT_DMA_REGION => {
+            | OBJECT_DMA_REGION
+            | OBJECT_PCI_DEVICE
+            | OBJECT_VIRTIO_DEVICE => {
                 return Err(ParseError::InvalidReference);
             }
             _ => return Err(ParseError::InvalidObjectKind),

@@ -57,7 +57,7 @@ KrustBoot Manifest v1 records: 9
 KrustBoot boot modules: 13
 KrustBoot processes: 13
 KrustBoot endpoints: 12
-KrustBoot grants: 49
+KrustBoot grants: 51
 KrustBoot store objects: 14
 KrustBoot state volumes: 0
 KrustBoot network ports: 1
@@ -65,6 +65,8 @@ KrustBoot io port ranges: 3
 KrustBoot mmio regions: 0
 KrustBoot interrupt lines: 1
 KrustBoot dma regions: 1
+KrustBoot pci devices: 1
+KrustBoot virtio devices: 1
 boot_module[0] name=vertex-init string=vertex-init
 boot_module[1] name=serial-driver string=serial-driver
 boot_module[2] name=logd string=logd
@@ -120,6 +122,8 @@ process=block-driver cap[6] io-port=cap:io.pci-config rights=read|write
 process=block-driver cap[7] interrupt-line=cap:irq.virtio-blk0 rights=listen
 process=block-driver cap[8] dma-region=cap:dma.virtio-blk0 rights=read|write|map
 process=block-driver cap[9] io-port=cap:io.virtio-blk0 rights=read|write
+process=block-driver cap[10] pci-device=device:virtio-blk0 rights=control
+process=block-driver cap[11] virtio-device=device:virtio-blk0 rights=control
 process=echo cap[3] network-port=cap:net.tcp.8080 rights=listen
 process=timer-service cap[0] timer=monotonic-timer rights=control
 network_port[0] id=cap:net.tcp.8080
@@ -192,6 +196,8 @@ proc=block-driver cap[6] io-port=cap:io.pci-config rights=read|write
 proc=block-driver cap[7] interrupt-line=cap:irq.virtio-blk0 rights=listen
 proc=block-driver cap[8] dma-region=cap:dma.virtio-blk0 base=
 proc=block-driver cap[9] io-port=cap:io.virtio-blk0 rights=read|write
+proc=block-driver cap[10] pci-device=device:virtio-blk0 kind=virtio-blk-pci rights=control
+proc=block-driver cap[11] virtio-device=device:virtio-blk0 transport=virtio-pci-io rights=control
 proc=vertex-store cap[0] endpoint=store-hello-text-request rights=receive
 proc=vertex-store cap[3] endpoint=vertex-store-block-reply rights=receive
 proc=vertex-state cap[0] endpoint=state-counter-request rights=receive
@@ -214,7 +220,7 @@ vertex-init manifest generation: gen:hello-0001
 vertex-init boot modules: 13
 vertex-init processes: 13
 vertex-init endpoints: 12
-vertex-init grants: 49
+vertex-init grants: 51
 vertex-init network ports: 1
 vertex-init store objects: 14
 Krust process executable store object: process=logd object=store:logd-demo
@@ -228,6 +234,8 @@ vertex-init io ports: 3
 vertex-init mmio regions: 0
 vertex-init interrupt lines: 1
 vertex-init dma regions: 1
+vertex-init pci devices: 1
+vertex-init virtio devices: 1
 service with quota=1 endpoint can create one endpoint
 second endpoint creation fails
 init can delegate smaller quota
@@ -462,7 +470,7 @@ done
 
 cleanup
 pid=
-echo "smoke failed: serial output did not contain the full M14-M54 native activation transcript after $QEMU_ATTEMPTS checks"
+echo "smoke failed: serial output did not contain the full M14-M55 native activation transcript after $QEMU_ATTEMPTS checks"
 echo "serial log: $SERIAL_LOG"
 if [ -n "$missing_required" ]; then
     echo "missing required transcript lines:"

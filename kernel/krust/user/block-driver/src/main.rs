@@ -45,7 +45,7 @@ const VERTEX_DISK_JOURNAL_SECTION: usize = 5;
 const PCI_CONFIG_ADDRESS: u16 = 0x0cf8;
 const PCI_CONFIG_DATA: u16 = 0x0cfc;
 const PCI_VENDOR_VIRTIO: u16 = 0x1af4;
-const PCI_DEVICE_VIRTIO_BLK_LEGACY: u16 = 0x1001;
+const PCI_DEVICE_VIRTIO_BLK_IO_TRANSPORT: u16 = 0x1001;
 const PCI_COMMAND: u8 = 0x04;
 const PCI_BAR0: u8 = 0x10;
 const PCI_COMMAND_IO: u16 = 1 << 0;
@@ -163,13 +163,13 @@ impl VirtioBlock {
             store_read_logged: false,
             state_read_logged: false,
         };
-        if device.setup_legacy_queue().is_none() {
+        if device.setup_queue().is_none() {
             return None;
         }
         Some(device)
     }
 
-    fn setup_legacy_queue(&mut self) -> Option<()> {
+    fn setup_queue(&mut self) -> Option<()> {
         self.write_status(0)?;
         self.write_status(VIRTIO_STATUS_ACKNOWLEDGE)?;
         self.write_status(VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER)?;
@@ -310,7 +310,7 @@ fn discover_virtio_blk() -> Option<u16> {
     while slot < 32 {
         let vendor = pci_read_u16(0, slot, 0, 0x00)?;
         let device = pci_read_u16(0, slot, 0, 0x02)?;
-        if vendor == PCI_VENDOR_VIRTIO && device == PCI_DEVICE_VIRTIO_BLK_LEGACY {
+        if vendor == PCI_VENDOR_VIRTIO && device == PCI_DEVICE_VIRTIO_BLK_IO_TRANSPORT {
             let command = pci_read_u16(0, slot, 0, PCI_COMMAND)?;
             pci_write_u16(
                 0,

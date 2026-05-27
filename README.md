@@ -28,12 +28,12 @@ vertex-os/
     netstack/            Demo hosted network capability provider
     echo-server/         Demo service consuming log and network capabilities
   kernel/
-    krust/               Bootable Krust kernel prototype, currently covering M14-M54 native graph activation, substrate hardening, pinned tooling, ABI v1 IPC, console shell, virtio-blk I/O, VertexDisk v0, native boot selection, verified store objects, native updates, store-loaded executables, dynamic process creation, native config/secrets, package/link/build import, and the first appliance transcript
+    krust/               Bootable Krust kernel prototype, currently covering M14-M55 native graph activation, substrate hardening, pinned tooling, ABI v1 IPC, console shell, virtio-blk I/O, VertexDisk v0, native boot selection, verified store objects, native updates, store-loaded executables, dynamic process creation, native config/secrets, package/link/build import, the first appliance transcript, and native user-space driver objects
   lang/
     vertex-lang/         Planned typed system-definition language
 ```
 
-## Krust M14-M54
+## Krust M14-M55
 
 The current native activation path lives in `kernel/krust`. It is isolated
 from the hosted Cargo workspace and boots a Limine ISO under QEMU. The ISO
@@ -57,22 +57,22 @@ superblock/index/state/journal handling, M44 native generation selection and
 fallback, M45 store-object hash verification, M46 native update transactions,
 M47 store-loaded executable images, M48 dynamic process creation, M49 immutable
 config objects, M50 native secrets, M51-M53 package/link/build import CLI
-boundaries, M54 appliance behavior, and a real restart of `flaky-service`, not
-init-owned transcript logging.
+boundaries, M54 appliance behavior, M55 user-space driver object authority, and
+a real restart of `flaky-service`, not init-owned transcript logging.
 
 ```sh
 scripts/krust-smoke.sh
 ```
 
 The clean-clone release gate validates the hosted build, checks the Krust
-toolchain, rebuilds the ISO from clean kernel artifacts, and runs the M14-M54
-gate with the M14-M54 QEMU test matrix:
+toolchain, rebuilds the ISO from clean kernel artifacts, and runs the M14-M55
+gate with the M14-M55 QEMU test matrix:
 
 ```sh
 scripts/krust-release-gate.sh
 ```
 
-See [docs/krust-milestones.md](docs/krust-milestones.md) for M0 through M54
+See [docs/krust-milestones.md](docs/krust-milestones.md) for M0 through M55
 completion status,
 [docs/krust-toolchain.md](docs/krust-toolchain.md) for the pinned M39 toolchain,
 and [docs/krust-abi-v1.md](docs/krust-abi-v1.md) for the current syscall,

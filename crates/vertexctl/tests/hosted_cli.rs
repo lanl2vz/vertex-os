@@ -323,7 +323,7 @@ fn compile_boot_manifest_emits_krustboot_plan() {
     assert!(stdout.contains("boot_modules: 13"));
     assert!(stdout.contains("processes: 13"));
     assert!(stdout.contains("endpoints: 12"));
-    assert!(stdout.contains("grants: 49"));
+    assert!(stdout.contains("grants: 51"));
     assert!(stdout.contains("store_objects: 14"));
     assert!(stdout.contains("state_volumes: 0"));
     assert!(stdout.contains("network_ports: 1"));
@@ -331,6 +331,8 @@ fn compile_boot_manifest_emits_krustboot_plan() {
     assert!(stdout.contains("mmio_regions: 0"));
     assert!(stdout.contains("interrupt_lines: 1"));
     assert!(stdout.contains("dma_regions: 1"));
+    assert!(stdout.contains("pci_devices: 1"));
+    assert!(stdout.contains("virtio_devices: 1"));
 
     let bytes = fs::read(&output_path).expect("read krustboot output");
     assert!(bytes.starts_with(b"KRUSTBOOTV1\0\0\0\0\0"));
@@ -365,6 +367,8 @@ fn compile_boot_manifest_emits_krustboot_plan() {
     assert!(contains_bytes(&bytes, b"cap:io.virtio-blk0"));
     assert!(contains_bytes(&bytes, b"cap:irq.virtio-blk0"));
     assert!(contains_bytes(&bytes, b"cap:dma.virtio-blk0"));
+    assert!(contains_bytes(&bytes, b"device:virtio-blk0"));
+    assert!(contains_bytes(&bytes, b"virtio-pci-io"));
     assert!(contains_bytes(&bytes, b"cap:net.tcp.8080"));
 }
 
@@ -432,7 +436,7 @@ fn compile_boot_manifest_does_not_inject_implicit_logd_config() {
         &output_path.to_string_lossy(),
     ]));
 
-    assert!(stdout.contains("grants: 48"));
+    assert!(stdout.contains("grants: 50"));
     assert!(stdout.contains("store_objects: 13"));
     let bytes = fs::read(&output_path).expect("read krustboot output");
     assert!(!contains_bytes(&bytes, b"config:logd"));
@@ -508,6 +512,106 @@ fn compile_boot_manifest_rejects_legacy_state_backend_capability() {
     assert!(stderr.contains("legacy state backend capability"));
     assert!(stderr.contains("is not supported"));
     assert!(!output_path.exists());
+}
+
+#[test]
+fn validate_rejects_driver_without_health_check() {
+    let dir = temp_dir("driver-health");
+    let input_path = dir.join("driver-health.vertex.json");
+    let mut manifest: Value = serde_json::from_str(
+        &fs::read_to_string(repo_root().join("examples/hello-generation.vertex.json"))
+            .expect("read hello manifest"),
+    )
+    .expect("hello manifest should be json");
+
+    let services = manifest["services"]
+        .as_array_mut()
+        .expect("services should be an array");
+    let block_driver = services
+        .iter_mut()
+        .find(|service| service["id"] == "svc:block-driver")
+        .expect("block driver service should exist");
+    block_driver["health"] = Value::Null;
+
+    fs::write(
+        &input_path,
+        serde_json::to_string_pretty(&manifest).expect("serialize bad driver manifest"),
+    )
+    .expect("write bad driver manifest");
+
+    let stderr = assert_failure(run(&["validate", &input_path.to_string_lossy()]));
+
+    assert!(
+        stderr.contains(
+            "device device:virtio-blk0 driver svc:block-driver must declare a health check"
+        )
+    );
+}
+
+#[test]
+fn validate_rejects_legacy_driver_transport() {
+    let dir = temp_dir("driver-legacy-transport");
+    let input_path = dir.join("driver-legacy.vertex.json");
+    let mut manifest: Value = serde_json::from_str(
+        &fs::read_to_string(repo_root().join("examples/hello-generation.vertex.json"))
+            .expect("read hello manifest"),
+    )
+    .expect("hello manifest should be json");
+
+    let devices = manifest["devices"]
+        .as_array_mut()
+        .expect("devices should be an array");
+    let block_device = devices
+        .iter_mut()
+        .find(|device| device["id"] == "device:virtio-blk0")
+        .expect("block device should exist");
+    block_device["properties"]["transport"] = Value::String("virtio-pci-legacy".to_owned());
+
+    fs::write(
+        &input_path,
+        serde_json::to_string_pretty(&manifest).expect("serialize legacy transport manifest"),
+    )
+    .expect("write legacy transport manifest");
+
+    let stderr = assert_failure(run(&["validate", &input_path.to_string_lossy()]));
+
+    assert!(stderr.contains("device device:virtio-blk0 declares a legacy transport"));
+}
+
+#[test]
+fn validate_rejects_hardware_capability_for_non_driver() {
+    let dir = temp_dir("driver-hardware-owner");
+    let input_path = dir.join("driver-hardware-owner.vertex.json");
+    let mut manifest: Value = serde_json::from_str(
+        &fs::read_to_string(repo_root().join("examples/hello-generation.vertex.json"))
+            .expect("read hello manifest"),
+    )
+    .expect("hello manifest should be json");
+
+    let services = manifest["services"]
+        .as_array_mut()
+        .expect("services should be an array");
+    let echo = services
+        .iter_mut()
+        .find(|service| service["id"] == "svc:echo-server")
+        .expect("echo service should exist");
+    echo["requires"]
+        .as_array_mut()
+        .expect("echo requirements should be an array")
+        .push(serde_json::json!({
+            "capability": "cap:io.com1",
+            "rights": ["read"]
+        }));
+
+    fs::write(
+        &input_path,
+        serde_json::to_string_pretty(&manifest).expect("serialize bad hardware manifest"),
+    )
+    .expect("write bad hardware manifest");
+
+    let stderr = assert_failure(run(&["validate", &input_path.to_string_lossy()]));
+
+    assert!(stderr.contains("service svc:echo-server requires hardware capability cap:io.com1 owned by driver svc:serial-driver"));
 }
 
 #[test]

@@ -395,6 +395,18 @@ fn run_capability_table_demo(allocator: &memory::FrameAllocator, heap: KernelHea
             return;
         }
     };
+    let virtio_mmio = match table.add_object(
+        capability::KernelObjectKind::MmioRegion,
+        "mmio:virtio-demo",
+        0xfeb0_0000,
+        0x1000,
+    ) {
+        Ok(id) => id,
+        Err(_) => {
+            serial::write_str("Capability table demo failed: virtio MMIO object\n");
+            return;
+        }
+    };
     let virtio_irq = match table.add_object(
         capability::KernelObjectKind::InterruptLine,
         "irq:virtio-blk0",
@@ -416,6 +428,30 @@ fn run_capability_table_demo(allocator: &memory::FrameAllocator, heap: KernelHea
         Ok(id) => id,
         Err(_) => {
             serial::write_str("Capability table demo failed: virtio DMA object\n");
+            return;
+        }
+    };
+    let virtio_pci_device = match table.add_object(
+        capability::KernelObjectKind::PciDevice,
+        "device:virtio-blk0",
+        0,
+        0,
+    ) {
+        Ok(id) => id,
+        Err(_) => {
+            serial::write_str("Capability table demo failed: virtio PCI device object\n");
+            return;
+        }
+    };
+    let virtio_device = match table.add_object(
+        capability::KernelObjectKind::VirtioDevice,
+        "device:virtio-blk0",
+        0,
+        0,
+    ) {
+        Ok(id) => id,
+        Err(_) => {
+            serial::write_str("Capability table demo failed: virtio device object\n");
             return;
         }
     };
@@ -466,12 +502,19 @@ fn run_capability_table_demo(allocator: &memory::FrameAllocator, heap: KernelHea
                 capability::RIGHT_READ | capability::RIGHT_WRITE,
             )
             .is_err()
+        || table.grant(virtio_mmio, capability::RIGHT_MAP).is_err()
         || table.grant(virtio_irq, capability::RIGHT_LISTEN).is_err()
         || table
             .grant(
                 virtio_dma,
                 capability::RIGHT_READ | capability::RIGHT_WRITE | capability::RIGHT_MAP,
             )
+            .is_err()
+        || table
+            .grant(virtio_pci_device, capability::RIGHT_CONTROL)
+            .is_err()
+        || table
+            .grant(virtio_device, capability::RIGHT_CONTROL)
             .is_err()
     {
         serial::write_str("Capability table demo failed: grant\n");
@@ -480,7 +523,7 @@ fn run_capability_table_demo(allocator: &memory::FrameAllocator, heap: KernelHea
 
     table.print();
 
-    if table.object_count() == 11 && table.capability_count() == 11 {
+    if table.object_count() == 14 && table.capability_count() == 14 {
         serial::write_str("Capability table demo ok\n");
     } else {
         serial::write_str("Capability table demo failed: count mismatch\n");
@@ -1005,6 +1048,38 @@ fn build_boot_runtime_config(
             .is_err()
         {
             serial::write_str("KrustBoot runtime plan failed: dma region table\n");
+            return None;
+        }
+        index += 1;
+    }
+
+    index = 0;
+    while index < boot_manifest.pci_device_count() {
+        let device = boot_manifest.pci_device(index)?;
+        if config
+            .add_pci_device(ipc::BootPciDeviceConfig {
+                id: device.id,
+                kind: device.kind,
+            })
+            .is_err()
+        {
+            serial::write_str("KrustBoot runtime plan failed: pci device table\n");
+            return None;
+        }
+        index += 1;
+    }
+
+    index = 0;
+    while index < boot_manifest.virtio_device_count() {
+        let device = boot_manifest.virtio_device(index)?;
+        if config
+            .add_virtio_device(ipc::BootVirtioDeviceConfig {
+                id: device.id,
+                transport: device.transport,
+            })
+            .is_err()
+        {
+            serial::write_str("KrustBoot runtime plan failed: virtio device table\n");
             return None;
         }
         index += 1;
@@ -1745,6 +1820,40 @@ fn print_boot_manifest(manifest: &boot_manifest::Manifest<'static>) {
         }
         index += 1;
     }
+
+    serial::write_str("KrustBoot pci devices: ");
+    serial::write_u64_dec(manifest.pci_device_count() as u64);
+    serial::write_str("\n");
+    index = 0;
+    while index < manifest.pci_device_count() {
+        if let Some(device) = manifest.pci_device(index) {
+            serial::write_str("  pci_device[");
+            serial::write_u64_dec(index as u64);
+            serial::write_str("] id=");
+            serial::write_str(device.id);
+            serial::write_str(" kind=");
+            serial::write_str(device.kind);
+            serial::write_str("\n");
+        }
+        index += 1;
+    }
+
+    serial::write_str("KrustBoot virtio devices: ");
+    serial::write_u64_dec(manifest.virtio_device_count() as u64);
+    serial::write_str("\n");
+    index = 0;
+    while index < manifest.virtio_device_count() {
+        if let Some(device) = manifest.virtio_device(index) {
+            serial::write_str("  virtio_device[");
+            serial::write_u64_dec(index as u64);
+            serial::write_str("] id=");
+            serial::write_str(device.id);
+            serial::write_str(" transport=");
+            serial::write_str(device.transport);
+            serial::write_str("\n");
+        }
+        index += 1;
+    }
 }
 
 fn print_boot_grant_object(
@@ -1820,6 +1929,24 @@ fn print_boot_grant_object(
                 manifest
                     .dma_region(object_index)
                     .map(|region| region.id)
+                    .unwrap_or("<bad>"),
+            );
+        }
+        boot_manifest::OBJECT_PCI_DEVICE => {
+            serial::write_str("pci-device=");
+            serial::write_str(
+                manifest
+                    .pci_device(object_index)
+                    .map(|device| device.id)
+                    .unwrap_or("<bad>"),
+            );
+        }
+        boot_manifest::OBJECT_VIRTIO_DEVICE => {
+            serial::write_str("virtio-device=");
+            serial::write_str(
+                manifest
+                    .virtio_device(object_index)
+                    .map(|device| device.id)
                     .unwrap_or("<bad>"),
             );
         }
@@ -1927,6 +2054,10 @@ fn print_boot_manifest_error(error: boot_manifest::ParseError) {
             serial::write_str("too many interrupt lines")
         }
         boot_manifest::ParseError::TooManyDmaRegions => serial::write_str("too many dma regions"),
+        boot_manifest::ParseError::TooManyPciDevices => serial::write_str("too many pci devices"),
+        boot_manifest::ParseError::TooManyVirtioDevices => {
+            serial::write_str("too many virtio devices")
+        }
         boot_manifest::ParseError::InvalidString => serial::write_str("invalid string"),
         boot_manifest::ParseError::InvalidReference => serial::write_str("invalid reference"),
         boot_manifest::ParseError::InvalidRights => serial::write_str("invalid rights"),

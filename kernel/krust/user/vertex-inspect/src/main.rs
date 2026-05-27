@@ -8,14 +8,14 @@ use core::{cell::UnsafeCell, panic::PanicInfo};
 const CAP_INSPECT: u64 = 0;
 const CAP_SERIAL_LOG: u64 = 1;
 const CAP_MANIFEST: u64 = 3;
-const KRUSTBOOT_MAGIC: &[u8; 16] = b"KRUSTBOOTV0\0\0\0\0\0";
-const KRUSTBOOT_VERSION: u16 = 4;
+const KRUSTBOOT_MAGIC: &[u8; 16] = b"KRUSTBOOTM55\0\0\0\0";
+const KRUSTBOOT_VERSION: u16 = 5;
 const MANIFEST_BUFFER_LEN: usize = 16 * 1024;
 const REPORT_BUFFER_LEN: usize = 64 * 1024;
 const OFFSET_VERSION: usize = 16;
 const OFFSET_PROCESSES: usize = 20;
 const OFFSET_ENDPOINTS: usize = 22;
-const OFFSET_GENERATION_ID: usize = 40;
+const OFFSET_GENERATION_ID: usize = 44;
 const STRING_LEN: usize = 64;
 
 struct ReportBuffer(UnsafeCell<[u8; REPORT_BUFFER_LEN]>);

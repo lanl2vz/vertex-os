@@ -5,7 +5,7 @@ native Krust QEMU/Limine milestone. It is intentionally small and unstable. Its
 current job is to boot native `vertex-init`, create services from verified
 process templates, and enforce explicit process-local capabilities.
 
-Milestone status: ABI v1 now covers the M14-M54 native activation and substrate
+Milestone status: ABI v1 now covers the M14-M55 native activation and substrate
 proof. M25 adds the release gate. M26-M29 add Manifest v1 parsing, capability
 provenance/revocation, typed arena allocation checks, and resource quotas.
 M30-M31 add PIT-backed preemption and user page-fault containment. M32-M36 add
@@ -19,7 +19,7 @@ path, M42 adds minimal virtio-blk sector I/O over PCI I/O and DMA
 capabilities, and M43 adds VertexDisk v0 block-object persistence for store,
 state, and journal data. M44-M47 add native boot-manager state, verified store
 object identities, native update transactions, and process executable loading
-through verified store objects. M48-M54 replace fixed runtime process slots
+through verified store objects. M48-M55 replace fixed runtime process slots
 with PID-based process creation, add native config and secret authority,
 and add the first package/link/build/appliance surface. The ABI is still
 intentionally small, but this subset is the current native contract.
@@ -141,7 +141,7 @@ becoming uncontrolled kernel faults.
 Capabilities are process-local. A capability slot number is meaningful only in
 the current process's capability space.
 
-Current M14-M54 layout:
+Current M14-M55 layout:
 
 ```text
 vertex-init:
@@ -177,6 +177,8 @@ block-driver:
   cap[7] = interrupt-line cap:irq.virtio-blk0, rights=listen
   cap[8] = dma-region cap:dma.virtio-blk0, rights=read|write|map
   cap[9] = io-port cap:io.virtio-blk0, rights=read|write
+  cap[10] = pci-device device:virtio-blk0, rights=control
+  cap[11] = virtio-device device:virtio-blk0, rights=control
 
 vertex-store:
   cap[0] = endpoint store-hello-text-request, rights=receive
@@ -277,10 +279,13 @@ services; the proof path records and enforces the capability object, but does
 not yet include a network driver syscall that consumes it.
 
 Native I/O objects now cover the first hardware authority substrate:
-`IoPortRange`, `MmioRegion`, `InterruptLine`, and `DmaRegion`. `DmaRegion`
-authority is represented and granted to `block-driver`; `SYS_DMA_MAP` maps the
-region into the calling driver and returns `{ virtual_base, physical_base,
-length }`.
+`IoPortRange`, `MmioRegion`, `InterruptLine`, `DmaRegion`, `PciDevice`, and
+`VirtioDevice`. `DmaRegion` authority is represented and granted to
+`block-driver`; `SYS_DMA_MAP` maps the region into the calling driver and
+returns `{ virtual_base, physical_base, length }`. `PciDevice` and
+`VirtioDevice` are M55 ownership objects: they are granted only to the declared
+driver service and are intentionally not exposed to unprivileged consumers by
+default.
 
 Capability records carry kernel-owned metadata:
 
