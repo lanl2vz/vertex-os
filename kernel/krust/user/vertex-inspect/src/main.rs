@@ -8,8 +8,8 @@ use core::{cell::UnsafeCell, panic::PanicInfo};
 const CAP_INSPECT: u64 = 0;
 const CAP_SERIAL_LOG: u64 = 1;
 const CAP_MANIFEST: u64 = 3;
-const KRUSTBOOT_MAGIC: &[u8; 16] = b"KRUSTBOOTM60\0\0\0\0";
-const KRUSTBOOT_VERSION: u16 = 6;
+const KRUSTBOOT_MAGIC: &[u8; 16] = b"KRUSTBOOTM61\0\0\0\0";
+const KRUSTBOOT_VERSION: u16 = 7;
 const MANIFEST_BUFFER_LEN: usize = 16 * 1024;
 const REPORT_BUFFER_LEN: usize = 64 * 1024;
 const OFFSET_VERSION: usize = 16;
@@ -53,8 +53,16 @@ pub extern "C" fn _start() -> ! {
         log(b"vertex-inspect runtime report failed");
         sys::exit(1);
     }
-    let report = &report[..report_len as usize];
+    if sys::runtime_inspect(CAP_SERIAL_LOG, report) == sys::STATUS_BAD_CAPABILITY
+        && sys::process_create(CAP_INSPECT, 1) == sys::STATUS_BAD_CAPABILITY
+    {
+        log(b"M61 inspect authority rejects wrong kind and missing create right");
+    } else {
+        log(b"M61 inspect authority negative test failed");
+        sys::exit(1);
+    }
 
+    let report = &report[..report_len as usize];
     explain_echo_to_logd(report);
     explain_state_counter(report);
     explain_vertex_inspect_generation(report, &generation.id[..generation.id_len]);

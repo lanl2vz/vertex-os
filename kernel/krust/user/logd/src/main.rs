@@ -56,6 +56,15 @@ pub extern "C" fn _start() -> ! {
     }
     log(b"service with secret cap reads secret");
 
+    if sys::ipc_recv_raw(CAP_LOG_SINK, 1, 8) == sys::STATUS_BAD_BUFFER
+        && sys::object_read_raw(CAP_CONFIG, 1, 8) == sys::STATUS_BAD_BUFFER
+    {
+        log(b"M61 provider malformed receive/read buffers rejected");
+    } else {
+        log(b"M61 provider malformed buffer test failed");
+        sys::exit(1);
+    }
+
     let mut buffer = [0u8; 64];
     let received = sys::ipc_recv(CAP_LOG_SINK, &mut buffer);
     if received > buffer.len() as u64 {

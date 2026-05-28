@@ -11,6 +11,13 @@ const CAP_SERIAL_LOG: u64 = 1;
 #[unsafe(link_section = ".text._start")]
 #[unsafe(no_mangle)]
 pub extern "C" fn _start() -> ! {
+    if sys::sleep_ms(CAP_SERIAL_LOG, 1) == sys::STATUS_BAD_CAPABILITY {
+        log(b"M61 timer syscall rejects wrong object kind");
+    } else {
+        log(b"M61 timer wrong-kind test failed");
+        sys::exit(1);
+    }
+
     log(b"timer-service sleeps 10 ms");
     if sys::sleep_ms(CAP_TIMER, 10) != sys::STATUS_OK {
         log(b"timer-service sleep failed");

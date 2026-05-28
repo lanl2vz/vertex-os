@@ -5,8 +5,8 @@ mod sys;
 
 use core::panic::PanicInfo;
 
-const KRUSTBOOT_MAGIC: &[u8; 16] = b"KRUSTBOOTM60\0\0\0\0";
-const KRUSTBOOT_VERSION: u16 = 6;
+const KRUSTBOOT_MAGIC: &[u8; 16] = b"KRUSTBOOTM61\0\0\0\0";
+const KRUSTBOOT_VERSION: u16 = 7;
 const MANIFEST_BUFFER_LEN: usize = 16 * 1024;
 const OFFSET_VERSION: usize = 16;
 const OFFSET_BOOT_MODULES: usize = 18;
@@ -126,6 +126,7 @@ pub extern "C" fn _start() -> ! {
     log_count(b"vertex-init pci devices: ", pci_devices);
     log_count(b"vertex-init virtio devices: ", virtio_devices);
     log_count(b"vertex-init namespaces: ", namespaces);
+    run_m61_init_abi_tests(parent_generation);
     run_endpoint_quota_tests(parent_generation);
 
     let mut order = [0u16; MAX_PROCESSES];
@@ -521,6 +522,33 @@ fn run_endpoint_quota_tests(parent_generation: &[u8]) {
         log(b"second endpoint creation fails");
     } else {
         log(b"vertex-init endpoint quota second create failed");
+        activation_failed(parent_generation);
+    }
+}
+
+fn run_m61_init_abi_tests(parent_generation: &[u8]) {
+    if sys::read_manifest_raw(1, MANIFEST_BUFFER_LEN as u64) == sys::STATUS_BAD_BUFFER {
+        log(b"M61 malformed boot-read buffer rejected");
+    } else {
+        log(b"M61 malformed boot-read buffer test failed");
+        activation_failed(parent_generation);
+    }
+
+    if sys::cap_derive(sys::CAP_LOG, sys::CAP_DERIVED, sys::RIGHT_CONTROL)
+        == sys::STATUS_BAD_CAPABILITY
+        && sys::cap_transfer(1, sys::CAP_LOG, sys::CAP_DERIVED, sys::RIGHT_CONTROL)
+            == sys::STATUS_BAD_CAPABILITY
+    {
+        log(b"M61 rights subset checks reject derived and transferred authority");
+    } else {
+        log(b"M61 rights subset test failed");
+        activation_failed(parent_generation);
+    }
+
+    if sys::cap_move(sys::CAP_LOG, sys::CAP_LOG) == sys::STATUS_BAD_CAPABILITY {
+        log(b"M61 capability move rejects occupied target without dropping source");
+    } else {
+        log(b"M61 capability move occupied-target test failed");
         activation_failed(parent_generation);
     }
 }

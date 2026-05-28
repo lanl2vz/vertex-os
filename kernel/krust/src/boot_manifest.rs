@@ -4,8 +4,8 @@ pub const MODULE_STRING: &[u8] = b"krustboot-manifest";
 pub const FALLBACK_MODULE_STRING: &[u8] = b"krustboot-fallback-manifest";
 pub const BAD_GENERATION_MODULE_STRING: &[u8] = b"krustboot-bad-generation-manifest";
 
-const COMPACT_MAGIC: &[u8; 16] = b"KRUSTBOOTM60\0\0\0\0";
-const COMPACT_VERSION: u16 = 6;
+const COMPACT_MAGIC: &[u8; 16] = b"KRUSTBOOTM61\0\0\0\0";
+const COMPACT_VERSION: u16 = 7;
 const V1_MAGIC: &[u8; 16] = b"KRUSTBOOTV1\0\0\0\0\0";
 const V1_VERSION: u16 = 1;
 const V1_HEADER_SIZE: usize = 164;

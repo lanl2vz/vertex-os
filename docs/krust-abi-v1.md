@@ -5,7 +5,7 @@ native Krust QEMU/Limine milestone. It is intentionally small and unstable. Its
 current job is to boot native `vertex-init`, create services from verified
 process templates, and enforce explicit process-local capabilities.
 
-Milestone status: ABI v1 now covers the M14-M60 native activation and substrate
+Milestone status: ABI v1 now covers the M14-M61 native activation and substrate
 proof. M25 adds the release gate. M26-M29 add Manifest v1 parsing, capability
 provenance/revocation, typed arena allocation checks, and resource quotas.
 M30-M31 add PIT-backed preemption and user page-fault containment. M32-M36 add
@@ -24,7 +24,10 @@ with PID-based process creation, add native config and secret authority,
 and add the first package/link/build/appliance surface. M56-M60 add explicit
 virtio-console/rng/net device operations, UDP network-port send authority,
 capability namespace resolution, and the policy/typed source layer that compiles
-into the same generation manifest contract. The ABI is still
+into the same generation manifest contract. M61 makes syscall argument
+validation, typed object dispatch, rights-subset checks, namespace target
+limits, virtio device identity checks, and generation provenance the standing
+security regression baseline. The ABI is still
 intentionally small, but this subset is the current native contract.
 
 ## Machine ABI
@@ -150,7 +153,7 @@ becoming uncontrolled kernel faults.
 Capabilities are process-local. A capability slot number is meaningful only in
 the current process's capability space.
 
-Current M14-M60 layout:
+Current M14-M61 layout:
 
 ```text
 vertex-init:
@@ -289,10 +292,14 @@ SYS_IO_READ, SYS_IO_READ16, and SYS_IO_READ32 require read rights on an io-port 
 SYS_IO_WRITE, SYS_IO_WRITE16, and SYS_IO_WRITE32 require write rights on an io-port cap and a fully covered port span inside the granted range.
 SYS_IRQ_WAIT requires listen rights on an interrupt-line cap.
 SYS_MMIO_MAP requires map rights on an mmio-region cap.
-SYS_DMA_MAP requires read, write, and map rights on a dma-region cap.
+SYS_DMA_MAP requires read, write, and map rights on a dma-region cap and an
+8-byte-aligned output buffer for the three-field mapping record.
 SYS_VIRTIO_DEVICE_PROBE requires control rights on a virtio-device cap.
-SYS_VIRTIO_RNG_READ requires control rights on a virtio-device cap whose device ID is the RNG device.
-SYS_VIRTIO_NET_TX and SYS_VIRTIO_NET_RX require control rights on a virtio-device cap whose device ID is the network device.
+SYS_VIRTIO_RNG_READ requires control rights on a virtio-device cap whose device
+ID is the RNG device and whose transport is `virtio-pci-io`.
+SYS_VIRTIO_NET_TX and SYS_VIRTIO_NET_RX require control rights on a
+virtio-device cap whose device ID is the network device and whose transport is
+`virtio-pci-io`.
 SYS_NETWORK_SEND_UDP requires bind and listen rights on a network-port cap.
 SYS_NAMESPACE_RESOLVE requires resolve rights on a namespace cap and installs only the configured attenuated target capability.
 ```
@@ -330,10 +337,12 @@ revoked
 
 `SYS_CAP_DERIVE`, `SYS_CAP_TRANSFER`, and `SYS_CAP_COPY` create child
 capabilities with attenuated rights and a parent id. `SYS_CAP_MOVE` preserves the
-capability id while clearing the source slot. `SYS_CAP_REVOKE` marks a cap id and
-its descendants revoked; later lookup rejects revoked caps and caps with revoked
-ancestors. `SYS_CAP_INSPECT` prints the current metadata to the serial transcript
-and returns the parent capability id.
+capability id while clearing the source slot, and rejects an occupied or invalid
+target slot before clearing the source. `SYS_CAP_REVOKE` marks a cap id and its
+descendants revoked; later lookup rejects revoked caps, caps with revoked
+ancestors, and caps whose `generation_id` differs from the active runtime
+generation. `SYS_CAP_INSPECT` prints the current metadata to the serial
+transcript and returns the parent capability id.
 
 Process-control authority now distinguishes resource rights:
 
@@ -590,13 +599,16 @@ interrupt_lines
 dma_regions
 ```
 
+The compact payload identity is `KRUSTBOOTM61` version 7. Older compact
+payload identities, including the previous M60 identity, are rejected instead of
+being retained as compatibility formats.
+
 Manifest v1 adds a fixed header, record table, checksum, and record bounds
 validation. The current record kinds are boot modules, process templates,
 endpoints, grants, store objects, state volumes, timer, generation, and policy. The kernel
 requires the v1 wrapper at the boot-module boundary and rejects an unwrapped
 compact payload. After validating the wrapper, the kernel exposes the compact
-payload to `vertex-init` through cap[0] so existing userspace parsing stays
-small.
+payload to `vertex-init` through cap[0] so native userspace parsing stays small.
 
 Krust also creates fixed boot caps for native `vertex-init`:
 

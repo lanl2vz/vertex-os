@@ -7,7 +7,7 @@ runtime layered over a host kernel.
 
 ## Status Summary
 
-Current status: M14-M60 are implemented and smoke-tested under
+Current status: M14-M61 are implemented and smoke-tested under
 `qemu-system-x86_64` with Limine. M39 pins the native toolchain, M40 makes
 native IPC directed, and M41 adds a native console shell path over explicit
 console authority. M42 adds the first real virtio-blk sector I/O path over
@@ -23,9 +23,10 @@ M55 formalizes user-space driver objects and native device ownership. M56 adds
 virtio-console, virtio-rng, and virtio-net capability paths. M57 adds the first
 cap-mediated network send/receive path. M58 records the POSIX compatibility
 plan, M59 adds capability namespaces, and M60 adds human-readable policy and
-typed prototype compilation into the existing boot path.
+typed prototype compilation into the existing boot path. M61 hardens the native
+ABI and authority checks against hostile syscall inputs.
 
-Next target: M61-M65 should turn the current research prototype into a narrow
+Next target: M62-M65 should turn the current research prototype into a narrow
 capability-secured appliance OS MVP. The target remains standalone Krust under a
 defined QEMU/hardware profile, not POSIX compatibility or a host-side
 simulation runtime.
@@ -69,10 +70,11 @@ scripts/krust-test.sh m56
 scripts/krust-test.sh m57
 scripts/krust-test.sh m59
 scripts/krust-test.sh m60
+scripts/krust-test.sh m61
 ```
 
-Next direction: continue past the M60 policy and namespace baseline toward the
-M61-M65 appliance OS MVP: ABI hardening, durable storage, network service
+Next direction: continue past the M61 ABI and authority baseline toward the
+M62-M65 appliance OS MVP: durable storage, network service
 boundaries, supervisor semantics, and a supported standalone release profile.
 
 ## M0: Serial Boot
@@ -1473,7 +1475,7 @@ done: locked Cargo dependencies for the top-level host-tool workspace, Krust ker
 done: kernel/krust/rust-toolchain.toml pins Rust 1.95.0, rustfmt, and x86_64-unknown-none
 done: make doctor checks every required tool and reports actionable fixes
 done: legacy hello/ipc userspace crates are removed instead of carried forward
-done: single release-gate script runs the clean-clone M14-M60 proof with the M14-M60 QEMU matrix
+done: single release-gate script runs the clean-clone M14-M61 proof with the M14-M61 QEMU matrix
 ```
 
 Acceptance tests:
@@ -1531,7 +1533,7 @@ done: scripts/krust-test.sh m40 proves the directed IPC ABI and FIFO queue behav
 
 Status: done.
 
-Goal: turn the M14-M60 native proof into a small real operating system target:
+Goal: turn the M14-M61 native proof into a small real operating system target:
 bootable in QEMU, persistent, inspectable, updateable, and capable of running
 several native services under explicit authority.
 
@@ -2442,7 +2444,7 @@ done: M60 policy and typed prototype are checked by the gate
 
 ## M61: Kernel ABI and Authority Hardening
 
-Status: planned.
+Status: done.
 
 Goal: make the native ABI hostile-input resistant before adding breadth.
 
@@ -2480,6 +2482,26 @@ Implementation notes:
 - Keep the ABI small. If an old behavior conflicts with current authority rules,
   remove it instead of preserving compatibility.
 - Treat M61 as the security regression baseline for every later milestone.
+
+Implementation notes:
+
+- The compact native payload identity is now `KRUSTBOOTM61` version 7. M60
+  compact payloads are rejected by the kernel and userspace readers instead of
+  being accepted as a compatibility format.
+- The kernel rejects current-process capabilities whose generation provenance
+  does not match the active runtime generation, rejects `SYS_CAP_MOVE` before
+  clearing the source when the target slot is occupied or invalid, checks DMA
+  mapping output alignment after exact DMA authority validation, and requires
+  the expected `virtio-pci-io` transport on virtio device syscalls.
+- The M61 QEMU case runs native negative tests for wrong object kind, missing
+  rights, bad user buffers, virtio RNG/net device mismatches, timer wrong-kind
+  dispatch, inspect-only process-control denial, and capability
+  parent/generation provenance.
+- Host-side validation rejects namespace entries targeting hardware authority
+  and rejects `legacy` markers in device kind, selector, and properties
+  case-insensitively.
+
+done: M61 ABI and authority hardening is checked by the gate
 
 ## M62: Storage Reliability and VertexDisk Durability
 
@@ -2665,7 +2687,7 @@ install verified generations, run dynamically created services, preserve
 mutable state, explain its authority graph, and recover from failed updates.
 ```
 
-M13 proved that native services can run under explicit authority. M14-M60 prove
+M13 proved that native services can run under explicit authority. M14-M61 prove
 that the graph itself decides which native services exist, when they start,
 what they receive, why they are allowed to communicate, and how authority and
 resources are bounded, while timer preemption and user fault containment keep
@@ -2680,4 +2702,5 @@ process creation, config, secrets, package/link/build boundaries, and the first
 appliance transcript onto that same native path. M56-M60 add the remaining
 QEMU-friendly virtio devices, the first UDP-capable network path, the POSIX
 compatibility plan, capability namespaces, and human-readable policy plus typed
-prototype compilation.
+prototype compilation. M61 turns those surfaces into an ABI and authority
+regression baseline before the appliance MVP grows broader.

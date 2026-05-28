@@ -248,6 +248,9 @@ vertex-init dma regions: 1
 vertex-init pci devices: 4
 vertex-init virtio devices: 4
 vertex-init namespaces: 2
+M61 malformed boot-read buffer rejected
+M61 rights subset checks reject derived and transferred authority
+M61 capability move rejects occupied target without dropping source
 service with quota=1 endpoint can create one endpoint
 second endpoint creation fails
 init can delegate smaller quota
@@ -405,6 +408,12 @@ system generation rollback does not automatically roll back state unless policy 
 Native immutable store service ok
 Native VertexDisk state service ok
 Native state service client ok
+M61 syscall negative table: wrong object kind rejected
+M61 syscall negative table: missing rights rejected
+M61 syscall negative table: malformed buffers rejected
+M61 provider malformed receive/read buffers rejected
+M61 virtio typed device syscalls reject mismatched device IDs
+M61 timer syscall rejects wrong object kind
 timer-service sleeps 10 ms
 Timer sleep accepted: proc=timer-service timer=monotonic-timer ms=10
 Timer sleep blocked: proc=timer-service
@@ -485,7 +494,7 @@ while [ "$attempt" -le "$QEMU_ATTEMPTS" ]; do
     if check_transcript; then
         cleanup
         pid=
-        echo "smoke ok: Krust completed manifest v1, directed IPC, typed arenas, cap lifecycle, quotas, service-local store/state/timer access, restart, verified store execution, update checks, dynamic process creation, config/secret authority, and native service activation"
+        echo "smoke ok: Krust completed manifest v1, directed IPC, typed arenas, cap lifecycle, quotas, service-local store/state/timer access, restart, verified store execution, update checks, dynamic process creation, config/secret authority, M61 ABI hardening, and native service activation"
         exit 0
     fi
 
@@ -495,7 +504,7 @@ done
 
 cleanup
 pid=
-echo "smoke failed: serial output did not contain the full M14-M60 native activation transcript after $QEMU_ATTEMPTS checks"
+echo "smoke failed: serial output did not contain the full M14-M61 native activation transcript after $QEMU_ATTEMPTS checks"
 echo "serial log: $SERIAL_LOG"
 if [ -n "$missing_required" ]; then
     echo "missing required transcript lines:"

@@ -2,6 +2,7 @@ use core::arch::asm;
 
 pub const STATUS_OK: u64 = 0;
 pub const STATUS_BAD_CAPABILITY: u64 = u64::MAX - 1;
+pub const STATUS_BAD_BUFFER: u64 = u64::MAX - 2;
 
 const SYS_EXIT: u64 = 2;
 const SYS_IPC_SEND: u64 = 3;
@@ -30,6 +31,10 @@ pub fn ipc_recv(cap_slot: u64, buffer: &mut [u8]) -> u64 {
     )
 }
 
+pub fn ipc_recv_raw(cap_slot: u64, destination: u64, len: u64) -> u64 {
+    syscall3(SYS_IPC_RECV, cap_slot, destination, len)
+}
+
 pub fn log(cap_slot: u64, message: &[u8]) -> u64 {
     syscall3(
         SYS_LOG_WRITE,
@@ -54,6 +59,10 @@ pub fn object_read(cap_slot: u64, buffer: &mut [u8]) -> u64 {
         buffer.as_mut_ptr() as u64,
         buffer.len() as u64,
     )
+}
+
+pub fn object_read_raw(cap_slot: u64, destination: u64, len: u64) -> u64 {
+    syscall3(SYS_OBJECT_READ, cap_slot, destination, len)
 }
 
 pub fn secret_read(cap_slot: u64, buffer: &mut [u8]) -> u64 {

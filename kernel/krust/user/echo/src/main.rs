@@ -10,6 +10,7 @@ const CAP_SERIAL_LOG: u64 = 1;
 const CAP_NETWORK_PORT: u64 = 3;
 const CAP_NAMESPACE: u64 = 4;
 const CAP_NAMESPACE_RESOLVED: u64 = 24;
+const CAP_NETWORK_BIND_ONLY: u64 = 23;
 const CAP_COPY: u64 = 28;
 const CAP_MOVED: u64 = 27;
 
@@ -78,6 +79,8 @@ pub extern "C" fn _start() -> ! {
         log(b"namespace isolation denial failed");
         sys::exit(1);
     }
+
+    run_m61_syscall_negative_table();
 
     let mut dma_denied = [0u8; 24];
     if sys::io_read(3, 0x0cf8) == sys::STATUS_BAD_CAPABILITY
@@ -173,6 +176,41 @@ pub extern "C" fn _start() -> ! {
     }
 
     sys::exit(0)
+}
+
+fn run_m61_syscall_negative_table() {
+    let mut denied = [0u8; 8];
+    if sys::ipc_recv(CAP_LOG_SINK, &mut denied) != sys::STATUS_BAD_CAPABILITY
+        || sys::object_read(CAP_LOG_SINK, &mut denied) != sys::STATUS_BAD_CAPABILITY
+        || sys::io_read(CAP_LOG_SINK, 0x3f8) != sys::STATUS_BAD_CAPABILITY
+        || sys::mmio_map(CAP_LOG_SINK) != sys::STATUS_BAD_CAPABILITY
+        || sys::irq_wait(CAP_LOG_SINK, 0) != sys::STATUS_BAD_CAPABILITY
+        || sys::secret_read(CAP_LOG_SINK, &mut denied) != sys::STATUS_BAD_CAPABILITY
+        || sys::network_send_udp(CAP_LOG_SINK, b"wrong kind") != sys::STATUS_BAD_CAPABILITY
+        || sys::namespace_resolve(CAP_LOG_SINK, b"/state/a", CAP_NAMESPACE_RESOLVED - 2)
+            != sys::STATUS_BAD_CAPABILITY
+    {
+        log(b"M61 wrong object-kind negative table failed");
+        sys::exit(1);
+    }
+    log(b"M61 syscall negative table: wrong object kind rejected");
+
+    if sys::cap_copy(CAP_LOG_SINK, CAP_COPY, sys::RIGHT_RECEIVE) != sys::STATUS_BAD_CAPABILITY
+        || sys::cap_copy(CAP_NETWORK_PORT, CAP_NETWORK_BIND_ONLY, sys::RIGHT_BIND)
+            != sys::STATUS_OK
+        || sys::network_send_udp(CAP_NETWORK_BIND_ONLY, b"missing listen")
+            != sys::STATUS_BAD_CAPABILITY
+    {
+        log(b"M61 missing-rights negative table failed");
+        sys::exit(1);
+    }
+    log(b"M61 syscall negative table: missing rights rejected");
+
+    if sys::ipc_send_raw(CAP_LOG_SINK, 1, 4) != sys::STATUS_BAD_BUFFER {
+        log(b"M61 malformed user-buffer negative table failed");
+        sys::exit(1);
+    }
+    log(b"M61 syscall negative table: malformed buffers rejected");
 }
 
 fn log(message: &[u8]) {

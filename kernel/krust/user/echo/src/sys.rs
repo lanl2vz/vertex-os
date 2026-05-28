@@ -2,7 +2,10 @@ use core::arch::asm;
 
 pub const STATUS_OK: u64 = 0;
 pub const STATUS_BAD_CAPABILITY: u64 = u64::MAX - 1;
+pub const STATUS_BAD_BUFFER: u64 = u64::MAX - 2;
 pub const RIGHT_SEND: u64 = 1 << 4;
+pub const RIGHT_RECEIVE: u64 = 1 << 5;
+pub const RIGHT_BIND: u64 = 1 << 10;
 
 const SYS_EXIT: u64 = 2;
 const SYS_IPC_SEND: u64 = 3;
@@ -19,6 +22,7 @@ const SYS_ENDPOINT_CREATE: u64 = 25;
 const SYS_IO_READ: u64 = 27;
 const SYS_IO_WRITE: u64 = 28;
 const SYS_IRQ_WAIT: u64 = 29;
+const SYS_MMIO_MAP: u64 = 30;
 const SYS_DMA_MAP: u64 = 32;
 const SYS_SECRET_READ: u64 = 39;
 const SYS_VIRTIO_NET_TX: u64 = 42;
@@ -32,6 +36,10 @@ pub fn ipc_send(cap_slot: u64, message: &[u8]) -> u64 {
         message.as_ptr() as u64,
         message.len() as u64,
     )
+}
+
+pub fn ipc_send_raw(cap_slot: u64, source: u64, len: u64) -> u64 {
+    syscall3(SYS_IPC_SEND, cap_slot, source, len)
 }
 
 pub fn ipc_recv(cap_slot: u64, buffer: &mut [u8]) -> u64 {
@@ -86,6 +94,10 @@ pub fn io_read(cap_slot: u64, port: u64) -> u64 {
 
 pub fn irq_wait(cap_slot: u64, timeout_ms: u64) -> u64 {
     syscall3(SYS_IRQ_WAIT, cap_slot, timeout_ms, 0)
+}
+
+pub fn mmio_map(cap_slot: u64) -> u64 {
+    syscall3(SYS_MMIO_MAP, cap_slot, 0, 0)
 }
 
 pub fn dma_map(cap_slot: u64, buffer: &mut [u8; 24]) -> u64 {

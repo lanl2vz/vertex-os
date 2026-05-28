@@ -4,8 +4,8 @@ use std::fs;
 use std::path::PathBuf;
 use vertex_ir::{GenerationManifest, Service};
 
-const COMPACT_MAGIC: &[u8; 16] = b"KRUSTBOOTM60\0\0\0\0";
-const COMPACT_VERSION: u16 = 6;
+const COMPACT_MAGIC: &[u8; 16] = b"KRUSTBOOTM61\0\0\0\0";
+const COMPACT_VERSION: u16 = 7;
 const V1_MAGIC: &[u8; 16] = b"KRUSTBOOTV1\0\0\0\0\0";
 const V1_VERSION: u16 = 1;
 const V1_HEADER_SIZE: usize = 164;
@@ -294,13 +294,21 @@ pub fn corrupt(bytes: &[u8], mode: &str) -> Result<Vec<u8>, String> {
             }
             out = out[V1_PAYLOAD_OFFSET..].to_vec();
         }
+        "old-compact-magic" => {
+            if out.len() < V1_PAYLOAD_OFFSET + COMPACT_MAGIC.len() {
+                return Err("KrustBoot manifest is too short to rewrite compact magic".to_owned());
+            }
+            out[V1_PAYLOAD_OFFSET..V1_PAYLOAD_OFFSET + COMPACT_MAGIC.len()]
+                .copy_from_slice(b"KRUSTBOOTM60\0\0\0\0");
+            rewrite_v1_checksum(&mut out)?;
+        }
         "missing-provider" => {
             corrupt_missing_provider(&mut out)?;
             rewrite_v1_checksum(&mut out)?;
         }
         other => {
             return Err(format!(
-                "unknown KrustBoot corruption mode {other}; expected truncated, bad-magic, unsupported-version, out-of-bounds-record, raw-compact, or missing-provider"
+                "unknown KrustBoot corruption mode {other}; expected truncated, bad-magic, unsupported-version, out-of-bounds-record, raw-compact, old-compact-magic, or missing-provider"
             ));
         }
     }

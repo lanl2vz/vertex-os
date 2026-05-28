@@ -1,13 +1,13 @@
 # Krust Kernel
 
-Krust now covers the M14-M60 native graph-activation proof path, substrate
+Krust now covers the M14-M61 native graph-activation proof path, substrate
 hardening, reproducible build environment, directed IPC ABI v1, and native
 console shell plus virtio device I/O, VertexDisk v0 persistence, native boot
 selection, verified store objects, native update transactions, and store-loaded
 service executables, dynamic process creation, native config and secret
 authority, package/link/build import boundaries, the first appliance
 transcript, first-class native driver objects, capability namespaces, and
-policy/typed generation compilation. M44-M60 are tracked in
+policy/typed generation compilation, plus ABI/authority hardening. M44-M61 are tracked in
 `../../docs/krust-milestones.md`.
 
 The target is intentionally small:
@@ -375,17 +375,17 @@ make smoke
 ```
 
 The smoke test boots QEMU headlessly, captures serial output to
-`build/serial.log`, and passes when it sees the M14-M60 directed IPC, console,
+`build/serial.log`, and passes when it sees the M14-M61 directed IPC, console,
 virtio-block, VertexDisk, verified store, update, store-executable, dynamic
 process, config, secret, package-boundary, appliance, virtio device, networking,
-namespace, and policy transcript. The same check is available from the repository
+namespace, policy, and ABI-hardening transcript. The same check is available from the repository
 root:
 
 ```sh
 scripts/krust-smoke.sh
 ```
 
-## M26-M60 Substrate Gate
+## M26-M61 Substrate Gate
 
 Run the clean-clone gate from the repository root:
 
@@ -400,19 +400,19 @@ make release-gate
 ```
 
 The gate checks script executability and shell syntax, verifies Makefile recipe
-parsing, checks Rust formatting and Markdown whitespace, confirms the M14-M60
+parsing, checks Rust formatting and Markdown whitespace, confirms the M14-M61
 documentation anchors, checks the pinned M39 toolchain and Cargo lockfiles, runs
 `cargo metadata --locked --offline` and `cargo build --locked --offline`,
 validates `examples/hello-generation.vertex.json`, runs `make doctor`, rebuilds
 from `make clean`, runs `make smoke`, checks package/link/build import commands,
-and then runs the M14-M60 QEMU cases:
+and then runs the M14-M61 QEMU cases:
 `m14`,
 `manifest-cycle`, `bad-cap`, `readiness-timeout`, `rollback`, `store-state-services`,
 `timer`, `preemption`, `user-fault`, `restart`, `manifest-v1`, `cap-lifecycle`,
 `typed-arenas`, `quotas`, `m32`, `m33`, `m34`, `m35`, `m36`, `m37`, `m38`, `m40`,
 `m41`, `m42`, `m42-driver-fault`, `m43`, `m43-bad-superblock`, `m44`, `m45`,
 `m46`, `m47`, `m47-corrupt-executable`, `m48`, `m49`,
-`m49-config-corrupt`, `m50`, `m54`, `m55`, `m56`, `m57`, `m59`, `m60`, and the
+`m49-config-corrupt`, `m50`, `m54`, `m55`, `m56`, `m57`, `m59`, `m60`, `m61`, and the
 malformed-manifest cases. If the offline build
 fails, the gate prints the Cargo cache or vendoring prerequisite explicitly.
 

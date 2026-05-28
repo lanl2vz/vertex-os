@@ -49,6 +49,10 @@ pub fn read_manifest(buffer: &mut [u8]) -> u64 {
     )
 }
 
+pub fn read_manifest_raw(destination: u64, len: u64) -> u64 {
+    syscall3(SYS_BOOT_READ, CAP_MANIFEST, destination, len)
+}
+
 pub fn log(message: &[u8]) -> u64 {
     syscall3(
         SYS_LOG_WRITE,

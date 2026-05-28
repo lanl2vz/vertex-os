@@ -28,8 +28,8 @@ const USER_DMA_MAPPING_BASE: u64 = 0x0000_6000_0000_0000;
 const PCI_CONFIG_ADDRESS: u16 = 0x0cf8;
 const PCI_CONFIG_DATA: u16 = 0x0cfc;
 const PCI_VENDOR_VIRTIO: u16 = 0x1af4;
-const PCI_DEVICE_VIRTIO_NET_LEGACY: u16 = 0x1000;
-const PCI_DEVICE_VIRTIO_RNG_LEGACY: u16 = 0x1005;
+const PCI_DEVICE_VIRTIO_NET_IO_TRANSPORT: u16 = 0x1000;
+const PCI_DEVICE_VIRTIO_RNG_IO_TRANSPORT: u16 = 0x1005;
 const PCI_COMMAND: u8 = 0x04;
 const PCI_BAR0: u8 = 0x10;
 const PCI_COMMAND_IO: u16 = 1 << 0;
@@ -64,6 +64,7 @@ const UDP_IPV4_HEADER_LEN: usize = 42;
 const VIRTIO_DESC_F_NEXT: u16 = 1;
 const VIRTIO_RNG_DEVICE_ID: &str = "device:virtio-rng0";
 const VIRTIO_NET_DEVICE_ID: &str = "device:virtio-net0";
+const VIRTIO_PCI_IO_TRANSPORT_ID: &str = "virtio-pci-io";
 const QEMU_USER_GUEST_MAC: [u8; 6] = [0x52, 0x54, 0x00, 0x12, 0x34, 0x56];
 const QEMU_USER_GUEST_IP: [u8; 4] = [10, 0, 2, 15];
 const QEMU_USER_GATEWAY_IP: [u8; 4] = [10, 0, 2, 2];
@@ -772,6 +773,13 @@ impl CapabilitySpace {
         };
         self.caps[slot] = None;
         Ok(cap)
+    }
+
+    fn can_grant(&self, slot: u64) -> bool {
+        let Ok(slot) = usize::try_from(slot) else {
+            return false;
+        };
+        slot < self.caps.len() && self.caps[slot].is_none()
     }
 
     fn mark_revoked(&mut self, cap_id: u64) {
@@ -3680,6 +3688,9 @@ pub fn cap_move(source_slot: u64, target_slot: u64) -> Result<(), IpcError> {
     let Some(process) = runtime.processes.current_process_mut() else {
         return Err(IpcError::BadCapability);
     };
+    if !process.caps.can_grant(target_slot) {
+        return Err(IpcError::BadCapability);
+    }
     let cap = process.caps.clear(source_slot)?;
     process
         .caps
@@ -3944,6 +3955,9 @@ pub fn secret_read(cap_slot: u64, destination: *mut u8, max_len: usize) -> Resul
 
 pub fn virtio_device_probe(cap_slot: u64) -> Result<(), IpcError> {
     let device = virtio_device_from_cap(cap_slot, capability::RIGHT_CONTROL)?;
+    if device.transport != VIRTIO_PCI_IO_TRANSPORT_ID {
+        return Err(IpcError::BadCapability);
+    }
     serial::write_str("Virtio device probe accepted: proc=");
     serial::write_str(current_process_name());
     serial::write_str(" virtio-device=");
@@ -3960,7 +3974,7 @@ pub fn virtio_rng_read(
     max_len: usize,
 ) -> Result<usize, IpcError> {
     let device = virtio_device_from_cap(cap_slot, capability::RIGHT_CONTROL)?;
-    if device.name != VIRTIO_RNG_DEVICE_ID {
+    if !virtio_device_is(device, VIRTIO_RNG_DEVICE_ID) {
         return Err(IpcError::BadCapability);
     }
     let copy_len = min(max_len, 32);
@@ -3984,7 +3998,7 @@ pub fn virtio_net_tx(cap_slot: u64, source: *const u8, len: usize) -> Result<(),
         return Err(IpcError::MessageTooLarge);
     }
     let device = virtio_device_from_cap(cap_slot, capability::RIGHT_CONTROL)?;
-    if device.name != VIRTIO_NET_DEVICE_ID {
+    if !virtio_device_is(device, VIRTIO_NET_DEVICE_ID) {
         return Err(IpcError::BadCapability);
     }
     let mut frame = [0u8; MAX_MESSAGE_BYTES];
@@ -4008,7 +4022,7 @@ pub fn virtio_net_rx(
     max_len: usize,
 ) -> Result<usize, IpcError> {
     let device = virtio_device_from_cap(cap_slot, capability::RIGHT_CONTROL)?;
-    if device.name != VIRTIO_NET_DEVICE_ID {
+    if !virtio_device_is(device, VIRTIO_NET_DEVICE_ID) {
         return Err(IpcError::BadCapability);
     }
     if max_len < ETHERNET_MIN_FRAME_LEN {
@@ -4104,6 +4118,10 @@ fn virtio_net_receive_frame(destination: &mut [u8]) -> Result<usize, IpcError> {
     Ok(frame_len)
 }
 
+fn virtio_device_is(device: VirtioDeviceObject, expected_name: &str) -> bool {
+    device.name == expected_name && device.transport == VIRTIO_PCI_IO_TRANSPORT_ID
+}
+
 fn virtio_net_send_udp(payload: &[u8]) -> Result<(), IpcError> {
     if payload.len() + UDP_IPV4_HEADER_LEN > MAX_MESSAGE_BYTES + UDP_IPV4_HEADER_LEN {
         return Err(IpcError::MessageTooLarge);
@@ -4132,7 +4150,7 @@ fn virtio_net_state() -> Result<&'static mut VirtioNetState, IpcError> {
 }
 
 fn init_virtio_rng(state: &mut VirtioRngState) -> Result<(), IpcError> {
-    let io_base = discover_legacy_virtio_pci(PCI_DEVICE_VIRTIO_RNG_LEGACY)?;
+    let io_base = discover_virtio_pci_io_device(PCI_DEVICE_VIRTIO_RNG_IO_TRANSPORT)?;
     let (dma_physical, dma_virtual) = allocate_virtio_dma(VIRTIO_RNG_DMA_FRAMES)?;
     let mut queue = VirtioQueueState::new(dma_physical, dma_virtual);
 
@@ -4165,7 +4183,7 @@ fn init_virtio_rng(state: &mut VirtioRngState) -> Result<(), IpcError> {
 }
 
 fn init_virtio_net(state: &mut VirtioNetState) -> Result<(), IpcError> {
-    let io_base = discover_legacy_virtio_pci(PCI_DEVICE_VIRTIO_NET_LEGACY)?;
+    let io_base = discover_virtio_pci_io_device(PCI_DEVICE_VIRTIO_NET_IO_TRANSPORT)?;
     let (dma_physical, dma_virtual) = allocate_virtio_dma(VIRTIO_NET_DMA_FRAMES)?;
     let mut rx = VirtioQueueState::new(dma_physical, dma_virtual);
     let mut tx = VirtioQueueState::new(
@@ -4399,7 +4417,7 @@ fn allocate_virtio_dma(frame_count: u64) -> Result<(u64, u64), IpcError> {
     Ok((frame.start(), virtual_base))
 }
 
-fn discover_legacy_virtio_pci(device_id: u16) -> Result<u16, IpcError> {
+fn discover_virtio_pci_io_device(device_id: u16) -> Result<u16, IpcError> {
     let mut slot = 0u8;
     while slot < 32 {
         let vendor = pci_read_u16(0, slot, 0, 0x00);
@@ -4808,6 +4826,9 @@ pub fn dma_map(cap_slot: u64, destination: *mut u8, max_len: usize) -> Result<()
         cap_slot,
         capability::RIGHT_READ | capability::RIGHT_WRITE | capability::RIGHT_MAP,
     )?;
+    if (destination as u64) & 7 != 0 {
+        return Err(IpcError::InvalidUserBuffer);
+    }
     let virtual_base = USER_DMA_MAPPING_BASE + (region.id.raw() << 20);
     map_current_process_physical_range(
         virtual_base,
@@ -5412,6 +5433,7 @@ fn lookup_capability(cap_slot: u64, required_right: u64) -> Result<Capability, I
     if cap.revoked
         || runtime.cap_id_revoked(cap.id)
         || capability_has_revoked_ancestor(runtime, cap)
+        || cap.generation_id != runtime.generation_id
     {
         return Err(IpcError::BadCapability);
     }

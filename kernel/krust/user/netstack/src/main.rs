@@ -27,6 +27,18 @@ pub extern "C" fn _start() -> ! {
     }
     log(b"virtio-rng provides random bytes through explicit cap");
 
+    let mut rng_denied = [0u8; 8];
+    let mut net_denied = [0u8; 64];
+    if sys::virtio_rng_read(CAP_VIRTIO_NET, &mut rng_denied) == sys::STATUS_BAD_CAPABILITY
+        && sys::virtio_net_tx(CAP_VIRTIO_RNG, b"wrong device") == sys::STATUS_BAD_CAPABILITY
+        && sys::virtio_net_rx(CAP_VIRTIO_RNG, &mut net_denied) == sys::STATUS_BAD_CAPABILITY
+    {
+        log(b"M61 virtio typed device syscalls reject mismatched device IDs");
+    } else {
+        log(b"M61 virtio typed device denial failed");
+        sys::exit(1);
+    }
+
     if sys::virtio_probe(CAP_VIRTIO_NET) != sys::STATUS_OK {
         log(b"netstack virtio-net probe failed");
         sys::exit(1);

@@ -722,6 +722,28 @@ Boot generation: gen:m60-policy-0001
 Native service activation ok
 '
         ;;
+    m61|abi-authority-hardening)
+        MANIFEST="$ROOT_DIR/examples/krust-inspect-generation.vertex.json"
+        EXPECT_ACTIVATION_SUCCESS=1
+        required_lines='
+Boot generation: gen:inspect-0001
+M61 malformed boot-read buffer rejected
+M61 rights subset checks reject derived and transferred authority
+M61 capability move rejects occupied target without dropping source
+M61 provider malformed receive/read buffers rejected
+M61 syscall negative table: wrong object kind rejected
+M61 syscall negative table: missing rights rejected
+M61 syscall negative table: malformed buffers rejected
+M61 virtio typed device syscalls reject mismatched device IDs
+M61 timer syscall rejects wrong object kind
+M61 inspect authority rejects wrong kind and missing create right
+Capability inspect: proc=echo
+parent_cap_id=
+generation=gen:inspect-0001
+Capability revoke accepted: proc=echo
+Native service activation ok
+'
+        ;;
     m38|introspection)
         MANIFEST="$ROOT_DIR/examples/krust-inspect-generation.vertex.json"
         EXPECT_ACTIVATION_SUCCESS=1
@@ -770,6 +792,14 @@ KrustBoot manifest parse failed: bad magic
 KrustBoot manifest unavailable
 '
         ;;
+    manifest-old-compact-magic)
+        MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
+        KRUSTBOOT_CORRUPT=old-compact-magic
+        required_lines='
+KrustBoot manifest parse failed: bad magic
+KrustBoot manifest unavailable
+'
+        ;;
     manifest-unsupported-version)
         MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
         KRUSTBOOT_CORRUPT=unsupported-version
@@ -795,7 +825,7 @@ activation failed
 '
         ;;
     *)
-        echo "usage: scripts/krust-test.sh <m13|m14|valid-activation|manifest-cycle|bad-cap|readiness|readiness-timeout|rollback|store-state-services|timer|preemption|m30|user-fault|m31|restart|manifest-v1|cap-lifecycle|typed-arenas|quotas|m32|io-substrate|m33|serial-driver|m34|block-driver|m35|store-service|m36|state-service|m37|generation-switch|m38|introspection|m40|directed-ipc|m41|console-shell|m42|virtio-block|m42-driver-fault|block-driver-fault|m43|vertexdisk|m43-bad-superblock|vertexdisk-bad-superblock|m44|boot-manager|m45|store-verification|m46|native-update|m47|store-executables|m47-corrupt-executable|store-executable-corruption|m48|dynamic-process|m49|config-objects|m49-config-corrupt|config-hash-mismatch|m50|secrets|m54|appliance|m55|driver-framework|m56|virtio-device-stack|m57|networking-v0|m59|namespace-service|m60|policy-typed|manifest-truncated|manifest-bad-magic|manifest-raw-compact|manifest-unsupported-version|manifest-oob-record|manifest-missing-provider>" >&2
+        echo "usage: scripts/krust-test.sh <m13|m14|valid-activation|manifest-cycle|bad-cap|readiness|readiness-timeout|rollback|store-state-services|timer|preemption|m30|user-fault|m31|restart|manifest-v1|cap-lifecycle|typed-arenas|quotas|m32|io-substrate|m33|serial-driver|m34|block-driver|m35|store-service|m36|state-service|m37|generation-switch|m38|introspection|m40|directed-ipc|m41|console-shell|m42|virtio-block|m42-driver-fault|block-driver-fault|m43|vertexdisk|m43-bad-superblock|vertexdisk-bad-superblock|m44|boot-manager|m45|store-verification|m46|native-update|m47|store-executables|m47-corrupt-executable|store-executable-corruption|m48|dynamic-process|m49|config-objects|m49-config-corrupt|config-hash-mismatch|m50|secrets|m54|appliance|m55|driver-framework|m56|virtio-device-stack|m57|networking-v0|m59|namespace-service|m60|policy-typed|m61|abi-authority-hardening|manifest-truncated|manifest-bad-magic|manifest-raw-compact|manifest-old-compact-magic|manifest-unsupported-version|manifest-oob-record|manifest-missing-provider>" >&2
         exit 2
         ;;
 esac
