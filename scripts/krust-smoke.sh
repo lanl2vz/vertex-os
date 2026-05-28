@@ -8,7 +8,7 @@ ISO_IMAGE=${ISO_IMAGE:-"$BUILD_DIR/krust.iso"}
 BLOCK_IMAGE=${BLOCK_IMAGE:-"$BUILD_DIR/krust-block.img"}
 SERIAL_LOG=${SERIAL_LOG:-"$BUILD_DIR/serial.log"}
 QEMU=${QEMU:-qemu-system-x86_64}
-QEMU_EXTRA=${QEMU_EXTRA:-}
+QEMU_EXTRA=${QEMU_EXTRA:-"-object rng-random,filename=/dev/urandom,id=vertexrng -device virtio-rng-pci,rng=vertexrng,disable-modern=on -netdev user,id=vertexnet -device virtio-net-pci,netdev=vertexnet,mac=52:54:00:12:34:56,disable-modern=on"}
 QEMU_MACHINE=${QEMU_MACHINE:-}
 QEMU_BLOCK=${QEMU_BLOCK:-"-drive if=none,id=vertexblk,file=$BLOCK_IMAGE,format=raw -device virtio-blk-pci,drive=vertexblk,disable-modern=on,queue-size=8"}
 QEMU_ATTEMPTS=${QEMU_ATTEMPTS:-20}
@@ -355,9 +355,14 @@ echo cannot read logd config
 service without secret cap rejected
 netstack ready
 virtio-rng provides random bytes through explicit cap
-virtio-net driver can receive raw frames
 virtio-net driver can send raw frames
-Vertex replies to ping or sends ICMP echo
+virtio-net driver can receive raw frames
+Virtio net TX completed: proc=netstack virtio-device=device:virtio-net0 frame-bytes=60
+Virtio net RX completed: proc=netstack virtio-device=device:virtio-net0 frame-bytes=
+QEMU user-mode network delivered a raw frame
+Vertex sends ICMP echo
+QEMU user-mode network delivered ICMP echo reply
+UDP send transmitted: proc=echo network-port=cap:net.udp.9000 bytes=13
 Vertex sends UDP packet
 network authority is endpoint/capability mediated
 service A namespace contains /state/a

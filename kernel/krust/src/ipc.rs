@@ -1,6 +1,7 @@
 use core::{
     arch::{asm, x86_64::__cpuid_count},
     cell::UnsafeCell,
+    sync::atomic::{Ordering, compiler_fence},
 };
 
 use crate::{
@@ -24,6 +25,46 @@ const MAX_GENERATION_CONFIGS: usize = 4;
 const MAX_INSPECT_REPORT_BYTES: usize = 64 * 1024;
 const DMA_MAPPING_INFO_BYTES: usize = 24;
 const USER_DMA_MAPPING_BASE: u64 = 0x0000_6000_0000_0000;
+const PCI_CONFIG_ADDRESS: u16 = 0x0cf8;
+const PCI_CONFIG_DATA: u16 = 0x0cfc;
+const PCI_VENDOR_VIRTIO: u16 = 0x1af4;
+const PCI_DEVICE_VIRTIO_NET_LEGACY: u16 = 0x1000;
+const PCI_DEVICE_VIRTIO_RNG_LEGACY: u16 = 0x1005;
+const PCI_COMMAND: u8 = 0x04;
+const PCI_BAR0: u8 = 0x10;
+const PCI_COMMAND_IO: u16 = 1 << 0;
+const PCI_COMMAND_BUS_MASTER: u16 = 1 << 2;
+const VIRTIO_PCI_HOST_FEATURES: u16 = 0x00;
+const VIRTIO_PCI_GUEST_FEATURES: u16 = 0x04;
+const VIRTIO_PCI_QUEUE_PFN: u16 = 0x08;
+const VIRTIO_PCI_QUEUE_NUM: u16 = 0x0c;
+const VIRTIO_PCI_QUEUE_SEL: u16 = 0x0e;
+const VIRTIO_PCI_QUEUE_NOTIFY: u16 = 0x10;
+const VIRTIO_PCI_STATUS: u16 = 0x12;
+const VIRTIO_PCI_ISR: u16 = 0x13;
+const VIRTIO_PCI_NET_CONFIG: u16 = 0x14;
+const VIRTIO_STATUS_ACKNOWLEDGE: u8 = 1;
+const VIRTIO_STATUS_DRIVER: u8 = 2;
+const VIRTIO_STATUS_DRIVER_OK: u8 = 4;
+const VIRTIO_STATUS_FAILED: u8 = 0x80;
+const VIRTIO_QUEUE_MIN_SIZE: u16 = 2;
+const VIRTIO_QUEUE_MAX_SIZE: u16 = 256;
+const VIRTIO_QUEUE_DESC_OFFSET: usize = 0;
+const VIRTIO_QUEUE_RING_ALIGN: usize = 4096;
+const VIRTIO_QUEUE_STRIDE: usize = 16 * 1024;
+const VIRTIO_RNG_DMA_FRAMES: u64 = 4;
+const VIRTIO_NET_DMA_FRAMES: u64 = 8;
+const VIRTIO_POLL_SPINS: u64 = 20_000_000;
+const VIRTIO_DESC_F_WRITE: u16 = 2;
+const VIRTIO_AVAIL_F_NO_INTERRUPT: u16 = 1;
+const VIRTIO_NET_HDR_LEN: usize = 10;
+const VIRTIO_NET_RX_BUFFER_LEN: usize = 2048;
+const ETHERNET_MIN_FRAME_LEN: usize = 60;
+const UDP_IPV4_HEADER_LEN: usize = 42;
+const VIRTIO_DESC_F_NEXT: u16 = 1;
+const QEMU_USER_GUEST_MAC: [u8; 6] = [0x52, 0x54, 0x00, 0x12, 0x34, 0x56];
+const QEMU_USER_GUEST_IP: [u8; 4] = [10, 0, 2, 15];
+const QEMU_USER_GATEWAY_IP: [u8; 4] = [10, 0, 2, 2];
 const NATIVE_SECRET_VALUE: &[u8] = b"native-secret-value";
 const INITIAL_USER_RFLAGS: u64 = 0x202;
 const STATUS_BAD_BUFFER: u64 = u64::MAX - 2;
@@ -478,6 +519,86 @@ struct VirtioDeviceObject {
 }
 
 #[derive(Clone, Copy)]
+struct VirtioQueueState {
+    dma_physical: u64,
+    dma_virtual: u64,
+    queue_size: u16,
+    avail_offset: usize,
+    used_offset: usize,
+    data_offset: usize,
+    avail_idx: u16,
+    used_idx: u16,
+}
+
+impl VirtioQueueState {
+    const fn empty() -> Self {
+        Self {
+            dma_physical: 0,
+            dma_virtual: 0,
+            queue_size: 0,
+            avail_offset: 0,
+            used_offset: 0,
+            data_offset: 0,
+            avail_idx: 0,
+            used_idx: 0,
+        }
+    }
+
+    const fn new(dma_physical: u64, dma_virtual: u64) -> Self {
+        Self {
+            dma_physical,
+            dma_virtual,
+            queue_size: 0,
+            avail_offset: 0,
+            used_offset: 0,
+            data_offset: 0,
+            avail_idx: 0,
+            used_idx: 0,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct VirtioRngState {
+    initialized: bool,
+    io_base: u16,
+    queue: VirtioQueueState,
+}
+
+impl VirtioRngState {
+    const fn new() -> Self {
+        Self {
+            initialized: false,
+            io_base: 0,
+            queue: VirtioQueueState::empty(),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct VirtioNetState {
+    initialized: bool,
+    io_base: u16,
+    rx: VirtioQueueState,
+    tx: VirtioQueueState,
+    mac: [u8; 6],
+    rx_posted: bool,
+}
+
+impl VirtioNetState {
+    const fn new() -> Self {
+        Self {
+            initialized: false,
+            io_base: 0,
+            rx: VirtioQueueState::empty(),
+            tx: VirtioQueueState::empty(),
+            mac: QEMU_USER_GUEST_MAC,
+            rx_posted: false,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
 struct NamespaceEntry {
     path: &'static str,
     object: KernelObjectId,
@@ -596,6 +717,8 @@ static ROLLBACK_RUNTIME: Global<Option<GenerationRuntime>> = Global(UnsafeCell::
 static FAILED_GENERATION: Global<Option<&'static str>> = Global(UnsafeCell::new(None));
 static BOOT_MANAGER: Global<BootManagerState> = Global(UnsafeCell::new(BootManagerState::new()));
 static FRAME_ALLOCATOR: Global<Option<*mut memory::FrameAllocator>> = Global(UnsafeCell::new(None));
+static VIRTIO_RNG_STATE: Global<VirtioRngState> = Global(UnsafeCell::new(VirtioRngState::new()));
+static VIRTIO_NET_STATE: Global<VirtioNetState> = Global(UnsafeCell::new(VirtioNetState::new()));
 
 impl CapabilitySpace {
     const fn new() -> Self {
@@ -2604,19 +2727,26 @@ fn namespace_entry_object_id(
     runtime: &RuntimeState,
     entry: BootNamespaceEntryConfig,
 ) -> Result<KernelObjectId, InitError> {
-    match entry.object_kind {
-        BOOT_OBJECT_NAMESPACE => Err(InitError::InvalidBootManifest),
-        object_kind => grant_object_id(
-            runtime,
-            BootGrantConfig {
-                process_index: 0,
-                cap_slot: 0,
-                object_kind,
-                object_index: entry.object_index,
-                rights: entry.rights,
-            },
-        ),
+    if !namespace_entry_object_kind_allowed(entry.object_kind) {
+        return Err(InitError::InvalidBootManifest);
     }
+    grant_object_id(
+        runtime,
+        BootGrantConfig {
+            process_index: 0,
+            cap_slot: 0,
+            object_kind: entry.object_kind,
+            object_index: entry.object_index,
+            rights: entry.rights,
+        },
+    )
+}
+
+fn namespace_entry_object_kind_allowed(object_kind: u16) -> bool {
+    matches!(
+        object_kind,
+        BOOT_OBJECT_ENDPOINT | BOOT_OBJECT_STORE | BOOT_OBJECT_TIMER | BOOT_OBJECT_NETWORK_PORT
+    )
 }
 
 fn grant_process_cap_by_pid(
@@ -3828,21 +3958,13 @@ pub fn virtio_rng_read(
     max_len: usize,
 ) -> Result<usize, IpcError> {
     let device = virtio_device_from_cap(cap_slot, capability::RIGHT_CONTROL)?;
-    if !device.name.contains("rng") {
+    if device.name != "device:virtio-rng0" {
         return Err(IpcError::BadCapability);
     }
     let copy_len = min(max_len, 32);
     let mut bytes = [0u8; 32];
-    let mut seed = read_tsc() ^ device.id.raw().wrapping_mul(0x9e37_79b9_7f4a_7c15);
-    let mut index = 0;
-    while index < copy_len {
-        seed ^= seed << 13;
-        seed ^= seed >> 7;
-        seed ^= seed << 17;
-        bytes[index] = (seed >> ((index % 8) * 8)) as u8;
-        index += 1;
-    }
-    usercopy::copy_to_user(UserPtr::new(destination as u64), &bytes[..copy_len])
+    let actual_len = virtio_rng_fill(&mut bytes[..copy_len])?;
+    usercopy::copy_to_user(UserPtr::new(destination as u64), &bytes[..actual_len])
         .map_err(|_| IpcError::InvalidUserBuffer)?;
 
     serial::write_str("Virtio RNG read accepted: proc=");
@@ -3850,9 +3972,9 @@ pub fn virtio_rng_read(
     serial::write_str(" virtio-device=");
     serial::write_str(device.name);
     serial::write_str(" bytes=");
-    serial::write_u64_dec(copy_len as u64);
+    serial::write_u64_dec(actual_len as u64);
     serial::write_str("\n");
-    Ok(copy_len)
+    Ok(actual_len)
 }
 
 pub fn virtio_net_tx(cap_slot: u64, source: *const u8, len: usize) -> Result<(), IpcError> {
@@ -3860,14 +3982,15 @@ pub fn virtio_net_tx(cap_slot: u64, source: *const u8, len: usize) -> Result<(),
         return Err(IpcError::MessageTooLarge);
     }
     let device = virtio_device_from_cap(cap_slot, capability::RIGHT_CONTROL)?;
-    if !device.name.contains("net") {
+    if device.name != "device:virtio-net0" {
         return Err(IpcError::BadCapability);
     }
     let mut frame = [0u8; MAX_MESSAGE_BYTES];
     usercopy::copy_from_user(&mut frame, UserPtr::new(source as u64), len)
         .map_err(|_| IpcError::InvalidUserBuffer)?;
+    virtio_net_send_frame(&frame[..len])?;
 
-    serial::write_str("Virtio net TX accepted: proc=");
+    serial::write_str("Virtio net TX completed: proc=");
     serial::write_str(current_process_name());
     serial::write_str(" virtio-device=");
     serial::write_str(device.name);
@@ -3883,27 +4006,28 @@ pub fn virtio_net_rx(
     max_len: usize,
 ) -> Result<usize, IpcError> {
     let device = virtio_device_from_cap(cap_slot, capability::RIGHT_CONTROL)?;
-    if !device.name.contains("net") {
+    if device.name != "device:virtio-net0" {
         return Err(IpcError::BadCapability);
     }
-    if max_len < 64 {
+    if max_len < ETHERNET_MIN_FRAME_LEN {
         return Err(IpcError::MessageTooLarge);
     }
-    let mut frame = [0u8; 64];
-    frame[12] = 0x08;
-    frame[13] = 0x00;
-    frame[14] = 0x45;
-    frame[23] = 1;
-    frame[34] = 8;
-    usercopy::copy_to_user(UserPtr::new(destination as u64), &frame)
+    let mut frame = [0u8; MAX_MESSAGE_BYTES];
+    let frame_len = virtio_net_receive_frame(&mut frame)?;
+    if frame_len > max_len {
+        return Err(IpcError::MessageTooLarge);
+    }
+    usercopy::copy_to_user(UserPtr::new(destination as u64), &frame[..frame_len])
         .map_err(|_| IpcError::InvalidUserBuffer)?;
 
-    serial::write_str("Virtio net RX accepted: proc=");
+    serial::write_str("Virtio net RX completed: proc=");
     serial::write_str(current_process_name());
     serial::write_str(" virtio-device=");
     serial::write_str(device.name);
-    serial::write_str(" frame-bytes=64\n");
-    Ok(frame.len())
+    serial::write_str(" frame-bytes=");
+    serial::write_u64_dec(frame_len as u64);
+    serial::write_str("\n");
+    Ok(frame_len)
 }
 
 pub fn network_send_udp(cap_slot: u64, source: *const u8, len: usize) -> Result<(), IpcError> {
@@ -3914,8 +4038,9 @@ pub fn network_send_udp(cap_slot: u64, source: *const u8, len: usize) -> Result<
     let mut payload = [0u8; MAX_MESSAGE_BYTES];
     usercopy::copy_from_user(&mut payload, UserPtr::new(source as u64), len)
         .map_err(|_| IpcError::InvalidUserBuffer)?;
+    virtio_net_send_udp(&payload[..len])?;
 
-    serial::write_str("UDP send accepted: proc=");
+    serial::write_str("UDP send transmitted: proc=");
     serial::write_str(current_process_name());
     serial::write_str(" network-port=");
     serial::write_str(port.name);
@@ -3923,6 +4048,598 @@ pub fn network_send_udp(cap_slot: u64, source: *const u8, len: usize) -> Result<
     serial::write_u64_dec(len as u64);
     serial::write_str("\n");
     Ok(())
+}
+
+fn virtio_rng_fill(destination: &mut [u8]) -> Result<usize, IpcError> {
+    if destination.is_empty() {
+        return Ok(0);
+    }
+
+    let state = virtio_rng_state()?;
+    let data = queue_data_virtual(&state.queue);
+    zero_dma(data, destination.len());
+    let used_len = virtio_submit_single(
+        state.io_base,
+        0,
+        &mut state.queue,
+        destination.len() as u32,
+        true,
+    )?;
+    let actual_len = min(destination.len(), used_len as usize);
+    read_dma_bytes(data, &mut destination[..actual_len]);
+    Ok(actual_len)
+}
+
+fn virtio_net_send_frame(frame: &[u8]) -> Result<(), IpcError> {
+    let state = virtio_net_state()?;
+    virtio_net_send_frame_locked(state, frame)
+}
+
+fn virtio_net_receive_frame(destination: &mut [u8]) -> Result<usize, IpcError> {
+    let state = virtio_net_state()?;
+    if !state.rx_posted {
+        virtio_net_post_rx_buffer(state)?;
+    }
+
+    let used_len = virtio_wait_used(state.io_base, &mut state.rx)?;
+    state.rx_posted = false;
+    if used_len as usize <= VIRTIO_NET_HDR_LEN {
+        virtio_net_post_rx_buffer(state)?;
+        return Err(IpcError::BadCapability);
+    }
+
+    let frame_len = (used_len as usize) - VIRTIO_NET_HDR_LEN;
+    if frame_len > destination.len() {
+        virtio_net_post_rx_buffer(state)?;
+        return Err(IpcError::MessageTooLarge);
+    }
+
+    read_dma_bytes(
+        queue_data_virtual(&state.rx) + VIRTIO_NET_HDR_LEN as u64,
+        &mut destination[..frame_len],
+    );
+    virtio_net_post_rx_buffer(state)?;
+    Ok(frame_len)
+}
+
+fn virtio_net_send_udp(payload: &[u8]) -> Result<(), IpcError> {
+    if payload.len() + UDP_IPV4_HEADER_LEN > MAX_MESSAGE_BYTES + UDP_IPV4_HEADER_LEN {
+        return Err(IpcError::MessageTooLarge);
+    }
+
+    let state = virtio_net_state()?;
+    let mut frame = [0u8; MAX_MESSAGE_BYTES + UDP_IPV4_HEADER_LEN];
+    let frame_len = build_udp_ipv4_frame(state.mac, payload, &mut frame)?;
+    virtio_net_send_frame_locked(state, &frame[..frame_len])
+}
+
+fn virtio_rng_state() -> Result<&'static mut VirtioRngState, IpcError> {
+    let state = unsafe { &mut *VIRTIO_RNG_STATE.0.get() };
+    if !state.initialized {
+        init_virtio_rng(state)?;
+    }
+    Ok(state)
+}
+
+fn virtio_net_state() -> Result<&'static mut VirtioNetState, IpcError> {
+    let state = unsafe { &mut *VIRTIO_NET_STATE.0.get() };
+    if !state.initialized {
+        init_virtio_net(state)?;
+    }
+    Ok(state)
+}
+
+fn init_virtio_rng(state: &mut VirtioRngState) -> Result<(), IpcError> {
+    let io_base = discover_legacy_virtio_pci(PCI_DEVICE_VIRTIO_RNG_LEGACY)?;
+    let (dma_physical, dma_virtual) = allocate_virtio_dma(VIRTIO_RNG_DMA_FRAMES)?;
+    let mut queue = VirtioQueueState::new(dma_physical, dma_virtual);
+
+    virtio_write8(io_base, VIRTIO_PCI_STATUS, 0);
+    virtio_write8(io_base, VIRTIO_PCI_STATUS, VIRTIO_STATUS_ACKNOWLEDGE);
+    virtio_write8(
+        io_base,
+        VIRTIO_PCI_STATUS,
+        VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER,
+    );
+    let _features = virtio_read32(io_base, VIRTIO_PCI_HOST_FEATURES);
+    virtio_write32(io_base, VIRTIO_PCI_GUEST_FEATURES, 0);
+    if virtio_setup_queue(io_base, 0, &mut queue).is_err() {
+        virtio_write8(io_base, VIRTIO_PCI_STATUS, VIRTIO_STATUS_FAILED);
+        return Err(IpcError::BadCapability);
+    }
+    virtio_write8(
+        io_base,
+        VIRTIO_PCI_STATUS,
+        VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_DRIVER_OK,
+    );
+
+    *state = VirtioRngState {
+        initialized: true,
+        io_base,
+        queue,
+    };
+    serial::write_str("Virtio RNG PCI queue initialized\n");
+    Ok(())
+}
+
+fn init_virtio_net(state: &mut VirtioNetState) -> Result<(), IpcError> {
+    let io_base = discover_legacy_virtio_pci(PCI_DEVICE_VIRTIO_NET_LEGACY)?;
+    let (dma_physical, dma_virtual) = allocate_virtio_dma(VIRTIO_NET_DMA_FRAMES)?;
+    let mut rx = VirtioQueueState::new(dma_physical, dma_virtual);
+    let mut tx = VirtioQueueState::new(
+        dma_physical + VIRTIO_QUEUE_STRIDE as u64,
+        dma_virtual + VIRTIO_QUEUE_STRIDE as u64,
+    );
+
+    virtio_write8(io_base, VIRTIO_PCI_STATUS, 0);
+    virtio_write8(io_base, VIRTIO_PCI_STATUS, VIRTIO_STATUS_ACKNOWLEDGE);
+    virtio_write8(
+        io_base,
+        VIRTIO_PCI_STATUS,
+        VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER,
+    );
+    let _features = virtio_read32(io_base, VIRTIO_PCI_HOST_FEATURES);
+    virtio_write32(io_base, VIRTIO_PCI_GUEST_FEATURES, 0);
+    if virtio_setup_queue(io_base, 0, &mut rx).is_err()
+        || virtio_setup_queue(io_base, 1, &mut tx).is_err()
+    {
+        virtio_write8(io_base, VIRTIO_PCI_STATUS, VIRTIO_STATUS_FAILED);
+        return Err(IpcError::BadCapability);
+    }
+    let mac = read_virtio_net_mac(io_base);
+    virtio_write8(
+        io_base,
+        VIRTIO_PCI_STATUS,
+        VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_DRIVER_OK,
+    );
+
+    *state = VirtioNetState {
+        initialized: true,
+        io_base,
+        rx,
+        tx,
+        mac,
+        rx_posted: false,
+    };
+    virtio_net_post_rx_buffer(state)?;
+    serial::write_str("Virtio net PCI queues initialized\n");
+    Ok(())
+}
+
+fn virtio_setup_queue(
+    io_base: u16,
+    queue_index: u16,
+    queue: &mut VirtioQueueState,
+) -> Result<(), IpcError> {
+    virtio_write16(io_base, VIRTIO_PCI_QUEUE_SEL, queue_index);
+    let queue_size = virtio_read16(io_base, VIRTIO_PCI_QUEUE_NUM);
+    if !(VIRTIO_QUEUE_MIN_SIZE..=VIRTIO_QUEUE_MAX_SIZE).contains(&queue_size) {
+        return Err(IpcError::BadCapability);
+    }
+    let avail_offset = VIRTIO_QUEUE_DESC_OFFSET + queue_size as usize * 16;
+    let used_offset = align_up_usize(
+        avail_offset + 6 + queue_size as usize * 2,
+        VIRTIO_QUEUE_RING_ALIGN,
+    );
+    let data_offset = align_up_usize(
+        used_offset + 6 + queue_size as usize * 8,
+        VIRTIO_QUEUE_RING_ALIGN,
+    );
+    if data_offset >= VIRTIO_QUEUE_STRIDE {
+        return Err(IpcError::BadCapability);
+    }
+    queue.queue_size = queue_size;
+    queue.avail_offset = avail_offset;
+    queue.used_offset = used_offset;
+    queue.data_offset = data_offset;
+    queue.avail_idx = 0;
+    queue.used_idx = 0;
+
+    zero_dma(queue.dma_virtual, VIRTIO_QUEUE_STRIDE);
+    write_dma_u16(
+        queue.dma_virtual + queue.avail_offset as u64,
+        VIRTIO_AVAIL_F_NO_INTERRUPT,
+    );
+    virtio_write32(
+        io_base,
+        VIRTIO_PCI_QUEUE_PFN,
+        (queue.dma_physical >> 12) as u32,
+    );
+    Ok(())
+}
+
+fn virtio_net_post_rx_buffer(state: &mut VirtioNetState) -> Result<(), IpcError> {
+    zero_dma(queue_data_virtual(&state.rx), VIRTIO_NET_RX_BUFFER_LEN);
+    virtio_post_single(
+        state.io_base,
+        0,
+        &mut state.rx,
+        VIRTIO_NET_RX_BUFFER_LEN as u32,
+        true,
+    )?;
+    state.rx_posted = true;
+    Ok(())
+}
+
+fn virtio_net_send_frame_locked(state: &mut VirtioNetState, frame: &[u8]) -> Result<(), IpcError> {
+    if frame.len() > MAX_MESSAGE_BYTES + UDP_IPV4_HEADER_LEN {
+        return Err(IpcError::MessageTooLarge);
+    }
+    let payload_len = if frame.len() < ETHERNET_MIN_FRAME_LEN {
+        ETHERNET_MIN_FRAME_LEN
+    } else {
+        frame.len()
+    };
+    let total_len = payload_len + VIRTIO_NET_HDR_LEN;
+    if total_len > VIRTIO_NET_RX_BUFFER_LEN {
+        return Err(IpcError::MessageTooLarge);
+    }
+
+    let data = queue_data_virtual(&state.tx);
+    let data_physical = queue_data_physical(&state.tx);
+    zero_dma(data, total_len);
+    write_dma_bytes(data + VIRTIO_NET_HDR_LEN as u64, frame);
+    write_virtio_desc(
+        &state.tx,
+        0,
+        data_physical,
+        VIRTIO_NET_HDR_LEN as u32,
+        VIRTIO_DESC_F_NEXT,
+        1,
+    );
+    write_virtio_desc(
+        &state.tx,
+        1,
+        data_physical + VIRTIO_NET_HDR_LEN as u64,
+        payload_len as u32,
+        0,
+        0,
+    );
+    virtio_kick_queue_head(state.io_base, 1, &mut state.tx, 0);
+    let _used_len = virtio_wait_used(state.io_base, &mut state.tx)?;
+    Ok(())
+}
+
+fn virtio_submit_single(
+    io_base: u16,
+    queue_index: u16,
+    queue: &mut VirtioQueueState,
+    data_len: u32,
+    writable: bool,
+) -> Result<u32, IpcError> {
+    virtio_post_single(io_base, queue_index, queue, data_len, writable)?;
+    virtio_wait_used(io_base, queue)
+}
+
+fn virtio_post_single(
+    io_base: u16,
+    queue_index: u16,
+    queue: &mut VirtioQueueState,
+    data_len: u32,
+    writable: bool,
+) -> Result<(), IpcError> {
+    let flags = if writable { VIRTIO_DESC_F_WRITE } else { 0 };
+    write_virtio_desc(queue, 0, queue_data_physical(queue), data_len, flags, 0);
+    virtio_kick_queue_head(io_base, queue_index, queue, 0);
+    Ok(())
+}
+
+fn virtio_kick_queue_head(io_base: u16, queue_index: u16, queue: &mut VirtioQueueState, head: u16) {
+    let ring_offset = queue.avail_offset + 4 + ((queue.avail_idx % queue.queue_size) as usize * 2);
+    write_dma_u16(queue.dma_virtual + ring_offset as u64, head);
+    queue.avail_idx = queue.avail_idx.wrapping_add(1);
+    compiler_fence(Ordering::SeqCst);
+    write_dma_u16(
+        queue.dma_virtual + queue.avail_offset as u64 + 2,
+        queue.avail_idx,
+    );
+    compiler_fence(Ordering::SeqCst);
+    virtio_write16(io_base, VIRTIO_PCI_QUEUE_NOTIFY, queue_index);
+}
+
+fn virtio_wait_used(io_base: u16, queue: &mut VirtioQueueState) -> Result<u32, IpcError> {
+    let target_used = queue.used_idx.wrapping_add(1);
+    let mut spins = 0u64;
+    while read_dma_u16(queue.dma_virtual + queue.used_offset as u64 + 2) != target_used {
+        spins += 1;
+        if spins > VIRTIO_POLL_SPINS {
+            return Err(IpcError::Empty);
+        }
+        if spins & 0xfff == 0 {
+            pause_cpu();
+        }
+    }
+    compiler_fence(Ordering::SeqCst);
+    let used_offset = queue.used_offset + 4 + ((queue.used_idx % queue.queue_size) as usize * 8);
+    let used_len = read_dma_u32(queue.dma_virtual + used_offset as u64 + 4);
+    queue.used_idx = target_used;
+    let _isr = virtio_read8(io_base, VIRTIO_PCI_ISR);
+    Ok(used_len)
+}
+
+fn queue_data_virtual(queue: &VirtioQueueState) -> u64 {
+    queue.dma_virtual + queue.data_offset as u64
+}
+
+fn queue_data_physical(queue: &VirtioQueueState) -> u64 {
+    queue.dma_physical + queue.data_offset as u64
+}
+
+fn align_up_usize(value: usize, align: usize) -> usize {
+    (value + align - 1) & !(align - 1)
+}
+
+fn write_virtio_desc(
+    queue: &VirtioQueueState,
+    index: usize,
+    addr: u64,
+    len: u32,
+    flags: u16,
+    next: u16,
+) {
+    let offset = VIRTIO_QUEUE_DESC_OFFSET + index * 16;
+    write_dma_u64(queue.dma_virtual + offset as u64, addr);
+    write_dma_u32(queue.dma_virtual + offset as u64 + 8, len);
+    write_dma_u16(queue.dma_virtual + offset as u64 + 12, flags);
+    write_dma_u16(queue.dma_virtual + offset as u64 + 14, next);
+}
+
+fn allocate_virtio_dma(frame_count: u64) -> Result<(u64, u64), IpcError> {
+    let frame = frame_allocator()?
+        .allocate_contiguous(frame_count)
+        .ok_or(IpcError::BadCapability)?;
+    let hhdm_offset = limine::hhdm_offset().ok_or(IpcError::BadCapability)?;
+    let bytes = frame_count
+        .checked_mul(memory::FRAME_SIZE)
+        .ok_or(IpcError::BadCapability)? as usize;
+    let virtual_base = hhdm_offset + frame.start();
+    zero_dma(virtual_base, bytes);
+    Ok((frame.start(), virtual_base))
+}
+
+fn discover_legacy_virtio_pci(device_id: u16) -> Result<u16, IpcError> {
+    let mut slot = 0u8;
+    while slot < 32 {
+        let vendor = pci_read_u16(0, slot, 0, 0x00);
+        let device = pci_read_u16(0, slot, 0, 0x02);
+        if vendor == PCI_VENDOR_VIRTIO && device == device_id {
+            let command = pci_read_u16(0, slot, 0, PCI_COMMAND);
+            pci_write_u16(
+                0,
+                slot,
+                0,
+                PCI_COMMAND,
+                command | PCI_COMMAND_IO | PCI_COMMAND_BUS_MASTER,
+            );
+            let bar0 = pci_read_u32(0, slot, 0, PCI_BAR0);
+            if bar0 & 1 == 0 {
+                return Err(IpcError::BadCapability);
+            }
+            return Ok((bar0 & !0x3) as u16);
+        }
+        slot += 1;
+    }
+    Err(IpcError::BadCapability)
+}
+
+fn read_virtio_net_mac(io_base: u16) -> [u8; 6] {
+    let mut mac = [0u8; 6];
+    let mut index = 0;
+    while index < mac.len() {
+        mac[index] = virtio_read8(io_base, VIRTIO_PCI_NET_CONFIG + index as u16);
+        index += 1;
+    }
+    if mac == [0; 6] {
+        QEMU_USER_GUEST_MAC
+    } else {
+        mac
+    }
+}
+
+fn build_udp_ipv4_frame(
+    source_mac: [u8; 6],
+    payload: &[u8],
+    frame: &mut [u8],
+) -> Result<usize, IpcError> {
+    let packet_len = UDP_IPV4_HEADER_LEN
+        .checked_add(payload.len())
+        .ok_or(IpcError::MessageTooLarge)?;
+    let frame_len = if packet_len < ETHERNET_MIN_FRAME_LEN {
+        ETHERNET_MIN_FRAME_LEN
+    } else {
+        packet_len
+    };
+    if frame_len > frame.len() {
+        return Err(IpcError::MessageTooLarge);
+    }
+
+    zero_bytes(&mut frame[..frame_len]);
+    let mut index = 0;
+    while index < 6 {
+        frame[index] = 0xff;
+        frame[6 + index] = source_mac[index];
+        index += 1;
+    }
+    frame[12] = 0x08;
+    frame[13] = 0x00;
+
+    let ip_offset = 14;
+    let udp_offset = ip_offset + 20;
+    let ip_total_len = (20 + 8 + payload.len()) as u16;
+    frame[ip_offset] = 0x45;
+    frame[ip_offset + 1] = 0;
+    write_be_u16(frame, ip_offset + 2, ip_total_len);
+    write_be_u16(frame, ip_offset + 4, 0x5657);
+    write_be_u16(frame, ip_offset + 6, 0);
+    frame[ip_offset + 8] = 64;
+    frame[ip_offset + 9] = 17;
+    frame[ip_offset + 12..ip_offset + 16].copy_from_slice(&QEMU_USER_GUEST_IP);
+    frame[ip_offset + 16..ip_offset + 20].copy_from_slice(&QEMU_USER_GATEWAY_IP);
+    let checksum = ipv4_header_checksum(&frame[ip_offset..ip_offset + 20]);
+    write_be_u16(frame, ip_offset + 10, checksum);
+
+    write_be_u16(frame, udp_offset, 9000);
+    write_be_u16(frame, udp_offset + 2, 9000);
+    write_be_u16(frame, udp_offset + 4, (8 + payload.len()) as u16);
+    write_be_u16(frame, udp_offset + 6, 0);
+    frame[udp_offset + 8..udp_offset + 8 + payload.len()].copy_from_slice(payload);
+    Ok(frame_len)
+}
+
+fn ipv4_header_checksum(header: &[u8]) -> u16 {
+    let mut sum = 0u32;
+    let mut index = 0;
+    while index + 1 < header.len() {
+        if index != 10 {
+            sum += u16::from_be_bytes([header[index], header[index + 1]]) as u32;
+        }
+        index += 2;
+    }
+    while (sum >> 16) != 0 {
+        sum = (sum & 0xffff) + (sum >> 16);
+    }
+    !(sum as u16)
+}
+
+fn pci_address(bus: u8, slot: u8, function: u8, offset: u8) -> u32 {
+    0x8000_0000
+        | ((bus as u32) << 16)
+        | ((slot as u32) << 11)
+        | ((function as u32) << 8)
+        | ((offset as u32) & 0xfc)
+}
+
+fn pci_select(bus: u8, slot: u8, function: u8, offset: u8) -> u16 {
+    unsafe {
+        serial::outl_raw(PCI_CONFIG_ADDRESS, pci_address(bus, slot, function, offset));
+    }
+    PCI_CONFIG_DATA + ((offset as u16) & 0x3)
+}
+
+fn pci_read_u16(bus: u8, slot: u8, function: u8, offset: u8) -> u16 {
+    let port = pci_select(bus, slot, function, offset);
+    unsafe { serial::inw_raw(port) }
+}
+
+fn pci_read_u32(bus: u8, slot: u8, function: u8, offset: u8) -> u32 {
+    let port = pci_select(bus, slot, function, offset);
+    unsafe { serial::inl_raw(port) }
+}
+
+fn pci_write_u16(bus: u8, slot: u8, function: u8, offset: u8, value: u16) {
+    let port = pci_select(bus, slot, function, offset);
+    unsafe {
+        serial::outw_raw(port, value);
+    }
+}
+
+fn virtio_read8(io_base: u16, offset: u16) -> u8 {
+    unsafe { serial::inb_raw(io_base + offset) }
+}
+
+fn virtio_read16(io_base: u16, offset: u16) -> u16 {
+    unsafe { serial::inw_raw(io_base + offset) }
+}
+
+fn virtio_read32(io_base: u16, offset: u16) -> u32 {
+    unsafe { serial::inl_raw(io_base + offset) }
+}
+
+fn virtio_write8(io_base: u16, offset: u16, value: u8) {
+    unsafe {
+        serial::outb_raw(io_base + offset, value);
+    }
+}
+
+fn virtio_write16(io_base: u16, offset: u16, value: u16) {
+    unsafe {
+        serial::outw_raw(io_base + offset, value);
+    }
+}
+
+fn virtio_write32(io_base: u16, offset: u16, value: u32) {
+    unsafe {
+        serial::outl_raw(io_base + offset, value);
+    }
+}
+
+fn zero_dma(base: u64, len: usize) {
+    let mut index = 0;
+    while index < len {
+        write_dma_u8(base + index as u64, 0);
+        index += 1;
+    }
+}
+
+fn write_dma_bytes(base: u64, value: &[u8]) {
+    let mut index = 0;
+    while index < value.len() {
+        write_dma_u8(base + index as u64, value[index]);
+        index += 1;
+    }
+}
+
+fn read_dma_bytes(base: u64, out: &mut [u8]) {
+    let mut index = 0;
+    while index < out.len() {
+        out[index] = read_dma_u8(base + index as u64);
+        index += 1;
+    }
+}
+
+fn write_dma_u8(address: u64, value: u8) {
+    unsafe {
+        (address as *mut u8).write_volatile(value);
+    }
+}
+
+fn read_dma_u8(address: u64) -> u8 {
+    unsafe { (address as *const u8).read_volatile() }
+}
+
+fn write_dma_u16(address: u64, value: u16) {
+    write_dma_bytes(address, &value.to_le_bytes());
+}
+
+fn read_dma_u16(address: u64) -> u16 {
+    u16::from_le_bytes([read_dma_u8(address), read_dma_u8(address + 1)])
+}
+
+fn write_dma_u32(address: u64, value: u32) {
+    write_dma_bytes(address, &value.to_le_bytes());
+}
+
+fn read_dma_u32(address: u64) -> u32 {
+    u32::from_le_bytes([
+        read_dma_u8(address),
+        read_dma_u8(address + 1),
+        read_dma_u8(address + 2),
+        read_dma_u8(address + 3),
+    ])
+}
+
+fn write_dma_u64(address: u64, value: u64) {
+    write_dma_bytes(address, &value.to_le_bytes());
+}
+
+fn write_be_u16(buffer: &mut [u8], offset: usize, value: u16) {
+    let bytes = value.to_be_bytes();
+    buffer[offset] = bytes[0];
+    buffer[offset + 1] = bytes[1];
+}
+
+fn zero_bytes(buffer: &mut [u8]) {
+    let mut index = 0;
+    while index < buffer.len() {
+        buffer[index] = 0;
+        index += 1;
+    }
+}
+
+fn pause_cpu() {
+    unsafe {
+        asm!("pause", options(nomem, nostack, preserves_flags));
+    }
 }
 
 pub fn namespace_resolve(

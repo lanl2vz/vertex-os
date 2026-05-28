@@ -323,7 +323,7 @@ fn compile_boot_manifest_emits_krustboot_plan() {
     assert!(stdout.contains("boot_modules: 13"));
     assert!(stdout.contains("processes: 13"));
     assert!(stdout.contains("endpoints: 12"));
-    assert!(stdout.contains("grants: 51"));
+    assert!(stdout.contains("grants: 60"));
     assert!(stdout.contains("store_objects: 14"));
     assert!(stdout.contains("state_volumes: 0"));
     assert!(stdout.contains("network_ports: 1"));
@@ -331,8 +331,9 @@ fn compile_boot_manifest_emits_krustboot_plan() {
     assert!(stdout.contains("mmio_regions: 0"));
     assert!(stdout.contains("interrupt_lines: 1"));
     assert!(stdout.contains("dma_regions: 1"));
-    assert!(stdout.contains("pci_devices: 1"));
-    assert!(stdout.contains("virtio_devices: 1"));
+    assert!(stdout.contains("pci_devices: 4"));
+    assert!(stdout.contains("virtio_devices: 4"));
+    assert!(stdout.contains("namespaces: 2"));
 
     let bytes = fs::read(&output_path).expect("read krustboot output");
     assert!(bytes.starts_with(b"KRUSTBOOTV1\0\0\0\0\0"));
@@ -436,7 +437,7 @@ fn compile_boot_manifest_does_not_inject_implicit_logd_config() {
         &output_path.to_string_lossy(),
     ]));
 
-    assert!(stdout.contains("grants: 50"));
+    assert!(stdout.contains("grants: 59"));
     assert!(stdout.contains("store_objects: 13"));
     let bytes = fs::read(&output_path).expect("read krustboot output");
     assert!(!contains_bytes(&bytes, b"config:logd"));
@@ -491,11 +492,11 @@ fn compile_boot_manifest_rejects_legacy_state_backend_capability() {
     let capabilities = manifest["capabilities"]
         .as_array_mut()
         .expect("capabilities should be an array");
-    let state_request = capabilities
+    let clock_capability = capabilities
         .iter_mut()
-        .find(|capability| capability["id"] == "cap:state.counter.request")
-        .expect("state request capability should exist");
-    state_request["kind"] = Value::String("state-volume".to_owned());
+        .find(|capability| capability["id"] == "cap:clock.monotonic")
+        .expect("clock capability should exist");
+    clock_capability["kind"] = Value::String("state-volume".to_owned());
 
     fs::write(
         &input_path,
@@ -612,6 +613,49 @@ fn validate_rejects_hardware_capability_for_non_driver() {
     let stderr = assert_failure(run(&["validate", &input_path.to_string_lossy()]));
 
     assert!(stderr.contains("service svc:echo-server requires hardware capability cap:io.com1 owned by driver svc:serial-driver"));
+}
+
+#[test]
+fn compile_boot_manifest_rejects_namespace_hardware_target() {
+    let dir = temp_dir("krustboot-namespace-hardware");
+    let input_path = dir.join("namespace-hardware.vertex.json");
+    let output_path = dir.join("namespace-hardware.krustboot");
+    let mut manifest: Value = serde_json::from_str(
+        &fs::read_to_string(repo_root().join("examples/hello-generation.vertex.json"))
+            .expect("read hello manifest"),
+    )
+    .expect("hello manifest should be json");
+
+    let capabilities = manifest["capabilities"]
+        .as_array_mut()
+        .expect("capabilities should be an array");
+    let namespace = capabilities
+        .iter_mut()
+        .find(|capability| capability["id"] == "cap:namespace.echo")
+        .expect("echo namespace should exist");
+    namespace["properties"]["entries"]
+        .as_array_mut()
+        .expect("namespace entries should be an array")
+        .push(serde_json::json!({
+            "path": "/dev/com1",
+            "capability": "cap:io.com1",
+            "rights": ["read"]
+        }));
+
+    fs::write(
+        &input_path,
+        serde_json::to_string_pretty(&manifest).expect("serialize bad namespace manifest"),
+    )
+    .expect("write bad namespace manifest");
+
+    let stderr = assert_failure(run(&[
+        "compile-boot-manifest",
+        &input_path.to_string_lossy(),
+        &output_path.to_string_lossy(),
+    ]));
+
+    assert!(stderr.contains("namespace entries cannot resolve hardware capability kind io-port"));
+    assert!(!output_path.exists());
 }
 
 #[test]

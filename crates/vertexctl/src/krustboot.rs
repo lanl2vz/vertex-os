@@ -1241,9 +1241,10 @@ fn push_unique_namespace(
             })
             .transpose()?
             .unwrap_or_else(|| target.rights.clone());
+        let object_kind = object_kind_for_namespace_entry(target)?;
         parsed.push(NamespaceEntry {
             path: path.to_owned(),
-            object_kind: object_kind_for_capability(target)?,
+            object_kind,
             object_name: object_name_for_capability(target),
             rights: rights_mask(&rights, &target.rights, capability_id)?,
         });
@@ -1256,18 +1257,18 @@ fn push_unique_namespace(
     Ok(())
 }
 
-fn object_kind_for_capability(capability: &vertex_ir::Capability) -> Result<u16, String> {
+fn object_kind_for_namespace_entry(capability: &vertex_ir::Capability) -> Result<u16, String> {
     match capability.kind.as_str() {
         "ipc-endpoint" => Ok(OBJECT_ENDPOINT),
         "store-object" => Ok(OBJECT_STORE),
         "timer" => Ok(OBJECT_TIMER),
         "network-port" => Ok(OBJECT_NETWORK_PORT),
-        "io-port" => Ok(OBJECT_IO_PORT_RANGE),
-        "mmio-region" => Ok(OBJECT_MMIO_REGION),
-        "interrupt-line" => Ok(OBJECT_INTERRUPT_LINE),
-        "dma-region" => Ok(OBJECT_DMA_REGION),
-        "virtio-device" => Ok(OBJECT_VIRTIO_DEVICE),
-        "namespace" => Ok(OBJECT_NAMESPACE),
+        "io-port" | "mmio-region" | "interrupt-line" | "dma-region" | "pci-device"
+        | "virtio-device" => Err(format!(
+            "namespace entries cannot resolve hardware capability kind {}",
+            capability.kind
+        )),
+        "namespace" => Err("namespace entries cannot resolve namespace capabilities".to_owned()),
         other => Err(format!(
             "namespace entries cannot resolve capability kind {other}"
         )),
@@ -2617,6 +2618,7 @@ mod tests {
             dma_regions: Vec::new(),
             pci_devices: Vec::new(),
             virtio_devices: Vec::new(),
+            namespaces: Vec::new(),
         };
 
         let error = validate_plan(&plan).expect_err("duplicate cap slot should fail");

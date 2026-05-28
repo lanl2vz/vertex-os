@@ -922,7 +922,7 @@ fn validate_manifest(manifest: &Manifest<'_>) -> Result<(), ParseError> {
         while entry_index < namespace.entry_count {
             let entry = namespace.entries[entry_index].ok_or(ParseError::InvalidReference)?;
             validate_object_ref(manifest, entry.object_kind, entry.object_index)?;
-            if entry.object_kind == OBJECT_NAMESPACE || entry.rights == 0 {
+            if !namespace_entry_object_kind_allowed(entry.object_kind) || entry.rights == 0 {
                 return Err(ParseError::InvalidReference);
             }
             if entry.rights
@@ -947,6 +947,13 @@ fn validate_manifest(manifest: &Manifest<'_>) -> Result<(), ParseError> {
     }
 
     Ok(())
+}
+
+fn namespace_entry_object_kind_allowed(object_kind: u16) -> bool {
+    matches!(
+        object_kind,
+        OBJECT_ENDPOINT | OBJECT_STORE | OBJECT_TIMER | OBJECT_NETWORK_PORT
+    )
 }
 
 fn validate_object_ref(

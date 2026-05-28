@@ -8,7 +8,7 @@ ISO_IMAGE=${ISO_IMAGE:-"$BUILD_DIR/krust.iso"}
 BLOCK_IMAGE=${BLOCK_IMAGE:-"$BUILD_DIR/krust-block.img"}
 SERIAL_LOG=${SERIAL_LOG:-"$BUILD_DIR/serial-test.log"}
 QEMU=${QEMU:-qemu-system-x86_64}
-QEMU_EXTRA=${QEMU_EXTRA:-}
+QEMU_EXTRA=${QEMU_EXTRA:-"-object rng-random,filename=/dev/urandom,id=vertexrng -device virtio-rng-pci,rng=vertexrng,disable-modern=on -netdev user,id=vertexnet -device virtio-net-pci,netdev=vertexnet,mac=52:54:00:12:34:56,disable-modern=on"}
 QEMU_MACHINE=${QEMU_MACHINE:-}
 QEMU_BLOCK=${QEMU_BLOCK:-"-drive if=none,id=vertexblk,file=$BLOCK_IMAGE,format=raw -device virtio-blk-pci,drive=vertexblk,disable-modern=on,queue-size=8"}
 QEMU_ATTEMPTS=${QEMU_ATTEMPTS:-20}
@@ -676,13 +676,14 @@ Native service activation ok
     m57|networking-v0)
         MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
         EXPECT_ACTIVATION_SUCCESS=1
-        QEMU_EXTRA="${QEMU_EXTRA} -netdev user,id=vertexnet -device virtio-net-pci,netdev=vertexnet,disable-modern=on"
         required_lines='
 QEMU user-mode network attached
-Virtio net RX accepted: proc=netstack virtio-device=device:virtio-net0 frame-bytes=64
-Virtio net TX accepted: proc=netstack virtio-device=device:virtio-net0 frame-bytes=64
-Vertex replies to ping or sends ICMP echo
-UDP send accepted: proc=echo network-port=cap:net.udp.9000 bytes=13
+Virtio net TX completed: proc=netstack virtio-device=device:virtio-net0 frame-bytes=60
+Virtio net RX completed: proc=netstack virtio-device=device:virtio-net0 frame-bytes=
+QEMU user-mode network delivered a raw frame
+Vertex sends ICMP echo
+QEMU user-mode network delivered ICMP echo reply
+UDP send transmitted: proc=echo network-port=cap:net.udp.9000 bytes=13
 Vertex sends UDP packet
 network authority is endpoint/capability mediated
 unauthorized service cannot use network device

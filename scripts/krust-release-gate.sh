@@ -147,6 +147,13 @@ if ! cargo build --locked --offline >"$offline_log" 2>&1; then
     fail "cargo build --locked --offline failed. Populate the Cargo cache from Cargo.lock or configure a vendored Cargo source before running the M40 gate offline."
 fi
 
+step "cargo test --locked --offline -p vertex-ir -p vertexctl"
+test_log="$LOG_DIR/cargo-test-offline.log"
+if ! cargo test --locked --offline -p vertex-ir -p vertexctl >"$test_log" 2>&1; then
+    cat "$test_log"
+    fail "cargo test --locked --offline -p vertex-ir -p vertexctl failed"
+fi
+
 run "$ROOT_DIR/target/debug/vertexctl" validate "$ROOT_DIR/examples/hello-generation.vertex.json"
 run "$ROOT_DIR/target/debug/vertexctl" package inspect "$ROOT_DIR/examples/packages/logd.vertexpkg"
 run "$ROOT_DIR/target/debug/vertexctl" package instantiate "$ROOT_DIR/examples/packages/logd.vertexpkg"

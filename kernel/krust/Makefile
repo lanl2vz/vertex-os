@@ -57,7 +57,7 @@ KRUSTBOOT_CORRUPT ?=
 VERTEX_DISK_CORRUPT ?=
 
 QEMU ?= qemu-system-x86_64
-QEMU_EXTRA ?=
+QEMU_EXTRA ?= -object rng-random,filename=/dev/urandom,id=vertexrng -device virtio-rng-pci,rng=vertexrng,disable-modern=on -netdev user,id=vertexnet -device virtio-net-pci,netdev=vertexnet,mac=52:54:00:12:34:56,disable-modern=on
 QEMU_MACHINE ?=
 QEMU_BLOCK ?= -drive if=none,id=vertexblk,file=$(BLOCK_IMAGE),format=raw -device virtio-blk-pci,drive=vertexblk,disable-modern=on,queue-size=8
 LIMINE ?= limine
