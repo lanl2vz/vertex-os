@@ -5,7 +5,7 @@ native Krust QEMU/Limine milestone. It is intentionally small and unstable. Its
 current job is to boot native `vertex-init`, create services from verified
 process templates, and enforce explicit process-local capabilities.
 
-Milestone status: ABI v1 now covers the M14-M61 native activation and substrate
+Milestone status: ABI v1 now covers the M14-M65 native activation and substrate
 proof. M25 adds the release gate. M26-M29 add Manifest v1 parsing, capability
 provenance/revocation, typed arena allocation checks, and resource quotas.
 M30-M31 add PIT-backed preemption and user page-fault containment. M32-M36 add
@@ -27,7 +27,9 @@ capability namespace resolution, and the policy/typed source layer that compiles
 into the same generation manifest contract. M61 makes syscall argument
 validation, typed object dispatch, rights-subset checks, namespace target
 limits, virtio device identity checks, and generation provenance the standing
-security regression baseline. The ABI is still
+security regression baseline. M62-M65 add the storage durability checks,
+network boundary assertions, lifecycle reporting, and supported appliance
+profile artifact without adding legacy compatibility paths. The ABI is still
 intentionally small, but this subset is the current native contract.
 
 ## Machine ABI
@@ -153,7 +155,7 @@ becoming uncontrolled kernel faults.
 Capabilities are process-local. A capability slot number is meaningful only in
 the current process's capability space.
 
-Current M14-M61 layout:
+Current M14-M65 layout:
 
 ```text
 vertex-init:
@@ -599,8 +601,8 @@ interrupt_lines
 dma_regions
 ```
 
-The compact payload identity is `KRUSTBOOTM61` version 7. Older compact
-payload identities, including the previous M60 identity, are rejected instead of
+The compact payload identity is `KRUSTBOOTM65` version 8. Older compact
+payload identities, including the previous M61 identity, are rejected instead of
 being retained as compatibility formats.
 
 Manifest v1 adds a fixed header, record table, checksum, and record bounds

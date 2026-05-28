@@ -374,6 +374,49 @@ fn compile_boot_manifest_emits_krustboot_plan() {
 }
 
 #[test]
+fn release_profile_validates_m65_krustboot_identity() {
+    let dir = temp_dir("release-profile");
+    let krustboot_path = dir.join("hello-generation.krustboot");
+    let old_krustboot_path = dir.join("old-generation.krustboot");
+    let kernel_path = dir.join("krust");
+    let vertexdisk_path = dir.join("krust-block.img");
+    fs::write(&kernel_path, b"kernel").expect("write dummy kernel");
+    fs::write(&vertexdisk_path, b"vertexdisk").expect("write dummy vertexdisk");
+
+    assert_success(run(&[
+        "compile-boot-manifest",
+        "examples/hello-generation.vertex.json",
+        &krustboot_path.to_string_lossy(),
+    ]));
+
+    let profile = assert_success(run(&[
+        "release-profile",
+        "examples/hello-generation.vertex.json",
+        &krustboot_path.to_string_lossy(),
+        &kernel_path.to_string_lossy(),
+        &vertexdisk_path.to_string_lossy(),
+    ]));
+    assert!(profile.contains("krustboot=Manifest v1 compact KRUSTBOOTM65 version 8"));
+
+    assert_success(run(&[
+        "corrupt-boot-manifest",
+        "old-compact-magic",
+        &krustboot_path.to_string_lossy(),
+        &old_krustboot_path.to_string_lossy(),
+    ]));
+
+    let stderr = assert_failure(run(&[
+        "release-profile",
+        "examples/hello-generation.vertex.json",
+        &old_krustboot_path.to_string_lossy(),
+        &kernel_path.to_string_lossy(),
+        &vertexdisk_path.to_string_lossy(),
+    ]));
+    assert!(stderr.contains("unsupported KrustBoot compact magic"));
+    assert!(stderr.contains("expected KRUSTBOOTM65"));
+}
+
+#[test]
 fn validate_rejects_service_config_without_config_store_object() {
     let dir = temp_dir("missing-config-store");
     let input_path = dir.join("missing-config.vertex.json");

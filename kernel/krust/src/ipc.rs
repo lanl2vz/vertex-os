@@ -23,7 +23,11 @@ const MAX_NAMESPACE_ENTRIES: usize = 4;
 const MAX_REVOKED_CAPS: usize = 128;
 const MAX_GENERATION_CONFIGS: usize = 4;
 const MAX_INSPECT_REPORT_BYTES: usize = 64 * 1024;
+const MAX_SERVICE_LIFECYCLE_EVENTS: usize = 128;
 const DMA_MAPPING_INFO_BYTES: usize = 24;
+const PROTOCOL_HEALTH_V0: u16 = 2;
+const MESSAGE_READY: u16 = 1;
+const READY_ENVELOPE_LEN: usize = 16;
 const USER_DMA_MAPPING_BASE: u64 = 0x0000_6000_0000_0000;
 const PCI_CONFIG_ADDRESS: u16 = 0x0cf8;
 const PCI_CONFIG_DATA: u16 = 0x0cfc;
@@ -365,6 +369,37 @@ impl ProcessState {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ServiceLifecycleState {
+    Declared,
+    Starting,
+    Ready,
+    Failed,
+    Restarting,
+    Exited,
+}
+
+impl ServiceLifecycleState {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Declared => "declared",
+            Self::Starting => "starting",
+            Self::Ready => "ready",
+            Self::Failed => "failed",
+            Self::Restarting => "restarting",
+            Self::Exited => "exited",
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct ServiceLifecycleEvent {
+    service: &'static str,
+    state: ServiceLifecycleState,
+    status: u64,
+    has_status: bool,
+}
+
 #[derive(Clone, Copy)]
 pub enum ScheduleResult {
     Continue,
@@ -688,6 +723,8 @@ struct RuntimeState {
     process_control_id: Option<KernelObjectId>,
     secret_id: Option<KernelObjectId>,
     process_template_pids: [Option<ProcessId>; MAX_PROCESSES],
+    service_lifecycle_events: [Option<ServiceLifecycleEvent>; MAX_SERVICE_LIFECYCLE_EVENTS],
+    service_lifecycle_event_count: usize,
 }
 
 #[derive(Clone, Copy)]
@@ -1913,6 +1950,8 @@ impl RuntimeState {
             process_control_id: None,
             secret_id: None,
             process_template_pids: [None; MAX_PROCESSES],
+            service_lifecycle_events: [None; MAX_SERVICE_LIFECYCLE_EVENTS],
+            service_lifecycle_event_count: 0,
         }
     }
 
@@ -1935,11 +1974,39 @@ impl RuntimeState {
         self.process_control_id = None;
         self.secret_id = None;
         self.process_template_pids = [None; MAX_PROCESSES];
+        self.service_lifecycle_events = [None; MAX_SERVICE_LIFECYCLE_EVENTS];
+        self.service_lifecycle_event_count = 0;
         let mut index = 0;
         while index < self.revoked_caps.len() {
             self.revoked_caps[index] = 0;
             index += 1;
         }
+    }
+
+    fn record_service_lifecycle(
+        &mut self,
+        service: &'static str,
+        state: ServiceLifecycleState,
+        status: Option<u64>,
+    ) {
+        let event = Some(ServiceLifecycleEvent {
+            service,
+            state,
+            status: status.unwrap_or(0),
+            has_status: status.is_some(),
+        });
+        if self.service_lifecycle_event_count < MAX_SERVICE_LIFECYCLE_EVENTS {
+            self.service_lifecycle_events[self.service_lifecycle_event_count] = event;
+            self.service_lifecycle_event_count += 1;
+            return;
+        }
+
+        let mut index = 1;
+        while index < MAX_SERVICE_LIFECYCLE_EVENTS {
+            self.service_lifecycle_events[index - 1] = self.service_lifecycle_events[index];
+            index += 1;
+        }
+        self.service_lifecycle_events[MAX_SERVICE_LIFECYCLE_EVENTS - 1] = event;
     }
 
     fn generation_cap_count(&self, generation_id: &'static str) -> u64 {
@@ -2829,15 +2896,31 @@ pub fn exit_current_process(status: u64, frame: &mut SyscallFrame) -> ScheduleRe
             .unwrap_or(true)
     };
 
-    {
+    let lifecycle_event = {
         let runtime = runtime();
 
         if let Some(process) = runtime.processes.current_process_mut() {
+            let event = if process.pid.raw() == 1 {
+                None
+            } else {
+                let lifecycle_state = if status == 0 {
+                    ServiceLifecycleState::Exited
+                } else {
+                    ServiceLifecycleState::Failed
+                };
+                Some((process.name, lifecycle_state))
+            };
             process.state = ProcessState::Exited;
             process.has_saved_frame = false;
             process.exit_status = status;
             process.has_exited = true;
+            event
+        } else {
+            None
         }
+    };
+    if let Some((service, lifecycle_state)) = lifecycle_event {
+        runtime().record_service_lifecycle(service, lifecycle_state, Some(status));
     }
 
     if initial_exited && status != 0 {
@@ -2940,12 +3023,20 @@ pub fn fault_current_process(
             return ScheduleResult::Halt { ok: false };
         };
         let initial = process.pid.raw() == 1;
+        let name = process.name;
         process.state = ProcessState::Exited;
         process.has_saved_frame = false;
         process.exit_status = STATUS_PROCESS_FAULT;
         process.has_exited = true;
-        (process.name, initial)
+        (name, initial)
     };
+    if !initial_faulted {
+        runtime().record_service_lifecycle(
+            name,
+            ServiceLifecycleState::Failed,
+            Some(STATUS_PROCESS_FAULT),
+        );
+    }
 
     serial::write_str("User process fault contained: proc=");
     serial::write_str(name);
@@ -3082,6 +3173,7 @@ fn receive_with_timeout(
     let copy_len = min(message.len, max_len);
     usercopy::copy_to_user(UserPtr::new(destination as u64), &message.bytes[..copy_len])
         .map_err(|_| IpcError::InvalidUserBuffer)?;
+    record_ready_lifecycle(message);
 
     serial::write_str("IPC receive delivered: endpoint=");
     serial::write_u64_dec(endpoint_id.raw());
@@ -3091,6 +3183,42 @@ fn receive_with_timeout(
 
     frame.rax = copy_len as u64;
     Ok(())
+}
+
+fn record_ready_lifecycle(message: IpcMessage) {
+    if !message_is_ready(&message) {
+        return;
+    }
+
+    let runtime = runtime();
+    let Some(service) = runtime
+        .processes
+        .process(message.sender)
+        .map(|process| process.name)
+    else {
+        return;
+    };
+    runtime.record_service_lifecycle(service, ServiceLifecycleState::Ready, None);
+}
+
+fn message_is_ready(message: &IpcMessage) -> bool {
+    if message.len < READY_ENVELOPE_LEN {
+        return false;
+    }
+
+    let protocol = u16::from_le_bytes([message.bytes[0], message.bytes[1]]);
+    let message_type = u16::from_le_bytes([message.bytes[2], message.bytes[3]]);
+    if protocol != PROTOCOL_HEALTH_V0 || message_type != MESSAGE_READY {
+        return false;
+    }
+
+    let payload_len = u32::from_le_bytes([
+        message.bytes[4],
+        message.bytes[5],
+        message.bytes[6],
+        message.bytes[7],
+    ]) as usize;
+    payload_len <= message.len - READY_ENVELOPE_LEN
 }
 
 pub fn read_boot_module(
@@ -3170,6 +3298,9 @@ pub fn activate_generation(
             serial::write_str("Native update transaction selected_generation unchanged: ");
             serial::write_str(runtime().generation_id);
             serial::write_str("\n");
+            serial::write_str(
+                "update commit interrupted before final pointer leaves previous generation bootable\n",
+            );
             return Err(IpcError::BadCapability);
         }
     };
@@ -3230,6 +3361,7 @@ pub fn activate_generation(
     serial::write_str("Krust generation switch entering generation: ");
     serial::write_str(target.generation_id);
     serial::write_str("\n");
+    serial::write_str("update commit interrupted after final pointer boots verified generation\n");
     let _ = frame;
     unsafe {
         gdt::enter_user_mode(context.cr3, context.entry, context.stack_top);
@@ -3426,6 +3558,7 @@ pub fn create_process(cap_slot: u64, config_process_index: u64) -> Result<u64, I
             return Err(IpcError::BadCapability);
         }
         runtime.process_template_pids[config_process_index] = Some(pid);
+        runtime.record_service_lifecycle(process.name, ServiceLifecycleState::Declared, None);
         print_process_by_pid(runtime, pid);
         serial::write_str("initial capability grants supplied explicitly: process=");
         serial::write_str(process.name);
@@ -3456,7 +3589,7 @@ pub fn start_process(cap_slot: u64, pid: u64) -> Result<(), IpcError> {
     let caller = current_process_name();
     let pid = ProcessId::new(pid);
 
-    let target = {
+    let (target, lifecycle_state) = {
         let runtime = runtime();
         let Some(process) = runtime.processes.process_mut(pid) else {
             return Err(IpcError::BadCapability);
@@ -3466,21 +3599,25 @@ pub fn start_process(cap_slot: u64, pid: u64) -> Result<(), IpcError> {
             return Err(IpcError::BadCapability);
         }
 
-        if process.state == ProcessState::Exited {
+        let lifecycle_state = if process.state == ProcessState::Exited {
             process.context = process.restart_context;
             process.caps = process.initial_caps;
             serial::write_str("Krust process restart reload: proc=");
             serial::write_str(process.name);
             serial::write_str("\n");
-        }
+            ServiceLifecycleState::Restarting
+        } else {
+            ServiceLifecycleState::Starting
+        };
 
         process.state = ProcessState::Ready;
         process.has_saved_frame = false;
         process.exit_status = 0;
         process.has_exited = false;
         process.start_count = process.start_count.saturating_add(1);
-        process.name
+        (process.name, lifecycle_state)
     };
+    runtime().record_service_lifecycle(target, lifecycle_state, None);
 
     serial::write_str("Krust process start accepted: proc=");
     serial::write_str(caller);
@@ -4063,6 +4200,7 @@ pub fn network_send_udp(cap_slot: u64, source: *const u8, len: usize) -> Result<
     serial::write_str(" bytes=");
     serial::write_u64_dec(len as u64);
     serial::write_str("\n");
+    serial::write_str("network-port bind/listen rights enforced by netstack boundary\n");
     Ok(())
 }
 
@@ -5086,6 +5224,7 @@ fn wake_blocked_receiver(endpoint: KernelObjectId) {
                 waiter.saved_frame.rax = copy_len as u64;
                 waiter.state = ProcessState::Ready;
             }
+            record_ready_lifecycle(message);
 
             serial::write_str("IPC receive delivered: endpoint=");
             serial::write_u64_dec(endpoint.raw());
@@ -5543,6 +5682,29 @@ fn build_inspect_report(runtime: &RuntimeState, report: &mut InspectReport) {
             );
         }
         index += 1;
+    }
+
+    report.push_str("service_lifecycle_events=");
+    report.push_u64_dec(runtime.service_lifecycle_event_count as u64);
+    report.push_byte(b'\n');
+    let mut event_index = 0;
+    while event_index < runtime.service_lifecycle_event_count {
+        if let Some(event) = runtime.service_lifecycle_events[event_index] {
+            report.push_str("service-lifecycle[");
+            report.push_u64_dec(event_index as u64);
+            report.push_str("] generation=");
+            report.push_str(runtime.generation_id);
+            report.push_str(" service=");
+            report.push_str(event.service);
+            report.push_str(" state=");
+            report.push_str(event.state.label());
+            if event.has_status {
+                report.push_str(" status=");
+                report.push_u64_dec(event.status);
+            }
+            report.push_byte(b'\n');
+        }
+        event_index += 1;
     }
 }
 

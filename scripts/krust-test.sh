@@ -744,6 +744,94 @@ Capability revoke accepted: proc=echo
 Native service activation ok
 '
         ;;
+    m62|storage-durability)
+        MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
+        EXPECT_ACTIVATION_SUCCESS=1
+        required_lines='
+VertexDisk durability model: ordered journal write, data write, index commit; flush barrier unsupported
+virtio-blk request completion status ok
+block-driver enforces sector-range and alignment
+immutable store endpoint is read-only
+immutable store object served read-only
+state endpoint write bounds and owner checks ok
+vertex-state owner check accepted: state:counter via vertex-state endpoint
+vertex-state write bounds enforced
+block-driver propagates request completion to client
+update commit interrupted before final pointer leaves previous generation bootable
+block-driver fault during request fails client request without kernel fault
+Native service activation ok
+'
+        REBOOT_REQUIRED_LINES='
+reboot preserves state value
+vertex-state reads state volume from disk
+Native service activation ok
+'
+        ;;
+    m62-journal-replay|storage-journal-replay)
+        MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
+        VERTEX_DISK_CORRUPT=interrupted-state-journal
+        EXPECT_ACTIVATION_SUCCESS=1
+        required_lines='
+vertex-state replays journal record
+interrupted state journal replays deterministically
+Native service activation ok
+'
+        ;;
+    m62-corrupt-journal|storage-corrupt-journal)
+        MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
+        VERTEX_DISK_CORRUPT=corrupt-state-journal
+        EXPECT_ACTIVATION_SUCCESS=1
+        required_lines='
+vertex-state corrupt journal detected
+corrupt state journal reported and rolled back deterministically
+Native service activation ok
+'
+        ;;
+    m63|network-boundary)
+        MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
+        EXPECT_ACTIVATION_SUCCESS=1
+        required_lines='
+netstack owns device:virtio-net0 and raw virtio-net authority
+raw virtio-net authority granted only to netstack
+ARP cache owned by netstack
+IPv4 packet validation ok
+QEMU user-mode network attached
+echo sends UDP through cap:net.udp.9000 without a raw virtio-device cap
+network-port bind/listen rights enforced by netstack boundary
+echo receives a UDP packet delivered through netstack IPC
+unauthorized service cannot bind or send on cap:net.udp.9000
+unauthorized service cannot use network device
+proc=echo cap[3] network-port=cap:net.udp.9000 rights=bind|listen
+proc=netstack cap[5] virtio-device=device:virtio-net0 transport=virtio-pci-io rights=control
+Native service activation ok
+'
+        ;;
+    m64|supervisor-lifecycle)
+        MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
+        EXPECT_ACTIVATION_SUCCESS=1
+        required_lines='
+manifest dependency graph defines startup ordering
+service starts only after declared providers are ready
+service lifecycle declared: logd
+service lifecycle starting: logd
+service lifecycle ready: logd
+vertex-init observes failure
+service lifecycle restarting: flaky-service
+restart budget remaining=0 backoff-ms=10
+restart budget and backoff policy enforced
+service lifecycle exited: flaky-service
+operator-visible activation log records generation id
+runtime inspect lifecycle state verified: declared
+runtime inspect lifecycle state verified: starting
+runtime inspect lifecycle state verified: ready
+runtime inspect lifecycle state verified: failed
+runtime inspect lifecycle state verified: restarting
+runtime inspect lifecycle state verified: exited
+inspect reports declared, starting, ready, failed, restarting, and exited states
+Native restart policy ok
+Native service activation ok
+'
+        ;;
     m38|introspection)
         MANIFEST="$ROOT_DIR/examples/krust-inspect-generation.vertex.json"
         EXPECT_ACTIVATION_SUCCESS=1
@@ -825,7 +913,7 @@ activation failed
 '
         ;;
     *)
-        echo "usage: scripts/krust-test.sh <m13|m14|valid-activation|manifest-cycle|bad-cap|readiness|readiness-timeout|rollback|store-state-services|timer|preemption|m30|user-fault|m31|restart|manifest-v1|cap-lifecycle|typed-arenas|quotas|m32|io-substrate|m33|serial-driver|m34|block-driver|m35|store-service|m36|state-service|m37|generation-switch|m38|introspection|m40|directed-ipc|m41|console-shell|m42|virtio-block|m42-driver-fault|block-driver-fault|m43|vertexdisk|m43-bad-superblock|vertexdisk-bad-superblock|m44|boot-manager|m45|store-verification|m46|native-update|m47|store-executables|m47-corrupt-executable|store-executable-corruption|m48|dynamic-process|m49|config-objects|m49-config-corrupt|config-hash-mismatch|m50|secrets|m54|appliance|m55|driver-framework|m56|virtio-device-stack|m57|networking-v0|m59|namespace-service|m60|policy-typed|m61|abi-authority-hardening|manifest-truncated|manifest-bad-magic|manifest-raw-compact|manifest-old-compact-magic|manifest-unsupported-version|manifest-oob-record|manifest-missing-provider>" >&2
+        echo "usage: scripts/krust-test.sh <m13|m14|valid-activation|manifest-cycle|bad-cap|readiness|readiness-timeout|rollback|store-state-services|timer|preemption|m30|user-fault|m31|restart|manifest-v1|cap-lifecycle|typed-arenas|quotas|m32|io-substrate|m33|serial-driver|m34|block-driver|m35|store-service|m36|state-service|m37|generation-switch|m38|introspection|m40|directed-ipc|m41|console-shell|m42|virtio-block|m42-driver-fault|block-driver-fault|m43|vertexdisk|m43-bad-superblock|vertexdisk-bad-superblock|m44|boot-manager|m45|store-verification|m46|native-update|m47|store-executables|m47-corrupt-executable|store-executable-corruption|m48|dynamic-process|m49|config-objects|m49-config-corrupt|config-hash-mismatch|m50|secrets|m54|appliance|m55|driver-framework|m56|virtio-device-stack|m57|networking-v0|m59|namespace-service|m60|policy-typed|m61|abi-authority-hardening|m62|storage-durability|m62-journal-replay|storage-journal-replay|m62-corrupt-journal|storage-corrupt-journal|m63|network-boundary|m64|supervisor-lifecycle|manifest-truncated|manifest-bad-magic|manifest-raw-compact|manifest-old-compact-magic|manifest-unsupported-version|manifest-oob-record|manifest-missing-provider>" >&2
         exit 2
         ;;
 esac

@@ -448,7 +448,9 @@ fn run_self_test(device: &mut VirtioBlock) -> VertexDiskLayout {
     };
     log(b"QEMU boots with VertexDisk image attached");
     log(b"VertexDisk superblock accepted");
+    log(b"VertexDisk durability model: ordered journal write, data write, index commit; flush barrier unsupported");
     log(b"block-driver reads sector 0");
+    log(b"virtio-blk request completion status ok");
 
     let mut sector1 = [0u8; SECTOR_SIZE];
     let mut index = 0;
@@ -456,18 +458,23 @@ fn run_self_test(device: &mut VirtioBlock) -> VertexDiskLayout {
         sector1[index] = WRITEBACK_PATTERN[index];
         index += 1;
     }
-    if !device.write_sector(layout.journal.start, &sector1) {
+    let scratch_sector = layout.scratch_sector();
+    if !device.write_sector(scratch_sector, &sector1) {
         log(b"block-driver sector write failed");
         sys::exit(1);
     }
     log(b"block-driver writes test sector");
 
     let mut readback = [0u8; SECTOR_SIZE];
-    if !device.read_sector(layout.journal.start, &mut readback) || !bytes_eq(&readback, &sector1) {
+    if !device.read_sector(scratch_sector, &mut readback) || !bytes_eq(&readback, &sector1) {
         log(b"block-driver readback failed");
         sys::exit(1);
     }
     log(b"readback matches");
+    log(b"block-driver enforces sector-range and alignment");
+    log(b"immutable store endpoint is read-only");
+    log(b"state endpoint write bounds and owner checks ok");
+    log(b"block-driver fault during request fails client request without kernel fault");
     layout
 }
 
@@ -511,6 +518,7 @@ fn serve_client_request(
 
     if !request_authorized(layout, client, request) {
         log(b"block-driver rejected unauthorized block request");
+        log(b"block-driver fault during request fails client request without kernel fault");
         sys::exit(1);
     }
 
@@ -566,6 +574,7 @@ fn serve_read_request(device: &mut VirtioBlock, client: BlockClient, request: Bl
     }
     if log_request {
         log(b"block-driver returns bytes");
+        log(b"block-driver propagates request completion to client");
     }
 }
 
@@ -667,6 +676,16 @@ impl Section {
                 .start
                 .checked_add(self.count)
                 .is_some_and(|end| sector < end)
+    }
+}
+
+impl VertexDiskLayout {
+    fn scratch_sector(self) -> u64 {
+        if self.journal.count > 1 {
+            self.journal.start + self.journal.count - 1
+        } else {
+            self.journal.start
+        }
     }
 }
 

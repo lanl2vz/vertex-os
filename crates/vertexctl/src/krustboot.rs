@@ -4,8 +4,8 @@ use std::fs;
 use std::path::PathBuf;
 use vertex_ir::{GenerationManifest, Service};
 
-const COMPACT_MAGIC: &[u8; 16] = b"KRUSTBOOTM61\0\0\0\0";
-const COMPACT_VERSION: u16 = 7;
+const COMPACT_MAGIC: &[u8; 16] = b"KRUSTBOOTM65\0\0\0\0";
+const COMPACT_VERSION: u16 = 8;
 const V1_MAGIC: &[u8; 16] = b"KRUSTBOOTV1\0\0\0\0\0";
 const V1_VERSION: u16 = 1;
 const V1_HEADER_SIZE: usize = 164;
@@ -96,6 +96,19 @@ const VERTEX_STORE_LOGD_OBJECT_CAP_SLOT: u16 = 7;
 const VERTEX_STORE_ECHO_OBJECT_CAP_SLOT: u16 = 8;
 const LOGD_CONFIG_MODULE: &str = "config-logd-v0";
 const LOGD_CONFIG_BYTES: &[u8] = b"{\"level\":\"info\",\"sink\":\"serial\"}\n";
+
+pub struct KrustBootIdentity {
+    compact_version: u16,
+}
+
+impl KrustBootIdentity {
+    pub fn release_profile_label(&self) -> String {
+        format!(
+            "Manifest v1 compact KRUSTBOOTM65 version {}",
+            self.compact_version
+        )
+    }
+}
 
 pub fn compile(manifest: &GenerationManifest) -> Result<Vec<u8>, String> {
     let plan = derive_plan(manifest)?;
@@ -299,7 +312,7 @@ pub fn corrupt(bytes: &[u8], mode: &str) -> Result<Vec<u8>, String> {
                 return Err("KrustBoot manifest is too short to rewrite compact magic".to_owned());
             }
             out[V1_PAYLOAD_OFFSET..V1_PAYLOAD_OFFSET + COMPACT_MAGIC.len()]
-                .copy_from_slice(b"KRUSTBOOTM60\0\0\0\0");
+                .copy_from_slice(b"KRUSTBOOTM61\0\0\0\0");
             rewrite_v1_checksum(&mut out)?;
         }
         "missing-provider" => {
@@ -313,6 +326,88 @@ pub fn corrupt(bytes: &[u8], mode: &str) -> Result<Vec<u8>, String> {
         }
     }
     Ok(out)
+}
+
+pub fn validate_release_artifact(bytes: &[u8]) -> Result<KrustBootIdentity, String> {
+    if bytes.len() < V1_PAYLOAD_OFFSET + COMPACT_MAGIC.len() + 2 {
+        return Err("KrustBoot artifact is too short for Manifest v1 compact payload".to_owned());
+    }
+    if &bytes[..V1_MAGIC.len()] != V1_MAGIC {
+        return Err("KrustBoot artifact is not a Manifest v1 wrapper".to_owned());
+    }
+    let version = read_u16_at(bytes, 16)?;
+    if version != V1_VERSION {
+        return Err(format!(
+            "unsupported KrustBoot Manifest v1 wrapper version {version}; expected {V1_VERSION}"
+        ));
+    }
+    let header_size = read_u16_at(bytes, 18)? as usize;
+    if header_size != V1_HEADER_SIZE {
+        return Err(format!(
+            "unsupported KrustBoot Manifest v1 header size {header_size}; expected {V1_HEADER_SIZE}"
+        ));
+    }
+    let total_size = read_u32_at(bytes, 20)? as usize;
+    if total_size != bytes.len() {
+        return Err(format!(
+            "KrustBoot Manifest v1 total size {total_size} does not match artifact size {}",
+            bytes.len()
+        ));
+    }
+    let record_table_offset = read_u32_at(bytes, 24)? as usize;
+    if record_table_offset != V1_HEADER_SIZE {
+        return Err(format!(
+            "unsupported KrustBoot Manifest v1 record table offset {record_table_offset}; expected {V1_HEADER_SIZE}"
+        ));
+    }
+    let record_count = read_u16_at(bytes, 28)? as usize;
+    if record_count != V1_RECORD_COUNT {
+        return Err(format!(
+            "unsupported KrustBoot Manifest v1 record count {record_count}; expected {V1_RECORD_COUNT}"
+        ));
+    }
+    let checksum = read_u32_at(bytes, V1_CHECKSUM_OFFSET)?;
+    let computed_checksum = v1_checksum(bytes);
+    if checksum != computed_checksum {
+        return Err(format!(
+            "KrustBoot Manifest v1 checksum mismatch: artifact={checksum:#010x} computed={computed_checksum:#010x}"
+        ));
+    }
+
+    let mut record = 0;
+    while record < V1_RECORD_COUNT {
+        let offset = V1_HEADER_SIZE + record * V1_RECORD_SIZE;
+        let section_offset = read_u32_at(bytes, offset + 4)? as usize;
+        let section_len = read_u32_at(bytes, offset + 8)? as usize;
+        if section_offset < V1_PAYLOAD_OFFSET || section_offset > bytes.len() {
+            return Err(format!(
+                "KrustBoot Manifest v1 record {record} has out-of-bounds offset {section_offset}"
+            ));
+        }
+        if section_offset
+            .checked_add(section_len)
+            .filter(|end| *end <= bytes.len())
+            .is_none()
+        {
+            return Err(format!(
+                "KrustBoot Manifest v1 record {record} has out-of-bounds length {section_len}"
+            ));
+        }
+        record += 1;
+    }
+
+    let payload = V1_PAYLOAD_OFFSET;
+    if &bytes[payload..payload + COMPACT_MAGIC.len()] != COMPACT_MAGIC {
+        return Err("unsupported KrustBoot compact magic; expected KRUSTBOOTM65".to_owned());
+    }
+    let compact_version = read_u16_at(bytes, payload + COMPACT_MAGIC.len())?;
+    if compact_version != COMPACT_VERSION {
+        return Err(format!(
+            "unsupported KrustBoot compact version {compact_version}; expected {COMPACT_VERSION}"
+        ));
+    }
+
+    Ok(KrustBootIdentity { compact_version })
 }
 
 pub fn explain(manifest: &GenerationManifest) -> Result<String, String> {
@@ -2542,6 +2637,18 @@ fn read_u16_at(bytes: &[u8], offset: usize) -> Result<u16, String> {
         return Err("KrustBoot manifest is too short for u16 read".to_owned());
     }
     Ok(u16::from_le_bytes([bytes[offset], bytes[offset + 1]]))
+}
+
+fn read_u32_at(bytes: &[u8], offset: usize) -> Result<u32, String> {
+    if offset + 4 > bytes.len() {
+        return Err("KrustBoot manifest is too short for u32 read".to_owned());
+    }
+    Ok(u32::from_le_bytes([
+        bytes[offset],
+        bytes[offset + 1],
+        bytes[offset + 2],
+        bytes[offset + 3],
+    ]))
 }
 
 fn v1_checksum(bytes: &[u8]) -> u32 {

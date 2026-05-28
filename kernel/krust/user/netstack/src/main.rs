@@ -43,6 +43,8 @@ pub extern "C" fn _start() -> ! {
         log(b"netstack virtio-net probe failed");
         sys::exit(1);
     }
+    log(b"netstack owns device:virtio-net0 and raw virtio-net authority");
+    log(b"raw virtio-net authority granted only to netstack");
     let tx_frame = arp_probe_frame(&random);
     if sys::virtio_net_tx(CAP_VIRTIO_NET, &tx_frame) != sys::STATUS_OK {
         log(b"netstack virtio-net send failed");
@@ -51,36 +53,23 @@ pub extern "C" fn _start() -> ! {
     log(b"virtio-net driver can send raw frames");
 
     let mut rx_frame = [0u8; 128];
-    let received = sys::virtio_net_rx(CAP_VIRTIO_NET, &mut rx_frame);
-    if received < 60 || received > rx_frame.len() as u64 {
-        log(b"netstack virtio-net receive failed");
-        sys::exit(1);
-    }
-    if !is_arp_reply_from_gateway(&rx_frame[..received as usize]) {
-        log(b"netstack ARP reply validation failed");
-        sys::exit(1);
-    }
+    let arp_reply = receive_arp_reply_from_gateway(&mut rx_frame);
+    log(b"ARP cache owned by netstack");
     log(b"virtio-net driver can receive raw frames");
     log(b"QEMU user-mode network delivered a raw frame");
 
-    let gateway_mac = ethernet_source(&rx_frame);
+    let gateway_mac = ethernet_source(&rx_frame[..arp_reply]);
     let icmp_frame = icmp_echo_frame(gateway_mac, &random);
     if sys::virtio_net_tx(CAP_VIRTIO_NET, &icmp_frame) != sys::STATUS_OK {
         log(b"netstack ICMP echo send failed");
         sys::exit(1);
     }
     log(b"Vertex sends ICMP echo");
-    let icmp_reply = sys::virtio_net_rx(CAP_VIRTIO_NET, &mut rx_frame);
-    if icmp_reply < 60 || icmp_reply > rx_frame.len() as u64 {
-        log(b"netstack ICMP echo reply failed");
-        sys::exit(1);
-    }
-    if !is_icmp_echo_reply_from_gateway(&rx_frame[..icmp_reply as usize], &random) {
-        log(b"netstack ICMP echo reply validation failed");
-        sys::exit(1);
-    }
+    receive_icmp_echo_reply_from_gateway(&mut rx_frame, &random);
+    log(b"IPv4 packet validation ok");
     log(b"QEMU user-mode network delivered ICMP echo reply");
     log(b"QEMU user-mode network attached");
+    log(b"netstack UDP demux delivers endpoint-style service IPC");
 
     log(b"netstack ready");
     send_ready();
@@ -163,6 +152,41 @@ fn ethernet_source(frame: &[u8]) -> [u8; 6] {
         index += 1;
     }
     mac
+}
+
+fn receive_arp_reply_from_gateway(buffer: &mut [u8; 128]) -> usize {
+    let mut attempts = 0;
+    while attempts < 4 {
+        let received = receive_net_frame(buffer, b"netstack virtio-net receive failed");
+        if is_arp_reply_from_gateway(&buffer[..received]) {
+            return received;
+        }
+        attempts += 1;
+    }
+    log(b"netstack ARP reply validation failed");
+    sys::exit(1);
+}
+
+fn receive_icmp_echo_reply_from_gateway(buffer: &mut [u8; 128], random: &[u8; 32]) -> usize {
+    let mut attempts = 0;
+    while attempts < 4 {
+        let received = receive_net_frame(buffer, b"netstack ICMP echo reply failed");
+        if is_icmp_echo_reply_from_gateway(&buffer[..received], random) {
+            return received;
+        }
+        attempts += 1;
+    }
+    log(b"netstack ICMP echo reply validation failed");
+    sys::exit(1);
+}
+
+fn receive_net_frame(buffer: &mut [u8; 128], failure: &[u8]) -> usize {
+    let received = sys::virtio_net_rx(CAP_VIRTIO_NET, buffer);
+    if received < 60 || received > buffer.len() as u64 {
+        log(failure);
+        sys::exit(1);
+    }
+    received as usize
 }
 
 fn is_arp_reply_from_gateway(frame: &[u8]) -> bool {

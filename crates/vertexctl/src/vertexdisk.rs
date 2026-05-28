@@ -26,6 +26,10 @@ const STATE_DATA_SECTOR: u64 = STATE_INDEX_SECTOR + 1;
 const STATE_DATA_SECTORS: u64 = 8;
 const JOURNAL_SECTOR: u64 = STATE_DATA_SECTOR + STATE_DATA_SECTORS;
 const JOURNAL_SECTORS: u64 = 16;
+const JOURNAL_RECORD_MAGIC: &[u8; 16] = b"VDISKJOURNALV0\0\0";
+const JOURNAL_RECORD_STATE_WRITE: u16 = 1;
+const JOURNAL_STATE_ID_OFFSET: usize = 48;
+const JOURNAL_VALUE_OFFSET: usize = 128;
 const HELLO_OBJECT: &[u8] = b"hello from Krust store\n";
 const HELLO_OBJECT_ID: &str = "store:hello-text";
 const BLOCK_DRIVER_FAULT_OBJECT: &[u8] = b"krust-block-driver-fault\n";
@@ -67,9 +71,17 @@ pub fn corrupt(bytes: &[u8], mode: &str) -> Result<Vec<u8>, String> {
             write_u16(index, 18, 0);
             write_checksum(index);
         }
+        "interrupted-state-journal" => {
+            write_state_journal(&mut out, b"42")?;
+        }
+        "corrupt-state-journal" => {
+            write_state_journal(&mut out, b"42")?;
+            let journal = sector_mut(&mut out, JOURNAL_SECTOR);
+            journal[JOURNAL_VALUE_OFFSET] ^= 1;
+        }
         other => {
             return Err(format!(
-                "unknown VertexDisk corruption mode {other}; expected bad-superblock, store-object, store-executable, config-object, or missing-store-object"
+                "unknown VertexDisk corruption mode {other}; expected bad-superblock, store-object, store-executable, config-object, missing-store-object, interrupted-state-journal, or corrupt-state-journal"
             ));
         }
     }
@@ -244,6 +256,25 @@ fn write_state_index(image: &mut [u8], value_len: u32, value_checksum: u32) {
     write_u32(sector, STATE_ENTRY_OFFSET + 76, value_len);
     write_u32(sector, STATE_ENTRY_OFFSET + 80, value_checksum);
     write_checksum(sector);
+}
+
+fn write_state_journal(image: &mut [u8], value: &[u8]) -> Result<(), String> {
+    if value.len() > SECTOR_SIZE - JOURNAL_VALUE_OFFSET {
+        return Err("VertexDisk state journal value too large".to_owned());
+    }
+    let sector = sector_mut(image, JOURNAL_SECTOR);
+    sector.fill(0);
+    sector[..JOURNAL_RECORD_MAGIC.len()].copy_from_slice(JOURNAL_RECORD_MAGIC);
+    write_u16(sector, 16, VERSION);
+    write_u16(sector, 18, JOURNAL_RECORD_STATE_WRITE);
+    write_u64(sector, 24, STATE_INDEX_SECTOR);
+    write_u64(sector, 32, STATE_DATA_SECTOR);
+    write_u32(sector, 40, value.len() as u32);
+    write_u32(sector, 44, checksum32(value));
+    write_fixed_str(sector, JOURNAL_STATE_ID_OFFSET, STATE_VOLUME_ID);
+    sector[JOURNAL_VALUE_OFFSET..JOURNAL_VALUE_OFFSET + value.len()].copy_from_slice(value);
+    write_checksum(sector);
+    Ok(())
 }
 
 fn write_sector_bytes(image: &mut [u8], sector: u64, bytes: &[u8]) {

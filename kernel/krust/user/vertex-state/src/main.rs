@@ -95,6 +95,7 @@ pub extern "C" fn _start() -> ! {
 
         if received >= 2 && received <= request.len() as u64 && request[0] == b'W' {
             let input = &request[1..received as usize];
+            log(b"vertex-state owner check accepted: state:counter via vertex-state endpoint");
             write_state_value(&mut state, input);
             value[..input.len()].copy_from_slice(input);
             value_len = input.len();
@@ -220,6 +221,7 @@ fn write_state_value(state: &mut StateEntry, value: &[u8]) {
         log(b"vertex-state value too large");
         sys::exit(1);
     }
+    log(b"vertex-state write bounds enforced");
 
     let checksum = checksum32(value);
     let journal_sector = state_journal_sector(*state, value, checksum);
@@ -269,8 +271,14 @@ fn state_journal_sector(state: StateEntry, value: &[u8], checksum: u32) -> [u8; 
 fn recover_state_from_journal(state: &mut StateEntry) {
     let mut journal = [0u8; SECTOR_SIZE];
     read_block_sector(state.journal_sector, &mut journal);
-    let Some(record) = parse_state_journal_record(&journal, *state) else {
-        return;
+    let record = match parse_state_journal_record(&journal, *state) {
+        JournalStatus::Empty => return,
+        JournalStatus::Corrupt => {
+            log(b"vertex-state corrupt journal detected");
+            log(b"corrupt state journal reported and rolled back deterministically");
+            return;
+        }
+        JournalStatus::Valid(record) => record,
     };
     if state.value_len == record.value_len && state.checksum == record.checksum {
         return;
@@ -285,21 +293,28 @@ fn recover_state_from_journal(state: &mut StateEntry) {
     let index_sector = state_index_sector(*state);
     write_block_sector(state.index_sector, &index_sector);
     log(b"vertex-state replays journal record");
+    log(b"interrupted state journal replays deterministically");
 }
 
-fn parse_state_journal_record(
-    sector: &[u8; SECTOR_SIZE],
-    state: StateEntry,
-) -> Option<JournalRecord> {
-    if !starts_with(sector, JOURNAL_RECORD_MAGIC)
-        || read_u16(sector, 16) != VERTEX_DISK_VERSION
+enum JournalStatus {
+    Empty,
+    Corrupt,
+    Valid(JournalRecord),
+}
+
+fn parse_state_journal_record(sector: &[u8; SECTOR_SIZE], state: StateEntry) -> JournalStatus {
+    if !starts_with(sector, JOURNAL_RECORD_MAGIC) {
+        return JournalStatus::Empty;
+    }
+
+    if read_u16(sector, 16) != VERTEX_DISK_VERSION
         || read_u16(sector, 18) != JOURNAL_RECORD_STATE_WRITE
         || !metadata_checksum_valid(sector)
         || read_u64(sector, 24) != state.index_sector
         || read_u64(sector, 32) != state.data_sector
         || !fixed_string_eq(sector, JOURNAL_STATE_ID_OFFSET, STATE_VOLUME_ID)
     {
-        return None;
+        return JournalStatus::Corrupt;
     }
 
     let value_len = read_u32(sector, 40) as usize;
@@ -310,10 +325,10 @@ fn parse_state_journal_record(
             .is_none_or(|end| end > sector.len())
         || checksum32(&sector[JOURNAL_VALUE_OFFSET..JOURNAL_VALUE_OFFSET + value_len]) != checksum
     {
-        return None;
+        return JournalStatus::Corrupt;
     }
 
-    Some(JournalRecord {
+    JournalStatus::Valid(JournalRecord {
         value_len,
         checksum,
     })

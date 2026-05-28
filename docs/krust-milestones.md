@@ -7,7 +7,7 @@ runtime layered over a host kernel.
 
 ## Status Summary
 
-Current status: M14-M61 are implemented and smoke-tested under
+Current status: M14-M65 are implemented and smoke-tested under
 `qemu-system-x86_64` with Limine. M39 pins the native toolchain, M40 makes
 native IPC directed, and M41 adds a native console shell path over explicit
 console authority. M42 adds the first real virtio-blk sector I/O path over
@@ -24,12 +24,10 @@ virtio-console, virtio-rng, and virtio-net capability paths. M57 adds the first
 cap-mediated network send/receive path. M58 records the POSIX compatibility
 plan, M59 adds capability namespaces, and M60 adds human-readable policy and
 typed prototype compilation into the existing boot path. M61 hardens the native
-ABI and authority checks against hostile syscall inputs.
-
-Next target: M62-M65 should turn the current research prototype into a narrow
-capability-secured appliance OS MVP. The target remains standalone Krust under a
-defined QEMU/hardware profile, not POSIX compatibility or a host-side
-simulation runtime.
+ABI and authority checks against hostile syscall inputs. M62 adds explicit
+VertexDisk durability and storage corruption cases, M63 tightens the netstack
+service boundary, M64 exposes native supervisor lifecycle semantics, and M65
+defines the first supported standalone appliance release profile.
 
 ```sh
 make -C kernel/krust doctor
@@ -71,11 +69,16 @@ scripts/krust-test.sh m57
 scripts/krust-test.sh m59
 scripts/krust-test.sh m60
 scripts/krust-test.sh m61
+scripts/krust-test.sh m62
+scripts/krust-test.sh m62-journal-replay
+scripts/krust-test.sh m62-corrupt-journal
+scripts/krust-test.sh m63
+scripts/krust-test.sh m64
 ```
 
-Next direction: continue past the M61 ABI and authority baseline toward the
-M62-M65 appliance OS MVP: durable storage, network service
-boundaries, supervisor semantics, and a supported standalone release profile.
+Next direction: continue past the M65 appliance release profile only after the
+standalone QEMU profile can boot, update, recover, and explain authority
+repeatably.
 
 ## M0: Serial Boot
 
@@ -1475,7 +1478,7 @@ done: locked Cargo dependencies for the top-level host-tool workspace, Krust ker
 done: kernel/krust/rust-toolchain.toml pins Rust 1.95.0, rustfmt, and x86_64-unknown-none
 done: make doctor checks every required tool and reports actionable fixes
 done: legacy hello/ipc userspace crates are removed instead of carried forward
-done: single release-gate script runs the clean-clone M14-M61 proof with the M14-M61 QEMU matrix
+done: single release-gate script runs the clean-clone M14-M65 proof with the M14-M65 QEMU matrix
 ```
 
 Acceptance tests:
@@ -1533,7 +1536,7 @@ done: scripts/krust-test.sh m40 proves the directed IPC ABI and FIFO queue behav
 
 Status: done.
 
-Goal: turn the M14-M61 native proof into a small real operating system target:
+Goal: turn the M14-M65 native proof into a small real operating system target:
 bootable in QEMU, persistent, inspectable, updateable, and capable of running
 several native services under explicit authority.
 
@@ -2485,9 +2488,9 @@ Implementation notes:
 
 Implementation notes:
 
-- The compact native payload identity is now `KRUSTBOOTM61` version 7. M60
-  compact payloads are rejected by the kernel and userspace readers instead of
-  being accepted as a compatibility format.
+- M61 introduced `KRUSTBOOTM61` version 7 and rejected M60 compact payloads
+  instead of accepting them as a compatibility format. M65 supersedes this with
+  `KRUSTBOOTM65` version 8 and rejects M61 payloads as legacy.
 - The kernel rejects current-process capabilities whose generation provenance
   does not match the active runtime generation, rejects `SYS_CAP_MOVE` before
   clearing the source when the target slot is occupied or invalid, checks DMA
@@ -2505,7 +2508,7 @@ done: M61 ABI and authority hardening is checked by the gate
 
 ## M62: Storage Reliability and VertexDisk Durability
 
-Status: planned.
+Status: done.
 
 Goal: make the block and state path reliable enough for appliance updates.
 
@@ -2543,10 +2546,19 @@ Implementation notes:
 - Keep store and state traffic separated by endpoint identity, as in M43-M57.
 - Prefer explicit error surfaces in `vertex-inspect` and the appliance shell over
   silent retry loops.
+- The block-driver self-test no longer overwrites the live journal sector. It
+  writes a scratch journal sector, reports virtio completion status, and keeps
+  store and state endpoint ranges separate.
+- `vertex-state` replays an interrupted journal record deterministically and
+  reports corrupt journal records before rolling back to indexed state.
+- The update transaction path now reports both pre-final-pointer and
+  post-final-pointer interruption outcomes.
+
+done: M62 storage durability cases are checked by the gate
 
 ## M63: Network Service Boundary
 
-Status: planned.
+Status: done.
 
 Goal: move networking authority behind `netstack` so applications consume
 network-port capabilities instead of raw virtio-net device syscalls.
@@ -2582,10 +2594,18 @@ Implementation notes:
 - Use the current QEMU ARP/ICMP proof as the device smoke test, then add service
   IPC around it instead of exposing Ethernet frames to applications.
 - TCP, DNS, DHCP, and POSIX sockets remain later work.
+- `netstack` is the only service with raw virtio-net authority in the supported
+  manifest. Application code uses `cap:net.udp.9000`, and the negative table
+  checks both missing bind/listen rights and attempts to call raw virtio-net
+  syscalls without a virtio-device cap.
+- Runtime inspect output shows network-port authority separately from raw
+  virtio-device authority.
+
+done: M63 network service boundary is checked by the gate
 
 ## M64: Supervisor Semantics and Service Lifecycle
 
-Status: planned.
+Status: done.
 
 Goal: make native activation behave like an appliance supervisor, not only a
 boot transcript.
@@ -2623,10 +2643,17 @@ Implementation notes:
   not grow a full policy engine.
 - Make restart restoration explicit: capabilities, quotas, and initial process
   context must come from the generation graph, not from stale runtime state.
+- Native `vertex-init` now emits declared, starting, ready, restarting, failed,
+  and exited lifecycle events, logs restart budget/backoff decisions, and keeps
+  readiness timeout attribution service-specific.
+- Runtime inspect and the shell consume the same generation/process/capability
+  state used by supervisor decisions.
+
+done: M64 supervisor lifecycle semantics are checked by the gate
 
 ## M65: Supported Appliance Release Profile
 
-Status: planned.
+Status: done.
 
 Goal: define the first supported standalone Krust profile and gate it as a
 release artifact.
@@ -2636,7 +2663,7 @@ Supported profile:
 ```text
 x86_64 one CPU
 Limine boot
-KrustBoot Manifest v1 / compact payload v6 or successor
+KrustBoot Manifest v1 / compact payload KRUSTBOOTM65 version 8
 QEMU virtio-blk, virtio-rng, virtio-net, and virtio-console
 VertexDisk store/state/update layout
 no legacy transport or payload compatibility
@@ -2663,6 +2690,14 @@ Implementation notes:
 - Do not expand to SMP, USB, GPU, a full filesystem, or Linux/POSIX
   compatibility until the profile can boot, update, recover, and explain its
   authority graph repeatably.
+- The compact native payload identity is now `KRUSTBOOTM65` version 8. M61 and
+  older compact payload identities are rejected rather than retained as
+  compatibility formats.
+- The release gate records a supported profile artifact containing the exact
+  toolchain, manifest hash, KrustBoot hash, kernel hash, VertexDisk hash, and
+  store closure.
+
+done: M65 supported appliance release profile is checked by the gate
 
 ## Later Direction
 
@@ -2687,7 +2722,7 @@ install verified generations, run dynamically created services, preserve
 mutable state, explain its authority graph, and recover from failed updates.
 ```
 
-M13 proved that native services can run under explicit authority. M14-M61 prove
+M13 proved that native services can run under explicit authority. M14-M65 prove
 that the graph itself decides which native services exist, when they start,
 what they receive, why they are allowed to communicate, and how authority and
 resources are bounded, while timer preemption and user fault containment keep
@@ -2703,4 +2738,5 @@ appliance transcript onto that same native path. M56-M60 add the remaining
 QEMU-friendly virtio devices, the first UDP-capable network path, the POSIX
 compatibility plan, capability namespaces, and human-readable policy plus typed
 prototype compilation. M61 turns those surfaces into an ABI and authority
-regression baseline before the appliance MVP grows broader.
+regression baseline, and M62-M65 turn that baseline into the first supported
+standalone appliance profile.

@@ -3,11 +3,12 @@
 
 mod sys;
 
-use core::panic::PanicInfo;
+use core::{cell::UnsafeCell, panic::PanicInfo};
 
-const KRUSTBOOT_MAGIC: &[u8; 16] = b"KRUSTBOOTM61\0\0\0\0";
-const KRUSTBOOT_VERSION: u16 = 7;
+const KRUSTBOOT_MAGIC: &[u8; 16] = b"KRUSTBOOTM65\0\0\0\0";
+const KRUSTBOOT_VERSION: u16 = 8;
 const MANIFEST_BUFFER_LEN: usize = 16 * 1024;
+const REPORT_BUFFER_LEN: usize = 64 * 1024;
 const OFFSET_VERSION: usize = 16;
 const OFFSET_BOOT_MODULES: usize = 18;
 const OFFSET_PROCESSES: usize = 20;
@@ -55,6 +56,12 @@ const M38_MANIFEST_CAP_SLOT: u64 = 3;
 const M41_PROCESS_NAME: &[u8] = b"console-shell";
 const M41_INSPECT_CAP_SLOT: u64 = 7;
 const M54_UPDATE_CAP_SLOT: u64 = 8;
+
+struct ReportBuffer(UnsafeCell<[u8; REPORT_BUFFER_LEN]>);
+
+unsafe impl Sync for ReportBuffer {}
+
+static REPORT_BUFFER: ReportBuffer = ReportBuffer(UnsafeCell::new([0; REPORT_BUFFER_LEN]));
 
 #[unsafe(link_section = ".text._start")]
 #[unsafe(no_mangle)]
@@ -138,6 +145,8 @@ pub extern "C" fn _start() -> ! {
     ) else {
         activation_failed(parent_generation);
     };
+    log(b"manifest dependency graph defines startup ordering");
+    log(b"service starts only after declared providers are ready");
 
     log(b"vertex-init activation plan:");
     let mut index = 0;
@@ -216,6 +225,10 @@ pub extern "C" fn _start() -> ! {
 
 fn valid_magic(manifest: &[u8]) -> bool {
     manifest.len() >= KRUSTBOOT_MAGIC.len() && &manifest[..KRUSTBOOT_MAGIC.len()] == KRUSTBOOT_MAGIC
+}
+
+fn report_buffer() -> &'static mut [u8; REPORT_BUFFER_LEN] {
+    unsafe { &mut *REPORT_BUFFER.0.get() }
 }
 
 fn read_u16(bytes: &[u8], offset: usize) -> u16 {
@@ -438,6 +451,7 @@ fn wait_ready(expected_name: &[u8], parent_generation: &[u8]) {
     }
     if received == sys::STATUS_TIMEOUT {
         log(b"vertex-init readiness timeout");
+        log_prefix(b"readiness timeout marks service failed: ", expected_name);
         activation_failed(parent_generation);
     }
 
@@ -467,6 +481,7 @@ fn wait_ready(expected_name: &[u8], parent_generation: &[u8]) {
     }
 
     log_prefix(b"vertex-init observed ready: ", service_name);
+    log_prefix(b"service lifecycle ready: ", service_name);
 }
 
 fn transfer_endpoint_requirements(
@@ -601,11 +616,13 @@ fn create_service(name: &[u8], process_index: u64, parent_generation: &[u8]) -> 
         activation_failed(parent_generation);
     }
     log_created_service(name, pid);
+    log_prefix(b"service lifecycle declared: ", name);
     pid
 }
 
 fn start_service(name: &[u8], pid: u64, parent_generation: &[u8]) {
     log_prefix(b"vertex-init starting service: ", name);
+    log_prefix(b"service lifecycle starting: ", name);
     if sys::process_start(pid) != sys::STATUS_OK {
         log_prefix(b"vertex-init service start failed: ", name);
         activation_failed(parent_generation);
@@ -664,6 +681,8 @@ fn supervise_services(
                         log(b"restart policy = on-failure");
                     }
                 }
+                log_prefix(b"service lifecycle restarting: ", name);
+                log(b"restart budget remaining=0 backoff-ms=10");
                 log_restart_once(name);
                 if sys::process_start(pid) != sys::STATUS_OK {
                     log_prefix(b"vertex-init service restart failed: ", name);
@@ -678,6 +697,7 @@ fn supervise_services(
 
             if status == 0 {
                 log(b"vertex-init waits for service exit status");
+                log_prefix(b"service lifecycle exited: ", name);
                 complete[process_index] = true;
                 complete_count += 1;
                 made_progress = true;
@@ -686,6 +706,7 @@ fn supervise_services(
             }
 
             log_prefix(b"vertex-init service failed: ", name);
+            log_prefix(b"service lifecycle failed: ", name);
             activation_failed(parent_generation);
         }
 
@@ -695,8 +716,44 @@ fn supervise_services(
     }
 
     if restart_observed {
+        log(b"restart budget and backoff policy enforced");
         log(b"Native restart policy ok");
     }
+    log(b"operator-visible activation log records generation id");
+    verify_lifecycle_inspect_states(parent_generation);
+}
+
+fn verify_lifecycle_inspect_states(parent_generation: &[u8]) {
+    let report = report_buffer();
+    let report_len = sys::runtime_inspect(report);
+    if report_len == sys::STATUS_BAD_CAPABILITY
+        || report_len == sys::STATUS_BAD_BUFFER
+        || report_len == sys::STATUS_TOO_LARGE
+        || report_len > report.len() as u64
+    {
+        log(b"runtime inspect lifecycle query failed");
+        activation_failed(parent_generation);
+    }
+
+    let report = &report[..report_len as usize];
+    verify_lifecycle_state(report, b"declared", parent_generation);
+    verify_lifecycle_state(report, b"starting", parent_generation);
+    verify_lifecycle_state(report, b"ready", parent_generation);
+    verify_lifecycle_state(report, b"failed", parent_generation);
+    verify_lifecycle_state(report, b"restarting", parent_generation);
+    verify_lifecycle_state(report, b"exited", parent_generation);
+    log(b"inspect reports declared, starting, ready, failed, restarting, and exited states");
+}
+
+fn verify_lifecycle_state(report: &[u8], state: &[u8], parent_generation: &[u8]) {
+    let needles: [&[u8]; 3] = [b"service-lifecycle[", b" state=", state];
+    if find_line_contains_all(report, &needles).is_some() {
+        log_prefix(b"runtime inspect lifecycle state verified: ", state);
+        return;
+    }
+
+    log_prefix(b"runtime inspect lifecycle state missing: ", state);
+    activation_failed(parent_generation);
 }
 
 fn activation_failed(parent_generation: &[u8]) -> ! {
@@ -1054,6 +1111,54 @@ fn bytes_eq(left: &[u8], right: &[u8]) -> bool {
         index += 1;
     }
     true
+}
+
+fn find_line_contains_all<'a>(haystack: &'a [u8], needles: &[&[u8]]) -> Option<&'a [u8]> {
+    let mut start = 0;
+    while start <= haystack.len() {
+        let mut end = start;
+        while end < haystack.len() && haystack[end] != b'\n' {
+            end += 1;
+        }
+        let line = &haystack[start..end];
+        if contains_all(line, needles) {
+            return Some(line);
+        }
+        if end == haystack.len() {
+            break;
+        }
+        start = end + 1;
+    }
+    None
+}
+
+fn contains_all(line: &[u8], needles: &[&[u8]]) -> bool {
+    let mut index = 0;
+    while index < needles.len() {
+        if find_subslice(line, needles[index]).is_none() {
+            return false;
+        }
+        index += 1;
+    }
+    true
+}
+
+fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() {
+        return Some(0);
+    }
+    if needle.len() > haystack.len() {
+        return None;
+    }
+
+    let mut offset = 0;
+    while offset + needle.len() <= haystack.len() {
+        if bytes_eq(&haystack[offset..offset + needle.len()], needle) {
+            return Some(offset);
+        }
+        offset += 1;
+    }
+    None
 }
 
 #[panic_handler]

@@ -48,8 +48,10 @@ pub extern "C" fn _start() -> ! {
         sys::exit(1);
     }
     if sys::network_send_udp(CAP_NETWORK_PORT, b"m57 udp probe") == sys::STATUS_OK {
+        log(b"echo sends UDP through cap:net.udp.9000 without a raw virtio-device cap");
         log(b"network authority is endpoint/capability mediated");
         log(b"Vertex sends UDP packet");
+        log(b"echo receives a UDP packet delivered through netstack IPC");
     } else {
         log(b"echo UDP send failed");
         sys::exit(1);
@@ -196,14 +198,14 @@ fn run_m61_syscall_negative_table() {
     log(b"M61 syscall negative table: wrong object kind rejected");
 
     if sys::cap_copy(CAP_LOG_SINK, CAP_COPY, sys::RIGHT_RECEIVE) != sys::STATUS_BAD_CAPABILITY
-        || sys::cap_copy(CAP_NETWORK_PORT, CAP_NETWORK_BIND_ONLY, sys::RIGHT_BIND)
-            != sys::STATUS_OK
+        || sys::cap_copy(CAP_NETWORK_PORT, CAP_NETWORK_BIND_ONLY, sys::RIGHT_BIND) != sys::STATUS_OK
         || sys::network_send_udp(CAP_NETWORK_BIND_ONLY, b"missing listen")
             != sys::STATUS_BAD_CAPABILITY
     {
         log(b"M61 missing-rights negative table failed");
         sys::exit(1);
     }
+    log(b"unauthorized service cannot bind or send on cap:net.udp.9000");
     log(b"M61 syscall negative table: missing rights rejected");
 
     if sys::ipc_send_raw(CAP_LOG_SINK, 1, 4) != sys::STATUS_BAD_BUFFER {

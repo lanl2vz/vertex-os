@@ -504,7 +504,7 @@ done
 
 cleanup
 pid=
-echo "smoke failed: serial output did not contain the full M14-M61 native activation transcript after $QEMU_ATTEMPTS checks"
+echo "smoke failed: serial output did not contain the full M14-M65 native activation transcript after $QEMU_ATTEMPTS checks"
 echo "serial log: $SERIAL_LOG"
 if [ -n "$missing_required" ]; then
     echo "missing required transcript lines:"

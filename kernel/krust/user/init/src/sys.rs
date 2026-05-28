@@ -38,6 +38,7 @@ const SYS_CAP_INSPECT: u64 = 22;
 const SYS_CAP_MOVE: u64 = 23;
 const SYS_ENDPOINT_CREATE: u64 = 25;
 const SYS_QUOTA_DELEGATE: u64 = 26;
+const SYS_RUNTIME_INSPECT: u64 = 31;
 const SYS_PROCESS_START: u64 = 37;
 
 pub fn read_manifest(buffer: &mut [u8]) -> u64 {
@@ -90,6 +91,15 @@ pub fn process_start(pid: u64) -> u64 {
 
 pub fn process_wait(pid: u64) -> u64 {
     syscall3(SYS_PROCESS_WAIT, CAP_PROCESS_CONTROL, pid, 0)
+}
+
+pub fn runtime_inspect(buffer: &mut [u8]) -> u64 {
+    syscall3(
+        SYS_RUNTIME_INSPECT,
+        CAP_PROCESS_CONTROL,
+        buffer.as_mut_ptr() as u64,
+        buffer.len() as u64,
+    )
 }
 
 pub fn rollback_generation(generation: &[u8]) -> u64 {

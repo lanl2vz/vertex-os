@@ -219,6 +219,7 @@ fn serve_hello_object(entry: StoreEntry) -> ! {
         sys::exit(1);
     }
     log(b"vertex-store verifies hash");
+    log(b"immutable store object served read-only");
 
     sector[0] ^= 1;
     if !bytes_eq(&sector[..object_len], HELLO_OBJECT) {

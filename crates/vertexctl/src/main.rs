@@ -40,6 +40,7 @@ fn run(args: Vec<String>) -> Result<(), String> {
         "explain-krustboot" => explain_krustboot_cmd(&args[1..]),
         "create-vertex-disk" => create_vertex_disk_cmd(&args[1..]),
         "corrupt-vertex-disk" => corrupt_vertex_disk_cmd(&args[1..]),
+        "release-profile" => release_profile_cmd(&args[1..]),
         "package" => package_cmd(&args[1..]),
         "graph-link" => graph_link_cmd(&args[1..]),
         "build-import" => build_import_cmd(&args[1..]),
@@ -56,6 +57,69 @@ fn run(args: Vec<String>) -> Result<(), String> {
         }
         other => Err(format!("unknown command {other}")),
     }
+}
+
+fn release_profile_cmd(args: &[String]) -> Result<(), String> {
+    let [manifest_path, krustboot_path, kernel_path, vertexdisk_path] = args else {
+        return Err(
+            "usage: vertexctl release-profile <manifest> <krustboot> <kernel-elf> <vertexdisk>"
+                .to_owned(),
+        );
+    };
+    let manifest = load_manifest(manifest_path).map_err(|error| error.to_string())?;
+    let mut closure = BTreeSet::new();
+    for executable in &manifest.executables {
+        closure.insert(executable.store_object.clone());
+    }
+    for service in &manifest.services {
+        for config in &service.configs {
+            closure.insert(config.clone());
+        }
+    }
+    for capability in &manifest.capabilities {
+        if capability.kind == "store-object" {
+            closure.insert(capability.provider.clone());
+        }
+        if let Some(object) = capability
+            .properties
+            .get("object")
+            .and_then(serde_json::Value::as_str)
+        {
+            closure.insert(object.to_owned());
+        }
+    }
+    let krustboot_bytes = fs::read(krustboot_path)
+        .map_err(|source| format!("failed to read {krustboot_path}: {source}"))?;
+    let krustboot_identity = krustboot::validate_release_artifact(&krustboot_bytes)?;
+
+    println!("Krust supported appliance release profile");
+    println!("generation={}", manifest.generation.id);
+    println!("architecture=x86_64 one-cpu");
+    println!("boot=Limine");
+    println!("krustboot={}", krustboot_identity.release_profile_label());
+    println!("devices=virtio-blk,virtio-rng,virtio-net,virtio-console");
+    println!("base-profile=no POSIX personality, no legacy transport, no legacy payload");
+    println!(
+        "toolchain=rustc 1.95.0,cargo 1.95.0,qemu-system-x86_64 11.0.0,limine 12.3.0,xorriso 1.5.8.pl01"
+    );
+    println!("manifest_hash=blake3:{}", hash_file(manifest_path)?);
+    println!("krustboot_hash=blake3:{}", hash_bytes(&krustboot_bytes));
+    println!("kernel_hash=blake3:{}", hash_file(kernel_path)?);
+    println!("vertexdisk_hash=blake3:{}", hash_file(vertexdisk_path)?);
+    println!("store_closure_count={}", closure.len());
+    for object in closure {
+        println!("store_closure={object}");
+    }
+    Ok(())
+}
+
+fn hash_file(path: &str) -> Result<String, String> {
+    let bytes = fs::read(path).map_err(|source| format!("failed to read {path}: {source}"))?;
+    Ok(hash_bytes(&bytes))
+}
+
+fn hash_bytes(bytes: &[u8]) -> String {
+    blake3::hash(bytes).to_hex().to_string()
 }
 
 fn validate_cmd(args: &[String]) -> Result<(), String> {
@@ -1538,6 +1602,7 @@ fn print_usage() {
            vertexctl explain-krustboot <manifest>\n\
            vertexctl create-vertex-disk <output> <manifest>...\n\
            vertexctl corrupt-vertex-disk <mode> <input> <output>\n\
+           vertexctl release-profile <manifest> <krustboot> <kernel-elf> <vertexdisk>\n\
            vertexctl package inspect <package>\n\
            vertexctl package instantiate <package>\n\
            vertexctl graph-link <output-dir> <package>...\n\
