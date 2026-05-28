@@ -2,14 +2,16 @@
 
 Vertex OS is a typed, reproducible, capability-secure operating-system prototype where a running machine is represented as a generation graph.
 
-The repository currently has two active paths:
+The repository currently has one native OS target plus host-side development
+tools:
 
-1. Hosted Vertex prototype on Linux: Vertex IR, `vertexctl`,
-   `vertex-supervisor`, and demo userland services.
-2. Native Krust path: QEMU/Limine boot, compact KrustBoot manifest, native
+1. Standalone Krust/Vertex OS path: QEMU/Limine boot, compact KrustBoot manifest, native
    `vertex-init`, process-local capabilities, safe user-copy validation,
    PIT-backed preemption, user page-fault containment, and native multi-service
    activation.
+2. Host-side tooling and simulation: Vertex IR, `vertexctl`,
+   `vertex-supervisor`, and demo userland services. These tools run on the
+   development host; they are not the OS substrate.
 
 ## Repository Layout
 
@@ -21,11 +23,11 @@ vertex-os/
   crates/
     vertex-ir/           Vertex IR model, loader, validation, graph helpers
     vertexctl/           CLI for validation, graphing, boot-manifest compilation, activation, inspection, and rollback
-    vertex-supervisor/   Hosted Linux graph activator prototype
+    vertex-supervisor/   Host-side graph activator and simulation tool
   userland/
-    vertex-init/         Planned hosted first user-space activator
+    vertex-init/         First user-space activator for native Krust
     logd/                Demo log service
-    netstack/            Demo hosted network capability provider
+    netstack/            Demo network capability provider
     echo-server/         Demo service consuming log and network capabilities
   kernel/
     krust/               Bootable Krust kernel prototype, currently covering M14-M60 native graph activation, substrate hardening, pinned tooling, ABI v1 IPC, console shell, virtio device I/O, VertexDisk v0, native boot selection, verified store objects, native updates, store-loaded executables, dynamic process creation, native config/secrets, package/link/build import, the first appliance transcript, native user-space driver objects, capability namespaces, and policy compilation
@@ -36,7 +38,7 @@ vertex-os/
 ## Krust M14-M60
 
 The current native activation path lives in `kernel/krust`. It is isolated
-from the hosted Cargo workspace and boots a Limine ISO under QEMU. The ISO
+from the host-side Cargo workspace and boots a Limine ISO under QEMU. The ISO
 build first runs `vertexctl compile-boot-manifest` to turn the source
 generation graph into `hello-generation.krustboot`, a versioned KrustBoot
 Manifest v1 native boot artifact.
@@ -67,16 +69,16 @@ transcript logging.
 scripts/krust-smoke.sh
 ```
 
-The clean-clone release gate validates the hosted build, checks the Krust
-toolchain, rebuilds the ISO from clean kernel artifacts, and runs the M14-M60
-gate with the M14-M60 QEMU test matrix:
+The clean-clone release gate validates the host-side tool build, checks the
+Krust toolchain, rebuilds the standalone ISO from clean kernel artifacts, and
+runs the M14-M60 gate with the M14-M60 QEMU test matrix:
 
 ```sh
 scripts/krust-release-gate.sh
 ```
 
 See [docs/krust-milestones.md](docs/krust-milestones.md) for M0 through M60
-completion status,
+completion status and the planned M61-M65 appliance OS MVP direction,
 [docs/krust-toolchain.md](docs/krust-toolchain.md) for the pinned M39 toolchain,
 and [docs/krust-abi-v1.md](docs/krust-abi-v1.md) for the current syscall,
 capability, process, and IPC ABI.
@@ -101,13 +103,13 @@ target/debug/vertexctl who-can examples/hello-generation.vertex.json cap:log.sin
 target/debug/vertexctl compile-boot-manifest examples/hello-generation.vertex.json /private/tmp/hello-generation.krustboot
 ```
 
-Materialize the hosted demo into a local store tree:
+Materialize the host-side simulation demo into a local store tree:
 
 ```sh
 target/debug/vertexctl materialize-demo examples/hello-generation.vertex.json /private/tmp/vertex-os-demo
 ```
 
-Run the hosted activation:
+Run the host-side activation simulation:
 
 ```sh
 target/debug/vertex-supervisor --run-once /private/tmp/vertex-os-demo/hello-generation.hosted.vertex.json
@@ -115,7 +117,7 @@ target/debug/vertex-supervisor --run-once /private/tmp/vertex-os-demo/hello-gene
 
 In restricted sandboxes, local socket binding may require running the supervisor outside the sandbox.
 
-Track hosted generation activation state under `.vertex/`:
+Track host-side generation activation state under `.vertex/`:
 
 ```sh
 target/debug/vertexctl activate /private/tmp/vertex-os-demo/hello-generation.hosted.vertex.json --run-once
@@ -125,6 +127,6 @@ target/debug/vertexctl inspect current --json
 target/debug/vertexctl rollback --run-once
 ```
 
-Use `--state-root <dir>` with hosted activation and inspection commands to keep generation metadata somewhere other than `.vertex/`. Hosted activation records live under `<state-root>/activations/`, current and previous pointers are stored as JSON, activation history is appended to `<state-root>/history.jsonl`, and supervisor runtime events are appended to `<state-root>/runtime-events.jsonl`.
+Use `--state-root <dir>` with host-side activation and inspection commands to keep generation metadata somewhere other than `.vertex/`. Host-side activation records live under `<state-root>/activations/`, current and previous pointers are stored as JSON, activation history is appended to `<state-root>/history.jsonl`, and supervisor runtime events are appended to `<state-root>/runtime-events.jsonl`.
 
-The hosted supervisor now keeps typed capability and state grants internally before encoding them for child processes. Runtime events include concrete granted capabilities, provided capabilities, state volume paths, provider readiness checks, and activation failures. `examples/deny-log-generation.vertex.json` is a negative authority demo: `cap:log.sink` exists, but `svc:echo-server` does not declare it, so the supervisor does not pass the grant and the service exits. This is hosted grant enforcement; host-level process isolation remains a later milestone.
+The host-side supervisor keeps typed capability and state grants internally before encoding them for child processes. Runtime events include concrete granted capabilities, provided capabilities, state volume paths, provider readiness checks, and activation failures. `examples/deny-log-generation.vertex.json` is a negative authority demo: `cap:log.sink` exists, but `svc:echo-server` does not declare it, so the supervisor does not pass the grant and the service exits. This is a development simulation of grant enforcement; standalone enforcement lives in Krust.

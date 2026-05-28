@@ -371,13 +371,15 @@ service: prisma-api
 
 The first working prototype should not be a desktop OS.
 
-The first milestone should be a Linux-hosted Vertex generation runner:
+The first milestone was a host-side Vertex generation runner for graph
+validation and iteration:
 
 ```text
 manifest -> validate -> activate -> inspect -> switch -> rollback
 ```
 
-The second milestone should be a QEMU-bootable Krust Kernel that runs a tiny manifest:
+The native target is the QEMU-bootable standalone Krust Kernel that runs a tiny
+manifest:
 
 ```text
 Krust boots
@@ -437,7 +439,8 @@ A v0 prototype succeeds if it can demonstrate:
 7. `vertexctl why` can explain authority.
 8. A generation can be switched.
 9. A previous generation can be reactivated.
-10. The same conceptual manifest can eventually be booted by Krust Kernel.
+10. The same conceptual manifest can be compiled into a KrustBoot artifact and
+    booted by the standalone Krust Kernel.
 
 ## Open questions
 

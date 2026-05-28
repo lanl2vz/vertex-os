@@ -21,8 +21,10 @@ Suggested next implementation order:
 
 1. Implement a small Rust crate named `vertex-ir` that can load, validate, and pretty-print `examples/hello-generation.vertex.json`.
 2. Implement `vertexctl validate`, `vertexctl graph`, and `vertexctl why` against this IR.
-3. Build a Linux-hosted `vertex-supervisor` that activates the example manifest with ordinary Linux subprocesses and simulated capabilities.
-4. Only then begin the first QEMU-bootable Krust Kernel prototype.
+3. Build a host-side `vertex-supervisor` that activates the example manifest
+   with ordinary development-host subprocesses and simulated capabilities.
+4. Use that simulator only to validate graph semantics, then move enforcement to
+   the standalone QEMU-bootable Krust Kernel prototype.
 
 ## Source anchors
 

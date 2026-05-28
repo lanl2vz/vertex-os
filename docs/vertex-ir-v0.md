@@ -70,7 +70,8 @@ A v0 manifest has these top-level sections:
 }
 ```
 
-Only a subset is required for the first Linux-hosted prototype.
+Only a subset was required for the early host-side simulator. The standalone
+Krust path consumes a compiled KrustBoot artifact derived from the same graph.
 
 ## Identifier conventions
 
@@ -132,7 +133,7 @@ Example:
 {
   "id": "gen:hello-0001",
   "createdUtc": "2026-05-22T00:00:00Z",
-  "description": "Minimal Vertex OS hosted demo generation",
+  "description": "Minimal Vertex OS demo generation",
   "parent": null
 }
 ```
@@ -141,7 +142,7 @@ Example:
 
 The `kernel` object declares the kernel artifact.
 
-For a Linux-hosted prototype, this may be a placeholder.
+For host-side tooling and simulations, this may be a placeholder.
 
 For Krust-native boot, it identifies the Krust Kernel image.
 
@@ -175,9 +176,8 @@ Fields:
 - `executable`
 - `mode`
 
-Modes:
+Primary mode:
 
-- `hosted-linux`
 - `krust-native`
 
 Example:
@@ -186,7 +186,7 @@ Example:
 {
   "id": "init:vertex-init",
   "executable": "exe:vertex-init",
-  "mode": "hosted-linux"
+  "mode": "krust-native"
 }
 ```
 
@@ -249,7 +249,7 @@ Example:
   "id": "exe:logd",
   "storeObject": "store:logd-demo",
   "entrypoint": "bin/logd",
-  "abi": "hosted-linux-process.v0",
+  "abi": "krust-native-process.v0",
   "argsDefault": []
 }
 ```
@@ -557,9 +557,11 @@ For stable generation identity, canonicalization should eventually specify:
 
 `manifestHash` should be computed after canonicalization with a specified algorithm such as BLAKE3 or SHA-256.
 
-## Hosted Linux interpretation
+## Host-Side Simulation Interpretation
 
-The first prototype can simulate capabilities on Linux.
+The development tools can simulate capabilities as ordinary host processes.
+This is useful for validation and graph tooling, but it is not the Vertex OS
+runtime target.
 
 Possible mappings:
 
@@ -573,7 +575,8 @@ clock            -> ordinary host clock access, later explicit syscall/cap
 log-sink         -> pipe or Unix socket to logd
 ```
 
-The hosted prototype should preserve Vertex semantics even if Linux cannot fully enforce them.
+The host-side simulator should preserve Vertex semantics even if the host OS
+cannot fully enforce them.
 
 ## Krust-native interpretation
 
@@ -627,7 +630,8 @@ svc:echo-server can use cap:log.sink because:
 
 ## Evolution plan
 
-VIR v0 is for a hosted prototype.
+VIR v0 began as a host-side graph format and now also feeds the standalone
+Krust boot-manifest compiler.
 
 VIR v1 should add:
 
@@ -642,7 +646,7 @@ VIR v1 should add:
 - device-driver authority model
 - compatibility personality declarations
 
-VIR v2 should be suitable for Krust-native boot.
+Later VIR revisions should make Krust-native boot the primary interpretation.
 
 ## Non-goals for VIR v0
 

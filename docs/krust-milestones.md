@@ -1,8 +1,9 @@
 # Krust Milestones
 
-This file tracks the native Krust path from the first QEMU boot to a real
-native Vertex boot. The hosted Linux prototype remains the reference for Vertex
-IR and graph semantics; Krust is the native enforcement path.
+This file tracks the native Krust path from the first QEMU boot to a standalone
+Vertex OS appliance profile. Host-side tools and simulations remain useful for
+Vertex IR development, but Krust is the native enforcement path rather than a
+runtime layered over a host kernel.
 
 ## Status Summary
 
@@ -23,6 +24,11 @@ virtio-console, virtio-rng, and virtio-net capability paths. M57 adds the first
 cap-mediated network send/receive path. M58 records the POSIX compatibility
 plan, M59 adds capability namespaces, and M60 adds human-readable policy and
 typed prototype compilation into the existing boot path.
+
+Next target: M61-M65 should turn the current research prototype into a narrow
+capability-secured appliance OS MVP. The target remains standalone Krust under a
+defined QEMU/hardware profile, not POSIX compatibility or a host-side
+simulation runtime.
 
 ```sh
 make -C kernel/krust doctor
@@ -65,9 +71,9 @@ scripts/krust-test.sh m59
 scripts/krust-test.sh m60
 ```
 
-Next direction: continue past the M60 policy and namespace baseline toward
-broader device coverage and compatibility personalities without reintroducing
-ambient authority.
+Next direction: continue past the M60 policy and namespace baseline toward the
+M61-M65 appliance OS MVP: ABI hardening, durable storage, network service
+boundaries, supervisor semantics, and a supported standalone release profile.
 
 ## M0: Serial Boot
 
@@ -467,8 +473,8 @@ Status: done.
 
 Goal: make the native boot manifest a compiled representation of the actual
 Vertex graph. Today the example manifest has a smaller `krustBoot` section next
-to the richer hosted graph. M16 should make hosted `vertexctl
-compile-boot-manifest` derive native KrustBoot records from services,
+to the richer host-side graph. M16 should make `vertexctl compile-boot-manifest`
+derive native KrustBoot records from services,
 capabilities, providers, dependencies, policies, and lifecycle fields.
 
 Pipeline:
@@ -518,8 +524,8 @@ because it requires cap:log.sink/send
 and svc:logd provides cap:log.sink
 ```
 
-This is the key bridge from a native proof path to one source graph that can target
-both hosted and native runtimes.
+This is the key bridge from a native proof path to one source graph that can
+target both the host-side simulator and the native runtime.
 
 ## M17: Capability Derivation, Attenuation, And Transfer
 
@@ -1449,7 +1455,7 @@ a structured text report containing the runtime generation, process states,
 current capability spaces, initial capability spaces, rights, cap IDs, parent
 cap IDs, generation IDs, and revocation state. `vertex-init` delegates only
 `inspect` and manifest `read` authority to `vertex-inspect`; the service then
-proves the native counterpart to hosted `vertexctl why` and `who-can` without
+proves the native counterpart to host-side `vertexctl why` and `who-can` without
 receiving control, allocation, delegate, or revoke authority.
 
 ## M39: Reproducible Build Environment
@@ -1463,7 +1469,7 @@ Implemented:
 
 ```text
 done: documented host tool versions for Rust, qemu, limine, xorriso, and cargo tools
-done: locked Cargo dependencies for the hosted workspace, Krust kernel, and native userspace crates
+done: locked Cargo dependencies for the top-level host-tool workspace, Krust kernel, and native userspace crates
 done: kernel/krust/rust-toolchain.toml pins Rust 1.95.0, rustfmt, and x86_64-unknown-none
 done: make doctor checks every required tool and reports actionable fixes
 done: legacy hello/ipc userspace crates are removed instead of carried forward
@@ -2434,10 +2440,212 @@ Implementation notes:
 
 done: M60 policy and typed prototype are checked by the gate
 
+## M61: Kernel ABI and Authority Hardening
+
+Status: planned.
+
+Goal: make the native ABI hostile-input resistant before adding breadth.
+
+Scope:
+
+```text
+syscall argument bounds and alignment
+exact object-kind dispatch for every syscall
+exact typed device IDs for device-specific syscalls
+rights-mask subset checks on every derived or transferred capability
+namespace resolution limited to explicitly allowed non-hardware object types
+revocation and parent-cap provenance invariants
+generation identity checks on process, cap, and inspect paths
+no legacy payload, transport, or compatibility fallback path
+```
+
+Acceptance tests:
+
+```text
+wrong object kind is rejected for every syscall family
+missing rights are rejected for every syscall family
+malformed user buffers fail without kernel fault
+namespace cannot resolve io-port, mmio, interrupt, dma, pci, or virtio authority
+virtio-rng rejects every non-RNG virtio-device ID
+virtio-net TX/RX reject every non-network virtio-device ID
+legacy markers in device kind, selector, or properties are rejected case-insensitively
+capability inspect shows parent and generation provenance after derive/transfer/revoke
+```
+
+Implementation notes:
+
+- Add a syscall negative-test table instead of one-off transcript checks. Each
+  syscall should have at least one wrong-object, wrong-rights, and bad-buffer
+  case.
+- Keep the ABI small. If an old behavior conflicts with current authority rules,
+  remove it instead of preserving compatibility.
+- Treat M61 as the security regression baseline for every later milestone.
+
+## M62: Storage Reliability and VertexDisk Durability
+
+Status: planned.
+
+Goal: make the block and state path reliable enough for appliance updates.
+
+Scope:
+
+```text
+virtio-blk request completion and error propagation
+sector-range and alignment enforcement
+read-only immutable store objects
+state write bounds and owner checks
+journal replay after interrupted writes
+generation update commit atomicity
+explicit durability model for flush/barrier support
+block-driver failure and restart semantics
+```
+
+Acceptance tests:
+
+```text
+store reads survive repeated boot
+state write survives reboot
+interrupted state journal replays or rolls back deterministically
+corrupt state journal is detected and reported
+corrupt store object is rejected by hash before process launch
+update commit interrupted before final pointer leaves previous generation bootable
+update commit interrupted after final pointer boots the new verified generation
+block-driver fault during request fails the client request without kernel fault
+```
+
+Implementation notes:
+
+- Define the exact VertexDisk durability contract before adding a filesystem.
+  A small, auditable store/state layout is more valuable than broad POSIX file
+  semantics at this stage.
+- Keep store and state traffic separated by endpoint identity, as in M43-M57.
+- Prefer explicit error surfaces in `vertex-inspect` and the appliance shell over
+  silent retry loops.
+
+## M63: Network Service Boundary
+
+Status: planned.
+
+Goal: move networking authority behind `netstack` so applications consume
+network-port capabilities instead of raw virtio-net device syscalls.
+
+Scope:
+
+```text
+raw virtio-net authority granted only to netstack
+ARP cache owned by netstack
+IPv4 packet validation
+ICMP echo request/reply for diagnostics
+UDP send through network-port capability
+UDP receive and demultiplex through endpoint-style service IPC
+network-port bind/listen rights enforced by netstack and kernel objects
+```
+
+Acceptance tests:
+
+```text
+netstack owns device:virtio-net0 and initializes QEMU user-mode networking
+echo sends UDP through cap:net.udp.9000 without a raw virtio-device cap
+echo receives a UDP packet delivered through netstack IPC
+unauthorized service cannot bind or send on cap:net.udp.9000
+unauthorized service cannot call raw virtio-net TX/RX
+ICMP echo from the appliance shell reaches the QEMU gateway
+inspect shows network-port authority and raw driver authority separately
+```
+
+Implementation notes:
+
+- Keep raw virtio-net syscalls as driver-facing ABI only. Application-facing
+  networking should be endpoint/capability mediated.
+- Use the current QEMU ARP/ICMP proof as the device smoke test, then add service
+  IPC around it instead of exposing Ethernet frames to applications.
+- TCP, DNS, DHCP, and POSIX sockets remain later work.
+
+## M64: Supervisor Semantics and Service Lifecycle
+
+Status: planned.
+
+Goal: make native activation behave like an appliance supervisor, not only a
+boot transcript.
+
+Scope:
+
+```text
+manifest dependency graph for startup ordering
+readiness timeout policy per service
+health-check protocol per driver/service
+restart budget and backoff
+dependency failure propagation
+fault attribution in inspect output
+service state machine exposed through runtime inspect
+operator-visible activation log
+```
+
+Acceptance tests:
+
+```text
+service starts only after declared providers are ready
+readiness timeout marks the correct service failed
+restart=never exits once and stays failed
+restart=on-failure restarts within budget and then reports exhausted
+restart=always restarts after clean exit only when policy allows it
+dependent service is not started when required provider fails
+inspect reports declared, starting, ready, failed, restarting, and exited states
+appliance shell shows last failure reason and generation id
+```
+
+Implementation notes:
+
+- Keep lifecycle policy in native `vertex-init`/supervisor userspace where
+  possible. The kernel should enforce authority and provide inspectable state,
+  not grow a full policy engine.
+- Make restart restoration explicit: capabilities, quotas, and initial process
+  context must come from the generation graph, not from stale runtime state.
+
+## M65: Supported Appliance Release Profile
+
+Status: planned.
+
+Goal: define the first supported standalone Krust profile and gate it as a
+release artifact.
+
+Supported profile:
+
+```text
+x86_64 one CPU
+Limine boot
+KrustBoot Manifest v1 / compact payload v6 or successor
+QEMU virtio-blk, virtio-rng, virtio-net, and virtio-console
+VertexDisk store/state/update layout
+no legacy transport or payload compatibility
+no POSIX personality in the base profile
+```
+
+Acceptance tests:
+
+```text
+clean checkout builds host tools offline
+standalone ISO rebuilds from clean kernel artifacts
+M56-M64 QEMU cases run in the release gate
+storage corruption cases run in the release gate
+network authority cases run in the release gate
+malformed manifest cases run in the release gate
+release artifact records exact toolchain, manifest hash, kernel hash, and store closure
+README and docs describe Krust as standalone, with host-side tools only as build/simulation utilities
+```
+
+Implementation notes:
+
+- This is the first place to write down what is supported. Everything outside the
+  profile is explicitly experimental.
+- Do not expand to SMP, USB, GPU, a full filesystem, or Linux/POSIX
+  compatibility until the profile can boot, update, recover, and explain its
+  authority graph repeatably.
+
 ## Later Direction
 
-Avoid these until the persistent appliance, update path, and native store are
-solid:
+Avoid these until the appliance release profile, storage durability, network
+service boundary, update path, and supervisor semantics are solid:
 
 ```text
 USB

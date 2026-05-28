@@ -84,8 +84,8 @@ stack, or filesystems are part of this native proof. Timer deadlines
 now wake through the PIT interrupt path, bad userspace page faults are contained
 as process failures, and hardware-shaped authority is exposed only through
 explicit capability objects. The kernel consumes a compact KrustBoot Manifest v1
-artifact compiled by hosted `vertexctl`; graph interpretation and lifecycle
-policy remain a userspace responsibility.
+artifact compiled by host-side `vertexctl`; graph interpretation and lifecycle
+policy remain a userspace responsibility inside the standalone Krust system.
 
 ## Prerequisites
 
