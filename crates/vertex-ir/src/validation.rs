@@ -360,11 +360,12 @@ fn validate_devices(manifest: &GenerationManifest, report: &mut ValidationReport
             ));
         }
 
-        if contains_legacy_transport(&device.selector)
-            || contains_legacy_transport(&device.properties)
+        if contains_legacy_marker(&Value::String(device.kind.clone()))
+            || contains_legacy_marker(&device.selector)
+            || contains_legacy_marker(&device.properties)
         {
             report.error(format!(
-                "device {} declares a legacy transport; upgrade the device declaration instead of keeping compatibility mode",
+                "device {} declares a legacy transport marker; upgrade the device declaration instead of keeping compatibility mode",
                 device.id
             ));
         }
@@ -414,11 +415,11 @@ fn is_hardware_capability_kind(kind: &str) -> bool {
     )
 }
 
-fn contains_legacy_transport(value: &Value) -> bool {
+fn contains_legacy_marker(value: &Value) -> bool {
     match value {
-        Value::String(text) => text.contains("legacy"),
-        Value::Array(values) => values.iter().any(contains_legacy_transport),
-        Value::Object(map) => map.values().any(contains_legacy_transport),
+        Value::String(text) => text.to_ascii_lowercase().contains("legacy"),
+        Value::Array(values) => values.iter().any(contains_legacy_marker),
+        Value::Object(map) => map.values().any(contains_legacy_marker),
         _ => false,
     }
 }

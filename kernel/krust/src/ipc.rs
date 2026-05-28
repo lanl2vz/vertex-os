@@ -62,6 +62,8 @@ const VIRTIO_NET_RX_BUFFER_LEN: usize = 2048;
 const ETHERNET_MIN_FRAME_LEN: usize = 60;
 const UDP_IPV4_HEADER_LEN: usize = 42;
 const VIRTIO_DESC_F_NEXT: u16 = 1;
+const VIRTIO_RNG_DEVICE_ID: &str = "device:virtio-rng0";
+const VIRTIO_NET_DEVICE_ID: &str = "device:virtio-net0";
 const QEMU_USER_GUEST_MAC: [u8; 6] = [0x52, 0x54, 0x00, 0x12, 0x34, 0x56];
 const QEMU_USER_GUEST_IP: [u8; 4] = [10, 0, 2, 15];
 const QEMU_USER_GATEWAY_IP: [u8; 4] = [10, 0, 2, 2];
@@ -3958,7 +3960,7 @@ pub fn virtio_rng_read(
     max_len: usize,
 ) -> Result<usize, IpcError> {
     let device = virtio_device_from_cap(cap_slot, capability::RIGHT_CONTROL)?;
-    if device.name != "device:virtio-rng0" {
+    if device.name != VIRTIO_RNG_DEVICE_ID {
         return Err(IpcError::BadCapability);
     }
     let copy_len = min(max_len, 32);
@@ -3982,7 +3984,7 @@ pub fn virtio_net_tx(cap_slot: u64, source: *const u8, len: usize) -> Result<(),
         return Err(IpcError::MessageTooLarge);
     }
     let device = virtio_device_from_cap(cap_slot, capability::RIGHT_CONTROL)?;
-    if device.name != "device:virtio-net0" {
+    if device.name != VIRTIO_NET_DEVICE_ID {
         return Err(IpcError::BadCapability);
     }
     let mut frame = [0u8; MAX_MESSAGE_BYTES];
@@ -4006,7 +4008,7 @@ pub fn virtio_net_rx(
     max_len: usize,
 ) -> Result<usize, IpcError> {
     let device = virtio_device_from_cap(cap_slot, capability::RIGHT_CONTROL)?;
-    if device.name != "device:virtio-net0" {
+    if device.name != VIRTIO_NET_DEVICE_ID {
         return Err(IpcError::BadCapability);
     }
     if max_len < ETHERNET_MIN_FRAME_LEN {

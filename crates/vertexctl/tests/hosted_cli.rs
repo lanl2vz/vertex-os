@@ -580,6 +580,67 @@ fn validate_rejects_legacy_driver_transport() {
 }
 
 #[test]
+fn validate_rejects_case_insensitive_legacy_driver_transport() {
+    let dir = temp_dir("driver-uppercase-legacy-transport");
+    let input_path = dir.join("driver-uppercase-legacy.vertex.json");
+    let mut manifest: Value = serde_json::from_str(
+        &fs::read_to_string(repo_root().join("examples/hello-generation.vertex.json"))
+            .expect("read hello manifest"),
+    )
+    .expect("hello manifest should be json");
+
+    let devices = manifest["devices"]
+        .as_array_mut()
+        .expect("devices should be an array");
+    let block_device = devices
+        .iter_mut()
+        .find(|device| device["id"] == "device:virtio-blk0")
+        .expect("block device should exist");
+    block_device["properties"]["transport"] = Value::String("virtio-pci-LEGACY".to_owned());
+
+    fs::write(
+        &input_path,
+        serde_json::to_string_pretty(&manifest)
+            .expect("serialize uppercase legacy transport manifest"),
+    )
+    .expect("write uppercase legacy transport manifest");
+
+    let stderr = assert_failure(run(&["validate", &input_path.to_string_lossy()]));
+
+    assert!(stderr.contains("device device:virtio-blk0 declares a legacy transport"));
+}
+
+#[test]
+fn validate_rejects_legacy_driver_kind_marker() {
+    let dir = temp_dir("driver-legacy-kind");
+    let input_path = dir.join("driver-legacy-kind.vertex.json");
+    let mut manifest: Value = serde_json::from_str(
+        &fs::read_to_string(repo_root().join("examples/hello-generation.vertex.json"))
+            .expect("read hello manifest"),
+    )
+    .expect("hello manifest should be json");
+
+    let devices = manifest["devices"]
+        .as_array_mut()
+        .expect("devices should be an array");
+    let block_device = devices
+        .iter_mut()
+        .find(|device| device["id"] == "device:virtio-blk0")
+        .expect("block device should exist");
+    block_device["kind"] = Value::String("virtio-blk-legacy-pci".to_owned());
+
+    fs::write(
+        &input_path,
+        serde_json::to_string_pretty(&manifest).expect("serialize legacy kind manifest"),
+    )
+    .expect("write legacy kind manifest");
+
+    let stderr = assert_failure(run(&["validate", &input_path.to_string_lossy()]));
+
+    assert!(stderr.contains("device device:virtio-blk0 declares a legacy transport"));
+}
+
+#[test]
 fn validate_rejects_hardware_capability_for_non_driver() {
     let dir = temp_dir("driver-hardware-owner");
     let input_path = dir.join("driver-hardware-owner.vertex.json");
