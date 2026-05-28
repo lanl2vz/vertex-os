@@ -241,11 +241,11 @@ unauthorized service cannot access PCI I/O, IRQ, or DMA capabilities
         MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
         EXPECT_ACTIVATION_SUCCESS=1
         required_lines='
-KrustBoot grants: 51
+KrustBoot grants: 60
 KrustBoot io port ranges: 3
 KrustBoot mmio regions: 0
-KrustBoot pci devices: 1
-KrustBoot virtio devices: 1
+KrustBoot pci devices: 4
+KrustBoot virtio devices: 4
 io_port[1] id=cap:io.pci-config base=0x0000000000000cf8 length=0x0000000000000008
 io_port[2] id=cap:io.virtio-blk0 base=0x000000000000c000 length=0x0000000000001000
 interrupt_line[0] id=cap:irq.virtio-blk0 line=11
@@ -272,7 +272,7 @@ Native service activation ok
         MANIFEST="$ROOT_DIR/examples/krust-block-driver-fault-generation.vertex.json"
         required_lines='
 Boot generation: gen:block-driver-fault-0001
-KrustBoot grants: 52
+KrustBoot grants: 60
 KrustBoot store objects:
 proc=block-driver cap[10] store-object=store:block-driver-fault-token rights=read
 Object read accepted: proc=block-driver object=store:block-driver-fault-token bytes=25
@@ -289,7 +289,7 @@ Native service activation failed
         EXPECT_ACTIVATION_SUCCESS=1
         required_lines='
 KrustBoot endpoints: 12
-KrustBoot grants: 51
+KrustBoot grants: 60
 KrustBoot state volumes: 0
 QEMU boots with VertexDisk image attached
 VertexDisk superblock accepted
@@ -448,7 +448,7 @@ Native service activation ok
         EXPECT_ACTIVATION_SUCCESS=1
         required_lines='
 KrustBoot endpoints: 12
-KrustBoot grants: 51
+KrustBoot grants: 60
 IPC FIFO regression: queued sends preserve FIFO order
 IPC FIFO regression: queue-full send rejected
 IPC FIFO regression: receiver-specific dequeue preserves eligible ordering
@@ -503,7 +503,7 @@ Boot generation: gen:console-0001
 KrustBoot boot modules: 14
 KrustBoot processes: 14
 KrustBoot endpoints: 15
-KrustBoot grants: 59
+KrustBoot grants: 65
 proc=console-driver cap[0] endpoint=console-output rights=receive
 proc=console-driver cap[3] endpoint=console-driver-control rights=receive
 proc=console-shell cap[0] endpoint=console-shell-request rights=receive
@@ -634,19 +634,90 @@ Native service activation ok
         MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
         EXPECT_ACTIVATION_SUCCESS=1
         required_lines='
-KrustBoot pci devices: 1
-KrustBoot virtio devices: 1
+KrustBoot pci devices: 4
+KrustBoot virtio devices: 4
 pci_device[0] id=device:virtio-blk0 kind=virtio-blk-pci
 virtio_device[0] id=device:virtio-blk0 transport=virtio-pci-io
+virtio_device[1] id=device:virtio-console0 transport=virtio-pci-io
+virtio_device[2] id=device:virtio-rng0 transport=virtio-pci-io
+virtio_device[3] id=device:virtio-net0 transport=virtio-pci-io
 process[1] name=serial-driver module=serial-driver initial=no service=svc:serial-driver restart=0 health=ipc-ping
+process[3] name=netstack module=netstack initial=no service=svc:netstack restart=1 health=ipc-ping
 process[4] name=block-driver module=block-driver initial=no service=svc:block-driver restart=0 health=ipc-ping
 proc=serial-driver cap[3] io-port=cap:io.com1 rights=read|write
+proc=serial-driver cap[5] virtio-device=device:virtio-console0 transport=virtio-pci-io rights=control
+proc=netstack cap[3] virtio-device=device:virtio-rng0 transport=virtio-pci-io rights=control
+proc=netstack cap[5] virtio-device=device:virtio-net0 transport=virtio-pci-io rights=control
 proc=block-driver cap[10] pci-device=device:virtio-blk0 kind=virtio-blk-pci rights=control
 proc=block-driver cap[11] virtio-device=device:virtio-blk0 transport=virtio-pci-io rights=control
 serial-driver ready
+virtio-console replaces raw serial shell transport
+netstack ready
 virtio-blk driver ready
 unauthorized service cannot access PCI I/O, IRQ, or DMA capabilities
 Native driver framework ok
+Native service activation ok
+'
+        ;;
+    m56|virtio-device-stack)
+        MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
+        EXPECT_ACTIVATION_SUCCESS=1
+        required_lines='
+KrustBoot pci devices: 4
+KrustBoot virtio devices: 4
+virtio-console replaces raw serial shell transport
+virtio-rng provides random bytes through explicit cap
+virtio-net driver can send raw frames
+virtio-net driver can receive raw frames
+unauthorized service cannot use network device
+Native service activation ok
+'
+        ;;
+    m57|networking-v0)
+        MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
+        EXPECT_ACTIVATION_SUCCESS=1
+        QEMU_EXTRA="${QEMU_EXTRA} -netdev user,id=vertexnet -device virtio-net-pci,netdev=vertexnet,disable-modern=on"
+        required_lines='
+QEMU user-mode network attached
+Virtio net RX accepted: proc=netstack virtio-device=device:virtio-net0 frame-bytes=64
+Virtio net TX accepted: proc=netstack virtio-device=device:virtio-net0 frame-bytes=64
+Vertex replies to ping or sends ICMP echo
+UDP send accepted: proc=echo network-port=cap:net.udp.9000 bytes=13
+Vertex sends UDP packet
+network authority is endpoint/capability mediated
+unauthorized service cannot use network device
+Native service activation ok
+'
+        ;;
+    m59|namespace-service)
+        MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
+        EXPECT_ACTIVATION_SUCCESS=1
+        required_lines='
+KrustBoot namespaces: 2
+namespace[0] id=cap:namespace.echo entries=1
+namespace[1] id=cap:namespace.reader entries=1
+proc=echo cap[4] namespace=cap:namespace.echo rights=resolve
+proc=reader-service cap[4] namespace=cap:namespace.reader rights=resolve
+Namespace resolve accepted: proc=echo namespace=cap:namespace.echo path=/state/a
+service A namespace contains /state/a
+Namespace resolve rejected: proc=echo namespace=cap:namespace.echo path=/state/b
+service A cannot resolve /state/b
+Native service activation ok
+'
+        ;;
+    m60|policy-typed)
+        MANIFEST="/private/tmp/krust-m60-policy-generation.vertex.json"
+        "$ROOT_DIR/target/debug/vertexctl" compile-policy "$ROOT_DIR/examples/policy.vertex" "$MANIFEST"
+        "$ROOT_DIR/target/debug/vertexctl" compile-typed "$ROOT_DIR/examples/typed-system.vertex" /private/tmp/krust-m60-typed-generation.vertex.json
+        if "$ROOT_DIR/target/debug/vertexctl" compile-typed "$ROOT_DIR/examples/invalid-missing-capability.vertex" /private/tmp/krust-m60-invalid.vertex.json; then
+            echo "typed policy unexpectedly accepted missing capability" >&2
+            exit 1
+        fi
+        "$ROOT_DIR/target/debug/vertexctl" compile-boot-manifest "$MANIFEST" /private/tmp/krust-m60-policy.krustboot
+        "$ROOT_DIR/target/debug/vertexctl" create-vertex-disk /private/tmp/krust-m60-policy.img "$MANIFEST"
+        EXPECT_ACTIVATION_SUCCESS=1
+        required_lines='
+Boot generation: gen:m60-policy-0001
 Native service activation ok
 '
         ;;
@@ -723,7 +794,7 @@ activation failed
 '
         ;;
     *)
-        echo "usage: scripts/krust-test.sh <m13|m14|valid-activation|manifest-cycle|bad-cap|readiness|readiness-timeout|rollback|store-state-services|timer|preemption|m30|user-fault|m31|restart|manifest-v1|cap-lifecycle|typed-arenas|quotas|m32|io-substrate|m33|serial-driver|m34|block-driver|m35|store-service|m36|state-service|m37|generation-switch|m38|introspection|m40|directed-ipc|m41|console-shell|m42|virtio-block|m42-driver-fault|block-driver-fault|m43|vertexdisk|m43-bad-superblock|vertexdisk-bad-superblock|m44|boot-manager|m45|store-verification|m46|native-update|m47|store-executables|m47-corrupt-executable|store-executable-corruption|m48|dynamic-process|m49|config-objects|m49-config-corrupt|config-hash-mismatch|m50|secrets|m54|appliance|m55|driver-framework|manifest-truncated|manifest-bad-magic|manifest-raw-compact|manifest-unsupported-version|manifest-oob-record|manifest-missing-provider>" >&2
+        echo "usage: scripts/krust-test.sh <m13|m14|valid-activation|manifest-cycle|bad-cap|readiness|readiness-timeout|rollback|store-state-services|timer|preemption|m30|user-fault|m31|restart|manifest-v1|cap-lifecycle|typed-arenas|quotas|m32|io-substrate|m33|serial-driver|m34|block-driver|m35|store-service|m36|state-service|m37|generation-switch|m38|introspection|m40|directed-ipc|m41|console-shell|m42|virtio-block|m42-driver-fault|block-driver-fault|m43|vertexdisk|m43-bad-superblock|vertexdisk-bad-superblock|m44|boot-manager|m45|store-verification|m46|native-update|m47|store-executables|m47-corrupt-executable|store-executable-corruption|m48|dynamic-process|m49|config-objects|m49-config-corrupt|config-hash-mismatch|m50|secrets|m54|appliance|m55|driver-framework|m56|virtio-device-stack|m57|networking-v0|m59|namespace-service|m60|policy-typed|manifest-truncated|manifest-bad-magic|manifest-raw-compact|manifest-unsupported-version|manifest-oob-record|manifest-missing-provider>" >&2
         exit 2
         ;;
 esac

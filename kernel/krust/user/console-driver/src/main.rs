@@ -66,7 +66,9 @@ fn drain_console_output() {
             log(b"console-driver output receive failed");
             sys::exit(1);
         }
-        write_bytes(&buffer[..received as usize]);
+        let payload = &buffer[..received as usize];
+        mirror_console_lines(payload);
+        write_bytes(payload);
         log(b"console-driver wrote console output");
     }
 }
@@ -154,6 +156,30 @@ fn log_prefix(prefix: &[u8], value: &[u8]) {
     append(&mut buffer, &mut len, prefix);
     append(&mut buffer, &mut len, value);
     log(&buffer[..len]);
+}
+
+fn mirror_console_lines(payload: &[u8]) {
+    let mut start = 0;
+    let mut index = 0;
+    while index < payload.len() {
+        if payload[index] == b'\n' {
+            log_console_line(&payload[start..index]);
+            start = index + 1;
+        }
+        index += 1;
+    }
+}
+
+fn log_console_line(line: &[u8]) {
+    let mut end = line.len();
+    while end != 0 && line[end - 1] == b'\r' {
+        end -= 1;
+    }
+    let line = &line[..end];
+    if line.is_empty() || bytes_eq(line, b">") || bytes_eq(line, b"> ") {
+        return;
+    }
+    log(line);
 }
 
 fn append(buffer: &mut [u8], len: &mut usize, value: &[u8]) {

@@ -7,6 +7,9 @@ use core::panic::PanicInfo;
 
 const CAP_LOG_SINK: u64 = 0;
 const CAP_SERIAL_LOG: u64 = 1;
+const CAP_NETWORK_PORT: u64 = 3;
+const CAP_NAMESPACE: u64 = 4;
+const CAP_NAMESPACE_RESOLVED: u64 = 24;
 const CAP_COPY: u64 = 28;
 const CAP_MOVED: u64 = 27;
 
@@ -43,6 +46,39 @@ pub extern "C" fn _start() -> ! {
         log(b"echo block-driver denial failed");
         sys::exit(1);
     }
+    if sys::network_send_udp(CAP_NETWORK_PORT, b"m57 udp probe") == sys::STATUS_OK {
+        log(b"network authority is endpoint/capability mediated");
+        log(b"Vertex sends UDP packet");
+    } else {
+        log(b"echo UDP send failed");
+        sys::exit(1);
+    }
+    if sys::virtio_net_tx(CAP_NETWORK_PORT, b"raw frame denied") == sys::STATUS_BAD_CAPABILITY {
+        log(b"unauthorized service cannot use network device");
+    } else {
+        log(b"echo network device denial failed");
+        sys::exit(1);
+    }
+
+    if sys::namespace_resolve(CAP_NAMESPACE, b"/state/a", CAP_NAMESPACE_RESOLVED) != sys::STATUS_OK
+    {
+        log(b"namespace resolve /state/a failed");
+        sys::exit(1);
+    }
+    log(b"service A namespace contains /state/a");
+    if sys::cap_inspect(CAP_NAMESPACE_RESOLVED) == sys::STATUS_BAD_CAPABILITY {
+        log(b"namespace resolved capability inspect failed");
+        sys::exit(1);
+    }
+    if sys::namespace_resolve(CAP_NAMESPACE, b"/state/b", CAP_NAMESPACE_RESOLVED - 1)
+        == sys::STATUS_BAD_CAPABILITY
+    {
+        log(b"service A cannot resolve /state/b");
+    } else {
+        log(b"namespace isolation denial failed");
+        sys::exit(1);
+    }
+
     let mut dma_denied = [0u8; 24];
     if sys::io_read(3, 0x0cf8) == sys::STATUS_BAD_CAPABILITY
         && sys::irq_wait(3, 0) == sys::STATUS_BAD_CAPABILITY

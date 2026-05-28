@@ -138,6 +138,17 @@
         "length": 8
       },
       "driver": "svc:serial-driver"
+    },
+    {
+      "id": "device:virtio-console0",
+      "kind": "virtio-console-pci",
+      "selector": {
+        "channel": "shell"
+      },
+      "driver": "svc:serial-driver",
+      "properties": {
+        "transport": "virtio-pci-io"
+      }
     }
   ],
   "stateVolumes": [],
@@ -152,6 +163,39 @@
       ],
       "properties": {
         "protocol": "vertex.log.v1"
+      }
+    },
+    {
+      "id": "cap:net.udp.9000",
+      "kind": "network-port",
+      "provider": "svc:vertex-supervisor",
+      "rights": [
+        "listen",
+        "bind"
+      ],
+      "properties": {
+        "protocol": "udp",
+        "port": 9000,
+        "hostedSimulation": "supervisor-passes-udp-endpoint"
+      }
+    },
+    {
+      "id": "cap:namespace.echo",
+      "kind": "namespace",
+      "provider": "svc:vertex-supervisor",
+      "rights": [
+        "resolve"
+      ],
+      "properties": {
+        "entries": [
+          {
+            "path": "/state/a",
+            "capability": "cap:log.sink",
+            "rights": [
+              "send"
+            ]
+          }
+        ]
       }
     },
     {
@@ -309,6 +353,19 @@
           "capability": "cap:log.sink",
           "rights": [
             "send"
+          ]
+        },
+        {
+          "capability": "cap:net.udp.9000",
+          "rights": [
+            "listen",
+            "bind"
+          ]
+        },
+        {
+          "capability": "cap:namespace.echo",
+          "rights": [
+            "resolve"
           ]
         }
       ],

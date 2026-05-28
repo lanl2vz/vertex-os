@@ -57,7 +57,7 @@ KrustBoot Manifest v1 records: 9
 KrustBoot boot modules: 13
 KrustBoot processes: 13
 KrustBoot endpoints: 12
-KrustBoot grants: 51
+KrustBoot grants: 60
 KrustBoot store objects: 14
 KrustBoot state volumes: 0
 KrustBoot network ports: 1
@@ -65,8 +65,9 @@ KrustBoot io port ranges: 3
 KrustBoot mmio regions: 0
 KrustBoot interrupt lines: 1
 KrustBoot dma regions: 1
-KrustBoot pci devices: 1
-KrustBoot virtio devices: 1
+KrustBoot pci devices: 4
+KrustBoot virtio devices: 4
+KrustBoot namespaces: 2
 boot_module[0] name=vertex-init string=vertex-init
 boot_module[1] name=serial-driver string=serial-driver
 boot_module[2] name=logd string=logd
@@ -124,9 +125,14 @@ process=block-driver cap[8] dma-region=cap:dma.virtio-blk0 rights=read|write|map
 process=block-driver cap[9] io-port=cap:io.virtio-blk0 rights=read|write
 process=block-driver cap[10] pci-device=device:virtio-blk0 rights=control
 process=block-driver cap[11] virtio-device=device:virtio-blk0 rights=control
-process=echo cap[3] network-port=cap:net.tcp.8080 rights=listen
+process=serial-driver cap[5] virtio-device=device:virtio-console0 rights=control
+process=netstack cap[3] virtio-device=device:virtio-rng0 rights=control
+process=netstack cap[5] virtio-device=device:virtio-net0 rights=control
+process=echo cap[3] network-port=cap:net.udp.9000 rights=bind|listen
+process=echo cap[4] namespace=cap:namespace.echo rights=resolve
+process=reader-service cap[4] namespace=cap:namespace.reader rights=resolve
 process=timer-service cap[0] timer=monotonic-timer rights=control
-network_port[0] id=cap:net.tcp.8080
+network_port[0] id=cap:net.udp.9000
 io_port[0] id=cap:io.com1 base=0x00000000000003f8 length=0x0000000000000008
 io_port[1] id=cap:io.pci-config base=0x0000000000000cf8 length=0x0000000000000008
 io_port[2] id=cap:io.virtio-blk0 base=0x000000000000c000 length=0x0000000000001000
@@ -204,7 +210,12 @@ proc=vertex-state cap[0] endpoint=state-counter-request rights=receive
 proc=vertex-state cap[3] endpoint=vertex-state-block-reply rights=receive
 proc=model-reader cap[0] endpoint=model-reader-store-reply rights=receive
 proc=reader-service cap[0] endpoint=state-reader-state-reply rights=receive
-proc=echo cap[3] network-port=cap:net.tcp.8080 rights=listen
+proc=serial-driver cap[5] virtio-device=device:virtio-console0 transport=virtio-pci-io rights=control
+proc=netstack cap[3] virtio-device=device:virtio-rng0 transport=virtio-pci-io rights=control
+proc=netstack cap[5] virtio-device=device:virtio-net0 transport=virtio-pci-io rights=control
+proc=echo cap[3] network-port=cap:net.udp.9000 rights=bind|listen
+proc=echo cap[4] namespace=cap:namespace.echo rights=resolve
+proc=reader-service cap[4] namespace=cap:namespace.reader rights=resolve
 proc=netstack cap[1] endpoint=serial-log rights=send
 proc=echo cap[1] endpoint=serial-log rights=send
 proc=timer-service cap[0] timer=monotonic-timer rights=control
@@ -220,7 +231,7 @@ vertex-init manifest generation: gen:hello-0001
 vertex-init boot modules: 13
 vertex-init processes: 13
 vertex-init endpoints: 12
-vertex-init grants: 51
+vertex-init grants: 60
 vertex-init network ports: 1
 vertex-init store objects: 14
 Krust process executable store object: process=logd object=store:logd-demo
@@ -234,8 +245,9 @@ vertex-init io ports: 3
 vertex-init mmio regions: 0
 vertex-init interrupt lines: 1
 vertex-init dma regions: 1
-vertex-init pci devices: 1
-vertex-init virtio devices: 1
+vertex-init pci devices: 4
+vertex-init virtio devices: 4
+vertex-init namespaces: 2
 service with quota=1 endpoint can create one endpoint
 second endpoint creation fails
 init can delegate smaller quota
@@ -342,6 +354,14 @@ negative test: logd process-create rejected: bad capability
 echo cannot read logd config
 service without secret cap rejected
 netstack ready
+virtio-rng provides random bytes through explicit cap
+virtio-net driver can receive raw frames
+virtio-net driver can send raw frames
+Vertex replies to ping or sends ICMP echo
+Vertex sends UDP packet
+network authority is endpoint/capability mediated
+service A namespace contains /state/a
+service A cannot resolve /state/b
 virtio-blk driver ready
 virtio-blk PCI device discovered
 IRQ wait accepted: proc=block-driver interrupt-line=cap:irq.virtio-blk0
@@ -470,7 +490,7 @@ done
 
 cleanup
 pid=
-echo "smoke failed: serial output did not contain the full M14-M55 native activation transcript after $QEMU_ATTEMPTS checks"
+echo "smoke failed: serial output did not contain the full M14-M60 native activation transcript after $QEMU_ATTEMPTS checks"
 echo "serial log: $SERIAL_LOG"
 if [ -n "$missing_required" ]; then
     echo "missing required transcript lines:"

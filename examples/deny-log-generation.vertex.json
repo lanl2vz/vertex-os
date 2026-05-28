@@ -138,7 +138,7 @@
       }
     },
     {
-      "id": "cap:net.tcp.8080",
+      "id": "cap:net.udp.9000",
       "kind": "network-port",
       "provider": "svc:netstack",
       "rights": [
@@ -146,9 +146,9 @@
         "bind"
       ],
       "properties": {
-        "protocol": "tcp",
-        "port": 8080,
-        "hostedSimulation": "supervisor-passes-listening-fd"
+        "protocol": "udp",
+        "port": 9000,
+        "hostedSimulation": "supervisor-passes-udp-endpoint"
       }
     },
     {
@@ -247,7 +247,7 @@
         }
       ],
       "provides": [
-        "cap:net.tcp.8080"
+        "cap:net.udp.9000"
       ],
       "state": [],
       "secrets": [],
@@ -270,7 +270,7 @@
       "executable": "exe:echo-server",
       "args": [
         "--listen",
-        "cap:net.tcp.8080"
+        "cap:net.udp.9000"
       ],
       "env": {
         "VERTEX_REQUIRE_LOG_SINK": "1"
@@ -283,9 +283,10 @@
           ]
         },
         {
-          "capability": "cap:net.tcp.8080",
+          "capability": "cap:net.udp.9000",
           "rights": [
-            "listen"
+            "listen",
+            "bind"
           ]
         }
       ],

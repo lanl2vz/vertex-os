@@ -33,6 +33,8 @@ fn run(args: Vec<String>) -> Result<(), String> {
         "graph" => graph_cmd(&args[1..]),
         "why" => why_cmd(&args[1..]),
         "materialize-demo" => materialize_demo_cmd(&args[1..]),
+        "compile-policy" => compile_policy_cmd(&args[1..], PolicyMode::Structured),
+        "compile-typed" => compile_policy_cmd(&args[1..], PolicyMode::Typed),
         "compile-boot-manifest" => compile_boot_manifest_cmd(&args[1..]),
         "corrupt-boot-manifest" => corrupt_boot_manifest_cmd(&args[1..]),
         "explain-krustboot" => explain_krustboot_cmd(&args[1..]),
@@ -155,6 +157,193 @@ fn materialize_demo_cmd(args: &[String]) -> Result<(), String> {
         .map_err(|source| format!("failed to write {}: {source}", manifest_out.display()))?;
 
     println!("{}", manifest_out.display());
+    Ok(())
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PolicyMode {
+    Structured,
+    Typed,
+}
+
+struct PolicyPrototype {
+    template: String,
+    generation: Option<String>,
+    services: BTreeMap<String, PolicyService>,
+}
+
+#[derive(Default)]
+struct PolicyService {
+    requires: BTreeSet<String>,
+    provides: BTreeSet<String>,
+}
+
+fn compile_policy_cmd(args: &[String], mode: PolicyMode) -> Result<(), String> {
+    let [policy_path, output_path] = args else {
+        return Err(match mode {
+            PolicyMode::Structured => "usage: vertexctl compile-policy <policy.vertex> <output>",
+            PolicyMode::Typed => "usage: vertexctl compile-typed <system.vertex> <output>",
+        }
+        .to_owned());
+    };
+
+    let source = fs::read_to_string(policy_path)
+        .map_err(|source| format!("failed to read {policy_path}: {source}"))?;
+    let prototype = parse_policy_prototype(&source, mode)?;
+    let mut manifest = load_manifest(&prototype.template).map_err(|error| error.to_string())?;
+    validate_policy_wiring(&prototype, &manifest)?;
+
+    if let Some(generation) = prototype.generation {
+        manifest.generation.id = generation;
+    }
+    manifest.generation.description = match mode {
+        PolicyMode::Structured => "compiled from Vertex policy prototype".to_owned(),
+        PolicyMode::Typed => "compiled from typed Vertex prototype".to_owned(),
+    };
+
+    let report = validate_manifest(&manifest);
+    if !report.is_valid() {
+        print_report(&report);
+        return Err(format!(
+            "compiled manifest {} is invalid",
+            manifest.generation.id
+        ));
+    }
+
+    let json = to_pretty_json(&manifest).map_err(|source| source.to_string())?;
+    fs::write(output_path, json)
+        .map_err(|source| format!("failed to write {output_path}: {source}"))?;
+    println!(
+        "{} compiled {} -> {}",
+        match mode {
+            PolicyMode::Structured => "policy",
+            PolicyMode::Typed => "typed system definition",
+        },
+        policy_path,
+        output_path
+    );
+    Ok(())
+}
+
+fn parse_policy_prototype(source: &str, mode: PolicyMode) -> Result<PolicyPrototype, String> {
+    let expected_header = match mode {
+        PolicyMode::Structured => "vertex-policy v0",
+        PolicyMode::Typed => "typed-vertex v0",
+    };
+    let mut header_seen = false;
+    let mut template = None;
+    let mut generation = None;
+    let mut services = BTreeMap::<String, PolicyService>::new();
+
+    for (line_index, raw_line) in source.lines().enumerate() {
+        let line = raw_line.split('#').next().unwrap_or_default().trim();
+        if line.is_empty() {
+            continue;
+        }
+        if !header_seen {
+            if line != expected_header {
+                return Err(format!(
+                    "line {}: expected header {expected_header}",
+                    line_index + 1
+                ));
+            }
+            header_seen = true;
+            continue;
+        }
+
+        let parts = line.split_whitespace().collect::<Vec<_>>();
+        match parts.as_slice() {
+            ["template", path] => template = Some((*path).to_owned()),
+            ["generation", id] => generation = Some((*id).to_owned()),
+            ["service", service_id, action, capability_id]
+                if *action == "requires" || *action == "provides" =>
+            {
+                let service = services.entry((*service_id).to_owned()).or_default();
+                if *action == "requires" {
+                    service.requires.insert((*capability_id).to_owned());
+                } else {
+                    service.provides.insert((*capability_id).to_owned());
+                }
+            }
+            _ => {
+                return Err(format!(
+                    "line {}: unsupported policy statement `{line}`",
+                    line_index + 1
+                ));
+            }
+        }
+    }
+
+    if !header_seen {
+        return Err(format!("missing {expected_header} header"));
+    }
+    Ok(PolicyPrototype {
+        template: template.ok_or_else(|| "policy missing template".to_owned())?,
+        generation,
+        services,
+    })
+}
+
+fn validate_policy_wiring(
+    prototype: &PolicyPrototype,
+    manifest: &GenerationManifest,
+) -> Result<(), String> {
+    for (service_id, service) in &prototype.services {
+        let manifest_service = manifest
+            .service(service_id)
+            .ok_or_else(|| format!("policy service {service_id} is not in template"))?;
+        let manifest_requires = manifest_service
+            .requires
+            .iter()
+            .map(|requirement| requirement.capability.as_str())
+            .collect::<BTreeSet<_>>();
+        let manifest_provides = manifest_service
+            .provides
+            .iter()
+            .map(String::as_str)
+            .collect::<BTreeSet<_>>();
+
+        for capability_id in &service.requires {
+            let capability = manifest.capability(capability_id).ok_or_else(|| {
+                format!(
+                    "missing capability wiring: service {service_id} requires undeclared {capability_id}"
+                )
+            })?;
+            if !manifest_requires.contains(capability_id.as_str()) {
+                return Err(format!(
+                    "missing capability wiring: service {service_id} does not receive {capability_id}"
+                ));
+            }
+            if manifest.service(&capability.provider).is_some() {
+                let provider = prototype.services.get(&capability.provider).ok_or_else(|| {
+                    format!(
+                        "missing capability wiring: provider {} for {capability_id} is not declared",
+                        capability.provider
+                    )
+                })?;
+                if !provider.provides.contains(capability_id) {
+                    return Err(format!(
+                        "missing capability wiring: provider {} does not provide {capability_id}",
+                        capability.provider
+                    ));
+                }
+            }
+        }
+
+        for capability_id in &service.provides {
+            if manifest.capability(capability_id).is_none() {
+                return Err(format!(
+                    "missing capability wiring: service {service_id} provides undeclared {capability_id}"
+                ));
+            }
+            if !manifest_provides.contains(capability_id.as_str()) {
+                return Err(format!(
+                    "missing capability wiring: service {service_id} template does not provide {capability_id}"
+                ));
+            }
+        }
+    }
+
     Ok(())
 }
 
@@ -1343,6 +1532,8 @@ fn print_usage() {
            vertexctl graph <manifest>\n\
            vertexctl why <manifest> <service> <capability>\n\
            vertexctl materialize-demo <manifest> <output-dir>\n\
+           vertexctl compile-policy <policy.vertex> <output>\n\
+           vertexctl compile-typed <system.vertex> <output>\n\
            vertexctl compile-boot-manifest <manifest> <output>\n\
            vertexctl explain-krustboot <manifest>\n\
            vertexctl create-vertex-disk <output> <manifest>...\n\

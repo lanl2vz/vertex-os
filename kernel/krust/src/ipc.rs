@@ -17,6 +17,8 @@ const MAX_OBJECTS: usize = 64;
 const MAX_PROCESSES: usize = 16;
 const MAX_CAPS: usize = 32;
 const MAX_BOOT_GRANTS: usize = 128;
+const MAX_BOOT_NAMESPACES: usize = 4;
+const MAX_NAMESPACE_ENTRIES: usize = 4;
 const MAX_REVOKED_CAPS: usize = 128;
 const MAX_GENERATION_CONFIGS: usize = 4;
 const MAX_INSPECT_REPORT_BYTES: usize = 64 * 1024;
@@ -40,6 +42,7 @@ pub const BOOT_OBJECT_INTERRUPT_LINE: u16 = 8;
 pub const BOOT_OBJECT_DMA_REGION: u16 = 9;
 pub const BOOT_OBJECT_PCI_DEVICE: u16 = 10;
 pub const BOOT_OBJECT_VIRTIO_DEVICE: u16 = 11;
+pub const BOOT_OBJECT_NAMESPACE: u16 = 12;
 
 pub const FRAME_R15: usize = 0;
 pub const FRAME_R14: usize = 8;
@@ -232,6 +235,21 @@ pub struct BootVirtioDeviceConfig {
 }
 
 #[derive(Clone, Copy)]
+pub struct BootNamespaceEntryConfig {
+    pub path: &'static str,
+    pub object_kind: u16,
+    pub object_index: usize,
+    pub rights: u64,
+}
+
+#[derive(Clone, Copy)]
+pub struct BootNamespaceConfig {
+    pub id: &'static str,
+    pub entries: [Option<BootNamespaceEntryConfig>; MAX_NAMESPACE_ENTRIES],
+    pub entry_count: usize,
+}
+
+#[derive(Clone, Copy)]
 pub struct BootGrantConfig {
     pub process_index: usize,
     pub cap_slot: u64,
@@ -265,6 +283,8 @@ pub struct BootRuntimeConfig {
     pci_device_count: usize,
     virtio_devices: [Option<BootVirtioDeviceConfig>; MAX_OBJECTS],
     virtio_device_count: usize,
+    namespaces: [Option<BootNamespaceConfig>; MAX_BOOT_NAMESPACES],
+    namespace_count: usize,
     grants: [Option<BootGrantConfig>; MAX_BOOT_GRANTS],
     grant_count: usize,
 }
@@ -458,6 +478,21 @@ struct VirtioDeviceObject {
 }
 
 #[derive(Clone, Copy)]
+struct NamespaceEntry {
+    path: &'static str,
+    object: KernelObjectId,
+    rights: u64,
+}
+
+#[derive(Clone, Copy)]
+struct NamespaceObject {
+    id: KernelObjectId,
+    name: &'static str,
+    entries: [Option<NamespaceEntry>; MAX_NAMESPACE_ENTRIES],
+    entry_count: usize,
+}
+
+#[derive(Clone, Copy)]
 struct ProcessControlObject {
     id: KernelObjectId,
     name: &'static str,
@@ -489,6 +524,7 @@ enum KernelObject {
     DmaRegion(DmaRegionObject),
     PciDevice(PciDeviceObject),
     VirtioDevice(VirtioDeviceObject),
+    Namespace(NamespaceObject),
     ProcessControl(ProcessControlObject),
     Secret(SecretObject),
 }
@@ -523,6 +559,7 @@ struct RuntimeState {
     dma_region_ids: [Option<KernelObjectId>; MAX_OBJECTS],
     pci_device_ids: [Option<KernelObjectId>; MAX_OBJECTS],
     virtio_device_ids: [Option<KernelObjectId>; MAX_OBJECTS],
+    namespace_ids: [Option<KernelObjectId>; MAX_BOOT_NAMESPACES],
     timer_id: Option<KernelObjectId>,
     process_control_id: Option<KernelObjectId>,
     secret_id: Option<KernelObjectId>,
@@ -982,6 +1019,35 @@ impl VirtioDeviceObject {
     }
 }
 
+impl NamespaceObject {
+    const fn new(
+        id: KernelObjectId,
+        name: &'static str,
+        entries: [Option<NamespaceEntry>; MAX_NAMESPACE_ENTRIES],
+        entry_count: usize,
+    ) -> Self {
+        Self {
+            id,
+            name,
+            entries,
+            entry_count,
+        }
+    }
+
+    fn resolve(&self, path: &[u8]) -> Option<NamespaceEntry> {
+        let mut index = 0;
+        while index < self.entry_count {
+            if let Some(entry) = self.entries[index]
+                && entry.path.as_bytes() == path
+            {
+                return Some(entry);
+            }
+            index += 1;
+        }
+        None
+    }
+}
+
 impl ProcessControlObject {
     const fn new(id: KernelObjectId, name: &'static str) -> Self {
         Self { id, name }
@@ -1254,6 +1320,28 @@ impl ObjectTable {
         Ok(id)
     }
 
+    fn add_namespace(
+        &mut self,
+        name: &'static str,
+        entries: [Option<NamespaceEntry>; MAX_NAMESPACE_ENTRIES],
+        entry_count: usize,
+    ) -> Result<KernelObjectId, InitError> {
+        if self.count == self.objects.len() {
+            return Err(InitError::ObjectTableFull);
+        }
+
+        let id = KernelObjectId(self.next_id);
+        self.next_id += 1;
+        self.objects[self.count] = Some(KernelObject::Namespace(NamespaceObject::new(
+            id,
+            name,
+            entries,
+            entry_count,
+        )));
+        self.count += 1;
+        Ok(id)
+    }
+
     fn add_process_control(&mut self, name: &'static str) -> Result<KernelObjectId, InitError> {
         if self.count == self.objects.len() {
             return Err(InitError::ObjectTableFull);
@@ -1356,6 +1444,20 @@ impl ObjectTable {
         None
     }
 
+    fn get_network_port(&self, id: KernelObjectId) -> Option<NetworkPortObject> {
+        let mut index = 0;
+        while index < self.count {
+            if let Some(KernelObject::NetworkPort(port)) = self.objects[index]
+                && port.id == id
+            {
+                return Some(port);
+            }
+            index += 1;
+        }
+
+        None
+    }
+
     fn get_timer(&self, id: KernelObjectId) -> Option<TimerObject> {
         let mut index = 0;
         while index < self.count {
@@ -1419,6 +1521,34 @@ impl ObjectTable {
                 && region.id == id
             {
                 return Some(region);
+            }
+            index += 1;
+        }
+
+        None
+    }
+
+    fn get_virtio_device(&self, id: KernelObjectId) -> Option<VirtioDeviceObject> {
+        let mut index = 0;
+        while index < self.count {
+            if let Some(KernelObject::VirtioDevice(device)) = self.objects[index]
+                && device.id == id
+            {
+                return Some(device);
+            }
+            index += 1;
+        }
+
+        None
+    }
+
+    fn get_namespace(&self, id: KernelObjectId) -> Option<NamespaceObject> {
+        let mut index = 0;
+        while index < self.count {
+            if let Some(KernelObject::Namespace(namespace)) = self.objects[index]
+                && namespace.id == id
+            {
+                return Some(namespace);
             }
             index += 1;
         }
@@ -1645,6 +1775,7 @@ impl RuntimeState {
             dma_region_ids: [None; MAX_OBJECTS],
             pci_device_ids: [None; MAX_OBJECTS],
             virtio_device_ids: [None; MAX_OBJECTS],
+            namespace_ids: [None; MAX_BOOT_NAMESPACES],
             timer_id: None,
             process_control_id: None,
             secret_id: None,
@@ -1666,6 +1797,7 @@ impl RuntimeState {
         self.dma_region_ids = [None; MAX_OBJECTS];
         self.pci_device_ids = [None; MAX_OBJECTS];
         self.virtio_device_ids = [None; MAX_OBJECTS];
+        self.namespace_ids = [None; MAX_BOOT_NAMESPACES];
         self.timer_id = None;
         self.process_control_id = None;
         self.secret_id = None;
@@ -1799,6 +1931,8 @@ impl BootRuntimeConfig {
             pci_device_count: 0,
             virtio_devices: [None; MAX_OBJECTS],
             virtio_device_count: 0,
+            namespaces: [None; MAX_BOOT_NAMESPACES],
+            namespace_count: 0,
             grants: [None; MAX_BOOT_GRANTS],
             grant_count: 0,
         }
@@ -1906,6 +2040,18 @@ impl BootRuntimeConfig {
         Ok(())
     }
 
+    pub fn add_namespace(&mut self, namespace: BootNamespaceConfig) -> Result<(), InitError> {
+        if self.namespace_count == self.namespaces.len() {
+            return Err(InitError::ObjectTableFull);
+        }
+        if namespace.entry_count > MAX_NAMESPACE_ENTRIES {
+            return Err(InitError::InvalidBootManifest);
+        }
+        self.namespaces[self.namespace_count] = Some(namespace);
+        self.namespace_count += 1;
+        Ok(())
+    }
+
     pub fn add_grant(&mut self, grant: BootGrantConfig) -> Result<(), InitError> {
         if self.grant_count == self.grants.len() {
             return Err(InitError::CapabilityTableFull);
@@ -1934,6 +2080,7 @@ impl BootRuntimeConfig {
             BOOT_OBJECT_DMA_REGION if grant.object_index < self.dma_region_count => {}
             BOOT_OBJECT_PCI_DEVICE if grant.object_index < self.pci_device_count => {}
             BOOT_OBJECT_VIRTIO_DEVICE if grant.object_index < self.virtio_device_count => {}
+            BOOT_OBJECT_NAMESPACE if grant.object_index < self.namespace_count => {}
             BOOT_OBJECT_ENDPOINT
             | BOOT_OBJECT_STORE
             | BOOT_OBJECT_STATE
@@ -1944,7 +2091,8 @@ impl BootRuntimeConfig {
             | BOOT_OBJECT_INTERRUPT_LINE
             | BOOT_OBJECT_DMA_REGION
             | BOOT_OBJECT_PCI_DEVICE
-            | BOOT_OBJECT_VIRTIO_DEVICE => return Err(InitError::InvalidBootManifest),
+            | BOOT_OBJECT_VIRTIO_DEVICE
+            | BOOT_OBJECT_NAMESPACE => return Err(InitError::InvalidBootManifest),
             _ => return Err(InitError::InvalidBootManifest),
         }
         self.grants[self.grant_count] = Some(grant);
@@ -2221,6 +2369,30 @@ pub fn init_from_boot_config(config: &'static BootRuntimeConfig) -> Result<(), I
     }
 
     runtime.timer_id = Some(runtime.objects.add_timer("monotonic-timer")?);
+
+    let mut namespace_index = 0;
+    while namespace_index < config.namespace_count {
+        let namespace = config.namespaces[namespace_index].ok_or(InitError::InvalidBootManifest)?;
+        let mut entries = [None; MAX_NAMESPACE_ENTRIES];
+        let mut entry_index = 0;
+        while entry_index < namespace.entry_count {
+            let entry = namespace.entries[entry_index].ok_or(InitError::InvalidBootManifest)?;
+            let object = namespace_entry_object_id(runtime, entry)?;
+            entries[entry_index] = Some(NamespaceEntry {
+                path: entry.path,
+                object,
+                rights: entry.rights,
+            });
+            entry_index += 1;
+        }
+        runtime.namespace_ids[namespace_index] = Some(runtime.objects.add_namespace(
+            namespace.id,
+            entries,
+            namespace.entry_count,
+        )?);
+        namespace_index += 1;
+    }
+
     runtime.secret_id = Some(
         runtime
             .objects
@@ -2421,7 +2593,29 @@ fn grant_object_id(
         BOOT_OBJECT_VIRTIO_DEVICE => {
             runtime.virtio_device_ids[grant.object_index].ok_or(InitError::InvalidBootManifest)
         }
+        BOOT_OBJECT_NAMESPACE => {
+            runtime.namespace_ids[grant.object_index].ok_or(InitError::InvalidBootManifest)
+        }
         _ => Err(InitError::InvalidBootManifest),
+    }
+}
+
+fn namespace_entry_object_id(
+    runtime: &RuntimeState,
+    entry: BootNamespaceEntryConfig,
+) -> Result<KernelObjectId, InitError> {
+    match entry.object_kind {
+        BOOT_OBJECT_NAMESPACE => Err(InitError::InvalidBootManifest),
+        object_kind => grant_object_id(
+            runtime,
+            BootGrantConfig {
+                process_index: 0,
+                cap_slot: 0,
+                object_kind,
+                object_index: entry.object_index,
+                rights: entry.rights,
+            },
+        ),
     }
 }
 
@@ -3616,6 +3810,175 @@ pub fn secret_read(cap_slot: u64, destination: *mut u8, max_len: usize) -> Resul
     Ok(copy_len)
 }
 
+pub fn virtio_device_probe(cap_slot: u64) -> Result<(), IpcError> {
+    let device = virtio_device_from_cap(cap_slot, capability::RIGHT_CONTROL)?;
+    serial::write_str("Virtio device probe accepted: proc=");
+    serial::write_str(current_process_name());
+    serial::write_str(" virtio-device=");
+    serial::write_str(device.name);
+    serial::write_str(" transport=");
+    serial::write_str(device.transport);
+    serial::write_str("\n");
+    Ok(())
+}
+
+pub fn virtio_rng_read(
+    cap_slot: u64,
+    destination: *mut u8,
+    max_len: usize,
+) -> Result<usize, IpcError> {
+    let device = virtio_device_from_cap(cap_slot, capability::RIGHT_CONTROL)?;
+    if !device.name.contains("rng") {
+        return Err(IpcError::BadCapability);
+    }
+    let copy_len = min(max_len, 32);
+    let mut bytes = [0u8; 32];
+    let mut seed = read_tsc() ^ device.id.raw().wrapping_mul(0x9e37_79b9_7f4a_7c15);
+    let mut index = 0;
+    while index < copy_len {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        bytes[index] = (seed >> ((index % 8) * 8)) as u8;
+        index += 1;
+    }
+    usercopy::copy_to_user(UserPtr::new(destination as u64), &bytes[..copy_len])
+        .map_err(|_| IpcError::InvalidUserBuffer)?;
+
+    serial::write_str("Virtio RNG read accepted: proc=");
+    serial::write_str(current_process_name());
+    serial::write_str(" virtio-device=");
+    serial::write_str(device.name);
+    serial::write_str(" bytes=");
+    serial::write_u64_dec(copy_len as u64);
+    serial::write_str("\n");
+    Ok(copy_len)
+}
+
+pub fn virtio_net_tx(cap_slot: u64, source: *const u8, len: usize) -> Result<(), IpcError> {
+    if len > MAX_MESSAGE_BYTES {
+        return Err(IpcError::MessageTooLarge);
+    }
+    let device = virtio_device_from_cap(cap_slot, capability::RIGHT_CONTROL)?;
+    if !device.name.contains("net") {
+        return Err(IpcError::BadCapability);
+    }
+    let mut frame = [0u8; MAX_MESSAGE_BYTES];
+    usercopy::copy_from_user(&mut frame, UserPtr::new(source as u64), len)
+        .map_err(|_| IpcError::InvalidUserBuffer)?;
+
+    serial::write_str("Virtio net TX accepted: proc=");
+    serial::write_str(current_process_name());
+    serial::write_str(" virtio-device=");
+    serial::write_str(device.name);
+    serial::write_str(" frame-bytes=");
+    serial::write_u64_dec(len as u64);
+    serial::write_str("\n");
+    Ok(())
+}
+
+pub fn virtio_net_rx(
+    cap_slot: u64,
+    destination: *mut u8,
+    max_len: usize,
+) -> Result<usize, IpcError> {
+    let device = virtio_device_from_cap(cap_slot, capability::RIGHT_CONTROL)?;
+    if !device.name.contains("net") {
+        return Err(IpcError::BadCapability);
+    }
+    if max_len < 64 {
+        return Err(IpcError::MessageTooLarge);
+    }
+    let mut frame = [0u8; 64];
+    frame[12] = 0x08;
+    frame[13] = 0x00;
+    frame[14] = 0x45;
+    frame[23] = 1;
+    frame[34] = 8;
+    usercopy::copy_to_user(UserPtr::new(destination as u64), &frame)
+        .map_err(|_| IpcError::InvalidUserBuffer)?;
+
+    serial::write_str("Virtio net RX accepted: proc=");
+    serial::write_str(current_process_name());
+    serial::write_str(" virtio-device=");
+    serial::write_str(device.name);
+    serial::write_str(" frame-bytes=64\n");
+    Ok(frame.len())
+}
+
+pub fn network_send_udp(cap_slot: u64, source: *const u8, len: usize) -> Result<(), IpcError> {
+    if len > MAX_MESSAGE_BYTES {
+        return Err(IpcError::MessageTooLarge);
+    }
+    let port = network_port_from_cap(cap_slot, capability::RIGHT_BIND | capability::RIGHT_LISTEN)?;
+    let mut payload = [0u8; MAX_MESSAGE_BYTES];
+    usercopy::copy_from_user(&mut payload, UserPtr::new(source as u64), len)
+        .map_err(|_| IpcError::InvalidUserBuffer)?;
+
+    serial::write_str("UDP send accepted: proc=");
+    serial::write_str(current_process_name());
+    serial::write_str(" network-port=");
+    serial::write_str(port.name);
+    serial::write_str(" bytes=");
+    serial::write_u64_dec(len as u64);
+    serial::write_str("\n");
+    Ok(())
+}
+
+pub fn namespace_resolve(
+    cap_slot: u64,
+    path: *const u8,
+    path_len: usize,
+    target_slot: u64,
+) -> Result<(), IpcError> {
+    if path_len > 128 {
+        return Err(IpcError::MessageTooLarge);
+    }
+    let namespace = namespace_from_cap(cap_slot, capability::RIGHT_RESOLVE)?;
+    let mut path_bytes = [0u8; 128];
+    usercopy::copy_from_user(&mut path_bytes, UserPtr::new(path as u64), path_len)
+        .map_err(|_| IpcError::InvalidUserBuffer)?;
+    let Some(entry) = namespace.resolve(&path_bytes[..path_len]) else {
+        serial::write_str("Namespace resolve rejected: proc=");
+        serial::write_str(current_process_name());
+        serial::write_str(" namespace=");
+        serial::write_str(namespace.name);
+        serial::write_str(" path=");
+        serial::write_ascii_bytes(&path_bytes[..path_len]);
+        serial::write_str("\n");
+        return Err(IpcError::BadCapability);
+    };
+
+    let namespace_cap = lookup_capability(cap_slot, capability::RIGHT_RESOLVE)?;
+    let runtime = runtime();
+    let owner = runtime
+        .processes
+        .current_process()
+        .map(|process| process.pid)
+        .ok_or(IpcError::BadCapability)?;
+    let cap = runtime.new_capability(entry.object, entry.rights, owner, namespace_cap.id, owner);
+    let Some(process) = runtime.processes.current_process_mut() else {
+        return Err(IpcError::BadCapability);
+    };
+    process
+        .caps
+        .grant(target_slot, cap)
+        .map_err(|_| IpcError::BadCapability)?;
+
+    serial::write_str("Namespace resolve accepted: proc=");
+    serial::write_str(process.name);
+    serial::write_str(" namespace=");
+    serial::write_str(namespace.name);
+    serial::write_str(" path=");
+    serial::write_ascii_bytes(&path_bytes[..path_len]);
+    serial::write_str(" target_cap[");
+    serial::write_u64_dec(target_slot);
+    serial::write_str("] rights=");
+    print_rights(entry.rights);
+    serial::write_str("\n");
+    Ok(())
+}
+
 pub fn io_read(cap_slot: u64, port: u64) -> Result<u64, IpcError> {
     let range = io_port_from_cap(cap_slot, capability::RIGHT_READ)?;
     if !port_span_in_range(range, port, 1) || port > u16::MAX as u64 {
@@ -4232,6 +4595,17 @@ fn timer_from_cap(cap_slot: u64, required_right: u64) -> Result<TimerObject, Ipc
         .ok_or(IpcError::BadCapability)
 }
 
+fn network_port_from_cap(
+    cap_slot: u64,
+    required_right: u64,
+) -> Result<NetworkPortObject, IpcError> {
+    let cap = lookup_capability(cap_slot, required_right)?;
+    runtime()
+        .objects
+        .get_network_port(cap.object)
+        .ok_or(IpcError::BadCapability)
+}
+
 fn io_port_from_cap(cap_slot: u64, required_right: u64) -> Result<IoPortRangeObject, IpcError> {
     let cap = lookup_capability(cap_slot, required_right)?;
     runtime()
@@ -4264,6 +4638,25 @@ fn dma_region_from_cap(cap_slot: u64, required_right: u64) -> Result<DmaRegionOb
     runtime()
         .objects
         .get_dma_region(cap.object)
+        .ok_or(IpcError::BadCapability)
+}
+
+fn virtio_device_from_cap(
+    cap_slot: u64,
+    required_right: u64,
+) -> Result<VirtioDeviceObject, IpcError> {
+    let cap = lookup_capability(cap_slot, required_right)?;
+    runtime()
+        .objects
+        .get_virtio_device(cap.object)
+        .ok_or(IpcError::BadCapability)
+}
+
+fn namespace_from_cap(cap_slot: u64, required_right: u64) -> Result<NamespaceObject, IpcError> {
+    let cap = lookup_capability(cap_slot, required_right)?;
+    runtime()
+        .objects
+        .get_namespace(cap.object)
         .ok_or(IpcError::BadCapability)
 }
 
@@ -4548,6 +4941,11 @@ fn write_capability_object_report(
                     report.push_str(device.transport);
                     return;
                 }
+                KernelObject::Namespace(namespace) if namespace.id == object => {
+                    report.push_str("namespace=");
+                    report.push_str(namespace.name);
+                    return;
+                }
                 KernelObject::ProcessControl(process_control) if process_control.id == object => {
                     report.push_str("process-control=");
                     report.push_str(process_control.name);
@@ -4617,6 +5015,7 @@ fn write_rights_report(report: &mut InspectReport, rights: u64) {
         "inspect-metadata",
         wrote,
     );
+    wrote = write_right_report(report, rights, capability::RIGHT_RESOLVE, "resolve", wrote);
 
     if !wrote {
         report.push_str("none");
@@ -4786,6 +5185,11 @@ fn print_capability_object(object: KernelObjectId) {
                     serial::write_str(device.transport);
                     return;
                 }
+                KernelObject::Namespace(namespace) if namespace.id == object => {
+                    serial::write_str("namespace=");
+                    serial::write_str(namespace.name);
+                    return;
+                }
                 KernelObject::ProcessControl(process_control) if process_control.id == object => {
                     serial::write_str("process-control=");
                     serial::write_str(process_control.name);
@@ -4858,6 +5262,7 @@ fn print_rights(rights: u64) {
         "inspect-metadata",
         wrote,
     );
+    wrote = print_right(rights, capability::RIGHT_RESOLVE, "resolve", wrote);
 
     if !wrote {
         serial::write_str("none");

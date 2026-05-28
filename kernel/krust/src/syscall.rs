@@ -47,6 +47,12 @@ const SYS_IO_WRITE32: u64 = 36;
 const SYS_PROCESS_START: u64 = 37;
 const SYS_PROCESS_KILL: u64 = 38;
 const SYS_SECRET_READ: u64 = 39;
+const SYS_VIRTIO_DEVICE_PROBE: u64 = 40;
+const SYS_VIRTIO_RNG_READ: u64 = 41;
+const SYS_VIRTIO_NET_TX: u64 = 42;
+const SYS_VIRTIO_NET_RX: u64 = 43;
+const SYS_NETWORK_SEND_UDP: u64 = 44;
+const SYS_NAMESPACE_RESOLVE: u64 = 45;
 
 const STATUS_OK: u64 = 0;
 const STATUS_BAD_CAPABILITY: u64 = u64::MAX - 1;
@@ -326,6 +332,42 @@ pub extern "C" fn krust_syscall_dispatch(
             Ok(len) => frame.rax = len as u64,
             Err(error) => frame.rax = ipc_error_status("SYS_SECRET_READ", error),
         },
+        SYS_VIRTIO_DEVICE_PROBE => match ipc::virtio_device_probe(arg0) {
+            Ok(()) => frame.rax = STATUS_OK,
+            Err(error) => frame.rax = ipc_error_status("SYS_VIRTIO_DEVICE_PROBE", error),
+        },
+        SYS_VIRTIO_RNG_READ => match ipc::virtio_rng_read(
+            arg0,
+            arg1 as *mut u8,
+            usize::try_from(arg2).unwrap_or(usize::MAX),
+        ) {
+            Ok(len) => frame.rax = len as u64,
+            Err(error) => frame.rax = ipc_error_status("SYS_VIRTIO_RNG_READ", error),
+        },
+        SYS_VIRTIO_NET_TX => match ipc::virtio_net_tx(
+            arg0,
+            arg1 as *const u8,
+            usize::try_from(arg2).unwrap_or(usize::MAX),
+        ) {
+            Ok(()) => frame.rax = STATUS_OK,
+            Err(error) => frame.rax = ipc_error_status("SYS_VIRTIO_NET_TX", error),
+        },
+        SYS_VIRTIO_NET_RX => match ipc::virtio_net_rx(
+            arg0,
+            arg1 as *mut u8,
+            usize::try_from(arg2).unwrap_or(usize::MAX),
+        ) {
+            Ok(len) => frame.rax = len as u64,
+            Err(error) => frame.rax = ipc_error_status("SYS_VIRTIO_NET_RX", error),
+        },
+        SYS_NETWORK_SEND_UDP => match ipc::network_send_udp(
+            arg0,
+            arg1 as *const u8,
+            usize::try_from(arg2).unwrap_or(usize::MAX),
+        ) {
+            Ok(()) => frame.rax = STATUS_OK,
+            Err(error) => frame.rax = ipc_error_status("SYS_NETWORK_SEND_UDP", error),
+        },
         SYS_IRQ_WAIT => match ipc::irq_wait(arg0, arg1) {
             Ok(()) => frame.rax = STATUS_OK,
             Err(error) => frame.rax = ipc_error_status("SYS_IRQ_WAIT", error),
@@ -350,6 +392,14 @@ pub extern "C" fn krust_syscall_dispatch(
             Ok(()) => frame.rax = STATUS_OK,
             Err(error) => frame.rax = ipc_error_status("SYS_DMA_MAP", error),
         },
+        SYS_NAMESPACE_RESOLVE => {
+            let path_len = usize::try_from(arg2 & 0xffff_ffff).unwrap_or(usize::MAX);
+            let target_slot = arg2 >> 32;
+            match ipc::namespace_resolve(arg0, arg1 as *const u8, path_len, target_slot) {
+                Ok(()) => frame.rax = STATUS_OK,
+                Err(error) => frame.rax = ipc_error_status("SYS_NAMESPACE_RESOLVE", error),
+            }
+        }
         _ => {
             serial::write_str("Unknown userspace syscall: ");
             serial::write_u64_dec(number);

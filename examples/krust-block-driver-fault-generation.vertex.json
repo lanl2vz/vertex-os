@@ -298,6 +298,17 @@
       }
     },
     {
+      "id": "device:virtio-console0",
+      "kind": "virtio-console-pci",
+      "selector": {
+        "channel": "shell"
+      },
+      "driver": "svc:serial-driver",
+      "properties": {
+        "transport": "virtio-pci-io"
+      }
+    },
+    {
       "id": "device:virtio-blk0",
       "kind": "virtio-blk-pci",
       "selector": {
@@ -306,6 +317,28 @@
         "irq": 11
       },
       "driver": "svc:block-driver",
+      "properties": {
+        "transport": "virtio-pci-io"
+      }
+    },
+    {
+      "id": "device:virtio-rng0",
+      "kind": "virtio-rng-pci",
+      "selector": {
+        "source": "qemu-rng"
+      },
+      "driver": "svc:netstack",
+      "properties": {
+        "transport": "virtio-pci-io"
+      }
+    },
+    {
+      "id": "device:virtio-net0",
+      "kind": "virtio-net-pci",
+      "selector": {
+        "netdev": "user"
+      },
+      "driver": "svc:netstack",
       "properties": {
         "transport": "virtio-pci-io"
       }
@@ -375,7 +408,7 @@
       }
     },
     {
-      "id": "cap:net.tcp.8080",
+      "id": "cap:net.udp.9000",
       "kind": "network-port",
       "provider": "svc:netstack",
       "rights": [
@@ -383,9 +416,28 @@
         "bind"
       ],
       "properties": {
-        "protocol": "tcp",
-        "port": 8080,
-        "hostedSimulation": "supervisor-passes-listening-fd"
+        "protocol": "udp",
+        "port": 9000,
+        "hostedSimulation": "supervisor-passes-udp-endpoint"
+      }
+    },
+    {
+      "id": "cap:namespace.echo",
+      "kind": "namespace",
+      "provider": "svc:vertex-supervisor",
+      "rights": [
+        "resolve"
+      ],
+      "properties": {
+        "entries": [
+          {
+            "path": "/state/a",
+            "capability": "cap:state.counter.request",
+            "rights": [
+              "send"
+            ]
+          }
+        ]
       }
     },
     {
@@ -711,7 +763,7 @@
         }
       ],
       "provides": [
-        "cap:net.tcp.8080"
+        "cap:net.udp.9000"
       ],
       "state": [],
       "secrets": [],
@@ -720,7 +772,10 @@
         "memoryMaxBytes": 67108864,
         "cpuShares": 100
       },
-      "health": null,
+      "health": {
+        "kind": "ipc-ping",
+        "target": "cap:net.udp.9000"
+      },
       "lifecycle": {
         "startAfter": [
           "svc:vertex-supervisor"
@@ -896,7 +951,7 @@
       "executable": "exe:echo-server",
       "args": [
         "--listen",
-        "cap:net.tcp.8080"
+        "cap:net.udp.9000"
       ],
       "env": {},
       "requires": [
@@ -913,9 +968,16 @@
           ]
         },
         {
-          "capability": "cap:net.tcp.8080",
+          "capability": "cap:net.udp.9000",
           "rights": [
-            "listen"
+            "listen",
+            "bind"
+          ]
+        },
+        {
+          "capability": "cap:namespace.echo",
+          "rights": [
+            "resolve"
           ]
         }
       ],

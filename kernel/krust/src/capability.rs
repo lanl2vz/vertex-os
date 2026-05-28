@@ -26,6 +26,7 @@ pub const RIGHT_DERIVE: u64 = 1 << 19;
 pub const RIGHT_SEAL: u64 = 1 << 20;
 pub const RIGHT_UNSEAL: u64 = 1 << 21;
 pub const RIGHT_INSPECT_METADATA: u64 = 1 << 22;
+pub const RIGHT_RESOLVE: u64 = 1 << 23;
 
 #[derive(Clone, Copy)]
 pub struct ObjectId(u64);
@@ -225,6 +226,7 @@ fn print_rights(rights: u64) {
     wrote = print_right(rights, RIGHT_SEAL, "seal", wrote);
     wrote = print_right(rights, RIGHT_UNSEAL, "unseal", wrote);
     wrote = print_right(rights, RIGHT_INSPECT_METADATA, "inspect-metadata", wrote);
+    wrote = print_right(rights, RIGHT_RESOLVE, "resolve", wrote);
 
     if !wrote {
         serial::write_str("none");

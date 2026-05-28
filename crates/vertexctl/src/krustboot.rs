@@ -4,8 +4,8 @@ use std::fs;
 use std::path::PathBuf;
 use vertex_ir::{GenerationManifest, Service};
 
-const COMPACT_MAGIC: &[u8; 16] = b"KRUSTBOOTM55\0\0\0\0";
-const COMPACT_VERSION: u16 = 5;
+const COMPACT_MAGIC: &[u8; 16] = b"KRUSTBOOTM60\0\0\0\0";
+const COMPACT_VERSION: u16 = 6;
 const V1_MAGIC: &[u8; 16] = b"KRUSTBOOTV1\0\0\0\0\0";
 const V1_VERSION: u16 = 1;
 const V1_HEADER_SIZE: usize = 164;
@@ -13,7 +13,7 @@ const V1_CHECKSUM_OFFSET: usize = 32;
 const V1_RECORD_SIZE: usize = 12;
 const V1_RECORD_COUNT: usize = 9;
 const V1_PAYLOAD_OFFSET: usize = V1_HEADER_SIZE + V1_RECORD_COUNT * V1_RECORD_SIZE;
-const COMPACT_HEADER_SIZE: usize = 172;
+const COMPACT_HEADER_SIZE: usize = 174;
 const STRING_LEN: usize = 64;
 const BOOT_MODULE_RECORD_LEN: usize = STRING_LEN * 2;
 const PROCESS_REF_LIST_LEN: usize = 2 + MAX_PROCESS_REFS * 2;
@@ -31,10 +31,11 @@ const INTERRUPT_LINE_RECORD_LEN: usize = STRING_LEN + 8;
 const DMA_REGION_RECORD_LEN: usize = STRING_LEN + 16;
 const PCI_DEVICE_RECORD_LEN: usize = STRING_LEN * 2;
 const VIRTIO_DEVICE_RECORD_LEN: usize = STRING_LEN * 2;
+const NAMESPACE_ENTRY_RECORD_LEN: usize = STRING_LEN + 8;
 const MAX_BOOT_MODULES: usize = 16;
 const MAX_PROCESSES: usize = 16;
 const MAX_ENDPOINTS: usize = 16;
-const MAX_GRANTS: usize = 64;
+const MAX_GRANTS: usize = 96;
 const MAX_STORE_OBJECTS: usize = 32;
 const MAX_STATE_VOLUMES: usize = 4;
 const MAX_NETWORK_PORTS: usize = 4;
@@ -44,6 +45,8 @@ const MAX_INTERRUPT_LINES: usize = 4;
 const MAX_DMA_REGIONS: usize = 4;
 const MAX_PCI_DEVICES: usize = 4;
 const MAX_VIRTIO_DEVICES: usize = 4;
+const MAX_NAMESPACES: usize = 4;
+const MAX_NAMESPACE_ENTRIES: usize = 4;
 const MAX_PROCESS_REFS: usize = 4;
 const DMA_KERNEL_ALLOCATED_BASE: u64 = u64::MAX;
 const RIGHT_SEND: u16 = 1 << 0;
@@ -56,6 +59,7 @@ const RIGHT_CONTROL: u16 = 1 << 6;
 const RIGHT_BIND: u16 = 1 << 7;
 const RIGHT_LISTEN: u16 = 1 << 8;
 const RIGHT_MAP: u16 = 1 << 9;
+const RIGHT_RESOLVE: u16 = 1 << 10;
 const OBJECT_ENDPOINT: u16 = 1;
 const OBJECT_STORE: u16 = 2;
 const OBJECT_STATE: u16 = 3;
@@ -67,6 +71,7 @@ const OBJECT_INTERRUPT_LINE: u16 = 8;
 const OBJECT_DMA_REGION: u16 = 9;
 const OBJECT_PCI_DEVICE: u16 = 10;
 const OBJECT_VIRTIO_DEVICE: u16 = 11;
+const OBJECT_NAMESPACE: u16 = 12;
 const RECORD_BOOT_MODULE: u16 = 1;
 const RECORD_PROCESS: u16 = 2;
 const RECORD_ENDPOINT: u16 = 3;
@@ -112,6 +117,7 @@ pub fn compile(manifest: &GenerationManifest) -> Result<Vec<u8>, String> {
     push_count(&mut body, plan.dma_regions.len(), "dma_regions")?;
     push_count(&mut body, plan.pci_devices.len(), "pci_devices")?;
     push_count(&mut body, plan.virtio_devices.len(), "virtio_devices")?;
+    push_count(&mut body, plan.namespaces.len(), "namespaces")?;
     push_fixed_str(&mut body, &manifest.generation.id)?;
     push_fixed_str(
         &mut body,
@@ -196,6 +202,21 @@ pub fn compile(manifest: &GenerationManifest) -> Result<Vec<u8>, String> {
         push_fixed_str(&mut body, &device.transport)?;
     }
 
+    for namespace in &plan.namespaces {
+        push_fixed_str(&mut body, &namespace.id)?;
+        push_count(&mut body, namespace.entries.len(), "namespace_entries")?;
+        for entry in &namespace.entries {
+            push_fixed_str(&mut body, &entry.path)?;
+            push_u16(&mut body, entry.object_kind);
+            push_u16(
+                &mut body,
+                object_index_for_kind(&plan, entry.object_kind, &entry.object_name)? as u16,
+            );
+            push_u16(&mut body, entry.rights);
+            push_u16(&mut body, 0);
+        }
+    }
+
     wrap_v1(manifest, &plan, &body)
 }
 
@@ -220,6 +241,7 @@ pub fn summary(manifest: &GenerationManifest, output_path: &str, byte_len: usize
          dma_regions: {}\n\
          pci_devices: {}\n\
          virtio_devices: {}\n\
+         namespaces: {}\n\
          bytes: {byte_len}",
         manifest.generation.id,
         manifest.generation.parent.as_deref().unwrap_or("<none>"),
@@ -235,7 +257,8 @@ pub fn summary(manifest: &GenerationManifest, output_path: &str, byte_len: usize
         plan.interrupt_lines.len(),
         plan.dma_regions.len(),
         plan.pci_devices.len(),
-        plan.virtio_devices.len()
+        plan.virtio_devices.len(),
+        plan.namespaces.len()
     )
 }
 
@@ -355,6 +378,7 @@ struct BootPlan {
     dma_regions: Vec<DmaRegion>,
     pci_devices: Vec<PciDevice>,
     virtio_devices: Vec<VirtioDevice>,
+    namespaces: Vec<Namespace>,
 }
 
 #[derive(Debug, Clone)]
@@ -451,6 +475,20 @@ struct PciDevice {
 struct VirtioDevice {
     id: String,
     transport: String,
+}
+
+#[derive(Debug, Clone)]
+struct Namespace {
+    id: String,
+    entries: Vec<NamespaceEntry>,
+}
+
+#[derive(Debug, Clone)]
+struct NamespaceEntry {
+    path: String,
+    object_kind: u16,
+    object_name: String,
+    rights: u16,
 }
 
 fn derive_plan(manifest: &GenerationManifest) -> Result<BootPlan, String> {
@@ -696,6 +734,7 @@ fn derive_plan(manifest: &GenerationManifest) -> Result<BootPlan, String> {
     let mut dma_regions = Vec::new();
     let mut pci_devices = Vec::new();
     let mut virtio_devices = Vec::new();
+    let mut namespaces = Vec::new();
     let mut next_object_slots = initial_object_cap_slots(&processes);
     add_vertex_store_verifier_grants(&mut grants, &store_objects, &processes);
     reserve_vertex_store_verifier_slots(&mut next_object_slots, &processes);
@@ -758,6 +797,20 @@ fn derive_plan(manifest: &GenerationManifest) -> Result<BootPlan, String> {
                     grants.push(Grant {
                         process: process_name.clone(),
                         object_kind: OBJECT_NETWORK_PORT,
+                        object_name: capability.id.clone(),
+                        cap_slot: next_object_cap_slot(&mut next_object_slots, &process_name)?,
+                        rights: rights_mask(
+                            &requirement.rights,
+                            &capability.rights,
+                            &capability.id,
+                        )?,
+                    });
+                }
+                "namespace" => {
+                    push_unique_namespace(&mut namespaces, manifest, capability)?;
+                    grants.push(Grant {
+                        process: process_name.clone(),
+                        object_kind: OBJECT_NAMESPACE,
                         object_name: capability.id.clone(),
                         cap_slot: next_object_cap_slot(&mut next_object_slots, &process_name)?,
                         rights: rights_mask(
@@ -894,6 +947,7 @@ fn derive_plan(manifest: &GenerationManifest) -> Result<BootPlan, String> {
         dma_regions,
         pci_devices,
         virtio_devices,
+        namespaces,
     })
 }
 
@@ -1107,6 +1161,128 @@ fn store_hash_hex(bytes: &[u8]) -> String {
 fn push_unique_network_port(ports: &mut Vec<NetworkPort>, port_id: String) {
     if !ports.iter().any(|port| port.id == port_id) {
         ports.push(NetworkPort { id: port_id });
+    }
+}
+
+fn push_unique_namespace(
+    namespaces: &mut Vec<Namespace>,
+    manifest: &GenerationManifest,
+    capability: &vertex_ir::Capability,
+) -> Result<(), String> {
+    if namespaces
+        .iter()
+        .any(|namespace| namespace.id == capability.id)
+    {
+        return Ok(());
+    }
+
+    let entries = capability
+        .properties
+        .get("entries")
+        .and_then(Value::as_array)
+        .ok_or_else(|| format!("namespace capability {} missing entries", capability.id))?;
+    if entries.is_empty() {
+        return Err(format!(
+            "namespace capability {} has no entries",
+            capability.id
+        ));
+    }
+    if entries.len() > MAX_NAMESPACE_ENTRIES {
+        return Err(format!(
+            "namespace capability {} exceeds {MAX_NAMESPACE_ENTRIES} entries",
+            capability.id
+        ));
+    }
+
+    let mut parsed = Vec::new();
+    let mut paths = BTreeSet::new();
+    for entry in entries {
+        let path = value_str(entry, "path")
+            .ok_or_else(|| format!("namespace capability {} entry missing path", capability.id))?;
+        if !path.starts_with('/') {
+            return Err(format!(
+                "namespace capability {} entry path {path} must be absolute",
+                capability.id
+            ));
+        }
+        if !paths.insert(path.to_owned()) {
+            return Err(format!(
+                "namespace capability {} duplicates path {path}",
+                capability.id
+            ));
+        }
+        let capability_id = value_str(entry, "capability").ok_or_else(|| {
+            format!(
+                "namespace capability {} entry {path} missing capability",
+                capability.id
+            )
+        })?;
+        let target = manifest.capability(capability_id).ok_or_else(|| {
+            format!(
+                "namespace capability {} entry {path} references unknown capability {capability_id}",
+                capability.id
+            )
+        })?;
+        let rights = entry
+            .get("rights")
+            .and_then(Value::as_array)
+            .map(|rights| {
+                rights
+                    .iter()
+                    .map(|right| {
+                        right.as_str().map(str::to_owned).ok_or_else(|| {
+                            format!(
+                                "namespace capability {} entry {path} has non-string right",
+                                capability.id
+                            )
+                        })
+                    })
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .transpose()?
+            .unwrap_or_else(|| target.rights.clone());
+        parsed.push(NamespaceEntry {
+            path: path.to_owned(),
+            object_kind: object_kind_for_capability(target)?,
+            object_name: object_name_for_capability(target),
+            rights: rights_mask(&rights, &target.rights, capability_id)?,
+        });
+    }
+
+    namespaces.push(Namespace {
+        id: capability.id.clone(),
+        entries: parsed,
+    });
+    Ok(())
+}
+
+fn object_kind_for_capability(capability: &vertex_ir::Capability) -> Result<u16, String> {
+    match capability.kind.as_str() {
+        "ipc-endpoint" => Ok(OBJECT_ENDPOINT),
+        "store-object" => Ok(OBJECT_STORE),
+        "timer" => Ok(OBJECT_TIMER),
+        "network-port" => Ok(OBJECT_NETWORK_PORT),
+        "io-port" => Ok(OBJECT_IO_PORT_RANGE),
+        "mmio-region" => Ok(OBJECT_MMIO_REGION),
+        "interrupt-line" => Ok(OBJECT_INTERRUPT_LINE),
+        "dma-region" => Ok(OBJECT_DMA_REGION),
+        "virtio-device" => Ok(OBJECT_VIRTIO_DEVICE),
+        "namespace" => Ok(OBJECT_NAMESPACE),
+        other => Err(format!(
+            "namespace entries cannot resolve capability kind {other}"
+        )),
+    }
+}
+
+fn object_name_for_capability(capability: &vertex_ir::Capability) -> String {
+    match capability.kind.as_str() {
+        "timer" => "monotonic-timer".to_owned(),
+        "store-object" | "io-port" | "mmio-region" | "interrupt-line" | "dma-region" => {
+            capability.id.clone()
+        }
+        "ipc-endpoint" => endpoint_name(&capability.id),
+        "network-port" | "virtio-device" | "namespace" => capability.id.clone(),
+        _ => capability.id.clone(),
     }
 }
 
@@ -1437,6 +1613,11 @@ fn next_object_cap_slot(slots: &mut BTreeMap<String, u16>, process: &str) -> Res
     let slot = slots
         .get_mut(process)
         .ok_or_else(|| format!("unknown process {process} for cap slot allocation"))?;
+    while *slot == SERIAL_RESERVED_CAP_SLOT || *slot == READINESS_RESERVED_CAP_SLOT {
+        *slot = slot
+            .checked_add(1)
+            .ok_or_else(|| format!("cap slot overflow for process {process}"))?;
+    }
     let out = *slot;
     *slot = slot
         .checked_add(1)
@@ -1515,6 +1696,11 @@ fn validate_plan(plan: &BootPlan) -> Result<(), String> {
     if plan.virtio_devices.len() > MAX_VIRTIO_DEVICES {
         return Err(format!(
             "native boot plan exceeds {MAX_VIRTIO_DEVICES} virtio devices"
+        ));
+    }
+    if plan.namespaces.len() > MAX_NAMESPACES {
+        return Err(format!(
+            "native boot plan exceeds {MAX_NAMESPACES} namespaces"
         ));
     }
 
@@ -1598,6 +1784,35 @@ fn validate_plan(plan: &BootPlan) -> Result<(), String> {
     for device in &plan.virtio_devices {
         if !virtio_device_names.insert(device.id.as_str()) {
             return Err(format!("duplicate virtio device {}", device.id));
+        }
+    }
+
+    let mut namespace_names = BTreeSet::new();
+    for namespace in &plan.namespaces {
+        if !namespace_names.insert(namespace.id.as_str()) {
+            return Err(format!("duplicate namespace {}", namespace.id));
+        }
+        if namespace.entries.is_empty() || namespace.entries.len() > MAX_NAMESPACE_ENTRIES {
+            return Err(format!(
+                "namespace {} must contain 1..={MAX_NAMESPACE_ENTRIES} entries",
+                namespace.id
+            ));
+        }
+        let mut paths = BTreeSet::new();
+        for entry in &namespace.entries {
+            if !paths.insert(entry.path.as_str()) {
+                return Err(format!(
+                    "namespace {} duplicates path {}",
+                    namespace.id, entry.path
+                ));
+            }
+            object_index_for_kind(plan, entry.object_kind, &entry.object_name)?;
+            if entry.object_kind == OBJECT_NAMESPACE || entry.rights == 0 {
+                return Err(format!(
+                    "namespace {} entry {} has invalid target",
+                    namespace.id, entry.path
+                ));
+            }
         }
     }
 
@@ -1769,6 +1984,7 @@ fn rights_mask(required: &[String], capability: &[String], context: &str) -> Res
             "bind" => mask |= RIGHT_BIND,
             "listen" => mask |= RIGHT_LISTEN,
             "map" => mask |= RIGHT_MAP,
+            "resolve" => mask |= RIGHT_RESOLVE,
             other => return Err(format!("unsupported native right {other} for {context}")),
         }
     }
@@ -1948,21 +2164,37 @@ fn virtio_device_index(plan: &BootPlan, id: &str) -> Result<usize, String> {
         .ok_or_else(|| format!("unknown virtio device {id}"))
 }
 
-fn object_index(plan: &BootPlan, grant: &Grant) -> Result<usize, String> {
-    match grant.object_kind {
-        OBJECT_ENDPOINT => endpoint_index(plan, &grant.object_name),
-        OBJECT_STORE => store_index(plan, &grant.object_name),
-        OBJECT_STATE => state_index(plan, &grant.object_name),
-        OBJECT_TIMER if grant.object_name == "monotonic-timer" => Ok(0),
-        OBJECT_NETWORK_PORT => network_port_index(plan, &grant.object_name),
-        OBJECT_IO_PORT_RANGE => io_port_index(plan, &grant.object_name),
-        OBJECT_MMIO_REGION => mmio_region_index(plan, &grant.object_name),
-        OBJECT_INTERRUPT_LINE => interrupt_line_index(plan, &grant.object_name),
-        OBJECT_DMA_REGION => dma_region_index(plan, &grant.object_name),
-        OBJECT_PCI_DEVICE => pci_device_index(plan, &grant.object_name),
-        OBJECT_VIRTIO_DEVICE => virtio_device_index(plan, &grant.object_name),
+fn namespace_index(plan: &BootPlan, id: &str) -> Result<usize, String> {
+    plan.namespaces
+        .iter()
+        .position(|namespace| namespace.id == id)
+        .ok_or_else(|| format!("unknown namespace {id}"))
+}
+
+fn object_index_for_kind(
+    plan: &BootPlan,
+    object_kind: u16,
+    object_name: &str,
+) -> Result<usize, String> {
+    match object_kind {
+        OBJECT_ENDPOINT => endpoint_index(plan, object_name),
+        OBJECT_STORE => store_index(plan, object_name),
+        OBJECT_STATE => state_index(plan, object_name),
+        OBJECT_TIMER if object_name == "monotonic-timer" => Ok(0),
+        OBJECT_NETWORK_PORT => network_port_index(plan, object_name),
+        OBJECT_IO_PORT_RANGE => io_port_index(plan, object_name),
+        OBJECT_MMIO_REGION => mmio_region_index(plan, object_name),
+        OBJECT_INTERRUPT_LINE => interrupt_line_index(plan, object_name),
+        OBJECT_DMA_REGION => dma_region_index(plan, object_name),
+        OBJECT_PCI_DEVICE => pci_device_index(plan, object_name),
+        OBJECT_VIRTIO_DEVICE => virtio_device_index(plan, object_name),
+        OBJECT_NAMESPACE => namespace_index(plan, object_name),
         other => Err(format!("unsupported native object kind {other}")),
     }
+}
+
+fn object_index(plan: &BootPlan, grant: &Grant) -> Result<usize, String> {
+    object_index_for_kind(plan, grant.object_kind, &grant.object_name)
 }
 
 fn push_process_ref_list(
@@ -2060,6 +2292,7 @@ struct BodySections {
     dma_regions: (usize, usize),
     pci_devices: (usize, usize),
     virtio_devices: (usize, usize),
+    namespaces: (usize, usize),
 }
 
 fn wrap_v1(manifest: &GenerationManifest, plan: &BootPlan, body: &[u8]) -> Result<Vec<u8>, String> {
@@ -2149,7 +2382,8 @@ fn wrap_v1(manifest: &GenerationManifest, plan: &BootPlan, body: &[u8]) -> Resul
             + sections.interrupt_lines.1
             + sections.dma_regions.1
             + sections.pci_devices.1
-            + sections.virtio_devices.1,
+            + sections.virtio_devices.1
+            + sections.namespaces.1,
     )?;
     debug_assert_eq!(bytes.len(), payload_offset);
 
@@ -2160,7 +2394,7 @@ fn wrap_v1(manifest: &GenerationManifest, plan: &BootPlan, body: &[u8]) -> Resul
 
 impl BodySections {
     fn new(plan: &BootPlan) -> Self {
-        let generation = (44, STRING_LEN * 2);
+        let generation = (46, STRING_LEN * 2);
         let boot_modules = (
             COMPACT_HEADER_SIZE,
             plan.boot_modules.len() * BOOT_MODULE_RECORD_LEN,
@@ -2213,6 +2447,12 @@ impl BodySections {
             pci_devices.0 + pci_devices.1,
             plan.virtio_devices.len() * VIRTIO_DEVICE_RECORD_LEN,
         );
+        let namespace_len = plan
+            .namespaces
+            .iter()
+            .map(|namespace| STRING_LEN + 2 + namespace.entries.len() * NAMESPACE_ENTRY_RECORD_LEN)
+            .sum();
+        let namespaces = (virtio_devices.0 + virtio_devices.1, namespace_len);
 
         Self {
             generation,
@@ -2229,6 +2469,7 @@ impl BodySections {
             dma_regions,
             pci_devices,
             virtio_devices,
+            namespaces,
         }
     }
 }

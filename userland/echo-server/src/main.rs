@@ -39,10 +39,10 @@ fn run() -> Result<(), String> {
         }
     }
 
-    if find_cap(&caps, "cap:net.tcp.8080", "listen").is_some() {
-        println!("{service_id}: can listen on cap:net.tcp.8080");
+    if find_cap(&caps, "cap:net.udp.9000", "listen").is_some() {
+        println!("{service_id}: can listen on cap:net.udp.9000");
     } else {
-        println!("{service_id}: cannot listen on cap:net.tcp.8080");
+        println!("{service_id}: cannot listen on cap:net.udp.9000");
     }
 
     Ok(())

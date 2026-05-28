@@ -6,7 +6,7 @@ IR and graph semantics; Krust is the native enforcement path.
 
 ## Status Summary
 
-Current status: M14-M55 are implemented and smoke-tested under
+Current status: M14-M60 are implemented and smoke-tested under
 `qemu-system-x86_64` with Limine. M39 pins the native toolchain, M40 makes
 native IPC directed, and M41 adds a native console shell path over explicit
 console authority. M42 adds the first real virtio-blk sector I/O path over
@@ -18,7 +18,11 @@ transactions, and M47 loads service executables only through verified native
 store objects. M48 adds PID-based dynamic process creation, M49 adds immutable
 config objects, M50 adds native secret authority, M51-M53 add package/link/build
 graph CLI boundaries, M54 boots the first stateful appliance transcript, and
-M55 formalizes user-space driver objects and native device ownership.
+M55 formalizes user-space driver objects and native device ownership. M56 adds
+virtio-console, virtio-rng, and virtio-net capability paths. M57 adds the first
+cap-mediated network send/receive path. M58 records the POSIX compatibility
+plan, M59 adds capability namespaces, and M60 adds human-readable policy and
+typed prototype compilation into the existing boot path.
 
 ```sh
 make -C kernel/krust doctor
@@ -55,10 +59,15 @@ scripts/krust-test.sh m49-config-corrupt
 scripts/krust-test.sh m50
 scripts/krust-test.sh m54
 scripts/krust-test.sh m55
+scripts/krust-test.sh m56
+scripts/krust-test.sh m57
+scripts/krust-test.sh m59
+scripts/krust-test.sh m60
 ```
 
-Next direction: grow the virtio device stack, networking, and the higher level
-language boundary on top of the M55 appliance and driver baseline.
+Next direction: continue past the M60 policy and namespace baseline toward
+broader device coverage and compatibility personalities without reintroducing
+ambient authority.
 
 ## M0: Serial Boot
 
@@ -1458,7 +1467,7 @@ done: locked Cargo dependencies for the hosted workspace, Krust kernel, and nati
 done: kernel/krust/rust-toolchain.toml pins Rust 1.95.0, rustfmt, and x86_64-unknown-none
 done: make doctor checks every required tool and reports actionable fixes
 done: legacy hello/ipc userspace crates are removed instead of carried forward
-done: single release-gate script runs the clean-clone M14-M55 proof with the M14-M55 QEMU matrix
+done: single release-gate script runs the clean-clone M14-M60 proof with the M14-M60 QEMU matrix
 ```
 
 Acceptance tests:
@@ -1516,7 +1525,7 @@ done: scripts/krust-test.sh m40 proves the directed IPC ABI and FIFO queue behav
 
 Status: done.
 
-Goal: turn the M14-M55 native proof into a small real operating system target:
+Goal: turn the M14-M60 native proof into a small real operating system target:
 bootable in QEMU, persistent, inspectable, updateable, and capable of running
 several native services under explicit authority.
 
@@ -2226,7 +2235,7 @@ done: M55 user-space driver framework is checked by the gate
 
 ## M56: Virtio Device Stack
 
-Status: planned.
+Status: done.
 
 Goal: grow beyond virtio-blk into the QEMU-friendly device set needed for a
 usable appliance and development loop.
@@ -2248,9 +2257,26 @@ virtio-net driver can send and receive raw frames
 unauthorized service cannot access virtio devices
 ```
 
+Implementation notes:
+
+- KrustBoot payload version 6 is the only accepted compact device-manifest
+  format. It carries the M56-M60 virtio and namespace sections directly; the
+  previous M55 payload identity is not accepted as a compatibility mode.
+- `virtio-console`, `virtio-rng`, and `virtio-net` are native
+  `VirtioDevice` capability objects. `vertexctl` grants them only to the
+  declared driver service.
+- `SYS_VIRTIO_DEVICE_PROBE`, `SYS_VIRTIO_RNG_READ`, `SYS_VIRTIO_NET_TX`, and
+  `SYS_VIRTIO_NET_RX` all resolve through the caller's process-local
+  capability table and reject the wrong object kind or missing rights.
+- `serial-driver` probes the console device, `netstack` reads RNG bytes and
+  sends/receives raw net frames, and `echo` proves an unauthorized virtio-net
+  call is rejected.
+
+done: M56 virtio device stack is checked by the gate
+
 ## M57: Networking v0
 
-Status: planned.
+Status: done.
 
 Goal: add the smallest useful network path after storage and the appliance
 model are stable.
@@ -2276,9 +2302,21 @@ network authority is endpoint/capability mediated
 unauthorized service cannot use network device
 ```
 
+Implementation notes:
+
+- The M57 QEMU case attaches QEMU user-mode networking and the generation graph
+  exposes only `cap:net.udp.9000` as a network-port authority.
+- `SYS_NETWORK_SEND_UDP` consumes a `NetworkPort` capability with bind/listen
+  rights. The raw virtio-net device remains a separate driver-only capability.
+- `netstack` proves raw frame RX/TX and ICMP-style echo handling in the native
+  transcript; `echo` proves UDP send authority through the endpoint-style
+  network-port capability and proves it still cannot use the virtio-net device.
+
+done: M57 networking v0 is checked by the gate
+
 ## M58: POSIX Compatibility Plan
 
-Status: planned.
+Status: done.
 
 Goal: write the compatibility architecture before implementing it.
 
@@ -2301,9 +2339,11 @@ Acceptance artifact:
 docs/posix-personality-v0.md
 ```
 
+done: M58 POSIX compatibility plan is checked by the gate
+
 ## M59: Capability Namespace Service
 
-Status: planned.
+Status: done.
 
 Goal: add path-like convenience without creating a global Unix namespace.
 
@@ -2332,9 +2372,23 @@ service A cannot resolve /state/b
 inspect shows namespace grants
 ```
 
+Implementation notes:
+
+- Namespace objects are first-class KrustBoot objects and runtime capabilities,
+  not a global filesystem. The only namespace right is `resolve`.
+- Each namespace entry maps an absolute path to an existing non-namespace
+  capability object plus attenuated rights. Resolution installs a derived cap in
+  the caller-selected target slot.
+- The hello generation grants `svc:echo-server` a namespace containing
+  `/state/a` and `svc:state-reader` a different namespace containing
+  `/state/b`; the M59 case checks both grants and the `/state/b` denial from
+  service A.
+
+done: M59 capability namespace service is checked by the gate
+
 ## M60: Human-Readable Policy and Typed Vertex Prototype
 
-Status: planned.
+Status: done.
 
 Goal: introduce a readable system definition layer only after the runtime
 semantics have been proven by the appliance path.
@@ -2365,6 +2419,21 @@ invalid missing capability rejected before boot
 valid system boots in QEMU
 ```
 
+Implementation notes:
+
+- `vertexctl compile-policy` reads `examples/policy.vertex`, validates the
+  service/capability declarations against the template manifest, and emits a
+  normal generation manifest.
+- `vertexctl compile-typed` uses the same validation path for the typed
+  prototype syntax. Missing capability wiring is rejected before any boot
+  artifact is generated.
+- The M60 case compiles policy and typed examples, rejects
+  `examples/invalid-missing-capability.vertex`, compiles the resulting
+  KrustBoot manifest, writes VertexDisk metadata, and boots the valid policy
+  generation under QEMU.
+
+done: M60 policy and typed prototype are checked by the gate
+
 ## Later Direction
 
 Avoid these until the persistent appliance, update path, and native store are
@@ -2388,7 +2457,7 @@ install verified generations, run dynamically created services, preserve
 mutable state, explain its authority graph, and recover from failed updates.
 ```
 
-M13 proved that native services can run under explicit authority. M14-M55 prove
+M13 proved that native services can run under explicit authority. M14-M60 prove
 that the graph itself decides which native services exist, when they start,
 what they receive, why they are allowed to communicate, and how authority and
 resources are bounded, while timer preemption and user fault containment keep
@@ -2400,4 +2469,7 @@ turns that block path into a checked VertexDisk layout with persistent state.
 M44-M47 move boot selection, store-object verification, update commits, and
 service executable loading onto the native verified-store path. M48-M55 move
 process creation, config, secrets, package/link/build boundaries, and the first
-appliance transcript onto that same native path.
+appliance transcript onto that same native path. M56-M60 add the remaining
+QEMU-friendly virtio devices, the first UDP-capable network path, the POSIX
+compatibility plan, capability namespaces, and human-readable policy plus typed
+prototype compilation.

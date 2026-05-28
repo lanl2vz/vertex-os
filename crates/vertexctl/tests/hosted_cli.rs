@@ -369,7 +369,7 @@ fn compile_boot_manifest_emits_krustboot_plan() {
     assert!(contains_bytes(&bytes, b"cap:dma.virtio-blk0"));
     assert!(contains_bytes(&bytes, b"device:virtio-blk0"));
     assert!(contains_bytes(&bytes, b"virtio-pci-io"));
-    assert!(contains_bytes(&bytes, b"cap:net.tcp.8080"));
+    assert!(contains_bytes(&bytes, b"cap:net.udp.9000"));
 }
 
 #[test]

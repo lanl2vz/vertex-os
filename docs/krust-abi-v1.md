@@ -5,7 +5,7 @@ native Krust QEMU/Limine milestone. It is intentionally small and unstable. Its
 current job is to boot native `vertex-init`, create services from verified
 process templates, and enforce explicit process-local capabilities.
 
-Milestone status: ABI v1 now covers the M14-M55 native activation and substrate
+Milestone status: ABI v1 now covers the M14-M60 native activation and substrate
 proof. M25 adds the release gate. M26-M29 add Manifest v1 parsing, capability
 provenance/revocation, typed arena allocation checks, and resource quotas.
 M30-M31 add PIT-backed preemption and user page-fault containment. M32-M36 add
@@ -21,7 +21,10 @@ state, and journal data. M44-M47 add native boot-manager state, verified store
 object identities, native update transactions, and process executable loading
 through verified store objects. M48-M55 replace fixed runtime process slots
 with PID-based process creation, add native config and secret authority,
-and add the first package/link/build/appliance surface. The ABI is still
+and add the first package/link/build/appliance surface. M56-M60 add explicit
+virtio-console/rng/net device operations, UDP network-port send authority,
+capability namespace resolution, and the policy/typed source layer that compiles
+into the same generation manifest contract. The ABI is still
 intentionally small, but this subset is the current native contract.
 
 ## Machine ABI
@@ -102,6 +105,12 @@ process frame, switch CR3, and return into another userspace process through
 | 37 | `SYS_PROCESS_START` | `arg0 = process_control_cap_slot`, `arg1 = pid`, `arg2 = 0` | status |
 | 38 | `SYS_PROCESS_KILL` | `arg0 = process_control_cap_slot`, `arg1 = pid`, `arg2 = status` | status |
 | 39 | `SYS_SECRET_READ` | `arg0 = secret_cap_slot`, `arg1 = user_ptr`, `arg2 = max_len` | byte count or error status |
+| 40 | `SYS_VIRTIO_DEVICE_PROBE` | `arg0 = virtio_device_cap_slot` | status |
+| 41 | `SYS_VIRTIO_RNG_READ` | `arg0 = virtio_rng_cap_slot`, `arg1 = user_ptr`, `arg2 = max_len` | byte count or error status |
+| 42 | `SYS_VIRTIO_NET_TX` | `arg0 = virtio_net_cap_slot`, `arg1 = frame_ptr`, `arg2 = frame_len` | status |
+| 43 | `SYS_VIRTIO_NET_RX` | `arg0 = virtio_net_cap_slot`, `arg1 = frame_ptr`, `arg2 = max_len` | byte count or error status |
+| 44 | `SYS_NETWORK_SEND_UDP` | `arg0 = network_port_cap_slot`, `arg1 = payload_ptr`, `arg2 = payload_len` | status |
+| 45 | `SYS_NAMESPACE_RESOLVE` | `arg0 = namespace_cap_slot`, `arg1 = path_ptr`, `arg2 = target_slot << 32 \| path_len` | status |
 
 ## Return Status Values
 
@@ -141,7 +150,7 @@ becoming uncontrolled kernel faults.
 Capabilities are process-local. A capability slot number is meaningful only in
 the current process's capability space.
 
-Current M14-M55 layout:
+Current M14-M60 layout:
 
 ```text
 vertex-init:
@@ -165,6 +174,13 @@ serial-driver:
   cap[1] = endpoint serial-log, rights=send
   cap[2] = endpoint readiness, rights=send
   cap[3] = io-port cap:io.com1, rights=read|write
+  cap[5] = virtio-device device:virtio-console0, rights=control
+
+netstack:
+  cap[1] = endpoint serial-log, rights=send
+  cap[2] = endpoint readiness, rights=send
+  cap[3] = virtio-device device:virtio-rng0, rights=control
+  cap[5] = virtio-device device:virtio-net0, rights=control
 
 block-driver:
   cap[0] = endpoint vertex-store-block-request, rights=receive
@@ -204,7 +220,8 @@ vertex-inspect:
 
 echo:
   cap[1] = endpoint serial-log, rights=send
-  cap[3] = network-port cap:net.tcp.8080, rights=listen
+  cap[3] = network-port cap:net.udp.9000, rights=bind|listen
+  cap[4] = namespace cap:namespace.echo, rights=resolve
   cap[0] = endpoint log-sink, rights=send after vertex-init derives and transfers it
 
 model-reader:
@@ -220,6 +237,7 @@ reader-service:
   cap[0] = endpoint state-reader-state-reply, rights=receive
   cap[1] = endpoint serial-log, rights=send
   cap[3] = endpoint state-counter-request, rights=send after vertex-init derives and transfers it
+  cap[4] = namespace cap:namespace.reader, rights=resolve
 
 timer-service:
   cap[0] = timer monotonic-timer, rights=control
@@ -272,20 +290,30 @@ SYS_IO_WRITE, SYS_IO_WRITE16, and SYS_IO_WRITE32 require write rights on an io-p
 SYS_IRQ_WAIT requires listen rights on an interrupt-line cap.
 SYS_MMIO_MAP requires map rights on an mmio-region cap.
 SYS_DMA_MAP requires read, write, and map rights on a dma-region cap.
+SYS_VIRTIO_DEVICE_PROBE requires control rights on a virtio-device cap.
+SYS_VIRTIO_RNG_READ requires control rights on a virtio-device cap whose device ID is the RNG device.
+SYS_VIRTIO_NET_TX and SYS_VIRTIO_NET_RX require control rights on a virtio-device cap whose device ID is the network device.
+SYS_NETWORK_SEND_UDP requires bind and listen rights on a network-port cap.
+SYS_NAMESPACE_RESOLVE requires resolve rights on a namespace cap and installs only the configured attenuated target capability.
 ```
 
-Native network-port objects currently grant bind/listen authority to declared
-services; the proof path records and enforces the capability object, but does
-not yet include a network driver syscall that consumes it.
+Native network-port objects grant bind/listen authority to declared services.
+M57 consumes that object through `SYS_NETWORK_SEND_UDP`; raw virtio-net TX/RX
+remains a separate driver capability and is not implied by network-port access.
 
 Native I/O objects now cover the first hardware authority substrate:
 `IoPortRange`, `MmioRegion`, `InterruptLine`, `DmaRegion`, `PciDevice`, and
 `VirtioDevice`. `DmaRegion` authority is represented and granted to
 `block-driver`; `SYS_DMA_MAP` maps the region into the calling driver and
 returns `{ virtual_base, physical_base, length }`. `PciDevice` and
-`VirtioDevice` are M55 ownership objects: they are granted only to the declared
+`VirtioDevice` are ownership objects: they are granted only to the declared
 driver service and are intentionally not exposed to unprivileged consumers by
 default.
+
+Namespace objects are capability objects, not ambient paths. A namespace maps
+absolute names to existing non-namespace capability objects with explicit
+attenuated rights. Resolution requires `resolve`, writes the derived capability
+into the caller-selected slot, and fails if the path is absent.
 
 Capability records carry kernel-owned metadata:
 

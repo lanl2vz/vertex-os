@@ -101,7 +101,7 @@ gen:hello-0001
 svc:logd
 svc:echo-server
 cap:log.sink
-cap:net.tcp.8080
+cap:net.udp.9000
 state:postgres-data
 store:blake3-f00d...-logd
 ```
@@ -347,11 +347,11 @@ Example:
   "id": "svc:echo-server",
   "name": "echo-server",
   "executable": "exe:echo-server",
-  "args": ["--listen", "cap:net.tcp.8080"],
+  "args": ["--listen", "cap:net.udp.9000"],
   "env": {},
   "requires": [
     { "capability": "cap:log.sink", "rights": ["send"] },
-    { "capability": "cap:net.tcp.8080", "rights": ["listen"] }
+    { "capability": "cap:net.udp.9000", "rights": ["bind", "listen"] }
   ],
   "provides": ["cap:echo.api"],
   "state": [],
@@ -565,7 +565,7 @@ Possible mappings:
 
 ```text
 ipc-endpoint     -> Unix domain socket or inherited file descriptor
-network-port     -> supervisor binds socket and passes fd
+network-port     -> supervisor binds a UDP socket and passes fd
 store-read       -> read-only bind mount or path env var
 state-volume     -> temporary directory or bind mount
 secret-read      -> inherited pipe/fd, never environment variable if avoidable
@@ -593,7 +593,7 @@ The kernel does not evaluate the high-level graph. It only sees compact capabili
 The first meaningful graph should have:
 
 - `svc:logd` providing `cap:log.sink`
-- `svc:netstack` providing `cap:net.tcp.8080`
+- `svc:netstack` providing `cap:net.udp.9000`
 - `svc:echo-server` requiring both and providing `cap:echo.api`
 
 This is sufficient to prove:

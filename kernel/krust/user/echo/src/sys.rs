@@ -21,6 +21,9 @@ const SYS_IO_WRITE: u64 = 28;
 const SYS_IRQ_WAIT: u64 = 29;
 const SYS_DMA_MAP: u64 = 32;
 const SYS_SECRET_READ: u64 = 39;
+const SYS_VIRTIO_NET_TX: u64 = 42;
+const SYS_NETWORK_SEND_UDP: u64 = 44;
+const SYS_NAMESPACE_RESOLVE: u64 = 45;
 
 pub fn ipc_send(cap_slot: u64, message: &[u8]) -> u64 {
     syscall3(
@@ -109,6 +112,33 @@ pub fn secret_read(cap_slot: u64, buffer: &mut [u8]) -> u64 {
         cap_slot,
         buffer.as_mut_ptr() as u64,
         buffer.len() as u64,
+    )
+}
+
+pub fn virtio_net_tx(cap_slot: u64, frame: &[u8]) -> u64 {
+    syscall3(
+        SYS_VIRTIO_NET_TX,
+        cap_slot,
+        frame.as_ptr() as u64,
+        frame.len() as u64,
+    )
+}
+
+pub fn network_send_udp(cap_slot: u64, payload: &[u8]) -> u64 {
+    syscall3(
+        SYS_NETWORK_SEND_UDP,
+        cap_slot,
+        payload.as_ptr() as u64,
+        payload.len() as u64,
+    )
+}
+
+pub fn namespace_resolve(cap_slot: u64, path: &[u8], target_slot: u64) -> u64 {
+    syscall3(
+        SYS_NAMESPACE_RESOLVE,
+        cap_slot,
+        path.as_ptr() as u64,
+        (target_slot << 32) | path.len() as u64,
     )
 }
 

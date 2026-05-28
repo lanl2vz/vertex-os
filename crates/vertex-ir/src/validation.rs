@@ -324,6 +324,7 @@ fn is_valid_right(right: &str) -> bool {
             | "restore"
             | "delegate"
             | "revoke"
+            | "resolve"
     )
 }
 

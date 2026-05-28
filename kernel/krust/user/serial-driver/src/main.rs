@@ -9,6 +9,7 @@ const CAP_SERIAL_INPUT: u64 = 0;
 const CAP_SERIAL_LOG: u64 = 1;
 const CAP_READINESS: u64 = 2;
 const CAP_COM1: u64 = 3;
+const CAP_VIRTIO_CONSOLE: u64 = 5;
 const COM1: u64 = 0x3f8;
 const COM1_LINE_STATUS: u64 = COM1 + 5;
 const PROTOCOL_HEALTH_V0: u16 = 2;
@@ -20,6 +21,11 @@ const ENVELOPE_LEN: usize = 16;
 pub extern "C" fn _start() -> ! {
     log(b"serial-driver ready");
     log(b"serial-driver has COM1 I/O port capability");
+    if sys::virtio_probe(CAP_VIRTIO_CONSOLE) != sys::STATUS_OK {
+        log(b"serial-driver virtio-console probe failed");
+        sys::exit(1);
+    }
+    log(b"virtio-console replaces raw serial shell transport");
 
     if sys::io_read(CAP_COM1, COM1_LINE_STATUS) == sys::STATUS_BAD_CAPABILITY {
         log(b"serial-driver COM1 read failed");

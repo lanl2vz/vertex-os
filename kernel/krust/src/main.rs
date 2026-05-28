@@ -1086,6 +1086,40 @@ fn build_boot_runtime_config(
     }
 
     index = 0;
+    while index < boot_manifest.namespace_count() {
+        let namespace = boot_manifest.namespace(index)?;
+        let mut entries = [None; boot_manifest::MAX_NAMESPACE_ENTRIES];
+        let mut entry_index = 0;
+        while entry_index < namespace.entry_count {
+            let entry = namespace.entries[entry_index]?;
+            let rights = capability_rights_from_boot(entry.rights);
+            if rights == 0 {
+                serial::write_str("KrustBoot runtime plan failed: empty namespace rights\n");
+                return None;
+            }
+            entries[entry_index] = Some(ipc::BootNamespaceEntryConfig {
+                path: entry.path,
+                object_kind: entry.object_kind,
+                object_index: entry.object_index,
+                rights,
+            });
+            entry_index += 1;
+        }
+        if config
+            .add_namespace(ipc::BootNamespaceConfig {
+                id: namespace.id,
+                entries,
+                entry_count: namespace.entry_count,
+            })
+            .is_err()
+        {
+            serial::write_str("KrustBoot runtime plan failed: namespace table\n");
+            return None;
+        }
+        index += 1;
+    }
+
+    index = 0;
     while index < boot_manifest.grant_count() {
         let grant = boot_manifest.grant(index)?;
         let rights = capability_rights_from_boot(grant.rights);
@@ -1170,6 +1204,9 @@ fn capability_rights_from_boot(rights: u16) -> u64 {
     }
     if rights & boot_manifest::RIGHT_MAP != 0 {
         out |= capability::RIGHT_MAP;
+    }
+    if rights & boot_manifest::RIGHT_RESOLVE != 0 {
+        out |= capability::RIGHT_RESOLVE;
     }
     out
 }
@@ -1854,6 +1891,36 @@ fn print_boot_manifest(manifest: &boot_manifest::Manifest<'static>) {
         }
         index += 1;
     }
+
+    serial::write_str("KrustBoot namespaces: ");
+    serial::write_u64_dec(manifest.namespace_count() as u64);
+    serial::write_str("\n");
+    index = 0;
+    while index < manifest.namespace_count() {
+        if let Some(namespace) = manifest.namespace(index) {
+            serial::write_str("  namespace[");
+            serial::write_u64_dec(index as u64);
+            serial::write_str("] id=");
+            serial::write_str(namespace.id);
+            serial::write_str(" entries=");
+            serial::write_u64_dec(namespace.entry_count as u64);
+            serial::write_str("\n");
+            let mut entry_index = 0;
+            while entry_index < namespace.entry_count {
+                if let Some(entry) = namespace.entries[entry_index] {
+                    serial::write_str("    path=");
+                    serial::write_str(entry.path);
+                    serial::write_str(" -> ");
+                    print_boot_grant_object(manifest, entry.object_kind, entry.object_index);
+                    serial::write_str(" rights=");
+                    print_boot_grant_rights(entry.rights);
+                    serial::write_str("\n");
+                }
+                entry_index += 1;
+            }
+        }
+        index += 1;
+    }
 }
 
 fn print_boot_grant_object(
@@ -1950,6 +2017,15 @@ fn print_boot_grant_object(
                     .unwrap_or("<bad>"),
             );
         }
+        boot_manifest::OBJECT_NAMESPACE => {
+            serial::write_str("namespace=");
+            serial::write_str(
+                manifest
+                    .namespace(object_index)
+                    .map(|namespace| namespace.id)
+                    .unwrap_or("<bad>"),
+            );
+        }
         _ => serial::write_str("object=<bad>"),
     }
 }
@@ -2023,6 +2099,13 @@ fn print_boot_grant_rights(rights: u16) {
         serial::write_str("listen");
         wrote = true;
     }
+    if rights & boot_manifest::RIGHT_RESOLVE != 0 {
+        if wrote {
+            serial::write_str("|");
+        }
+        serial::write_str("resolve");
+        wrote = true;
+    }
     if !wrote {
         serial::write_str("none");
     }
@@ -2057,6 +2140,10 @@ fn print_boot_manifest_error(error: boot_manifest::ParseError) {
         boot_manifest::ParseError::TooManyPciDevices => serial::write_str("too many pci devices"),
         boot_manifest::ParseError::TooManyVirtioDevices => {
             serial::write_str("too many virtio devices")
+        }
+        boot_manifest::ParseError::TooManyNamespaces => serial::write_str("too many namespaces"),
+        boot_manifest::ParseError::TooManyNamespaceEntries => {
+            serial::write_str("too many namespace entries")
         }
         boot_manifest::ParseError::InvalidString => serial::write_str("invalid string"),
         boot_manifest::ParseError::InvalidReference => serial::write_str("invalid reference"),

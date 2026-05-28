@@ -1,12 +1,13 @@
 # Krust Kernel
 
-Krust now covers the M14-M55 native graph-activation proof path, substrate
+Krust now covers the M14-M60 native graph-activation proof path, substrate
 hardening, reproducible build environment, directed IPC ABI v1, and native
-console shell plus minimal virtio-blk sector I/O, VertexDisk v0 persistence,
-native boot selection, verified store objects, native update transactions, and
-store-loaded service executables, dynamic process creation, native config and
-secret authority, package/link/build import boundaries, the first appliance
-transcript, and first-class native driver objects. M44-M55 are tracked in
+console shell plus virtio device I/O, VertexDisk v0 persistence, native boot
+selection, verified store objects, native update transactions, and store-loaded
+service executables, dynamic process creation, native config and secret
+authority, package/link/build import boundaries, the first appliance
+transcript, first-class native driver objects, capability namespaces, and
+policy/typed generation compilation. M44-M60 are tracked in
 `../../docs/krust-milestones.md`.
 
 The target is intentionally small:
@@ -37,7 +38,7 @@ Krust records non-initial KrustBoot process records as templates and allocates r
 Krust grants vertex-init cap[0] read rights to the manifest module
 Krust grants vertex-init cap[1] send rights to the serial-log endpoint
 Krust grants vertex-init cap[2] process-control authority with control, allocate, delegate, revoke, inspect, create, start, kill, and wait rights; cap[3] readiness receive authority; and per-endpoint attenuable endpoint authority starting at cap[4]
-Krust applies I/O port, IRQ, DMA, store-object, config, secret, endpoint, and timer authority only when a service is dynamically created from a matching template
+Krust applies I/O port, IRQ, DMA, virtio-device, network-port, namespace, store-object, config, secret, endpoint, and timer authority only when a service is dynamically created from a matching template
 Krust installs a minimal IDT for #UD, #GP, #PF, and PIT IRQ0
 Krust installs a TSS-backed ring-0 interrupt stack for user traps
 Krust programs the PIT/PIC timer path and preempts CPU-bound userspace
@@ -59,6 +60,9 @@ echo inspects, copies, moves, and revokes delegated authority
 echo drops its endpoint capability and denied authority stays rejected
 serial-driver writes COM1 through its own I/O port capability
 block-driver owns virtio-blk PCI I/O, IRQ, DMA, PCI-device, and virtio-device authority and serves separate VertexDisk block IPC endpoints for store and state
+serial-driver owns virtio-console authority, and netstack owns virtio-rng plus virtio-net authority
+echo sends a UDP probe through a network-port capability and proves it cannot use the raw virtio-net device
+echo and reader-service receive different namespace capabilities and resolve only their configured paths
 model-reader reads an immutable object through vertex-store and VertexDisk/block-driver
 counter-service and reader-service access mutable state through vertex-state persisted on VertexDisk
 vertex-inspect reads the generation graph and asks the kernel for a process/capability graph through inspect-only authority
@@ -75,8 +79,8 @@ Krust halts after `Native service activation ok`
 ```
 
 No unbounded general-purpose allocator, APIC-backed timer, advanced fault
-delivery, full interrupt handling, full JSON parsing in the kernel, filesystem,
-network stack, or filesystems are part of this native proof. Timer deadlines
+delivery, full interrupt handling, full JSON parsing in the kernel, full TCP/IP
+stack, or filesystems are part of this native proof. Timer deadlines
 now wake through the PIT interrupt path, bad userspace page faults are contained
 as process failures, and hardware-shaped authority is exposed only through
 explicit capability objects. The kernel consumes a compact KrustBoot Manifest v1
@@ -180,7 +184,7 @@ KrustBoot Manifest v1 records: 9
 KrustBoot boot modules: 13
 KrustBoot processes: 13
 KrustBoot endpoints: 12
-KrustBoot grants: 51
+KrustBoot grants: 60
 KrustBoot store objects: 14
 KrustBoot state volumes: 0
 KrustBoot network ports: 1
@@ -188,18 +192,23 @@ KrustBoot io port ranges: 3
 KrustBoot mmio regions: 0
 KrustBoot interrupt lines: 1
 KrustBoot dma regions: 1
-KrustBoot pci devices: 1
-KrustBoot virtio devices: 1
+KrustBoot pci devices: 4
+KrustBoot virtio devices: 4
+KrustBoot namespaces: 2
   grant[0] process=vertex-init cap[1] endpoint=serial-log rights=send
   grant[11] process=logd cap[0] endpoint=log-sink rights=receive
   grant[12] process=vertex-init cap[4] endpoint=log-sink rights=send
-  grant[13] process=echo cap[3] network-port=cap:net.tcp.8080 rights=listen
+  grant[13] process=echo cap[3] network-port=cap:net.udp.9000 rights=bind|listen
   grant[...] process=block-driver cap[6] io-port=cap:io.pci-config rights=read|write
   grant[...] process=block-driver cap[7] interrupt-line=cap:irq.virtio-blk0 rights=listen
   grant[...] process=block-driver cap[8] dma-region=cap:dma.virtio-blk0 rights=read|write|map
   grant[...] process=block-driver cap[9] io-port=cap:io.virtio-blk0 rights=read|write
   grant[...] process=block-driver cap[10] pci-device=device:virtio-blk0 rights=control
   grant[...] process=block-driver cap[11] virtio-device=device:virtio-blk0 rights=control
+  grant[...] process=serial-driver cap[5] virtio-device=device:virtio-console0 rights=control
+  grant[...] process=netstack cap[3] virtio-device=device:virtio-rng0 rights=control
+  grant[...] process=netstack cap[5] virtio-device=device:virtio-net0 rights=control
+  grant[...] process=echo cap[4] namespace=cap:namespace.echo rights=resolve
   grant[42] process=timer-service cap[0] timer=monotonic-timer rights=control
 io_port[1] id=cap:io.pci-config base=0x0000000000000cf8 length=0x0000000000000008
 io_port[2] id=cap:io.virtio-blk0 base=0x000000000000c000 length=0x0000000000001000
@@ -253,7 +262,7 @@ vertex-init manifest generation: gen:hello-0001
 vertex-init boot modules: 13
 vertex-init processes: 13
 vertex-init endpoints: 12
-vertex-init grants: 51
+vertex-init grants: 60
 vertex-init network ports: 1
 vertex-init store objects: 14
 vertex-init state volumes: 0
@@ -261,8 +270,9 @@ vertex-init io ports: 3
 vertex-init mmio regions: 0
 vertex-init interrupt lines: 1
 vertex-init dma regions: 1
-vertex-init pci devices: 1
-vertex-init virtio devices: 1
+vertex-init pci devices: 4
+vertex-init virtio devices: 4
+vertex-init namespaces: 2
 service with quota=1 endpoint can create one endpoint
 second endpoint creation fails
 init can delegate smaller quota
@@ -365,17 +375,17 @@ make smoke
 ```
 
 The smoke test boots QEMU headlessly, captures serial output to
-`build/serial.log`, and passes when it sees the M14-M55 directed IPC, console,
+`build/serial.log`, and passes when it sees the M14-M60 directed IPC, console,
 virtio-block, VertexDisk, verified store, update, store-executable, dynamic
-process, config, secret, package-boundary, and appliance transcript. The same
-check is available from the repository
+process, config, secret, package-boundary, appliance, virtio device, networking,
+namespace, and policy transcript. The same check is available from the repository
 root:
 
 ```sh
 scripts/krust-smoke.sh
 ```
 
-## M26-M55 Substrate Gate
+## M26-M60 Substrate Gate
 
 Run the clean-clone gate from the repository root:
 
@@ -390,19 +400,19 @@ make release-gate
 ```
 
 The gate checks script executability and shell syntax, verifies Makefile recipe
-parsing, checks Rust formatting and Markdown whitespace, confirms the M14-M55
+parsing, checks Rust formatting and Markdown whitespace, confirms the M14-M60
 documentation anchors, checks the pinned M39 toolchain and Cargo lockfiles, runs
 `cargo metadata --locked --offline` and `cargo build --locked --offline`,
 validates `examples/hello-generation.vertex.json`, runs `make doctor`, rebuilds
 from `make clean`, runs `make smoke`, checks package/link/build import commands,
-and then runs the M14-M55 QEMU cases:
+and then runs the M14-M60 QEMU cases:
 `m14`,
 `manifest-cycle`, `bad-cap`, `readiness-timeout`, `rollback`, `store-state-services`,
 `timer`, `preemption`, `user-fault`, `restart`, `manifest-v1`, `cap-lifecycle`,
 `typed-arenas`, `quotas`, `m32`, `m33`, `m34`, `m35`, `m36`, `m37`, `m38`, `m40`,
 `m41`, `m42`, `m42-driver-fault`, `m43`, `m43-bad-superblock`, `m44`, `m45`,
 `m46`, `m47`, `m47-corrupt-executable`, `m48`, `m49`,
-`m49-config-corrupt`, `m50`, `m54`, `m55`, and the
+`m49-config-corrupt`, `m50`, `m54`, `m55`, `m56`, `m57`, `m59`, `m60`, and the
 malformed-manifest cases. If the offline build
 fails, the gate prints the Cargo cache or vendoring prerequisite explicitly.
 
@@ -416,19 +426,20 @@ KrustBoot Manifest v1 records: 9
 KrustBoot boot modules: 13
 KrustBoot processes: 13
 KrustBoot endpoints: 12
-KrustBoot grants: 51
+KrustBoot grants: 60
 KrustBoot store objects: 14
 KrustBoot network ports: 1
 KrustBoot io port ranges: 3
 KrustBoot mmio regions: 0
 KrustBoot interrupt lines: 1
 KrustBoot dma regions: 1
-KrustBoot pci devices: 1
-KrustBoot virtio devices: 1
+KrustBoot pci devices: 4
+KrustBoot virtio devices: 4
+KrustBoot namespaces: 2
 grant[0] process=vertex-init cap[1] endpoint=serial-log rights=send
 grant[11] process=logd cap[0] endpoint=log-sink rights=receive
 grant[12] process=vertex-init cap[4] endpoint=log-sink rights=send
-grant[13] process=echo cap[3] network-port=cap:net.tcp.8080 rights=listen
+grant[13] process=echo cap[3] network-port=cap:net.udp.9000 rights=bind|listen
 grant[...] process=serial-driver cap[3] io-port=cap:io.com1 rights=read|write
 grant[...] process=block-driver cap[6] io-port=cap:io.pci-config rights=read|write
 grant[...] process=block-driver cap[7] interrupt-line=cap:irq.virtio-blk0 rights=listen
@@ -436,7 +447,11 @@ grant[...] process=block-driver cap[8] dma-region=cap:dma.virtio-blk0 rights=rea
 grant[...] process=block-driver cap[9] io-port=cap:io.virtio-blk0 rights=read|write
 grant[...] process=block-driver cap[10] pci-device=device:virtio-blk0 rights=control
 grant[...] process=block-driver cap[11] virtio-device=device:virtio-blk0 rights=control
-network_port[0] id=cap:net.tcp.8080
+grant[...] process=serial-driver cap[5] virtio-device=device:virtio-console0 rights=control
+grant[...] process=netstack cap[3] virtio-device=device:virtio-rng0 rights=control
+grant[...] process=netstack cap[5] virtio-device=device:virtio-net0 rights=control
+grant[...] process=echo cap[4] namespace=cap:namespace.echo rights=resolve
+network_port[0] id=cap:net.udp.9000
 io_port[1] id=cap:io.pci-config base=0x0000000000000cf8 length=0x0000000000000008
 io_port[2] id=cap:io.virtio-blk0 base=0x000000000000c000 length=0x0000000000001000
 Physical allocator demo ok
@@ -480,8 +495,9 @@ vertex-init io ports: 3
 vertex-init mmio regions: 0
 vertex-init interrupt lines: 1
 vertex-init dma regions: 1
-vertex-init pci devices: 1
-vertex-init virtio devices: 1
+vertex-init pci devices: 4
+vertex-init virtio devices: 4
+vertex-init namespaces: 2
 service with quota=1 endpoint can create one endpoint
 second endpoint creation fails
 service with no allocation authority cannot create endpoint
@@ -509,6 +525,13 @@ echo I/O write rejected
 unauthorized service cannot talk to block-driver
 unauthorized service cannot access PCI I/O, IRQ, or DMA capabilities
 Native driver framework ok
+virtio-console replaces raw serial shell transport
+virtio-rng provides random bytes through explicit cap
+virtio-net driver can receive raw frames
+virtio-net driver can send raw frames
+Vertex sends UDP packet
+service A namespace contains /state/a
+service A cannot resolve /state/b
 logd received: hello from echo
 negative test: echo receive rejected: bad capability
 echo send after drop rejected

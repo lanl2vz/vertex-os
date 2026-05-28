@@ -1,0 +1,4 @@
+typed-vertex v0
+template examples/hello-generation.vertex.json
+generation gen:m60-invalid-0001
+service svc:echo-server requires cap:missing.logger

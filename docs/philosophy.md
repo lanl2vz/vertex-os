@@ -360,7 +360,7 @@ service: prisma-api
     - cap:secret.r2-token/read
     - cap:store.model-weights/read
   provides:
-    - cap:http.8080/listen
+    - cap:net.udp.9000/bind+listen
   state:
     - none
   restart:

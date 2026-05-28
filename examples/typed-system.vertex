@@ -1,0 +1,7 @@
+typed-vertex v0
+template examples/hello-generation.vertex.json
+generation gen:m60-typed-0001
+service svc:logd provides cap:log.sink
+service svc:echo-server requires cap:log.sink
+service svc:netstack provides cap:net.udp.9000
+service svc:echo-server requires cap:net.udp.9000

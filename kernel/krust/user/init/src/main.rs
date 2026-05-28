@@ -5,8 +5,8 @@ mod sys;
 
 use core::panic::PanicInfo;
 
-const KRUSTBOOT_MAGIC: &[u8; 16] = b"KRUSTBOOTM55\0\0\0\0";
-const KRUSTBOOT_VERSION: u16 = 5;
+const KRUSTBOOT_MAGIC: &[u8; 16] = b"KRUSTBOOTM60\0\0\0\0";
+const KRUSTBOOT_VERSION: u16 = 6;
 const MANIFEST_BUFFER_LEN: usize = 16 * 1024;
 const OFFSET_VERSION: usize = 16;
 const OFFSET_BOOT_MODULES: usize = 18;
@@ -22,7 +22,8 @@ const OFFSET_INTERRUPT_LINES: usize = 36;
 const OFFSET_DMA_REGIONS: usize = 38;
 const OFFSET_PCI_DEVICES: usize = 40;
 const OFFSET_VIRTIO_DEVICES: usize = 42;
-const OFFSET_GENERATION_ID: usize = 44;
+const OFFSET_NAMESPACES: usize = 44;
+const OFFSET_GENERATION_ID: usize = 46;
 const STRING_LEN: usize = 64;
 const OFFSET_PARENT_GENERATION_ID: usize = OFFSET_GENERATION_ID + STRING_LEN;
 const BOOT_MODULE_RECORD_LEN: usize = STRING_LEN * 2;
@@ -109,6 +110,7 @@ pub extern "C" fn _start() -> ! {
     let dma_regions = read_u16(&manifest, OFFSET_DMA_REGIONS);
     let pci_devices = read_u16(&manifest, OFFSET_PCI_DEVICES);
     let virtio_devices = read_u16(&manifest, OFFSET_VIRTIO_DEVICES);
+    let namespaces = read_u16(&manifest, OFFSET_NAMESPACES);
 
     log_count(b"vertex-init boot modules: ", boot_modules);
     log_count(b"vertex-init processes: ", processes);
@@ -123,6 +125,7 @@ pub extern "C" fn _start() -> ! {
     log_count(b"vertex-init dma regions: ", dma_regions);
     log_count(b"vertex-init pci devices: ", pci_devices);
     log_count(b"vertex-init virtio devices: ", virtio_devices);
+    log_count(b"vertex-init namespaces: ", namespaces);
     run_endpoint_quota_tests(parent_generation);
 
     let mut order = [0u16; MAX_PROCESSES];
