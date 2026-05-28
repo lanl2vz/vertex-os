@@ -57,7 +57,7 @@ KrustBoot Manifest v1 records: 9
 KrustBoot boot modules: 13
 KrustBoot processes: 13
 KrustBoot endpoints: 12
-KrustBoot grants: 60
+KrustBoot grants: 61
 KrustBoot store objects: 14
 KrustBoot state volumes: 0
 KrustBoot network ports: 1
@@ -128,6 +128,7 @@ process=block-driver cap[11] virtio-device=device:virtio-blk0 rights=control
 process=serial-driver cap[5] virtio-device=device:virtio-console0 rights=control
 process=netstack cap[3] virtio-device=device:virtio-rng0 rights=control
 process=netstack cap[5] virtio-device=device:virtio-net0 rights=control
+process=netstack cap[6] network-port=cap:net.udp.9000 rights=control
 process=echo cap[3] network-port=cap:net.udp.9000 rights=bind|listen
 process=echo cap[4] namespace=cap:namespace.echo rights=resolve
 process=reader-service cap[4] namespace=cap:namespace.reader rights=resolve
@@ -213,9 +214,11 @@ proc=reader-service cap[0] endpoint=state-reader-state-reply rights=receive
 proc=serial-driver cap[5] virtio-device=device:virtio-console0 transport=virtio-pci-io rights=control
 proc=netstack cap[3] virtio-device=device:virtio-rng0 transport=virtio-pci-io rights=control
 proc=netstack cap[5] virtio-device=device:virtio-net0 transport=virtio-pci-io rights=control
+proc=netstack cap[6] network-port=cap:net.udp.9000 rights=control
 proc=echo cap[3] network-port=cap:net.udp.9000 rights=bind|listen
 proc=echo cap[4] namespace=cap:namespace.echo rights=resolve
 proc=reader-service cap[4] namespace=cap:namespace.reader rights=resolve
+proc=vertex-init cap[30] timer=monotonic-timer rights=control
 proc=netstack cap[1] endpoint=serial-log rights=send
 proc=echo cap[1] endpoint=serial-log rights=send
 proc=timer-service cap[0] timer=monotonic-timer rights=control
@@ -231,7 +234,7 @@ vertex-init manifest generation: gen:hello-0001
 vertex-init boot modules: 13
 vertex-init processes: 13
 vertex-init endpoints: 12
-vertex-init grants: 60
+vertex-init grants: 61
 vertex-init network ports: 1
 vertex-init store objects: 14
 Krust process executable store object: process=logd object=store:logd-demo
@@ -365,8 +368,12 @@ Virtio net RX completed: proc=netstack virtio-device=device:virtio-net0 frame-by
 QEMU user-mode network delivered a raw frame
 Vertex sends ICMP echo
 QEMU user-mode network delivered ICMP echo reply
-UDP send transmitted: proc=echo network-port=cap:net.udp.9000 bytes=13
-Vertex sends UDP packet
+UDP send queued for netstack: proc=echo network-port=cap:net.udp.9000 bytes=13
+echo submits UDP request to netstack boundary
+Network-port UDP request delivered to netstack: network-port=cap:net.udp.9000 bytes=13
+netstack received UDP request through network-port boundary
+netstack transmitted UDP packet for network-port client
+UDP send transmitted: proc=netstack network-port=cap:net.udp.9000 bytes=13
 network authority is endpoint/capability mediated
 service A namespace contains /state/a
 service A cannot resolve /state/b
@@ -427,10 +434,14 @@ vertex-init restarts echo once
 Krust process restart reload: proc=echo
 echo restart retained delegated log cap
 flaky-service exits with status 1
+flaky-service creates quota-backed endpoint
 vertex-init observes failure
 restart policy = on-failure
+restart backoff sleep elapsed
 vertex-init restarts flaky-service once
 Krust process restart reload: proc=flaky-service
+Krust process restart restores quota baseline: proc=flaky-service
+flaky-service restart quota restored
 flaky-service exits 0
 Krust process wait observed exit: proc=logd
 vertex-init waits for service exit status
@@ -444,7 +455,6 @@ forbidden_lines='
 proc=vertex-init cap[5] store-object=store:hello-text rights=read
 proc=vertex-init cap[8] timer=monotonic-timer rights=control
 Object read accepted: proc=vertex-init
-Timer sleep accepted: proc=vertex-init
 '
 
 missing_required=

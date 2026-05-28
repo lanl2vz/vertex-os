@@ -1022,6 +1022,14 @@ fn derive_plan(manifest: &GenerationManifest) -> Result<BootPlan, String> {
         &mut next_object_slots,
         &root_service.id,
     )?;
+    grant_network_port_provider_caps(
+        manifest,
+        &processes,
+        &network_ports,
+        &mut grants,
+        &mut next_object_slots,
+        &root_service.id,
+    )?;
 
     let mut boot_modules = Vec::new();
     for process in &processes {
@@ -1600,6 +1608,35 @@ fn grant_native_driver_devices(
         }
     }
 
+    Ok(())
+}
+
+fn grant_network_port_provider_caps(
+    manifest: &GenerationManifest,
+    processes: &[NativeProcess],
+    network_ports: &[NetworkPort],
+    grants: &mut Vec<Grant>,
+    next_object_slots: &mut BTreeMap<String, u16>,
+    root_service_id: &str,
+) -> Result<(), String> {
+    for port in network_ports {
+        let capability = manifest
+            .capability(&port.id)
+            .ok_or_else(|| format!("network-port {} has no manifest capability", port.id))?;
+        if capability.kind != "network-port" || capability.provider == root_service_id {
+            continue;
+        }
+        let Some(process_name) = native_process_for_service(processes, &capability.provider) else {
+            continue;
+        };
+        grants.push(Grant {
+            process: process_name.clone(),
+            object_kind: OBJECT_NETWORK_PORT,
+            object_name: port.id.clone(),
+            cap_slot: next_object_cap_slot(next_object_slots, &process_name)?,
+            rights: RIGHT_CONTROL,
+        });
+    }
     Ok(())
 }
 

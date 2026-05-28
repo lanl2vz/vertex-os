@@ -323,7 +323,7 @@ fn compile_boot_manifest_emits_krustboot_plan() {
     assert!(stdout.contains("boot_modules: 13"));
     assert!(stdout.contains("processes: 13"));
     assert!(stdout.contains("endpoints: 12"));
-    assert!(stdout.contains("grants: 60"));
+    assert!(stdout.contains("grants: 61"));
     assert!(stdout.contains("store_objects: 14"));
     assert!(stdout.contains("state_volumes: 0"));
     assert!(stdout.contains("network_ports: 1"));
@@ -480,7 +480,7 @@ fn compile_boot_manifest_does_not_inject_implicit_logd_config() {
         &output_path.to_string_lossy(),
     ]));
 
-    assert!(stdout.contains("grants: 59"));
+    assert!(stdout.contains("grants: 60"));
     assert!(stdout.contains("store_objects: 13"));
     let bytes = fs::read(&output_path).expect("read krustboot output");
     assert!(!contains_bytes(&bytes, b"config:logd"));

@@ -28,6 +28,7 @@ const DMA_MAPPING_INFO_BYTES: usize = 24;
 const PROTOCOL_HEALTH_V0: u16 = 2;
 const MESSAGE_READY: u16 = 1;
 const READY_ENVELOPE_LEN: usize = 16;
+const INIT_TIMER_CAP_SLOT: u64 = 30;
 const USER_DMA_MAPPING_BASE: u64 = 0x0000_6000_0000_0000;
 const PCI_CONFIG_ADDRESS: u16 = 0x0cf8;
 const PCI_CONFIG_DATA: u16 = 0x0cfc;
@@ -46,7 +47,6 @@ const VIRTIO_PCI_QUEUE_SEL: u16 = 0x0e;
 const VIRTIO_PCI_QUEUE_NOTIFY: u16 = 0x10;
 const VIRTIO_PCI_STATUS: u16 = 0x12;
 const VIRTIO_PCI_ISR: u16 = 0x13;
-const VIRTIO_PCI_NET_CONFIG: u16 = 0x14;
 const VIRTIO_STATUS_ACKNOWLEDGE: u8 = 1;
 const VIRTIO_STATUS_DRIVER: u8 = 2;
 const VIRTIO_STATUS_DRIVER_OK: u8 = 4;
@@ -69,9 +69,6 @@ const VIRTIO_DESC_F_NEXT: u16 = 1;
 const VIRTIO_RNG_DEVICE_ID: &str = "device:virtio-rng0";
 const VIRTIO_NET_DEVICE_ID: &str = "device:virtio-net0";
 const VIRTIO_PCI_IO_TRANSPORT_ID: &str = "virtio-pci-io";
-const QEMU_USER_GUEST_MAC: [u8; 6] = [0x52, 0x54, 0x00, 0x12, 0x34, 0x56];
-const QEMU_USER_GUEST_IP: [u8; 4] = [10, 0, 2, 15];
-const QEMU_USER_GATEWAY_IP: [u8; 4] = [10, 0, 2, 2];
 const NATIVE_SECRET_VALUE: &[u8] = b"native-secret-value";
 const INITIAL_USER_RFLAGS: u64 = 0x202;
 const STATUS_BAD_BUFFER: u64 = u64::MAX - 2;
@@ -455,6 +452,7 @@ struct Process {
     has_exited: bool,
     start_count: u64,
     quota: ProcessQuota,
+    initial_quota: ProcessQuota,
 }
 
 #[derive(Clone, Copy)]
@@ -509,6 +507,8 @@ struct TimerObject {
 struct NetworkPortObject {
     id: KernelObjectId,
     name: &'static str,
+    queue: [IpcMessage; ENDPOINT_QUEUE_CAPACITY],
+    queue_len: usize,
 }
 
 #[derive(Clone, Copy)]
@@ -619,7 +619,6 @@ struct VirtioNetState {
     io_base: u16,
     rx: VirtioQueueState,
     tx: VirtioQueueState,
-    mac: [u8; 6],
     rx_posted: bool,
 }
 
@@ -630,7 +629,6 @@ impl VirtioNetState {
             io_base: 0,
             rx: VirtioQueueState::empty(),
             tx: VirtioQueueState::empty(),
-            mac: QEMU_USER_GUEST_MAC,
             rx_posted: false,
         }
     }
@@ -881,6 +879,7 @@ impl Process {
             has_exited: false,
             start_count: 0,
             quota: ProcessQuota::service(),
+            initial_quota: ProcessQuota::service(),
         }
     }
 
@@ -894,6 +893,11 @@ impl Process {
     ) -> Self {
         let initial = state == ProcessState::Running;
         let start_count = if initial { 1 } else { 0 };
+        let quota = if initial {
+            ProcessQuota::initial()
+        } else {
+            ProcessQuota::service()
+        };
         Self {
             pid,
             name,
@@ -907,11 +911,8 @@ impl Process {
             exit_status: 0,
             has_exited: false,
             start_count,
-            quota: if initial {
-                ProcessQuota::initial()
-            } else {
-                ProcessQuota::service()
-            },
+            quota,
+            initial_quota: quota,
         }
     }
 }
@@ -1130,7 +1131,47 @@ impl TimerObject {
 
 impl NetworkPortObject {
     const fn new(id: KernelObjectId, name: &'static str) -> Self {
-        Self { id, name }
+        Self {
+            id,
+            name,
+            queue: [IpcMessage::empty(); ENDPOINT_QUEUE_CAPACITY],
+            queue_len: 0,
+        }
+    }
+
+    fn enqueue_udp(
+        &mut self,
+        sender: ProcessId,
+        bytes: &[u8; MAX_MESSAGE_BYTES],
+        len: usize,
+    ) -> Result<(), IpcError> {
+        if self.queue_len == ENDPOINT_QUEUE_CAPACITY {
+            return Err(IpcError::MessageTooLarge);
+        }
+
+        let mut message = IpcMessage::empty();
+        message.sender = sender;
+        message.len = len;
+        message.bytes[..len].copy_from_slice(&bytes[..len]);
+        self.queue[self.queue_len] = message;
+        self.queue_len += 1;
+        Ok(())
+    }
+
+    fn dequeue_udp(&mut self) -> Option<IpcMessage> {
+        if self.queue_len == 0 {
+            return None;
+        }
+
+        let message = self.queue[0];
+        let mut index = 1;
+        while index < self.queue_len {
+            self.queue[index - 1] = self.queue[index];
+            index += 1;
+        }
+        self.queue_len -= 1;
+        self.queue[self.queue_len] = IpcMessage::empty();
+        Some(message)
     }
 }
 
@@ -1626,6 +1667,25 @@ impl ObjectTable {
         }
 
         None
+    }
+
+    fn get_network_port_mut(&mut self, id: KernelObjectId) -> Option<&mut NetworkPortObject> {
+        let mut found = None;
+        let mut index = 0;
+        while index < self.count {
+            if let Some(KernelObject::NetworkPort(port)) = self.objects[index]
+                && port.id == id
+            {
+                found = Some(index);
+                break;
+            }
+            index += 1;
+        }
+
+        match &mut self.objects[found?] {
+            Some(KernelObject::NetworkPort(port)) => Some(port),
+            _ => None,
+        }
     }
 
     fn get_timer(&self, id: KernelObjectId) -> Option<TimerObject> {
@@ -2652,6 +2712,16 @@ pub fn init_from_boot_config(config: &'static BootRuntimeConfig) -> Result<(), I
     );
     grant_process_cap_by_pid(runtime, initial_pid, 2, cap, true)?;
 
+    let timer_id = runtime.timer_id.ok_or(InitError::InvalidBootManifest)?;
+    let cap = runtime.new_capability(
+        timer_id,
+        capability::RIGHT_CONTROL,
+        initial_pid,
+        0,
+        ProcessId::empty(),
+    );
+    grant_process_cap_by_pid(runtime, initial_pid, INIT_TIMER_CAP_SLOT, cap, true)?;
+
     print_boot_tables(runtime);
     Ok(())
 }
@@ -3173,7 +3243,7 @@ fn receive_with_timeout(
     let copy_len = min(message.len, max_len);
     usercopy::copy_to_user(UserPtr::new(destination as u64), &message.bytes[..copy_len])
         .map_err(|_| IpcError::InvalidUserBuffer)?;
-    record_ready_lifecycle(message);
+    record_ready_lifecycle(endpoint_id, current_pid, message);
 
     serial::write_str("IPC receive delivered: endpoint=");
     serial::write_u64_dec(endpoint_id.raw());
@@ -3185,31 +3255,42 @@ fn receive_with_timeout(
     Ok(())
 }
 
-fn record_ready_lifecycle(message: IpcMessage) {
-    if !message_is_ready(&message) {
+fn record_ready_lifecycle(endpoint: KernelObjectId, receiver: ProcessId, message: IpcMessage) {
+    let Some(ready_service_name) = ready_service_name(&message) else {
+        return;
+    };
+
+    let service = {
+        let runtime = runtime();
+        let Some(endpoint) = runtime.objects.get_endpoint(endpoint) else {
+            return;
+        };
+        if endpoint.name != "readiness" || receiver.raw() != 1 {
+            return;
+        }
+
+        let Some(process) = runtime.processes.process(message.sender) else {
+            return;
+        };
+        process.name
+    };
+
+    if ready_service_name != service.as_bytes() {
         return;
     }
 
-    let runtime = runtime();
-    let Some(service) = runtime
-        .processes
-        .process(message.sender)
-        .map(|process| process.name)
-    else {
-        return;
-    };
-    runtime.record_service_lifecycle(service, ServiceLifecycleState::Ready, None);
+    runtime().record_service_lifecycle(service, ServiceLifecycleState::Ready, None);
 }
 
-fn message_is_ready(message: &IpcMessage) -> bool {
+fn ready_service_name(message: &IpcMessage) -> Option<&[u8]> {
     if message.len < READY_ENVELOPE_LEN {
-        return false;
+        return None;
     }
 
     let protocol = u16::from_le_bytes([message.bytes[0], message.bytes[1]]);
     let message_type = u16::from_le_bytes([message.bytes[2], message.bytes[3]]);
     if protocol != PROTOCOL_HEALTH_V0 || message_type != MESSAGE_READY {
-        return false;
+        return None;
     }
 
     let payload_len = u32::from_le_bytes([
@@ -3218,7 +3299,11 @@ fn message_is_ready(message: &IpcMessage) -> bool {
         message.bytes[6],
         message.bytes[7],
     ]) as usize;
-    payload_len <= message.len - READY_ENVELOPE_LEN
+    if payload_len > message.len - READY_ENVELOPE_LEN {
+        return None;
+    }
+
+    Some(&message.bytes[READY_ENVELOPE_LEN..READY_ENVELOPE_LEN + payload_len])
 }
 
 pub fn read_boot_module(
@@ -3602,7 +3687,11 @@ pub fn start_process(cap_slot: u64, pid: u64) -> Result<(), IpcError> {
         let lifecycle_state = if process.state == ProcessState::Exited {
             process.context = process.restart_context;
             process.caps = process.initial_caps;
+            process.quota = process.initial_quota;
             serial::write_str("Krust process restart reload: proc=");
+            serial::write_str(process.name);
+            serial::write_str("\n");
+            serial::write_str("Krust process restart restores quota baseline: proc=");
             serial::write_str(process.name);
             serial::write_str("\n");
             ServiceLifecycleState::Restarting
@@ -4003,7 +4092,13 @@ pub fn quota_delegate(
     let Some(target) = runtime.processes.process_mut(target_pid) else {
         return Err(IpcError::BadCapability);
     };
+    let persist_for_restart = target.state == ProcessState::Declared;
     target.quota.max_endpoints = max_endpoints;
+    if persist_for_restart {
+        target.quota.used_endpoints = 0;
+        target.initial_quota.max_endpoints = max_endpoints;
+        target.initial_quota.used_endpoints = 0;
+    }
 
     serial::write_str("Quota delegate accepted: proc=");
     serial::write_str(caller_name);
@@ -4191,9 +4286,20 @@ pub fn network_send_udp(cap_slot: u64, source: *const u8, len: usize) -> Result<
     let mut payload = [0u8; MAX_MESSAGE_BYTES];
     usercopy::copy_from_user(&mut payload, UserPtr::new(source as u64), len)
         .map_err(|_| IpcError::InvalidUserBuffer)?;
-    virtio_net_send_udp(&payload[..len])?;
+    let sender = runtime()
+        .processes
+        .current_process()
+        .map(|process| process.pid)
+        .ok_or(IpcError::BadCapability)?;
+    {
+        let runtime = runtime();
+        let Some(port) = runtime.objects.get_network_port_mut(port.id) else {
+            return Err(IpcError::BadCapability);
+        };
+        port.enqueue_udp(sender, &payload, len)?;
+    }
 
-    serial::write_str("UDP send transmitted: proc=");
+    serial::write_str("UDP send queued for netstack: proc=");
     serial::write_str(current_process_name());
     serial::write_str(" network-port=");
     serial::write_str(port.name);
@@ -4202,6 +4308,40 @@ pub fn network_send_udp(cap_slot: u64, source: *const u8, len: usize) -> Result<
     serial::write_str("\n");
     serial::write_str("network-port bind/listen rights enforced by netstack boundary\n");
     Ok(())
+}
+
+pub fn network_recv_udp(
+    cap_slot: u64,
+    destination: *mut u8,
+    max_len: usize,
+) -> Result<usize, IpcError> {
+    let port = network_port_from_cap(cap_slot, capability::RIGHT_CONTROL)?;
+    usercopy::validate_user_buffer(
+        UserPtr::new(destination as u64),
+        max_len,
+        paging::UserAccess::Write,
+    )
+    .map_err(|_| IpcError::InvalidUserBuffer)?;
+
+    let message = {
+        let runtime = runtime();
+        let Some(port) = runtime.objects.get_network_port_mut(port.id) else {
+            return Err(IpcError::BadCapability);
+        };
+        port.dequeue_udp()
+    }
+    .ok_or(IpcError::Empty)?;
+
+    let copy_len = min(message.len, max_len);
+    usercopy::copy_to_user(UserPtr::new(destination as u64), &message.bytes[..copy_len])
+        .map_err(|_| IpcError::InvalidUserBuffer)?;
+
+    serial::write_str("Network-port UDP request delivered to netstack: network-port=");
+    serial::write_str(port.name);
+    serial::write_str(" bytes=");
+    serial::write_u64_dec(copy_len as u64);
+    serial::write_str("\n");
+    Ok(copy_len)
 }
 
 fn virtio_rng_fill(destination: &mut [u8]) -> Result<usize, IpcError> {
@@ -4258,17 +4398,6 @@ fn virtio_net_receive_frame(destination: &mut [u8]) -> Result<usize, IpcError> {
 
 fn virtio_device_is(device: VirtioDeviceObject, expected_name: &str) -> bool {
     device.name == expected_name && device.transport == VIRTIO_PCI_IO_TRANSPORT_ID
-}
-
-fn virtio_net_send_udp(payload: &[u8]) -> Result<(), IpcError> {
-    if payload.len() + UDP_IPV4_HEADER_LEN > MAX_MESSAGE_BYTES + UDP_IPV4_HEADER_LEN {
-        return Err(IpcError::MessageTooLarge);
-    }
-
-    let state = virtio_net_state()?;
-    let mut frame = [0u8; MAX_MESSAGE_BYTES + UDP_IPV4_HEADER_LEN];
-    let frame_len = build_udp_ipv4_frame(state.mac, payload, &mut frame)?;
-    virtio_net_send_frame_locked(state, &frame[..frame_len])
 }
 
 fn virtio_rng_state() -> Result<&'static mut VirtioRngState, IpcError> {
@@ -4344,7 +4473,6 @@ fn init_virtio_net(state: &mut VirtioNetState) -> Result<(), IpcError> {
         virtio_write8(io_base, VIRTIO_PCI_STATUS, VIRTIO_STATUS_FAILED);
         return Err(IpcError::BadCapability);
     }
-    let mac = read_virtio_net_mac(io_base);
     virtio_write8(
         io_base,
         VIRTIO_PCI_STATUS,
@@ -4356,7 +4484,6 @@ fn init_virtio_net(state: &mut VirtioNetState) -> Result<(), IpcError> {
         io_base,
         rx,
         tx,
-        mac,
         rx_posted: false,
     };
     virtio_net_post_rx_buffer(state)?;
@@ -4580,85 +4707,6 @@ fn discover_virtio_pci_io_device(device_id: u16) -> Result<u16, IpcError> {
     Err(IpcError::BadCapability)
 }
 
-fn read_virtio_net_mac(io_base: u16) -> [u8; 6] {
-    let mut mac = [0u8; 6];
-    let mut index = 0;
-    while index < mac.len() {
-        mac[index] = virtio_read8(io_base, VIRTIO_PCI_NET_CONFIG + index as u16);
-        index += 1;
-    }
-    if mac == [0; 6] {
-        QEMU_USER_GUEST_MAC
-    } else {
-        mac
-    }
-}
-
-fn build_udp_ipv4_frame(
-    source_mac: [u8; 6],
-    payload: &[u8],
-    frame: &mut [u8],
-) -> Result<usize, IpcError> {
-    let packet_len = UDP_IPV4_HEADER_LEN
-        .checked_add(payload.len())
-        .ok_or(IpcError::MessageTooLarge)?;
-    let frame_len = if packet_len < ETHERNET_MIN_FRAME_LEN {
-        ETHERNET_MIN_FRAME_LEN
-    } else {
-        packet_len
-    };
-    if frame_len > frame.len() {
-        return Err(IpcError::MessageTooLarge);
-    }
-
-    zero_bytes(&mut frame[..frame_len]);
-    let mut index = 0;
-    while index < 6 {
-        frame[index] = 0xff;
-        frame[6 + index] = source_mac[index];
-        index += 1;
-    }
-    frame[12] = 0x08;
-    frame[13] = 0x00;
-
-    let ip_offset = 14;
-    let udp_offset = ip_offset + 20;
-    let ip_total_len = (20 + 8 + payload.len()) as u16;
-    frame[ip_offset] = 0x45;
-    frame[ip_offset + 1] = 0;
-    write_be_u16(frame, ip_offset + 2, ip_total_len);
-    write_be_u16(frame, ip_offset + 4, 0x5657);
-    write_be_u16(frame, ip_offset + 6, 0);
-    frame[ip_offset + 8] = 64;
-    frame[ip_offset + 9] = 17;
-    frame[ip_offset + 12..ip_offset + 16].copy_from_slice(&QEMU_USER_GUEST_IP);
-    frame[ip_offset + 16..ip_offset + 20].copy_from_slice(&QEMU_USER_GATEWAY_IP);
-    let checksum = ipv4_header_checksum(&frame[ip_offset..ip_offset + 20]);
-    write_be_u16(frame, ip_offset + 10, checksum);
-
-    write_be_u16(frame, udp_offset, 9000);
-    write_be_u16(frame, udp_offset + 2, 9000);
-    write_be_u16(frame, udp_offset + 4, (8 + payload.len()) as u16);
-    write_be_u16(frame, udp_offset + 6, 0);
-    frame[udp_offset + 8..udp_offset + 8 + payload.len()].copy_from_slice(payload);
-    Ok(frame_len)
-}
-
-fn ipv4_header_checksum(header: &[u8]) -> u16 {
-    let mut sum = 0u32;
-    let mut index = 0;
-    while index + 1 < header.len() {
-        if index != 10 {
-            sum += u16::from_be_bytes([header[index], header[index + 1]]) as u32;
-        }
-        index += 2;
-    }
-    while (sum >> 16) != 0 {
-        sum = (sum & 0xffff) + (sum >> 16);
-    }
-    !(sum as u16)
-}
-
 fn pci_address(bus: u8, slot: u8, function: u8, offset: u8) -> u32 {
     0x8000_0000
         | ((bus as u32) << 16)
@@ -4778,20 +4826,6 @@ fn read_dma_u32(address: u64) -> u32 {
 
 fn write_dma_u64(address: u64, value: u64) {
     write_dma_bytes(address, &value.to_le_bytes());
-}
-
-fn write_be_u16(buffer: &mut [u8], offset: usize, value: u16) {
-    let bytes = value.to_be_bytes();
-    buffer[offset] = bytes[0];
-    buffer[offset + 1] = bytes[1];
-}
-
-fn zero_bytes(buffer: &mut [u8]) {
-    let mut index = 0;
-    while index < buffer.len() {
-        buffer[index] = 0;
-        index += 1;
-    }
 }
 
 fn pause_cpu() {
@@ -5224,7 +5258,7 @@ fn wake_blocked_receiver(endpoint: KernelObjectId) {
                 waiter.saved_frame.rax = copy_len as u64;
                 waiter.state = ProcessState::Ready;
             }
-            record_ready_lifecycle(message);
+            record_ready_lifecycle(endpoint, receiver_pid, message);
 
             serial::write_str("IPC receive delivered: endpoint=");
             serial::write_u64_dec(endpoint.raw());

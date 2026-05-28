@@ -116,6 +116,7 @@ process frame, switch CR3, and return into another userspace process through
 | 43 | `SYS_VIRTIO_NET_RX` | `arg0 = virtio_net_cap_slot`, `arg1 = frame_ptr`, `arg2 = max_len` | byte count or error status |
 | 44 | `SYS_NETWORK_SEND_UDP` | `arg0 = network_port_cap_slot`, `arg1 = payload_ptr`, `arg2 = payload_len` | status |
 | 45 | `SYS_NAMESPACE_RESOLVE` | `arg0 = namespace_cap_slot`, `arg1 = path_ptr`, `arg2 = target_slot << 32 \| path_len` | status |
+| 46 | `SYS_NETWORK_RECV_UDP` | `arg0 = network_port_cap_slot`, `arg1 = payload_ptr`, `arg2 = max_len` | byte count, `STATUS_EMPTY`, or error status |
 
 ## Return Status Values
 
@@ -165,6 +166,7 @@ vertex-init:
   cap[3] = endpoint readiness, rights=receive
   cap[4+] = endpoint authority caps, rights=send, one per declared
            graph endpoint beyond serial-log/readiness
+  cap[30] = timer monotonic-timer, rights=control, for supervised restart backoff
 
 logd:
   cap[0] = endpoint log-sink, rights=receive
@@ -186,6 +188,7 @@ netstack:
   cap[2] = endpoint readiness, rights=send
   cap[3] = virtio-device device:virtio-rng0, rights=control
   cap[5] = virtio-device device:virtio-net0, rights=control
+  cap[6] = network-port cap:net.udp.9000, rights=control
 
 block-driver:
   cap[0] = endpoint vertex-store-block-request, rights=receive
@@ -302,13 +305,20 @@ ID is the RNG device and whose transport is `virtio-pci-io`.
 SYS_VIRTIO_NET_TX and SYS_VIRTIO_NET_RX require control rights on a
 virtio-device cap whose device ID is the network device and whose transport is
 `virtio-pci-io`.
-SYS_NETWORK_SEND_UDP requires bind and listen rights on a network-port cap.
+SYS_NETWORK_SEND_UDP requires bind and listen rights on a network-port cap and
+queues the payload for the network provider.
+SYS_NETWORK_RECV_UDP requires control rights on a network-port cap and returns
+one queued application UDP payload to the provider, or `STATUS_EMPTY` when no
+payload is pending.
 SYS_NAMESPACE_RESOLVE requires resolve rights on a namespace cap and installs only the configured attenuated target capability.
 ```
 
-Native network-port objects grant bind/listen authority to declared services.
-M57 consumes that object through `SYS_NETWORK_SEND_UDP`; raw virtio-net TX/RX
-remains a separate driver capability and is not implied by network-port access.
+Native network-port objects grant bind/listen authority to declared application
+services and a control provider cap to `netstack`. M57 consumes that object
+through `SYS_NETWORK_SEND_UDP`; `netstack` drains the queue through
+`SYS_NETWORK_RECV_UDP` and performs raw virtio-net TX through its separate
+driver capability. Raw virtio-net TX/RX remains driver-facing authority and is
+not implied by network-port access.
 
 Native I/O objects now cover the first hardware authority substrate:
 `IoPortRange`, `MmioRegion`, `InterruptLine`, `DmaRegion`, `PciDevice`, and
@@ -621,6 +631,7 @@ cap[2] process-control control|allocate|delegate|revoke|inspect|create|start|kil
 cap[3] readiness receive
 cap[4+] endpoint authority for graph-delegated endpoints, one authority cap per
 declared endpoint beyond the fixed serial-log/readiness endpoints
+cap[30] monotonic timer control for restart backoff
 ```
 
 Endpoint, hardware, store-object, config, secret, network, device, and timer
@@ -632,4 +643,6 @@ process becomes part of that process's restart baseline, so the bounded ABI v1
 restart restores the delegated endpoint cap along with static grants. If a
 service both provides an endpoint and consumes delegated endpoint authority, the
 provided endpoint keeps cap[0] and delegated endpoint caps start at cap[3] to
-avoid the serial-log and readiness slots.
+avoid the serial-log and readiness slots. Quota delegated before first start is
+also part of the restart baseline, so restarted services receive the same
+endpoint allocation budget they had at initial launch.

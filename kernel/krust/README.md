@@ -39,8 +39,8 @@ Krust creates a runtime endpoint table and one initial runtime process from the 
 Krust records non-initial KrustBoot process records as templates and allocates runtime process IDs only through SYS_PROCESS_CREATE
 Krust grants vertex-init cap[0] read rights to the manifest module
 Krust grants vertex-init cap[1] send rights to the serial-log endpoint
-Krust grants vertex-init cap[2] process-control authority with control, allocate, delegate, revoke, inspect, create, start, kill, and wait rights; cap[3] readiness receive authority; and per-endpoint attenuable endpoint authority starting at cap[4]
-Krust applies I/O port, IRQ, DMA, virtio-device, network-port, namespace, store-object, config, secret, endpoint, and timer authority only when a service is dynamically created from a matching template
+Krust grants vertex-init cap[2] process-control authority with control, allocate, delegate, revoke, inspect, create, start, kill, and wait rights; cap[3] readiness receive authority; cap[30] monotonic timer control for supervised restart backoff; and per-endpoint attenuable endpoint authority starting at cap[4]
+Krust applies I/O port, IRQ, DMA, virtio-device, network-port, namespace, store-object, config, secret, endpoint, and service timer authority when a service is dynamically created from a matching template
 Krust installs a minimal IDT for #UD, #GP, #PF, and PIT IRQ0
 Krust installs a TSS-backed ring-0 interrupt stack for user traps
 Krust programs the PIT/PIC timer path and preempts CPU-bound userspace
@@ -186,7 +186,7 @@ KrustBoot Manifest v1 records: 9
 KrustBoot boot modules: 13
 KrustBoot processes: 13
 KrustBoot endpoints: 12
-KrustBoot grants: 60
+KrustBoot grants: 61
 KrustBoot store objects: 14
 KrustBoot state volumes: 0
 KrustBoot network ports: 1
@@ -210,6 +210,7 @@ KrustBoot namespaces: 2
   grant[...] process=serial-driver cap[5] virtio-device=device:virtio-console0 rights=control
   grant[...] process=netstack cap[3] virtio-device=device:virtio-rng0 rights=control
   grant[...] process=netstack cap[5] virtio-device=device:virtio-net0 rights=control
+  grant[...] process=netstack cap[6] network-port=cap:net.udp.9000 rights=control
   grant[...] process=echo cap[4] namespace=cap:namespace.echo rights=resolve
   grant[42] process=timer-service cap[0] timer=monotonic-timer rights=control
 io_port[1] id=cap:io.pci-config base=0x0000000000000cf8 length=0x0000000000000008
@@ -240,6 +241,7 @@ proc=vertex-init cap[1] endpoint=serial-log rights=send
 proc=vertex-init cap[2] process-control=process-control rights=control|allocate|delegate|revoke|inspect|create|start|kill|wait
 proc=vertex-init cap[3] endpoint=readiness rights=receive
 proc=vertex-init cap[4] endpoint=log-sink rights=send
+proc=vertex-init cap[30] timer=monotonic-timer rights=control
 proc=serial-driver cap[3] io-port=cap:io.com1 rights=read|write
 proc=block-driver cap[6] io-port=cap:io.pci-config rights=read|write
 proc=block-driver cap[7] interrupt-line=cap:irq.virtio-blk0 rights=listen
@@ -264,7 +266,7 @@ vertex-init manifest generation: gen:hello-0001
 vertex-init boot modules: 13
 vertex-init processes: 13
 vertex-init endpoints: 12
-vertex-init grants: 60
+vertex-init grants: 61
 vertex-init network ports: 1
 vertex-init store objects: 14
 vertex-init state volumes: 0
@@ -356,10 +358,14 @@ vertex-init restarts echo once
 Krust process restart reload: proc=echo
 echo restart retained delegated log cap
 flaky-service exits with status 1
+flaky-service creates quota-backed endpoint
 vertex-init observes failure
 restart policy = on-failure
+restart backoff sleep elapsed
 vertex-init restarts flaky-service once
 Krust process restart reload: proc=flaky-service
+Krust process restart restores quota baseline: proc=flaky-service
+flaky-service restart quota restored
 flaky-service exits 0
 Native restart policy ok
 Native manifest-driven activation ok
@@ -429,7 +435,7 @@ KrustBoot Manifest v1 records: 9
 KrustBoot boot modules: 13
 KrustBoot processes: 13
 KrustBoot endpoints: 12
-KrustBoot grants: 60
+KrustBoot grants: 61
 KrustBoot store objects: 14
 KrustBoot network ports: 1
 KrustBoot io port ranges: 3
@@ -453,6 +459,7 @@ grant[...] process=block-driver cap[11] virtio-device=device:virtio-blk0 rights=
 grant[...] process=serial-driver cap[5] virtio-device=device:virtio-console0 rights=control
 grant[...] process=netstack cap[3] virtio-device=device:virtio-rng0 rights=control
 grant[...] process=netstack cap[5] virtio-device=device:virtio-net0 rights=control
+grant[...] process=netstack cap[6] network-port=cap:net.udp.9000 rights=control
 grant[...] process=echo cap[4] namespace=cap:namespace.echo rights=resolve
 network_port[0] id=cap:net.udp.9000
 io_port[1] id=cap:io.pci-config base=0x0000000000000cf8 length=0x0000000000000008
@@ -487,6 +494,7 @@ proc=block-driver cap[8] dma-region=cap:dma.virtio-blk0 base=
 proc=block-driver cap[9] io-port=cap:io.virtio-blk0 rights=read|write
 proc=block-driver cap[10] pci-device=device:virtio-blk0 kind=virtio-blk-pci rights=control
 proc=block-driver cap[11] virtio-device=device:virtio-blk0 transport=virtio-pci-io rights=control
+proc=vertex-init cap[30] timer=monotonic-timer rights=control
 proc=model-reader cap[0] endpoint=store-hello-text-request rights=send
 proc=reader-service cap[0] endpoint=state-counter-request rights=send
 proc=timer-service cap[0] timer=monotonic-timer rights=control
@@ -532,7 +540,12 @@ virtio-console replaces raw serial shell transport
 virtio-rng provides random bytes through explicit cap
 virtio-net driver can receive raw frames
 virtio-net driver can send raw frames
-Vertex sends UDP packet
+UDP send queued for netstack: proc=echo network-port=cap:net.udp.9000 bytes=13
+echo submits UDP request to netstack boundary
+Network-port UDP request delivered to netstack: network-port=cap:net.udp.9000 bytes=13
+netstack received UDP request through network-port boundary
+netstack transmitted UDP packet for network-port client
+UDP send transmitted: proc=netstack network-port=cap:net.udp.9000 bytes=13
 service A namespace contains /state/a
 service A cannot resolve /state/b
 logd received: hello from echo
@@ -564,9 +577,13 @@ vertex-init restarts echo once
 Krust process restart reload: proc=echo
 echo restart retained delegated log cap
 flaky-service exits with status 1
+flaky-service creates quota-backed endpoint
 restart policy = on-failure
+restart backoff sleep elapsed
 vertex-init restarts flaky-service once
 Krust process restart reload: proc=flaky-service
+Krust process restart restores quota baseline: proc=flaky-service
+flaky-service restart quota restored
 flaky-service exits 0
 Native manifest-driven activation ok
 Native readiness activation ok

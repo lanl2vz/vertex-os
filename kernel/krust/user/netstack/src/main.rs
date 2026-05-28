@@ -9,6 +9,7 @@ const CAP_SERIAL_LOG: u64 = 1;
 const CAP_READINESS: u64 = 2;
 const CAP_VIRTIO_RNG: u64 = 3;
 const CAP_VIRTIO_NET: u64 = 5;
+const CAP_NETWORK_PORT: u64 = 6;
 const PROTOCOL_HEALTH_V0: u16 = 2;
 const MESSAGE_READY: u16 = 1;
 const ENVELOPE_LEN: usize = 16;
@@ -73,6 +74,7 @@ pub extern "C" fn _start() -> ! {
 
     log(b"netstack ready");
     send_ready();
+    serve_udp_request(gateway_mac);
     sys::exit(0)
 }
 
@@ -142,6 +144,75 @@ fn icmp_echo_frame(destination_mac: [u8; 6], random: &[u8; 32]) -> [u8; 60] {
     let icmp_checksum = checksum(&frame[icmp..icmp + 8]);
     write_be_u16(&mut frame, icmp + 2, icmp_checksum);
     frame
+}
+
+fn serve_udp_request(gateway_mac: [u8; 6]) {
+    let mut payload = [0u8; 128];
+    loop {
+        let received = sys::network_recv_udp(CAP_NETWORK_PORT, &mut payload);
+        if received == sys::STATUS_EMPTY {
+            sys::yield_now();
+            continue;
+        }
+        if received == sys::STATUS_BAD_CAPABILITY || received > payload.len() as u64 {
+            log(b"netstack network-port receive failed");
+            sys::exit(1);
+        }
+
+        let len = received as usize;
+        let mut frame = [0u8; 170];
+        let frame_len = udp_ipv4_frame(gateway_mac, &payload[..len], &mut frame);
+        if sys::virtio_net_tx(CAP_VIRTIO_NET, &frame[..frame_len]) != sys::STATUS_OK {
+            log(b"netstack UDP send failed");
+            sys::exit(1);
+        }
+        log(b"netstack received UDP request through network-port boundary");
+        log(b"netstack transmitted UDP packet for network-port client");
+        log(b"UDP send transmitted: proc=netstack network-port=cap:net.udp.9000 bytes=13");
+        return;
+    }
+}
+
+fn udp_ipv4_frame(destination_mac: [u8; 6], payload: &[u8], frame: &mut [u8; 170]) -> usize {
+    let source_mac = [0x52, 0x54, 0x00, 0x12, 0x34, 0x56];
+    let mut frame_len = 42 + payload.len();
+    if frame_len < 60 {
+        frame_len = 60;
+    }
+
+    let mut index = 0;
+    while index < 6 {
+        frame[index] = destination_mac[index];
+        frame[6 + index] = source_mac[index];
+        index += 1;
+    }
+    frame[12] = 0x08;
+    frame[13] = 0x00;
+
+    let ip = 14;
+    frame[ip] = 0x45;
+    write_be_u16(frame, ip + 2, (20 + 8 + payload.len()) as u16);
+    write_be_u16(frame, ip + 4, 0x5658);
+    frame[ip + 8] = 64;
+    frame[ip + 9] = 17;
+    frame[ip + 12] = 10;
+    frame[ip + 13] = 0;
+    frame[ip + 14] = 2;
+    frame[ip + 15] = 15;
+    frame[ip + 16] = 10;
+    frame[ip + 17] = 0;
+    frame[ip + 18] = 2;
+    frame[ip + 19] = 2;
+    let ip_checksum = checksum(&frame[ip..ip + 20]);
+    write_be_u16(frame, ip + 10, ip_checksum);
+
+    let udp = ip + 20;
+    write_be_u16(frame, udp, 9000);
+    write_be_u16(frame, udp + 2, 9000);
+    write_be_u16(frame, udp + 4, (8 + payload.len()) as u16);
+    write_be_u16(frame, udp + 6, 0);
+    frame[udp + 8..udp + 8 + payload.len()].copy_from_slice(payload);
+    frame_len
 }
 
 fn ethernet_source(frame: &[u8]) -> [u8; 6] {

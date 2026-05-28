@@ -50,8 +50,7 @@ pub extern "C" fn _start() -> ! {
     if sys::network_send_udp(CAP_NETWORK_PORT, b"m57 udp probe") == sys::STATUS_OK {
         log(b"echo sends UDP through cap:net.udp.9000 without a raw virtio-device cap");
         log(b"network authority is endpoint/capability mediated");
-        log(b"Vertex sends UDP packet");
-        log(b"echo receives a UDP packet delivered through netstack IPC");
+        log(b"echo submits UDP request to netstack boundary");
     } else {
         log(b"echo UDP send failed");
         sys::exit(1);

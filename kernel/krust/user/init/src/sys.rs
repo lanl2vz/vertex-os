@@ -6,6 +6,7 @@ pub const CAP_PROCESS_CONTROL: u64 = 2;
 pub const CAP_READINESS: u64 = 3;
 pub const CAP_ENDPOINT_AUTH_BASE: u64 = 4;
 pub const CAP_CREATED_ENDPOINT: u64 = 29;
+pub const CAP_TIMER: u64 = 30;
 pub const CAP_DERIVED: u64 = 31;
 
 pub const STATUS_OK: u64 = 0;
@@ -17,6 +18,7 @@ pub const RIGHT_READ: u64 = 1 << 0;
 pub const RIGHT_SEND: u64 = 1 << 4;
 pub const RIGHT_RECEIVE: u64 = 1 << 5;
 pub const RIGHT_CONTROL: u64 = 1 << 6;
+pub const RIGHT_ALLOCATE: u64 = 1 << 7;
 pub const RIGHT_REVOKE: u64 = 1 << 13;
 pub const RIGHT_INSPECT: u64 = 1 << 14;
 
@@ -31,6 +33,7 @@ const SYS_PROCESS_CREATE: u64 = 9;
 const SYS_CAP_DERIVE: u64 = 10;
 const SYS_CAP_DROP: u64 = 11;
 const SYS_CAP_TRANSFER: u64 = 12;
+const SYS_SLEEP_MS: u64 = 16;
 const SYS_PROCESS_WAIT: u64 = 17;
 const SYS_ROLLBACK_GENERATION: u64 = 18;
 const SYS_IPC_RECV_TIMEOUT: u64 = 19;
@@ -91,6 +94,10 @@ pub fn process_start(pid: u64) -> u64 {
 
 pub fn process_wait(pid: u64) -> u64 {
     syscall3(SYS_PROCESS_WAIT, CAP_PROCESS_CONTROL, pid, 0)
+}
+
+pub fn sleep_ms(milliseconds: u64) -> u64 {
+    syscall3(SYS_SLEEP_MS, CAP_TIMER, milliseconds, 0)
 }
 
 pub fn runtime_inspect(buffer: &mut [u8]) -> u64 {

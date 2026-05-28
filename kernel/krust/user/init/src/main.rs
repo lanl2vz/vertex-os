@@ -42,6 +42,7 @@ const RESTART_ALWAYS: u16 = 2;
 const MAX_NATIVE_RESTARTS: u16 = 1;
 const STATUS_RUNNING: u64 = u64::MAX - 8;
 const READINESS_TIMEOUT_MS: u64 = 500;
+const RESTART_BACKOFF_MS: u64 = 10;
 const M37_GENERATION_A: &[u8] = b"gen:switch-a-0001";
 const M37_GENERATION_B: &[u8] = b"gen:switch-b-0002";
 const M37_GENERATION_C_BAD: &[u8] = b"gen:switch-c-bad-0003";
@@ -56,6 +57,8 @@ const M38_MANIFEST_CAP_SLOT: u64 = 3;
 const M41_PROCESS_NAME: &[u8] = b"console-shell";
 const M41_INSPECT_CAP_SLOT: u64 = 7;
 const M54_UPDATE_CAP_SLOT: u64 = 8;
+const FLAKY_PROCESS_NAME: &[u8] = b"flaky-service";
+const FLAKY_PROCESS_CONTROL_CAP_SLOT: u64 = 3;
 
 struct ReportBuffer(UnsafeCell<[u8; REPORT_BUFFER_LEN]>);
 
@@ -168,6 +171,9 @@ pub extern "C" fn _start() -> ! {
         if !quota_delegate_test_done {
             run_quota_delegate_tests(pid, parent_generation);
             quota_delegate_test_done = true;
+        }
+        if bytes_eq(name, FLAKY_PROCESS_NAME) {
+            grant_flaky_restart_quota(pid, parent_generation);
         }
         if process_requires_endpoint(&manifest[..manifest_len], boot_modules, process_index) {
             transfer_endpoint_requirements(
@@ -584,6 +590,24 @@ fn run_quota_delegate_tests(target_pid: u64, parent_generation: &[u8]) {
     }
 }
 
+fn grant_flaky_restart_quota(target_pid: u64, parent_generation: &[u8]) {
+    if sys::quota_delegate(target_pid, 1) != sys::STATUS_OK {
+        log(b"flaky-service quota baseline delegate failed");
+        activation_failed(parent_generation);
+    }
+    if sys::cap_transfer(
+        target_pid,
+        sys::CAP_PROCESS_CONTROL,
+        FLAKY_PROCESS_CONTROL_CAP_SLOT,
+        sys::RIGHT_ALLOCATE,
+    ) != sys::STATUS_OK
+    {
+        log(b"flaky-service process-control baseline transfer failed");
+        activation_failed(parent_generation);
+    }
+    log(b"flaky-service restart quota baseline installed");
+}
+
 fn endpoint_auth_slot(endpoint_index: u16) -> u64 {
     if endpoint_index < 2 {
         return u64::MAX;
@@ -683,6 +707,11 @@ fn supervise_services(
                 }
                 log_prefix(b"service lifecycle restarting: ", name);
                 log(b"restart budget remaining=0 backoff-ms=10");
+                if sys::sleep_ms(RESTART_BACKOFF_MS) != sys::STATUS_OK {
+                    log(b"restart backoff sleep failed");
+                    activation_failed(parent_generation);
+                }
+                log(b"restart backoff sleep elapsed");
                 log_restart_once(name);
                 if sys::process_start(pid) != sys::STATUS_OK {
                     log_prefix(b"vertex-init service restart failed: ", name);

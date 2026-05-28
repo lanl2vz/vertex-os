@@ -140,10 +140,14 @@ Native service activation ok
         EXPECT_ACTIVATION_SUCCESS=1
         required_lines='
 flaky-service exits with status 1
+flaky-service creates quota-backed endpoint
 vertex-init observes failure
 restart policy = on-failure
+restart backoff sleep elapsed
 vertex-init restarts flaky-service once
 Krust process restart reload: proc=flaky-service
+Krust process restart restores quota baseline: proc=flaky-service
+flaky-service restart quota restored
 flaky-service exits 0
 restart policy = always
 vertex-init restarts echo once
@@ -241,7 +245,7 @@ unauthorized service cannot access PCI I/O, IRQ, or DMA capabilities
         MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
         EXPECT_ACTIVATION_SUCCESS=1
         required_lines='
-KrustBoot grants: 60
+KrustBoot grants: 61
 KrustBoot io port ranges: 3
 KrustBoot mmio regions: 0
 KrustBoot pci devices: 4
@@ -272,7 +276,7 @@ Native service activation ok
         MANIFEST="$ROOT_DIR/examples/krust-block-driver-fault-generation.vertex.json"
         required_lines='
 Boot generation: gen:block-driver-fault-0001
-KrustBoot grants: 60
+KrustBoot grants: 61
 KrustBoot store objects:
 proc=block-driver cap[10] store-object=store:block-driver-fault-token rights=read
 Object read accepted: proc=block-driver object=store:block-driver-fault-token bytes=25
@@ -289,7 +293,7 @@ Native service activation failed
         EXPECT_ACTIVATION_SUCCESS=1
         required_lines='
 KrustBoot endpoints: 12
-KrustBoot grants: 60
+KrustBoot grants: 61
 KrustBoot state volumes: 0
 QEMU boots with VertexDisk image attached
 VertexDisk superblock accepted
@@ -448,7 +452,7 @@ Native service activation ok
         EXPECT_ACTIVATION_SUCCESS=1
         required_lines='
 KrustBoot endpoints: 12
-KrustBoot grants: 60
+KrustBoot grants: 61
 IPC FIFO regression: queued sends preserve FIFO order
 IPC FIFO regression: queue-full send rejected
 IPC FIFO regression: receiver-specific dequeue preserves eligible ordering
@@ -648,6 +652,7 @@ proc=serial-driver cap[3] io-port=cap:io.com1 rights=read|write
 proc=serial-driver cap[5] virtio-device=device:virtio-console0 transport=virtio-pci-io rights=control
 proc=netstack cap[3] virtio-device=device:virtio-rng0 transport=virtio-pci-io rights=control
 proc=netstack cap[5] virtio-device=device:virtio-net0 transport=virtio-pci-io rights=control
+proc=netstack cap[6] network-port=cap:net.udp.9000 rights=control
 proc=block-driver cap[10] pci-device=device:virtio-blk0 kind=virtio-blk-pci rights=control
 proc=block-driver cap[11] virtio-device=device:virtio-blk0 transport=virtio-pci-io rights=control
 serial-driver ready
@@ -683,8 +688,10 @@ Virtio net RX completed: proc=netstack virtio-device=device:virtio-net0 frame-by
 QEMU user-mode network delivered a raw frame
 Vertex sends ICMP echo
 QEMU user-mode network delivered ICMP echo reply
-UDP send transmitted: proc=echo network-port=cap:net.udp.9000 bytes=13
-Vertex sends UDP packet
+UDP send queued for netstack: proc=echo network-port=cap:net.udp.9000 bytes=13
+echo submits UDP request to netstack boundary
+Network-port UDP request delivered to netstack: network-port=cap:net.udp.9000 bytes=13
+UDP send transmitted: proc=netstack network-port=cap:net.udp.9000 bytes=13
 network authority is endpoint/capability mediated
 unauthorized service cannot use network device
 Native service activation ok
@@ -798,11 +805,13 @@ IPv4 packet validation ok
 QEMU user-mode network attached
 echo sends UDP through cap:net.udp.9000 without a raw virtio-device cap
 network-port bind/listen rights enforced by netstack boundary
-echo receives a UDP packet delivered through netstack IPC
+netstack received UDP request through network-port boundary
+netstack transmitted UDP packet for network-port client
 unauthorized service cannot bind or send on cap:net.udp.9000
 unauthorized service cannot use network device
 proc=echo cap[3] network-port=cap:net.udp.9000 rights=bind|listen
 proc=netstack cap[5] virtio-device=device:virtio-net0 transport=virtio-pci-io rights=control
+proc=netstack cap[6] network-port=cap:net.udp.9000 rights=control
 Native service activation ok
 '
         ;;
@@ -818,6 +827,7 @@ service lifecycle ready: logd
 vertex-init observes failure
 service lifecycle restarting: flaky-service
 restart budget remaining=0 backoff-ms=10
+restart backoff sleep elapsed
 restart budget and backoff policy enforced
 service lifecycle exited: flaky-service
 operator-visible activation log records generation id

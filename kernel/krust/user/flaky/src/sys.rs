@@ -5,6 +5,7 @@ pub const STATUS_OK: u64 = 0;
 const SYS_EXIT: u64 = 2;
 const SYS_LOG_WRITE: u64 = 7;
 const SYS_PROCESS_ATTEMPT: u64 = 20;
+const SYS_ENDPOINT_CREATE: u64 = 25;
 
 pub fn log(cap_slot: u64, message: &[u8]) -> u64 {
     syscall3(
@@ -17,6 +18,10 @@ pub fn log(cap_slot: u64, message: &[u8]) -> u64 {
 
 pub fn process_attempt() -> u64 {
     syscall3(SYS_PROCESS_ATTEMPT, 0, 0, 0)
+}
+
+pub fn endpoint_create(control_slot: u64, cap_slot: u64) -> u64 {
+    syscall3(SYS_ENDPOINT_CREATE, control_slot, cap_slot, 0)
 }
 
 pub fn exit(status: u64) -> ! {

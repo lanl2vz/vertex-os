@@ -593,10 +593,14 @@ Acceptance evidence:
 
 ```text
 flaky-service exits with status 1
+flaky-service creates quota-backed endpoint
 vertex-init observes failure
 restart policy = on-failure
+restart backoff sleep elapsed
 vertex-init restarts flaky-service once
 Krust process restart reload: proc=flaky-service
+Krust process restart restores quota baseline: proc=flaky-service
+flaky-service restart quota restored
 flaky-service exits 0
 restart policy = always
 vertex-init restarts echo once
@@ -2308,7 +2312,8 @@ Acceptance tests:
 ```text
 QEMU user-mode network attached
 Vertex replies to ping or sends ICMP echo
-Vertex sends UDP packet
+echo queues a UDP payload through a network-port capability
+netstack transmits the queued UDP payload through raw virtio-net authority
 network authority is endpoint/capability mediated
 unauthorized service cannot use network device
 ```
@@ -2318,7 +2323,9 @@ Implementation notes:
 - The M57 QEMU case attaches QEMU user-mode networking and the generation graph
   exposes only `cap:net.udp.9000` as a network-port authority.
 - `SYS_NETWORK_SEND_UDP` consumes a `NetworkPort` capability with bind/listen
-  rights. The raw virtio-net device remains a separate driver-only capability.
+  rights and queues the payload for `netstack`. `netstack` receives queued
+  payloads through its control cap on the same network-port object, then uses
+  its separate raw virtio-net device capability to transmit frames.
 - `netstack` proves raw frame RX/TX and ICMP-style echo handling in the native
   transcript; `echo` proves UDP send authority through the endpoint-style
   network-port capability and proves it still cannot use the virtio-net device.
@@ -2571,7 +2578,7 @@ ARP cache owned by netstack
 IPv4 packet validation
 ICMP echo request/reply for diagnostics
 UDP send through network-port capability
-UDP receive and demultiplex through endpoint-style service IPC
+UDP request delivery through the netstack-owned network-port boundary
 network-port bind/listen rights enforced by netstack and kernel objects
 ```
 
@@ -2580,7 +2587,8 @@ Acceptance tests:
 ```text
 netstack owns device:virtio-net0 and initializes QEMU user-mode networking
 echo sends UDP through cap:net.udp.9000 without a raw virtio-device cap
-echo receives a UDP packet delivered through netstack IPC
+netstack receives the UDP request through the network-port boundary
+netstack transmits the UDP packet for the network-port client
 unauthorized service cannot bind or send on cap:net.udp.9000
 unauthorized service cannot call raw virtio-net TX/RX
 ICMP echo from the appliance shell reaches the QEMU gateway
@@ -2598,6 +2606,9 @@ Implementation notes:
   manifest. Application code uses `cap:net.udp.9000`, and the negative table
   checks both missing bind/listen rights and attempts to call raw virtio-net
   syscalls without a virtio-device cap.
+- `echo` can only queue UDP through bind/listen authority. The provider-side
+  network-port control cap is granted to `netstack`, which drains queued
+  payloads and performs the virtio-net transmit path.
 - Runtime inspect output shows network-port authority separately from raw
   virtio-device authority.
 
@@ -2644,8 +2655,10 @@ Implementation notes:
 - Make restart restoration explicit: capabilities, quotas, and initial process
   context must come from the generation graph, not from stale runtime state.
 - Native `vertex-init` now emits declared, starting, ready, restarting, failed,
-  and exited lifecycle events, logs restart budget/backoff decisions, and keeps
-  readiness timeout attribution service-specific.
+  and exited lifecycle events, performs timer-backed restart backoff sleeps,
+  and keeps readiness timeout attribution service-specific. The kernel only
+  records `ready` lifecycle events when they arrive on the readiness endpoint
+  for `vertex-init` and the ready payload names the sending process.
 - Runtime inspect and the shell consume the same generation/process/capability
   state used by supervisor decisions.
 
