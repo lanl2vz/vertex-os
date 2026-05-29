@@ -76,9 +76,11 @@ scripts/krust-test.sh m63
 scripts/krust-test.sh m64
 ```
 
-Next direction: continue past the M65 appliance release profile only after the
-standalone QEMU profile can boot, update, recover, and explain authority
-repeatably.
+Next direction: M66-M73 turn the supported M65 appliance profile from a
+credible prototype into a resource-lifetime and device-failure-hardened system.
+Do not broaden the platform until memory reclamation, failure-atomic kernel
+object creation, interrupt delivery, DMA safety, and virtio reset/recovery are
+gate-tested.
 
 ## M0: Serial Boot
 
@@ -2712,10 +2714,325 @@ Implementation notes:
 
 done: M65 supported appliance release profile is checked by the gate
 
+## M66: Owned Physical Frames And Reclamation
+
+Status: planned.
+
+Goal: make every allocated physical frame owned, inspectable, and reclaimable
+instead of treating frame allocation as a mostly one-way boot-time resource.
+
+Scope:
+
+```text
+frame owner metadata for kernel, page tables, process memory, DMA, and scratch allocations
+allocated/free/reserved frame accounting visible through runtime inspect
+contiguous allocation ownership records
+double-free and foreign-free rejection
+frame zeroing policy before reuse
+allocator exhaustion reported without corrupting allocator state
+```
+
+Acceptance tests:
+
+```text
+process exit returns all process-owned frames to the allocator
+restart reuses reclaimed frames without stale userspace bytes
+double-free is rejected and leaves accounting unchanged
+failed contiguous allocation leaves accounting unchanged
+runtime inspect reports total, allocated, free, reclaimed, and owner-class counts
+allocator exhaustion fails process creation cleanly
+```
+
+Implementation notes:
+
+- Add an explicit frame ledger before adding a general heap. The ledger is the
+  source of truth for ownership and is what later teardown paths consume.
+- Keep page-table frames, user segment frames, user stacks, DMA buffers, and
+  kernel scratch frames as distinct owner classes.
+- Zero frames on allocation or before reuse, but make the policy explicit and
+  testable.
+- Do not reclaim Limine, kernel image, boot modules, or HHDM backing ranges.
+
+## M67: Address Space Teardown And Process Reaping
+
+Status: planned.
+
+Goal: fully tear down a process address space on exit, fault, kill, failed
+start, and failed restart.
+
+Scope:
+
+```text
+walk user half of PML4 for owned mappings
+free user leaf frames
+free process page-table frames
+unmap user device mappings
+clear blocked IPC/sleep scheduler state on reaped processes
+reap faulted, killed, and normally exited services through one path
+```
+
+Acceptance tests:
+
+```text
+faulty-service frees its old address space before restart
+kill_process releases process frames and removes wait/sleep/block state
+failed userspace load frees all frames allocated before the failure
+repeated create/start/exit cycles reach a stable frame count
+blocked receiver killed while waiting is removed from endpoint wakeups
+runtime inspect shows no live mappings for reaped pids
+```
+
+Implementation notes:
+
+- This milestone should introduce an address-space object or equivalent
+  teardown API so process exit does not know page-table internals.
+- Treat process teardown as idempotent. Calling reap twice should be harmless
+  and observable as a no-op.
+- Keep kernel half mappings shared and never freed by process teardown.
+
+## M68: Kernel Object Lifetime And Failure Atomicity
+
+Status: planned.
+
+Goal: make kernel object creation and capability installation transactional so
+failed syscalls do not leak objects, caps, quotas, or IDs.
+
+Scope:
+
+```text
+object table free-list or generation-tagged slots
+capability slot rollback on partial failure
+quota charge and refund helpers
+endpoint_create failure atomicity
+process_create failure atomicity
+namespace_resolve failure atomicity
+cap_transfer failure atomicity
+runtime inspect leak report for unreachable objects
+```
+
+Acceptance tests:
+
+```text
+endpoint_create with occupied target slot does not consume object slots or quota
+process_create failure after partial cap grants leaves no process table entry
+namespace_resolve with occupied target slot does not allocate a cap id
+cap_transfer failure leaves target capability space unchanged
+repeated failed syscalls do not change live object/cap/quota counts
+inspect reports zero unreachable kernel objects after smoke
+```
+
+Implementation notes:
+
+- Prefer small transaction structs around existing fixed tables over a general
+  allocator.
+- IDs may remain monotonic if that is useful for audit, but live object slots
+  and quotas must not leak.
+- Keep failure atomicity local and explicit. Do not add broad rollback machinery
+  that obscures authority checks.
+
+## M69: Memory Pressure, Limits, And Soak Gate
+
+Status: planned.
+
+Goal: prove the M66-M68 memory lifecycle holds under repeated restarts,
+allocation pressure, and hostile syscall inputs.
+
+Scope:
+
+```text
+memory pressure test service
+bounded process and endpoint churn
+repeated fault/restart loops
+runtime high-water marks
+leak-delta checks in smoke and release gate
+out-of-memory error path coverage
+```
+
+Acceptance tests:
+
+```text
+100 create/start/exit cycles return to baseline frame and object counts
+100 fault/restart cycles return to baseline frame and object counts
+memory pressure service reaches configured limit and receives a clean error
+endpoint churn reaches quota limit and returns to baseline after owner exit
+release gate fails on nonzero frame/object/cap leak delta
+inspect shows memory high-water marks and current live counts
+```
+
+Implementation notes:
+
+- This is a hardening milestone, not a new feature milestone. The main output is
+  confidence that existing services can fail repeatedly without degrading the
+  system.
+- Keep cycle counts small enough for CI/QEMU portability, but high enough to
+  catch monotonic leaks.
+- Add a longer optional soak script separately from the default release gate.
+
+## M70: Interrupt Routing And Blocking IRQ Delivery
+
+Status: planned.
+
+Goal: replace IRQ stubs and polling-only waits with a real interrupt delivery
+path from hardware IRQs to authorized driver processes.
+
+Scope:
+
+```text
+IRQ object wait queues
+per-IRQ pending counters
+EOI ordering rules
+driver blocking on interrupt-line caps
+timeout-aware irq_wait
+spurious interrupt accounting
+interrupt attribution in runtime inspect
+```
+
+Acceptance tests:
+
+```text
+block-driver sleeps on virtio-blk IRQ instead of polling for completion
+netstack sleeps on virtio-net IRQ instead of polling for RX completion
+irq_wait without listen rights is rejected
+irq_wait timeout returns timeout without consuming future interrupts
+pending IRQ before wait wakes the next authorized waiter
+spurious IRQ is counted and does not wake unrelated drivers
+inspect reports IRQ line, owner, pending count, waiters, and spurious count
+```
+
+Implementation notes:
+
+- Keep the first implementation on legacy PIC/PIT/QEMU hardware if that is what
+  the supported profile uses. APIC can be a later replacement.
+- Preserve capability isolation: an interrupt-line cap should wake only the
+  process authorized for that IRQ object.
+- Avoid running driver logic in interrupt context. Interrupt handlers should
+  acknowledge, record, and schedule.
+
+## M71: DMA Ownership, Pinning, And Bounds Safety
+
+Status: planned.
+
+Goal: make DMA memory explicit, owned, bounded, and unmapped on teardown so
+drivers cannot use stale or overlapping DMA windows.
+
+Scope:
+
+```text
+DMA allocation records tied to process/device objects
+page-pinned DMA buffers
+DMA virtual mapping teardown
+overlap checks for physical and user DMA windows
+device-visible length and alignment validation
+DMA zeroing on allocation and release
+```
+
+Acceptance tests:
+
+```text
+driver exit releases DMA buffers and user DMA mappings
+restarted driver receives a fresh DMA mapping with zeroed contents
+overlapping DMA region in manifest is rejected
+unaligned DMA region in manifest is rejected
+oversized DMA region is rejected before mapping
+DMA map twice for the same object rejects or returns the same mapping without leaking frames
+unauthorized service cannot map or inspect another driver's DMA region
+```
+
+Implementation notes:
+
+- Without an IOMMU, Krust cannot fully contain a malicious device. The supported
+  profile should state that DMA safety is driver/process bookkeeping plus
+  manifest validation, not hardware remapping.
+- Keep DMA buffers out of the general user heap. DMA mappings should live in
+  reserved user VA windows with explicit ownership.
+- Device reset paths in M72 must release or reinitialize DMA descriptors through
+  this ownership model.
+
+## M72: Virtio Reset, Error Recovery, And Async Completion
+
+Status: planned.
+
+Goal: make virtio drivers recover from device errors, queue timeouts, and
+driver restarts without rebooting the kernel.
+
+Scope:
+
+```text
+virtqueue state machines
+descriptor ownership tracking
+device reset and reinitialize path
+timeout-to-reset policy
+completion events delivered through IRQ wait queues
+driver restart rebinds device authority safely
+virtio status/error counters in inspect
+```
+
+Acceptance tests:
+
+```text
+virtio-blk request timeout resets the device and fails only the request
+block-driver fault releases virtqueue ownership before restart
+restarted block-driver reinitializes virtio-blk and completes later requests
+virtio-net RX timeout does not wedge netstack
+virtio-rng timeout returns a clean syscall error
+wrong virtio device type cannot enter a typed driver reset path
+inspect reports virtio queue state, last error, reset count, and owner process
+```
+
+Implementation notes:
+
+- Keep one queue per supported QEMU virtio device until reset/recovery semantics
+  are boring. Multiple queues are later work.
+- Driver-owned requests should complete through a bounded kernel record, not by
+  trusting driver-local memory after the driver has faulted.
+- Recovery should favor clean failure and supervisor restart over hidden retry
+  loops.
+
+## M73: Device Isolation And Fault Injection Gate
+
+Status: planned.
+
+Goal: prove that driver faults, bad manifests, bad DMA/IRQ authority, and device
+timeouts are isolated from unrelated services and from the kernel.
+
+Scope:
+
+```text
+device fault-injection test matrix
+driver kill/fault while IRQ waiter is registered
+driver kill/fault while DMA is mapped
+driver kill/fault while request is in flight
+manifest negative cases for overlapping I/O, MMIO, DMA, and IRQ authority
+operator-visible device failure reports
+release-gate integration for memory and device leak deltas
+```
+
+Acceptance tests:
+
+```text
+block-driver fault during in-flight request fails client request without kernel fault or leaks
+netstack fault releases virtio-net IRQ/DMA ownership and leaves other services running
+serial-driver fault does not revoke unrelated console-shell authority
+bad manifest with overlapping I/O ranges is rejected
+bad manifest with overlapping DMA ranges is rejected
+bad manifest with duplicate IRQ ownership is rejected
+release gate checks memory/object/cap/DMA/IRQ leak deltas after fault injection
+appliance shell reports last device failure reason and owner process
+```
+
+Implementation notes:
+
+- This milestone closes the M66-M72 hardening loop. It should not introduce new
+  device classes.
+- Fault injection should be deterministic and scriptable under QEMU so failures
+  are reproducible.
+- Keep the operator report tied to the same inspect data used by the gate.
+
 ## Later Direction
 
 Avoid these until the appliance release profile, storage durability, network
-service boundary, update path, and supervisor semantics are solid:
+service boundary, update path, supervisor semantics, memory lifecycle, and
+interrupt/device failure model are solid:
 
 ```text
 USB
@@ -2732,7 +3049,9 @@ They matter eventually, but they distract from the next core proof:
 ```text
 A native booted Vertex system should be able to boot from persistent storage,
 install verified generations, run dynamically created services, preserve
-mutable state, explain its authority graph, and recover from failed updates.
+mutable state, explain its authority graph, recover from failed updates, and
+survive repeated process, memory, interrupt, DMA, and device failures without
+leaking resources or losing isolation.
 ```
 
 M13 proved that native services can run under explicit authority. M14-M65 prove
@@ -2752,4 +3071,6 @@ QEMU-friendly virtio devices, the first UDP-capable network path, the POSIX
 compatibility plan, capability namespaces, and human-readable policy plus typed
 prototype compilation. M61 turns those surfaces into an ABI and authority
 regression baseline, and M62-M65 turn that baseline into the first supported
-standalone appliance profile.
+standalone appliance profile. M66-M73 are reserved for turning that profile
+into a resource-lifetime and device-failure-hardened system before broadening
+the platform.

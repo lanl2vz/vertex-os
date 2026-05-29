@@ -104,6 +104,19 @@ global_asm!(
 
     .global krust_invalid_opcode_entry
 krust_invalid_opcode_entry:
+    mov rax, [rsp + 8]
+    test rax, 3
+    jz 6f
+    mov r14, [rsp]
+    push_user_frame
+    mov rdi, 6
+    xor rsi, rsi
+    mov rdx, r14
+    mov rcx, rsp
+    call krust_user_exception_dispatch
+    pop_user_frame
+    iretq
+6:
     xor rsi, rsi
     xor rdx, rdx
     mov rdi, 6
@@ -114,6 +127,21 @@ krust_invalid_opcode_entry:
 
     .global krust_general_protection_entry
 krust_general_protection_entry:
+    mov rax, [rsp + 16]
+    test rax, 3
+    jz 7f
+    mov r14, [rsp]
+    mov r15, [rsp + 8]
+    add rsp, 8
+    push_user_frame
+    mov rdi, 13
+    mov rsi, r14
+    mov rdx, r15
+    mov rcx, rsp
+    call krust_user_exception_dispatch
+    pop_user_frame
+    iretq
+7:
     mov rsi, [rsp]
     xor rdx, rdx
     mov rdi, 13
@@ -218,6 +246,36 @@ extern "C" fn krust_page_fault_user_dispatch(
     serial::write_str("\n");
 
     let result = ipc::fault_current_process("page-fault", cr2, error_code, frame);
+    if let ipc::ScheduleResult::Halt { ok } = result {
+        print_halt_status(ok);
+        halt_loop();
+    }
+}
+
+#[unsafe(no_mangle)]
+extern "C" fn krust_user_exception_dispatch(
+    vector: u64,
+    error_code: u64,
+    address: u64,
+    frame: &mut ipc::SyscallFrame,
+) {
+    let reason = match vector {
+        value if value == VECTOR_INVALID_OPCODE as u64 => "invalid-opcode",
+        value if value == VECTOR_GENERAL_PROTECTION as u64 => "general-protection",
+        _ => "exception",
+    };
+
+    serial::write_str("User exception: proc=");
+    serial::write_str(ipc::current_process_name());
+    serial::write_str(" vector=");
+    serial::write_u64_dec(vector);
+    serial::write_str(" rip=");
+    serial::write_u64_hex(address);
+    serial::write_str(" error=");
+    serial::write_u64_hex(error_code);
+    serial::write_str("\n");
+
+    let result = ipc::fault_current_process(reason, address, error_code, frame);
     if let ipc::ScheduleResult::Halt { ok } = result {
         print_halt_status(ok);
         halt_loop();

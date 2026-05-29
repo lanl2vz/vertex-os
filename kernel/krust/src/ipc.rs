@@ -29,7 +29,9 @@ const PROTOCOL_HEALTH_V0: u16 = 2;
 const MESSAGE_READY: u16 = 1;
 const READY_ENVELOPE_LEN: usize = 16;
 const INIT_TIMER_CAP_SLOT: u64 = 30;
+const USER_MMIO_MAPPING_BASE: u64 = 0x0000_5000_0000_0000;
 const USER_DMA_MAPPING_BASE: u64 = 0x0000_6000_0000_0000;
+const USER_DEVICE_MAPPING_STRIDE: u64 = 1 << 30;
 const PCI_CONFIG_ADDRESS: u16 = 0x0cf8;
 const PCI_CONFIG_DATA: u16 = 0x0cfc;
 const PCI_VENDOR_VIRTIO: u16 = 0x1af4;
@@ -4022,16 +4024,22 @@ pub fn endpoint_create(control_slot: u64, cap_slot: u64) -> Result<(), IpcError>
     let _process_control = process_control_from_cap(control_slot, capability::RIGHT_ALLOCATE)?;
     let process_name = current_process_name();
     let runtime = runtime();
-    let (owner, quota) = {
+    let (owner, quota, cap_slot_available) = {
         let Some(process) = runtime.processes.current_process() else {
             return Err(IpcError::BadCapability);
         };
-        (process.pid, process.quota)
+        (process.pid, process.quota, process.caps.can_grant(cap_slot))
     };
     if quota.used_endpoints >= quota.max_endpoints {
         serial::write_str("Endpoint create rejected: proc=");
         serial::write_str(process_name);
         serial::write_str(" quota=max_endpoints\n");
+        return Err(IpcError::BadCapability);
+    }
+    if !cap_slot_available {
+        serial::write_str("Endpoint create rejected: proc=");
+        serial::write_str(process_name);
+        serial::write_str(" target cap slot unavailable\n");
         return Err(IpcError::BadCapability);
     }
 
@@ -4968,13 +4976,27 @@ pub fn irq_wait(cap_slot: u64, _timeout_ms: u64) -> Result<(), IpcError> {
 
 pub fn mmio_map(cap_slot: u64) -> Result<u64, IpcError> {
     let region = mmio_region_from_cap(cap_slot, capability::RIGHT_MAP)?;
-    map_current_process_physical_range(
-        align_down(region.base, memory::FRAME_SIZE),
-        align_down(region.base, memory::FRAME_SIZE),
+    let physical_base = align_down(region.base, memory::FRAME_SIZE);
+    let page_offset = region
+        .base
+        .checked_sub(physical_base)
+        .ok_or(IpcError::BadCapability)?;
+    let map_len = align_up(
         region
             .length
-            .checked_add(region.base - align_down(region.base, memory::FRAME_SIZE))
+            .checked_add(page_offset)
             .ok_or(IpcError::BadCapability)?,
+        memory::FRAME_SIZE,
+    )
+    .ok_or(IpcError::BadCapability)?;
+    let virtual_base = device_user_mapping_base(USER_MMIO_MAPPING_BASE, region.id, map_len)?;
+    let user_base = virtual_base
+        .checked_add(page_offset)
+        .ok_or(IpcError::BadCapability)?;
+    map_current_process_physical_range(
+        virtual_base,
+        physical_base,
+        map_len,
         paging::PageFlags::user_device(),
     )?;
     serial::write_str("MMIO map accepted: proc=");
@@ -4985,8 +5007,10 @@ pub fn mmio_map(cap_slot: u64) -> Result<u64, IpcError> {
     serial::write_u64_hex(region.base);
     serial::write_str(" length=");
     serial::write_u64_hex(region.length);
+    serial::write_str(" virt=");
+    serial::write_u64_hex(user_base);
     serial::write_str("\n");
-    Ok(region.base)
+    Ok(user_base)
 }
 
 pub fn dma_map(cap_slot: u64, destination: *mut u8, max_len: usize) -> Result<(), IpcError> {
@@ -5001,11 +5025,12 @@ pub fn dma_map(cap_slot: u64, destination: *mut u8, max_len: usize) -> Result<()
     if (destination as u64) & 7 != 0 {
         return Err(IpcError::InvalidUserBuffer);
     }
-    let virtual_base = USER_DMA_MAPPING_BASE + (region.id.raw() << 20);
+    let map_len = align_up(region.length, memory::FRAME_SIZE).ok_or(IpcError::BadCapability)?;
+    let virtual_base = device_user_mapping_base(USER_DMA_MAPPING_BASE, region.id, map_len)?;
     map_current_process_physical_range(
         virtual_base,
         region.base,
-        region.length,
+        map_len,
         paging::PageFlags::user(true, false),
     )?;
 
@@ -6293,11 +6318,21 @@ fn map_current_process_physical_range(
     flags: paging::PageFlags,
 ) -> Result<(), IpcError> {
     if length == 0
+        || length % memory::FRAME_SIZE != 0
         || virtual_base % memory::FRAME_SIZE != 0
         || physical_base % memory::FRAME_SIZE != 0
     {
         return Err(IpcError::BadCapability);
     }
+    let virtual_end = virtual_base
+        .checked_add(length)
+        .ok_or(IpcError::BadCapability)?;
+    if virtual_base >= paging::USER_CANONICAL_LIMIT || virtual_end > paging::USER_CANONICAL_LIMIT {
+        return Err(IpcError::BadCapability);
+    }
+    physical_base
+        .checked_add(length)
+        .ok_or(IpcError::BadCapability)?;
 
     let hhdm_offset = limine::hhdm_offset().ok_or(IpcError::BadCapability)?;
     let root_table_physical = runtime()
@@ -6305,6 +6340,11 @@ fn map_current_process_physical_range(
         .current_process()
         .map(|process| process.context.cr3)
         .ok_or(IpcError::BadCapability)?;
+    if !paging::user_range_is_unmapped(hhdm_offset, root_table_physical, virtual_base, length)
+        .map_err(|_| IpcError::BadCapability)?
+    {
+        return Err(IpcError::BadCapability);
+    }
     let allocator = frame_allocator()?;
 
     let mut offset = 0;
@@ -6326,7 +6366,7 @@ fn map_current_process_physical_range(
             flags,
             allocator,
         ) {
-            Ok(()) | Err(paging::MapError::AlreadyMapped) => {}
+            Ok(()) => {}
             Err(_) => return Err(IpcError::BadCapability),
         }
         offset = offset
@@ -6335,6 +6375,33 @@ fn map_current_process_physical_range(
     }
 
     Ok(())
+}
+
+fn device_user_mapping_base(
+    window_base: u64,
+    object: KernelObjectId,
+    length: u64,
+) -> Result<u64, IpcError> {
+    if length == 0 || length > USER_DEVICE_MAPPING_STRIDE {
+        return Err(IpcError::BadCapability);
+    }
+
+    let offset = object
+        .raw()
+        .checked_mul(USER_DEVICE_MAPPING_STRIDE)
+        .ok_or(IpcError::BadCapability)?;
+    let base = window_base
+        .checked_add(offset)
+        .ok_or(IpcError::BadCapability)?;
+    let end = base.checked_add(length).ok_or(IpcError::BadCapability)?;
+    if base >= paging::USER_CANONICAL_LIMIT || end > paging::USER_CANONICAL_LIMIT {
+        return Err(IpcError::BadCapability);
+    }
+    Ok(base)
+}
+
+fn align_up(value: u64, align: u64) -> Option<u64> {
+    Some(value.checked_add(align - 1)? & !(align - 1))
 }
 
 fn align_down(value: u64, align: u64) -> u64 {

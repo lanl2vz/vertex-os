@@ -334,6 +334,37 @@ pub fn validate_user_range(
     Ok(())
 }
 
+pub fn user_range_is_unmapped(
+    hhdm_offset: u64,
+    root_table_physical: u64,
+    start: u64,
+    len: u64,
+) -> Result<bool, UserRangeError> {
+    let end = start.checked_add(len).ok_or(UserRangeError::Overflow)?;
+    if start >= USER_CANONICAL_LIMIT || end > USER_CANONICAL_LIMIT {
+        return Err(UserRangeError::NonCanonical);
+    }
+    if len == 0 {
+        return Ok(true);
+    }
+
+    let mut page = align_down(start);
+    let last_page = align_down(end - 1);
+    loop {
+        if user_page_is_mapped(hhdm_offset, root_table_physical, page)? {
+            return Ok(false);
+        }
+        if page == last_page {
+            break;
+        }
+        page = page
+            .checked_add(FRAME_SIZE)
+            .ok_or(UserRangeError::Overflow)?;
+    }
+
+    Ok(true)
+}
+
 fn validate_user_page(
     hhdm_offset: u64,
     root_table_physical: u64,
@@ -368,6 +399,35 @@ fn validate_user_page(
     }
 
     Err(UserRangeError::NotPresent)
+}
+
+fn user_page_is_mapped(
+    hhdm_offset: u64,
+    root_table_physical: u64,
+    virtual_address: u64,
+) -> Result<bool, UserRangeError> {
+    let indexes = page_indexes(virtual_address);
+    let mut table = phys_to_virt(hhdm_offset, root_table_physical);
+    let mut level = 0;
+
+    while level < indexes.len() {
+        let entry = unsafe { (*table).entries[indexes[level]] };
+        if !entry.is_present() {
+            return Ok(false);
+        }
+        if entry.is_huge() {
+            return Err(UserRangeError::HugePageEncountered);
+        }
+
+        if level == indexes.len() - 1 {
+            return Ok(true);
+        }
+
+        table = phys_to_virt(hhdm_offset, entry.address());
+        level += 1;
+    }
+
+    Ok(false)
 }
 
 fn page_indexes(virtual_address: u64) -> [usize; 4] {
