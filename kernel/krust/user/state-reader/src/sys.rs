@@ -10,6 +10,7 @@ const SYS_YIELD: u64 = 5;
 const SYS_IPC_SEND: u64 = 3;
 const SYS_IPC_RECV: u64 = 4;
 const SYS_LOG_WRITE: u64 = 7;
+const SYS_NAMESPACE_RESOLVE: u64 = 45;
 
 pub fn log(cap_slot: u64, message: &[u8]) -> u64 {
     syscall3(
@@ -40,6 +41,15 @@ pub fn ipc_recv(cap_slot: u64, buffer: &mut [u8]) -> u64 {
 
 pub fn yield_now() -> u64 {
     syscall3(SYS_YIELD, 0, 0, 0)
+}
+
+pub fn namespace_resolve(cap_slot: u64, path: &[u8], target_slot: u64) -> u64 {
+    syscall3(
+        SYS_NAMESPACE_RESOLVE,
+        cap_slot,
+        path.as_ptr() as u64,
+        (target_slot << 32) | path.len() as u64,
+    )
 }
 
 pub fn exit(status: u64) -> ! {

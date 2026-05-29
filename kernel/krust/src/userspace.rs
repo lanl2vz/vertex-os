@@ -3,7 +3,7 @@ use core::ptr;
 use crate::{
     elf::{self, Elf, ProgramHeader},
     exceptions, gdt, ipc, memory,
-    memory::{FRAME_SIZE, FrameAllocator},
+    memory::{FRAME_SIZE, FrameAllocator, FrameOwner},
     paging::{self, AddressSpace, PageFlags},
     serial, syscall, timer,
 };
@@ -36,19 +36,34 @@ pub fn load(
     let elf = Elf::parse(bytes).map_err(LoadError::Elf)?;
     let mut address_space = AddressSpace::new_from_active_kernel_mappings(hhdm_offset, allocator)
         .map_err(LoadError::AddressSpace)?;
+    let root_table_physical = address_space.root_table_physical();
 
+    let result = load_into_address_space(bytes, hhdm_offset, allocator, &mut address_space, &elf);
+    if result.is_err() {
+        let _ = paging::reclaim_user_address_space(hhdm_offset, root_table_physical, allocator);
+    }
+    result
+}
+
+fn load_into_address_space(
+    bytes: &[u8],
+    hhdm_offset: u64,
+    allocator: &mut FrameAllocator,
+    address_space: &mut AddressSpace,
+    elf: &Elf,
+) -> Result<UserImage, LoadError> {
     let mut index = 0;
     while index < elf.program_header_count() {
         if let Some(header) = elf.program_header(index)
             && header.typ == elf::PT_LOAD
         {
-            load_segment(bytes, hhdm_offset, allocator, &mut address_space, header)?;
+            load_segment(bytes, hhdm_offset, allocator, address_space, header)?;
         }
 
         index += 1;
     }
 
-    map_user_stack(hhdm_offset, allocator, &mut address_space)?;
+    map_user_stack(hhdm_offset, allocator, address_space)?;
 
     Ok(UserImage {
         cr3: address_space.root_table_physical(),
@@ -149,15 +164,18 @@ fn load_segment(
     }
 
     let flags = PageFlags::user(header.flags & elf::PF_W != 0, header.flags & elf::PF_X != 0);
+    let owner = FrameOwner::process_memory(address_space.root_table_physical());
     let mut page = page_start;
     while page < page_end {
-        let frame = allocator.allocate().ok_or(LoadError::OutOfFrames)?;
+        let frame = allocator
+            .allocate_owned(owner)
+            .ok_or(LoadError::OutOfFrames)?;
         zero_frame(hhdm_offset, frame);
 
         let copy_start = max(page, header.vaddr);
         let copy_end = min(page + FRAME_SIZE, header.vaddr + header.filesz);
         if copy_start < copy_end {
-            copy_segment_bytes(
+            if let Err(error) = copy_segment_bytes(
                 bytes,
                 hhdm_offset,
                 frame,
@@ -165,12 +183,16 @@ fn load_segment(
                 page,
                 copy_start,
                 copy_end,
-            )?;
+            ) {
+                let _ = allocator.free_owned(frame, owner);
+                return Err(error);
+            }
         }
 
-        address_space
-            .map_page(page, frame, flags, allocator)
-            .map_err(LoadError::Map)?;
+        if let Err(error) = address_space.map_page(page, frame, flags, allocator) {
+            let _ = allocator.free_owned(frame, owner);
+            return Err(LoadError::Map(error));
+        }
         page += FRAME_SIZE;
     }
 
@@ -183,14 +205,20 @@ fn map_user_stack(
     address_space: &mut AddressSpace,
 ) -> Result<(), LoadError> {
     let stack_bottom = USER_STACK_TOP - (USER_STACK_PAGES as u64 * FRAME_SIZE);
+    let owner = FrameOwner::process_memory(address_space.root_table_physical());
     let mut page = stack_bottom;
 
     while page < USER_STACK_TOP {
-        let frame = allocator.allocate().ok_or(LoadError::OutOfFrames)?;
+        let frame = allocator
+            .allocate_owned(owner)
+            .ok_or(LoadError::OutOfFrames)?;
         zero_frame(hhdm_offset, frame);
-        address_space
-            .map_page(page, frame, PageFlags::user(true, false), allocator)
-            .map_err(LoadError::Map)?;
+        if let Err(error) =
+            address_space.map_page(page, frame, PageFlags::user(true, false), allocator)
+        {
+            let _ = allocator.free_owned(frame, owner);
+            return Err(LoadError::Map(error));
+        }
         page += FRAME_SIZE;
     }
 

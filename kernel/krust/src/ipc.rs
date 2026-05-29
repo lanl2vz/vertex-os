@@ -7,6 +7,7 @@ use core::{
 use crate::{
     capability, gdt, limine, memory, paging, serial,
     usercopy::{self, UserPtr},
+    userspace,
 };
 
 pub const BOOT_ENDPOINT_ID: u64 = 1;
@@ -213,7 +214,8 @@ pub struct ProcessContext {
 pub struct BootProcessConfig {
     pub name: &'static str,
     pub context: ProcessContext,
-    pub restart_context: ProcessContext,
+    pub image_base: u64,
+    pub image_length: u64,
     pub initial: bool,
 }
 
@@ -444,7 +446,9 @@ struct Process {
     pid: ProcessId,
     name: &'static str,
     context: ProcessContext,
-    restart_context: ProcessContext,
+    image_base: u64,
+    image_length: u64,
+    context_reaped: bool,
     state: ProcessState,
     caps: CapabilitySpace,
     initial_caps: CapabilitySpace,
@@ -478,6 +482,7 @@ struct IpcMessage {
 struct IpcEndpoint {
     id: KernelObjectId,
     name: &'static str,
+    owner: ProcessId,
     queue: [IpcMessage; ENDPOINT_QUEUE_CAPACITY],
     queue_len: usize,
 }
@@ -688,6 +693,27 @@ enum KernelObject {
     Secret(SecretObject),
 }
 
+impl KernelObject {
+    fn id(self) -> KernelObjectId {
+        match self {
+            Self::IpcEndpoint(object) => object.id,
+            Self::BootModule(object) => object.id,
+            Self::StoreObject(object) => object.id,
+            Self::Timer(object) => object.id,
+            Self::NetworkPort(object) => object.id,
+            Self::IoPortRange(object) => object.id,
+            Self::MmioRegion(object) => object.id,
+            Self::InterruptLine(object) => object.id,
+            Self::DmaRegion(object) => object.id,
+            Self::PciDevice(object) => object.id,
+            Self::VirtioDevice(object) => object.id,
+            Self::Namespace(object) => object.id,
+            Self::ProcessControl(object) => object.id,
+            Self::Secret(object) => object.id,
+        }
+    }
+}
+
 struct ObjectTable {
     objects: [Option<KernelObject>; MAX_OBJECTS],
     count: usize,
@@ -867,11 +893,9 @@ impl Process {
                 entry: 0,
                 stack_top: 0,
             },
-            restart_context: ProcessContext {
-                cr3: 0,
-                entry: 0,
-                stack_top: 0,
-            },
+            image_base: 0,
+            image_length: 0,
+            context_reaped: true,
             state: ProcessState::Empty,
             caps: CapabilitySpace::new(),
             initial_caps: CapabilitySpace::new(),
@@ -889,7 +913,8 @@ impl Process {
         pid: ProcessId,
         name: &'static str,
         context: ProcessContext,
-        restart_context: ProcessContext,
+        image_base: u64,
+        image_length: u64,
         state: ProcessState,
         caps: CapabilitySpace,
     ) -> Self {
@@ -904,7 +929,9 @@ impl Process {
             pid,
             name,
             context,
-            restart_context,
+            image_base,
+            image_length,
+            context_reaped: false,
             state,
             caps,
             initial_caps: caps,
@@ -920,10 +947,11 @@ impl Process {
 }
 
 impl IpcEndpoint {
-    const fn new(id: KernelObjectId, name: &'static str) -> Self {
+    const fn new(id: KernelObjectId, name: &'static str, owner: ProcessId) -> Self {
         Self {
             id,
             name,
+            owner,
             queue: [IpcMessage::empty(); ENDPOINT_QUEUE_CAPACITY],
             queue_len: 0,
         }
@@ -992,7 +1020,11 @@ pub fn run_fifo_regression() {
     let provider = ProcessId::new(1);
     let client_a = ProcessId::new(2);
     let client_b = ProcessId::new(3);
-    let mut endpoint = IpcEndpoint::new(KernelObjectId(0xf100), "fifo-regression");
+    let mut endpoint = IpcEndpoint::new(
+        KernelObjectId(0xf100),
+        "fifo-regression",
+        ProcessId::empty(),
+    );
     let mut message = [0u8; MAX_MESSAGE_BYTES];
 
     message[0] = b'a';
@@ -1023,7 +1055,11 @@ pub fn run_fifo_regression() {
     }
     serial::write_str("IPC FIFO regression: queued sends preserve FIFO order\n");
 
-    let mut full_endpoint = IpcEndpoint::new(KernelObjectId(0xf101), "fifo-full-regression");
+    let mut full_endpoint = IpcEndpoint::new(
+        KernelObjectId(0xf101),
+        "fifo-full-regression",
+        ProcessId::empty(),
+    );
     let mut index = 0;
     while index < ENDPOINT_QUEUE_CAPACITY {
         message[0] = b'0' + index as u8;
@@ -1042,8 +1078,11 @@ pub fn run_fifo_regression() {
     }
     serial::write_str("IPC FIFO regression: queue-full send rejected\n");
 
-    let mut receiver_endpoint =
-        IpcEndpoint::new(KernelObjectId(0xf102), "fifo-receiver-regression");
+    let mut receiver_endpoint = IpcEndpoint::new(
+        KernelObjectId(0xf102),
+        "fifo-receiver-regression",
+        ProcessId::empty(),
+    );
     message[0] = b'a';
     if receiver_endpoint.enqueue(client_a, &message, 1).is_err() {
         fifo_regression_failed("receiver enqueue a");
@@ -1347,14 +1386,17 @@ impl ObjectTable {
     }
 
     fn add_endpoint(&mut self, name: &'static str) -> Result<KernelObjectId, InitError> {
-        if self.count == self.objects.len() {
-            return Err(InitError::ObjectTableFull);
-        }
+        self.add_endpoint_owned(name, ProcessId::empty())
+    }
 
+    fn add_endpoint_owned(
+        &mut self,
+        name: &'static str,
+        owner: ProcessId,
+    ) -> Result<KernelObjectId, InitError> {
         let id = KernelObjectId(self.next_id);
+        self.insert_object(KernelObject::IpcEndpoint(IpcEndpoint::new(id, name, owner)))?;
         self.next_id += 1;
-        self.objects[self.count] = Some(KernelObject::IpcEndpoint(IpcEndpoint::new(id, name)));
-        self.count += 1;
         Ok(id)
     }
 
@@ -1595,6 +1637,59 @@ impl ObjectTable {
             index += 1;
         }
         count
+    }
+
+    fn remove_owned_endpoints(&mut self, owner: ProcessId) -> u64 {
+        let mut removed = 0;
+        let mut index = 0;
+        while index < self.count {
+            if let Some(KernelObject::IpcEndpoint(endpoint)) = self.objects[index]
+                && endpoint.owner == owner
+            {
+                self.objects[index] = None;
+                removed += 1;
+            }
+            index += 1;
+        }
+        self.trim_empty_tail();
+        removed
+    }
+
+    fn live_count(&self) -> usize {
+        let mut live = 0;
+        let mut index = 0;
+        while index < self.count {
+            if self.objects[index].is_some() {
+                live += 1;
+            }
+            index += 1;
+        }
+        live
+    }
+
+    fn insert_object(&mut self, object: KernelObject) -> Result<(), InitError> {
+        let mut index = 0;
+        while index < self.count {
+            if self.objects[index].is_none() {
+                self.objects[index] = Some(object);
+                return Ok(());
+            }
+            index += 1;
+        }
+
+        if self.count == self.objects.len() {
+            return Err(InitError::ObjectTableFull);
+        }
+
+        self.objects[self.count] = Some(object);
+        self.count += 1;
+        Ok(())
+    }
+
+    fn trim_empty_tail(&mut self) {
+        while self.count > 0 && self.objects[self.count - 1].is_none() {
+            self.count -= 1;
+        }
     }
 
     fn get_endpoint_mut(&mut self, id: KernelObjectId) -> Option<&mut IpcEndpoint> {
@@ -1842,7 +1937,8 @@ impl ProcessTable {
         &mut self,
         name: &'static str,
         context: ProcessContext,
-        restart_context: ProcessContext,
+        image_base: u64,
+        image_length: u64,
         state: ProcessState,
         caps: CapabilitySpace,
     ) -> Result<ProcessId, InitError> {
@@ -1856,7 +1952,8 @@ impl ProcessTable {
             pid,
             name,
             context,
-            restart_context,
+            image_base,
+            image_length,
             state,
             caps,
         ));
@@ -1882,6 +1979,35 @@ impl ProcessTable {
         if self.next_id == pid.raw() + 1 {
             self.next_id = pid.raw();
         }
+        Ok(())
+    }
+
+    fn remove_process(&mut self, pid: ProcessId) -> Result<(), InitError> {
+        let mut found = None;
+        let mut index = 0;
+        while index < self.count {
+            if let Some(process) = self.processes[index]
+                && process.pid == pid
+            {
+                found = Some(index);
+                break;
+            }
+            index += 1;
+        }
+
+        let Some(mut index) = found else {
+            return Err(InitError::InvalidBootManifest);
+        };
+        if self.current == Some(pid) {
+            return Err(InitError::InvalidBootManifest);
+        }
+
+        while index + 1 < self.count {
+            self.processes[index] = self.processes[index + 1];
+            index += 1;
+        }
+        self.count -= 1;
+        self.processes[self.count] = Some(Process::empty());
         Ok(())
     }
 
@@ -2667,7 +2793,8 @@ pub fn init_from_boot_config(config: &'static BootRuntimeConfig) -> Result<(), I
     let initial_pid = runtime.processes.add_process(
         initial_process.name,
         initial_process.context,
-        initial_process.restart_context,
+        initial_process.image_base,
+        initial_process.image_length,
         ProcessState::Running,
         CapabilitySpace::new(),
     )?;
@@ -2968,10 +3095,11 @@ pub fn exit_current_process(status: u64, frame: &mut SyscallFrame) -> ScheduleRe
             .unwrap_or(true)
     };
 
-    let lifecycle_event = {
+    let (lifecycle_event, exiting_pid) = {
         let runtime = runtime();
 
         if let Some(process) = runtime.processes.current_process_mut() {
+            let pid = process.pid;
             let event = if process.pid.raw() == 1 {
                 None
             } else {
@@ -2986,9 +3114,9 @@ pub fn exit_current_process(status: u64, frame: &mut SyscallFrame) -> ScheduleRe
             process.has_saved_frame = false;
             process.exit_status = status;
             process.has_exited = true;
-            event
+            (event, Some(pid))
         } else {
-            None
+            (None, None)
         }
     };
     if let Some((service, lifecycle_state)) = lifecycle_event {
@@ -3000,6 +3128,9 @@ pub fn exit_current_process(status: u64, frame: &mut SyscallFrame) -> ScheduleRe
     }
 
     if schedule_next_ready(frame) {
+        if let Some(pid) = exiting_pid {
+            let _ = reap_process_context(pid);
+        }
         ScheduleResult::Switched
     } else {
         let ok = runtime().processes.all_exited_successfully();
@@ -3089,18 +3220,19 @@ pub fn fault_current_process(
     error_code: u64,
     frame: &mut SyscallFrame,
 ) -> ScheduleResult {
-    let (name, initial_faulted) = {
+    let (name, initial_faulted, faulted_pid) = {
         let runtime = runtime();
         let Some(process) = runtime.processes.current_process_mut() else {
             return ScheduleResult::Halt { ok: false };
         };
         let initial = process.pid.raw() == 1;
         let name = process.name;
+        let pid = process.pid;
         process.state = ProcessState::Exited;
         process.has_saved_frame = false;
         process.exit_status = STATUS_PROCESS_FAULT;
         process.has_exited = true;
-        (name, initial)
+        (name, initial, pid)
     };
     if !initial_faulted {
         runtime().record_service_lifecycle(
@@ -3125,6 +3257,7 @@ pub fn fault_current_process(
     }
 
     if schedule_next_ready(frame) {
+        let _ = reap_process_context(faulted_pid);
         ScheduleResult::Switched
     } else {
         ScheduleResult::Halt {
@@ -3607,6 +3740,106 @@ pub fn rollback_generation(
     }
 }
 
+fn recycle_exited_process_template(config_process_index: usize) -> Result<(), IpcError> {
+    let existing = {
+        let runtime = runtime();
+        let config = runtime.active_config.ok_or(IpcError::BadCapability)?;
+        if config_process_index >= config.process_count {
+            return Err(IpcError::BadCapability);
+        }
+        runtime.process_template_pids[config_process_index]
+    };
+
+    let Some(pid) = existing else {
+        return Ok(());
+    };
+
+    let state = {
+        let runtime = runtime();
+        runtime
+            .processes
+            .process(pid)
+            .map(|process| process.state)
+            .ok_or(IpcError::BadCapability)?
+    };
+    if state != ProcessState::Exited {
+        return Err(IpcError::BadCapability);
+    }
+
+    reap_process_context(pid)?;
+    let runtime = runtime();
+    runtime
+        .processes
+        .remove_process(pid)
+        .map_err(|_| IpcError::BadCapability)?;
+    runtime.process_template_pids[config_process_index] = None;
+
+    serial::write_str("Krust process table slot recycled: pid=");
+    serial::write_u64_dec(pid.raw());
+    serial::write_str(" template=");
+    serial::write_u64_dec(config_process_index as u64);
+    serial::write_str("\n");
+    Ok(())
+}
+
+fn load_process_context(
+    name: &'static str,
+    image_base: u64,
+    image_length: u64,
+) -> Result<ProcessContext, IpcError> {
+    if image_base == 0 || image_length == 0 {
+        return Err(IpcError::BadCapability);
+    }
+    let len = usize::try_from(image_length).map_err(|_| IpcError::BadCapability)?;
+    let bytes = unsafe { core::slice::from_raw_parts(image_base as *const u8, len) };
+    let hhdm_offset = limine::hhdm_offset().ok_or(IpcError::BadCapability)?;
+    match userspace::load(bytes, hhdm_offset, frame_allocator()?) {
+        Ok(image) => {
+            serial::write_str("Krust process image loaded from native store: process=");
+            serial::write_str(name);
+            serial::write_str(" entry=");
+            serial::write_u64_hex(image.entry);
+            serial::write_str(" stack=");
+            serial::write_u64_hex(image.stack_top);
+            serial::write_str(" cr3=");
+            serial::write_u64_hex(image.cr3);
+            serial::write_str("\n");
+            Ok(ProcessContext {
+                cr3: image.cr3,
+                entry: image.entry,
+                stack_top: image.stack_top,
+            })
+        }
+        Err(error) => {
+            userspace::print_load_error(error);
+            Err(IpcError::BadCapability)
+        }
+    }
+}
+
+fn reclaim_detached_address_space(name: &'static str, cr3: u64) {
+    if cr3 == 0 {
+        return;
+    }
+    let Some(hhdm_offset) = limine::hhdm_offset() else {
+        return;
+    };
+    let Ok(allocator) = frame_allocator() else {
+        return;
+    };
+    if let Ok(stats) = paging::reclaim_user_address_space(hhdm_offset, cr3, allocator) {
+        serial::write_str("Krust detached address space reaped: proc=");
+        serial::write_str(name);
+        serial::write_str(" user_frames=");
+        serial::write_u64_dec(stats.user_leaf_frames);
+        serial::write_str(" page_tables=");
+        serial::write_u64_dec(stats.page_table_frames);
+        serial::write_str(" device_mappings=");
+        serial::write_u64_dec(stats.device_mappings);
+        serial::write_str("\n");
+    }
+}
+
 pub fn create_process(cap_slot: u64, config_process_index: u64) -> Result<u64, IpcError> {
     let _process_control = process_control_from_cap(cap_slot, capability::RIGHT_CREATE)?;
     let caller = current_process_name();
@@ -3614,7 +3847,9 @@ pub fn create_process(cap_slot: u64, config_process_index: u64) -> Result<u64, I
         return Err(IpcError::BadCapability);
     };
 
-    let (pid, name) = {
+    recycle_exited_process_template(config_process_index)?;
+
+    let process = {
         let runtime = runtime();
         let config = runtime.active_config.ok_or(IpcError::BadCapability)?;
         if config_process_index >= config.process_count {
@@ -3629,19 +3864,34 @@ pub fn create_process(cap_slot: u64, config_process_index: u64) -> Result<u64, I
         };
         validate_config_caps_for_process(runtime, config, config_process_index)
             .map_err(|_| IpcError::BadCapability)?;
+        process
+    };
+    let context = load_process_context(process.name, process.image_base, process.image_length)?;
 
+    let (pid, name) = {
+        let runtime = runtime();
+        let config = runtime.active_config.ok_or(IpcError::BadCapability)?;
+        if runtime.process_template_pids[config_process_index].is_some() {
+            reclaim_detached_address_space(process.name, context.cr3);
+            return Err(IpcError::BadCapability);
+        }
         let pid = runtime
             .processes
             .add_process(
                 process.name,
-                process.context,
-                process.restart_context,
+                context,
+                process.image_base,
+                process.image_length,
                 ProcessState::Declared,
                 CapabilitySpace::new(),
             )
-            .map_err(|_| IpcError::BadCapability)?;
+            .map_err(|_| {
+                reclaim_detached_address_space(process.name, context.cr3);
+                IpcError::BadCapability
+            })?;
         if grant_config_caps_to_process(runtime, config, config_process_index, pid).is_err() {
             let _ = runtime.processes.remove_last_process(pid);
+            reclaim_detached_address_space(process.name, context.cr3);
             return Err(IpcError::BadCapability);
         }
         runtime.process_template_pids[config_process_index] = Some(pid);
@@ -3675,6 +3925,29 @@ pub fn start_process(cap_slot: u64, pid: u64) -> Result<(), IpcError> {
     let _process_control = process_control_from_cap(cap_slot, capability::RIGHT_START)?;
     let caller = current_process_name();
     let pid = ProcessId::new(pid);
+    let process_snapshot = {
+        let runtime = runtime();
+        runtime
+            .processes
+            .process(pid)
+            .copied()
+            .ok_or(IpcError::BadCapability)?
+    };
+    if process_snapshot.state != ProcessState::Declared
+        && process_snapshot.state != ProcessState::Exited
+    {
+        return Err(IpcError::BadCapability);
+    }
+    let reload_context = if process_snapshot.state == ProcessState::Exited {
+        reap_process_context(pid)?;
+        Some(load_process_context(
+            process_snapshot.name,
+            process_snapshot.image_base,
+            process_snapshot.image_length,
+        )?)
+    } else {
+        None
+    };
 
     let (target, lifecycle_state) = {
         let runtime = runtime();
@@ -3682,12 +3955,9 @@ pub fn start_process(cap_slot: u64, pid: u64) -> Result<(), IpcError> {
             return Err(IpcError::BadCapability);
         };
 
-        if process.state != ProcessState::Declared && process.state != ProcessState::Exited {
-            return Err(IpcError::BadCapability);
-        }
-
-        let lifecycle_state = if process.state == ProcessState::Exited {
-            process.context = process.restart_context;
+        let lifecycle_state = if let Some(context) = reload_context {
+            process.context = context;
+            process.context_reaped = false;
             process.caps = process.initial_caps;
             process.quota = process.initial_quota;
             serial::write_str("Krust process restart reload: proc=");
@@ -3734,9 +4004,12 @@ pub fn process_wait(cap_slot: u64, pid: u64) -> Result<u64, IpcError> {
     let _process_control = process_control_from_cap(cap_slot, capability::RIGHT_WAIT)?;
     let pid = ProcessId::new(pid);
 
-    let runtime = runtime();
-    let Some(process) = runtime.processes.process(pid).copied() else {
-        return Err(IpcError::BadCapability);
+    let process = {
+        let runtime = runtime();
+        let Some(process) = runtime.processes.process(pid).copied() else {
+            return Err(IpcError::BadCapability);
+        };
+        process
     };
 
     if process.state == ProcessState::Exited {
@@ -3747,6 +4020,7 @@ pub fn process_wait(cap_slot: u64, pid: u64) -> Result<u64, IpcError> {
         serial::write_str(" status=");
         serial::write_u64_dec(process.exit_status);
         serial::write_str("\n");
+        reap_process_context(pid)?;
         Ok(process.exit_status)
     } else {
         Ok(u64::MAX - 8)
@@ -3757,6 +4031,14 @@ pub fn kill_process(cap_slot: u64, pid: u64) -> Result<(), IpcError> {
     let _process_control = process_control_from_cap(cap_slot, capability::RIGHT_KILL)?;
     let pid = ProcessId::new(pid);
     let caller = current_process_name();
+    if runtime()
+        .processes
+        .current_process()
+        .map(|process| process.pid == pid)
+        .unwrap_or(false)
+    {
+        return Err(IpcError::BadCapability);
+    }
     let target = {
         let runtime = runtime();
         let Some(process) = runtime.processes.process_mut(pid) else {
@@ -3779,6 +4061,7 @@ pub fn kill_process(cap_slot: u64, pid: u64) -> Result<(), IpcError> {
     serial::write_str(" pid=");
     serial::write_u64_dec(pid.raw());
     serial::write_str("\n");
+    reap_process_context(pid)?;
     Ok(())
 }
 
@@ -3795,6 +4078,14 @@ pub fn cap_derive(parent_slot: u64, new_slot: u64, rights_mask: u64) -> Result<(
         .current_process()
         .map(|process| process.pid)
         .ok_or(IpcError::BadCapability)?;
+    {
+        let Some(process) = runtime.processes.current_process() else {
+            return Err(IpcError::BadCapability);
+        };
+        if !process.caps.can_grant(new_slot) {
+            return Err(IpcError::BadCapability);
+        }
+    }
     let cap = runtime.new_capability(parent.object, rights_mask, owner, parent.id, owner);
     let Some(process) = runtime.processes.current_process_mut() else {
         return Err(IpcError::BadCapability);
@@ -3887,6 +4178,14 @@ pub fn cap_copy(source_slot: u64, target_slot: u64, rights_mask: u64) -> Result<
         .current_process()
         .map(|process| process.pid)
         .ok_or(IpcError::BadCapability)?;
+    {
+        let Some(process) = runtime.processes.current_process() else {
+            return Err(IpcError::BadCapability);
+        };
+        if !process.caps.can_grant(target_slot) {
+            return Err(IpcError::BadCapability);
+        }
+    }
     let copied = runtime.new_capability(source.object, rights_mask, owner, source.id, owner);
     let Some(process) = runtime.processes.current_process_mut() else {
         return Err(IpcError::BadCapability);
@@ -3968,6 +4267,14 @@ pub fn cap_transfer(
             let Some(target_process) = runtime.processes.process(target_pid) else {
                 return Err(IpcError::BadCapability);
             };
+            if !target_process.caps.can_grant(target_slot) {
+                return Err(IpcError::BadCapability);
+            }
+            if target_process.state == ProcessState::Declared
+                && !target_process.initial_caps.can_grant(target_slot)
+            {
+                return Err(IpcError::BadCapability);
+            }
             (
                 target_process.name,
                 target_process.state == ProcessState::Declared,
@@ -4045,7 +4352,7 @@ pub fn endpoint_create(control_slot: u64, cap_slot: u64) -> Result<(), IpcError>
 
     let endpoint_id = runtime
         .objects
-        .add_endpoint("dynamic-endpoint")
+        .add_endpoint_owned("dynamic-endpoint", owner)
         .map_err(|_| {
             serial::write_str("Endpoint create rejected: object arena full\n");
             IpcError::BadCapability
@@ -4679,7 +4986,7 @@ fn write_virtio_desc(
 
 fn allocate_virtio_dma(frame_count: u64) -> Result<(u64, u64), IpcError> {
     let frame = frame_allocator()?
-        .allocate_contiguous(frame_count)
+        .allocate_contiguous_owned(frame_count, memory::FrameOwner::dma(frame_count))
         .ok_or(IpcError::BadCapability)?;
     let hhdm_offset = limine::hhdm_offset().ok_or(IpcError::BadCapability)?;
     let bytes = frame_count
@@ -4873,6 +5180,14 @@ pub fn namespace_resolve(
         .current_process()
         .map(|process| process.pid)
         .ok_or(IpcError::BadCapability)?;
+    {
+        let Some(process) = runtime.processes.current_process() else {
+            return Err(IpcError::BadCapability);
+        };
+        if !process.caps.can_grant(target_slot) {
+            return Err(IpcError::BadCapability);
+        }
+    }
     let cap = runtime.new_capability(entry.object, entry.rights, owner, namespace_cap.id, owner);
     let Some(process) = runtime.processes.current_process_mut() else {
         return Err(IpcError::BadCapability);
@@ -5713,8 +6028,44 @@ fn build_inspect_report(runtime: &RuntimeState, report: &mut InspectReport) {
     report.push_u64_dec(runtime.processes.count as u64);
     report.push_byte(b'\n');
     report.push_str("objects=");
-    report.push_u64_dec(runtime.objects.count as u64);
+    report.push_u64_dec(runtime.objects.live_count() as u64);
     report.push_byte(b'\n');
+    report.push_str("caps=");
+    report.push_u64_dec(runtime_cap_count(runtime));
+    report.push_byte(b'\n');
+    report.push_str("objects_unreachable=");
+    report.push_u64_dec(unreachable_object_count(runtime));
+    report.push_byte(b'\n');
+    write_unreachable_object_report(runtime, report);
+    if let Some(stats) = frame_allocator_stats() {
+        report.push_str("frames total=");
+        report.push_u64_dec(stats.total_frames);
+        report.push_str(" allocated=");
+        report.push_u64_dec(stats.allocated_frames);
+        report.push_str(" free=");
+        report.push_u64_dec(stats.free_frames);
+        report.push_str(" reserved=0 reclaimed=");
+        report.push_u64_dec(stats.reclaimed_frames);
+        report.push_str(" high_water=");
+        report.push_u64_dec(stats.high_water_frames);
+        report.push_str(" failed_allocations=");
+        report.push_u64_dec(stats.failed_allocations);
+        report.push_str(" recycled=");
+        report.push_u64_dec(stats.recycled_frames as u64);
+        report.push_str(" ledger_entries=");
+        report.push_u64_dec(stats.ledger_entries as u64);
+        report.push_str(" owner_kernel=");
+        report.push_u64_dec(stats.kernel_frames);
+        report.push_str(" owner_page_table=");
+        report.push_u64_dec(stats.page_table_frames);
+        report.push_str(" owner_process=");
+        report.push_u64_dec(stats.process_memory_frames);
+        report.push_str(" owner_dma=");
+        report.push_u64_dec(stats.dma_frames);
+        report.push_str(" owner_scratch=");
+        report.push_u64_dec(stats.scratch_frames);
+        report.push_byte(b'\n');
+    }
 
     let mut index = 0;
     while index < runtime.processes.count {
@@ -5727,6 +6078,14 @@ fn build_inspect_report(runtime: &RuntimeState, report: &mut InspectReport) {
             report.push_u64_dec(process.pid.raw());
             report.push_str(" state=");
             report.push_str(process.state.label());
+            report.push_str(" context_reaped=");
+            if process.context_reaped {
+                report.push_str("yes");
+            } else {
+                report.push_str("no");
+            }
+            report.push_str(" cr3=");
+            report.push_u64_dec(process.context.cr3);
             report.push_str(" generation=");
             report.push_str(runtime.generation_id);
             report.push_byte(b'\n');
@@ -5765,6 +6124,139 @@ fn build_inspect_report(runtime: &RuntimeState, report: &mut InspectReport) {
         }
         event_index += 1;
     }
+}
+
+fn write_unreachable_object_report(runtime: &RuntimeState, report: &mut InspectReport) {
+    let mut leak_index = 0;
+    let mut index = 0;
+    while index < runtime.objects.count {
+        if let Some(object) = runtime.objects.objects[index]
+            && !object_reachable_by_cap(runtime, object.id())
+            && !object_reachable_by_config(runtime, object.id())
+            && !object_reachable_by_owner(runtime, object)
+        {
+            report.push_str("object-unreachable[");
+            report.push_u64_dec(leak_index);
+            report.push_str("] ");
+            write_capability_object_report(runtime, report, object.id());
+            report.push_byte(b'\n');
+            leak_index += 1;
+        }
+        index += 1;
+    }
+}
+
+fn frame_allocator_stats() -> Option<memory::AllocatorStats> {
+    let allocator = unsafe { *FRAME_ALLOCATOR.0.get() }?;
+    unsafe { allocator.as_ref().map(|allocator| allocator.stats()) }
+}
+
+fn runtime_cap_count(runtime: &RuntimeState) -> u64 {
+    let mut count = 0;
+    let mut process_index = 0;
+    while process_index < runtime.processes.count {
+        if let Some(process) = runtime.processes.processes[process_index] {
+            count += cap_count_in_space(process.caps);
+            count += cap_count_in_space(process.initial_caps);
+        }
+        process_index += 1;
+    }
+    count
+}
+
+fn cap_count_in_space(space: CapabilitySpace) -> u64 {
+    let mut count = 0;
+    let mut slot = 0;
+    while slot < MAX_CAPS {
+        if space.caps[slot].is_some() {
+            count += 1;
+        }
+        slot += 1;
+    }
+    count
+}
+
+fn unreachable_object_count(runtime: &RuntimeState) -> u64 {
+    let mut count = 0;
+    let mut index = 0;
+    while index < runtime.objects.count {
+        if let Some(object) = runtime.objects.objects[index]
+            && !object_reachable_by_cap(runtime, object.id())
+            && !object_reachable_by_config(runtime, object.id())
+            && !object_reachable_by_owner(runtime, object)
+        {
+            count += 1;
+        }
+        index += 1;
+    }
+    count
+}
+
+fn object_reachable_by_cap(runtime: &RuntimeState, object_id: KernelObjectId) -> bool {
+    let mut process_index = 0;
+    while process_index < runtime.processes.count {
+        if let Some(process) = runtime.processes.processes[process_index]
+            && (cap_space_reaches_object(process.caps, object_id)
+                || cap_space_reaches_object(process.initial_caps, object_id))
+        {
+            return true;
+        }
+        process_index += 1;
+    }
+    false
+}
+
+fn object_reachable_by_config(runtime: &RuntimeState, object_id: KernelObjectId) -> bool {
+    id_list_contains(&runtime.endpoint_ids, object_id)
+        || id_list_contains(&runtime.store_object_ids, object_id)
+        || id_list_contains(&runtime.network_port_ids, object_id)
+        || id_list_contains(&runtime.io_port_ids, object_id)
+        || id_list_contains(&runtime.mmio_region_ids, object_id)
+        || id_list_contains(&runtime.interrupt_line_ids, object_id)
+        || id_list_contains(&runtime.dma_region_ids, object_id)
+        || id_list_contains(&runtime.pci_device_ids, object_id)
+        || id_list_contains(&runtime.virtio_device_ids, object_id)
+        || id_list_contains(&runtime.namespace_ids, object_id)
+        || runtime.timer_id == Some(object_id)
+        || runtime.process_control_id == Some(object_id)
+        || runtime.secret_id == Some(object_id)
+}
+
+fn object_reachable_by_owner(runtime: &RuntimeState, object: KernelObject) -> bool {
+    match object {
+        KernelObject::IpcEndpoint(endpoint) if endpoint.owner != ProcessId::empty() => runtime
+            .processes
+            .process(endpoint.owner)
+            .map(|process| {
+                process.state != ProcessState::Empty && process.state != ProcessState::Exited
+            })
+            .unwrap_or(false),
+        _ => false,
+    }
+}
+
+fn id_list_contains(ids: &[Option<KernelObjectId>], object_id: KernelObjectId) -> bool {
+    let mut index = 0;
+    while index < ids.len() {
+        if ids[index] == Some(object_id) {
+            return true;
+        }
+        index += 1;
+    }
+    false
+}
+
+fn cap_space_reaches_object(space: CapabilitySpace, object_id: KernelObjectId) -> bool {
+    let mut slot = 0;
+    while slot < MAX_CAPS {
+        if let Some(cap) = space.caps[slot]
+            && cap.object == object_id
+        {
+            return true;
+        }
+        slot += 1;
+    }
+    false
 }
 
 fn write_capability_space_report(
@@ -6309,6 +6801,53 @@ fn runtime() -> &'static mut RuntimeState {
 fn frame_allocator() -> Result<&'static mut memory::FrameAllocator, IpcError> {
     let allocator = unsafe { *FRAME_ALLOCATOR.0.get() }.ok_or(IpcError::BadCapability)?;
     unsafe { allocator.as_mut().ok_or(IpcError::BadCapability) }
+}
+
+fn reap_process_context(pid: ProcessId) -> Result<(), IpcError> {
+    let removed_endpoints = runtime().objects.remove_owned_endpoints(pid);
+    if removed_endpoints > 0 {
+        serial::write_str("Krust process owned endpoints reaped: pid=");
+        serial::write_u64_dec(pid.raw());
+        serial::write_str(" endpoints=");
+        serial::write_u64_dec(removed_endpoints);
+        serial::write_str("\n");
+    }
+
+    let (name, cr3, already_reaped) = {
+        let runtime = runtime();
+        let Some(process) = runtime.processes.process(pid) else {
+            return Err(IpcError::BadCapability);
+        };
+        (process.name, process.context.cr3, process.context_reaped)
+    };
+    if already_reaped || cr3 == 0 {
+        return Ok(());
+    }
+
+    let hhdm_offset = limine::hhdm_offset().ok_or(IpcError::BadCapability)?;
+    let stats = paging::reclaim_user_address_space(hhdm_offset, cr3, frame_allocator()?)
+        .map_err(|_| IpcError::BadCapability)?;
+    if let Some(process) = runtime().processes.process_mut(pid) {
+        process.context = ProcessContext {
+            cr3: 0,
+            entry: 0,
+            stack_top: 0,
+        };
+        process.context_reaped = true;
+    }
+
+    serial::write_str("Krust process address space reaped: proc=");
+    serial::write_str(name);
+    serial::write_str(" pid=");
+    serial::write_u64_dec(pid.raw());
+    serial::write_str(" user_frames=");
+    serial::write_u64_dec(stats.user_leaf_frames);
+    serial::write_str(" page_tables=");
+    serial::write_u64_dec(stats.page_table_frames);
+    serial::write_str(" device_mappings=");
+    serial::write_u64_dec(stats.device_mappings);
+    serial::write_str("\n");
+    Ok(())
 }
 
 fn map_current_process_physical_range(

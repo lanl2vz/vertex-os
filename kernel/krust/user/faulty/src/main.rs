@@ -10,7 +10,7 @@ const CAP_SERIAL_LOG: u64 = 1;
 #[unsafe(link_section = ".text._start")]
 #[unsafe(no_mangle)]
 pub extern "C" fn _start() -> ! {
-    if sys::process_attempt() <= 1 {
+    if sys::process_attempt() & 1 == 1 {
         log(b"faulty-service triggers direct invalid load");
         unsafe {
             let fault = 0x0000_0000_dead_0000 as *const u64;

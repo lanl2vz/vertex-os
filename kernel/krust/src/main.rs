@@ -46,6 +46,8 @@ static FALLBACK_BOOT_CONFIG: Global<ipc::BootRuntimeConfig> =
     Global(UnsafeCell::new(ipc::BootRuntimeConfig::new()));
 static BAD_GENERATION_BOOT_CONFIG: Global<ipc::BootRuntimeConfig> =
     Global(UnsafeCell::new(ipc::BootRuntimeConfig::new()));
+static PHYSICAL_FRAME_ALLOCATOR: Global<memory::FrameAllocator> =
+    Global(UnsafeCell::new(memory::FrameAllocator::new()));
 
 struct BootManifests {
     selected: &'static boot_manifest::Manifest<'static>,
@@ -113,23 +115,25 @@ fn print_boot_info() {
     let Some(boot_manifests) = print_boot_modules() else {
         return;
     };
-    let mut allocator = match init_physical_allocator(&memory_map) {
+    let allocator = match init_physical_allocator(&memory_map) {
         Some(allocator) => allocator,
         None => return,
     };
 
-    run_physical_allocator_demo(&mut allocator);
-    let Some(heap) = run_virtual_memory_demo(&mut allocator) else {
+    run_physical_allocator_demo(allocator);
+    let Some(heap) = run_virtual_memory_demo(allocator) else {
         return;
     };
-    run_capability_table_demo(&allocator, heap);
+    run_capability_table_demo(allocator, heap);
     run_typed_arena_demo(heap);
     ipc::run_fifo_regression();
-    run_native_boot(&mut allocator, &boot_manifests);
+    run_native_boot(allocator, &boot_manifests);
 }
 
-fn init_physical_allocator(memory_map: &limine::MemoryMap) -> Option<memory::FrameAllocator> {
-    let mut allocator = memory::FrameAllocator::new();
+fn init_physical_allocator(
+    memory_map: &limine::MemoryMap,
+) -> Option<&'static mut memory::FrameAllocator> {
+    let allocator = unsafe { &mut *PHYSICAL_FRAME_ALLOCATOR.0.get() };
 
     match allocator.init_from_limine(memory_map) {
         Ok(()) => {}
@@ -179,6 +183,42 @@ fn run_physical_allocator_demo(allocator: &mut memory::FrameAllocator) {
     serial::write_u64_hex(frame1.start());
     serial::write_str("\n");
 
+    let after_free = allocator.stats();
+    if allocator.free(frame1).is_err()
+        && allocator.stats().allocated_frames == after_free.allocated_frames
+    {
+        serial::write_str("M66 double-free rejected and accounting unchanged\n");
+    } else {
+        serial::write_str("Physical allocator demo failed: double-free accepted\n");
+        return;
+    }
+
+    let before_foreign_free = allocator.stats();
+    if allocator
+        .free_owned(frame0, memory::FrameOwner::kernel(frame0.start()))
+        .is_err()
+        && allocator.stats().allocated_frames == before_foreign_free.allocated_frames
+    {
+        serial::write_str("M66 foreign-free rejected and accounting unchanged\n");
+    } else {
+        serial::write_str("Physical allocator demo failed: foreign-free accepted\n");
+        return;
+    }
+
+    let before_failed_contiguous = allocator.stats();
+    if allocator
+        .allocate_contiguous_owned(u64::MAX, memory::FrameOwner::scratch())
+        .is_none()
+        && allocator.stats().allocated_frames == before_failed_contiguous.allocated_frames
+    {
+        serial::write_str("M66 failed contiguous allocation leaves accounting unchanged\n");
+    } else {
+        serial::write_str(
+            "Physical allocator demo failed: contiguous failure mutated accounting\n",
+        );
+        return;
+    }
+
     let Some(reused) = allocator.allocate() else {
         serial::write_str("Physical allocator demo failed: reuse\n");
         return;
@@ -226,11 +266,11 @@ fn run_virtual_memory_demo(allocator: &mut memory::FrameAllocator) -> Option<Ker
         serial::write_str("Virtual memory demo failed: page1\n");
         return None;
     };
-    let Some(frame0) = allocator.allocate() else {
+    let Some(frame0) = allocator.allocate_owned(memory::FrameOwner::kernel(page0)) else {
         serial::write_str("Virtual memory demo failed: frame0\n");
         return None;
     };
-    let Some(frame1) = allocator.allocate() else {
+    let Some(frame1) = allocator.allocate_owned(memory::FrameOwner::kernel(page1)) else {
         serial::write_str("Virtual memory demo failed: frame1\n");
         return None;
     };
@@ -723,24 +763,20 @@ fn prepare_native_boot_config(
     };
 
     let mut images = [None; MAX_BOOT_PROCESSES];
-    let mut restart_images = [None; MAX_BOOT_PROCESSES];
     let mut index = 0;
     while index < boot_manifest.process_count() {
         let Some(process) = boot_manifest.process(index) else {
             serial::write_str("KrustBoot IPC plan failed: process gap\n");
             return None;
         };
-        let Some(image) = load_boot_process_image(boot_manifest, process, hhdm_offset, allocator)
-        else {
-            return None;
-        };
-        images[index] = Some(image);
-        let Some(restart_image) =
-            load_boot_process_image(boot_manifest, process, hhdm_offset, allocator)
-        else {
-            return None;
-        };
-        restart_images[index] = Some(restart_image);
+        if process.initial {
+            let Some(image) =
+                load_boot_process_image(boot_manifest, process, hhdm_offset, allocator)
+            else {
+                return None;
+            };
+            images[index] = Some(image);
+        }
         index += 1;
     }
 
@@ -757,14 +793,7 @@ fn prepare_native_boot_config(
     let mut manifest_hash = [0u8; 64];
     store_hash_hex(blake3::hash(source_bytes).as_bytes(), &mut manifest_hash);
     config.set_manifest_hash(manifest_hash);
-    build_boot_runtime_config(
-        boot_manifest,
-        &images,
-        &restart_images,
-        hhdm_offset,
-        allocator,
-        config,
-    )?;
+    build_boot_runtime_config(boot_manifest, &images, hhdm_offset, allocator, config)?;
     let Some(_manifest_module) = find_module_by_string(manifest_module_string) else {
         serial::write_str("KrustBoot runtime init failed: manifest module missing\n");
         return None;
@@ -783,6 +812,31 @@ fn load_boot_process_image(
     hhdm_offset: u64,
     allocator: &mut memory::FrameAllocator,
 ) -> Option<userspace::UserImage> {
+    let store_object = verified_process_store_object(boot_manifest, process)?;
+    match userspace::load(store_object.bytes, hhdm_offset, allocator) {
+        Ok(image) => {
+            serial::write_str("Krust process image loaded from native store: process=");
+            serial::write_str(process.name);
+            serial::write_str(" entry=");
+            serial::write_u64_hex(image.entry);
+            serial::write_str(" stack=");
+            serial::write_u64_hex(image.stack_top);
+            serial::write_str(" cr3=");
+            serial::write_u64_hex(image.cr3);
+            serial::write_str("\n");
+            Some(image)
+        }
+        Err(error) => {
+            userspace::print_load_error(error);
+            None
+        }
+    }
+}
+
+fn verified_process_store_object(
+    boot_manifest: &boot_manifest::Manifest<'static>,
+    process: boot_manifest::Process<'static>,
+) -> Option<NativeStoreObject> {
     let Some(object) = store_object_for_module(boot_manifest, process.module_string) else {
         serial::write_str("KrustBoot process store object unavailable: process=");
         serial::write_str(process.name);
@@ -847,30 +901,12 @@ fn load_boot_process_image(
     serial::write_str("store hash verified before process creation: process=");
     serial::write_str(process.name);
     serial::write_str("\n");
-    match userspace::load(store_object.bytes, hhdm_offset, allocator) {
-        Ok(image) => {
-            serial::write_str("Krust process image loaded from native store: process=");
-            serial::write_str(process.name);
-            serial::write_str(" entry=");
-            serial::write_u64_hex(image.entry);
-            serial::write_str(" stack=");
-            serial::write_u64_hex(image.stack_top);
-            serial::write_str(" cr3=");
-            serial::write_u64_hex(image.cr3);
-            serial::write_str("\n");
-            Some(image)
-        }
-        Err(error) => {
-            userspace::print_load_error(error);
-            None
-        }
-    }
+    Some(store_object)
 }
 
 fn build_boot_runtime_config(
     boot_manifest: &boot_manifest::Manifest<'static>,
     images: &[Option<userspace::UserImage>; MAX_BOOT_PROCESSES],
-    restart_images: &[Option<userspace::UserImage>; MAX_BOOT_PROCESSES],
     hhdm_offset: u64,
     allocator: &mut memory::FrameAllocator,
     config: &mut ipc::BootRuntimeConfig,
@@ -893,27 +929,30 @@ fn build_boot_runtime_config(
     index = 0;
     while index < boot_manifest.process_count() {
         let process = boot_manifest.process(index)?;
-        let Some(image) = images[index] else {
-            serial::write_str("KrustBoot runtime plan failed: process image gap\n");
-            return None;
-        };
-        let Some(restart_image) = restart_images[index] else {
-            serial::write_str("KrustBoot runtime plan failed: restart image gap\n");
-            return None;
+        let store_object = verified_process_store_object(boot_manifest, process)?;
+        let context = if process.initial {
+            let Some(image) = images[index] else {
+                serial::write_str("KrustBoot runtime plan failed: initial process image gap\n");
+                return None;
+            };
+            ipc::ProcessContext {
+                cr3: image.cr3,
+                entry: image.entry,
+                stack_top: image.stack_top,
+            }
+        } else {
+            ipc::ProcessContext {
+                cr3: 0,
+                entry: 0,
+                stack_top: 0,
+            }
         };
         if config
             .add_process(ipc::BootProcessConfig {
                 name: process.name,
-                context: ipc::ProcessContext {
-                    cr3: image.cr3,
-                    entry: image.entry,
-                    stack_top: image.stack_top,
-                },
-                restart_context: ipc::ProcessContext {
-                    cr3: restart_image.cr3,
-                    entry: restart_image.entry,
-                    stack_top: restart_image.stack_top,
-                },
+                context,
+                image_base: store_object.bytes.as_ptr() as u64,
+                image_length: store_object.bytes.len() as u64,
                 initial: process.initial,
             })
             .is_err()
@@ -1155,7 +1194,7 @@ fn allocate_dma_region(
     let frames = length
         .checked_add(memory::FRAME_SIZE - 1)?
         .checked_div(memory::FRAME_SIZE)?;
-    let frame = allocator.allocate_contiguous(frames)?;
+    let frame = allocator.allocate_contiguous_owned(frames, memory::FrameOwner::dma(length))?;
     unsafe {
         core::ptr::write_bytes(
             (hhdm_offset + frame.start()) as *mut u8,
@@ -1236,6 +1275,10 @@ fn print_allocator_stats(label: &str, allocator: &memory::FrameAllocator) {
     serial::write_u64_dec(stats.free_frames);
     serial::write_str(" recycled_frames=");
     serial::write_u64_dec(stats.recycled_frames as u64);
+    serial::write_str(" reclaimed_frames=");
+    serial::write_u64_dec(stats.reclaimed_frames);
+    serial::write_str(" high_water_frames=");
+    serial::write_u64_dec(stats.high_water_frames);
     serial::write_str("\n");
 }
 

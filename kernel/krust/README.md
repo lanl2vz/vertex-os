@@ -1,6 +1,6 @@
 # Krust Kernel
 
-Krust now covers the M14-M65 native graph-activation proof path, substrate
+Krust now covers the M14-M69 native graph-activation proof path, substrate
 hardening, reproducible build environment, directed IPC ABI v1, and native
 console shell plus virtio device I/O, VertexDisk v0 persistence, native boot
 selection, verified store objects, native update transactions, and store-loaded
@@ -8,8 +8,9 @@ service executables, dynamic process creation, native config and secret
 authority, package/link/build import boundaries, the first appliance
 transcript, first-class native driver objects, capability namespaces,
 policy/typed generation compilation, storage durability, network boundaries,
-supervisor lifecycle semantics, and the supported appliance release profile.
-M44-M65 are tracked in
+supervisor lifecycle semantics, the supported appliance release profile, owned
+frame reclamation, address-space teardown, failure-atomic kernel object
+creation, and memory lifecycle soak gates. M44-M69 are tracked in
 `../../docs/krust-milestones.md`.
 
 The target is intentionally small:
@@ -75,7 +76,9 @@ console-driver owns COM1 in the M41 generation, and console-shell prints runtime
 timer-service sleeps through its own timer capability without monopolizing the scheduler
 cpu-hog proves a CPU-bound userspace loop cannot starve logd
 faulty-service proves a direct userspace page fault kills only that process and can be restarted
-echo proves bounded restart=always with delegated endpoint authority restored, and flaky-service proves restart=on-failure from a fresh restart context
+echo proves bounded restart=always with delegated endpoint authority restored, and flaky-service proves restart=on-failure from a freshly loaded address space
+Krust reclaims exited process address spaces, owned dynamic endpoints, and process page-table frames
+runtime inspect reports frame owner counts, reclaimed/high-water counters, live cap/object counts, unreachable object counts, and reaped exited pids with no live CR3
 logd receives the message and denial tests reject missing authority
 Krust halts after `Native service activation ok`
 ```
@@ -383,17 +386,18 @@ make smoke
 ```
 
 The smoke test boots QEMU headlessly, captures serial output to
-`build/serial.log`, and passes when it sees the M14-M65 directed IPC, console,
+`build/serial.log`, and passes when it sees the M14-M69 directed IPC, console,
 virtio-block, VertexDisk, verified store, update, store-executable, dynamic
 process, config, secret, package-boundary, appliance, virtio device, networking,
 namespace, policy, ABI-hardening, storage durability, network-boundary, and
-lifecycle transcript. The same check is available from the repository root:
+lifecycle, memory-lifecycle, and soak transcripts. The same check is available
+from the repository root:
 
 ```sh
 scripts/krust-smoke.sh
 ```
 
-## M26-M65 Substrate Gate
+## M26-M69 Substrate Gate
 
 Run the clean-clone gate from the repository root:
 
@@ -408,12 +412,12 @@ make release-gate
 ```
 
 The gate checks script executability and shell syntax, verifies Makefile recipe
-parsing, checks Rust formatting and Markdown whitespace, confirms the M14-M65
+parsing, checks Rust formatting and Markdown whitespace, confirms the M14-M69
 documentation anchors, checks the pinned M39 toolchain and Cargo lockfiles, runs
 `cargo metadata --locked --offline` and `cargo build --locked --offline`,
 validates `examples/hello-generation.vertex.json`, runs `make doctor`, rebuilds
 from `make clean`, runs `make smoke`, checks package/link/build import commands,
-and then runs the M14-M65 QEMU cases:
+and then runs the M14-M69 QEMU cases:
 `m14`,
 `manifest-cycle`, `bad-cap`, `readiness-timeout`, `rollback`, `store-state-services`,
 `timer`, `preemption`, `user-fault`, `restart`, `manifest-v1`, `cap-lifecycle`,
@@ -421,7 +425,8 @@ and then runs the M14-M65 QEMU cases:
 `m41`, `m42`, `m42-driver-fault`, `m43`, `m43-bad-superblock`, `m44`, `m45`,
 `m46`, `m47`, `m47-corrupt-executable`, `m48`, `m49`,
 `m49-config-corrupt`, `m50`, `m54`, `m55`, `m56`, `m57`, `m59`, `m60`, `m61`,
-`m62`, `m62-journal-replay`, `m62-corrupt-journal`, `m63`, `m64`, and the
+`m62`, `m62-journal-replay`, `m62-corrupt-journal`, `m63`, `m64`, `m66`,
+`m67`, `m68`, `m69`, and the
 malformed-manifest cases. If the offline build
 fails, the gate prints the Cargo cache or vendoring prerequisite explicitly.
 

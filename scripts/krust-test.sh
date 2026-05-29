@@ -132,6 +132,7 @@ restart policy = on-failure
 vertex-init restarts faulty-service once
 Krust process restart reload: proc=faulty-service
 faulty-service exits 0 after restart
+M69 100 fault/restart cycles return to baseline frame object and cap counts
 Native service activation ok
 '
         ;;
@@ -815,16 +816,29 @@ proc=netstack cap[6] network-port=cap:net.udp.9000 rights=control
 Native service activation ok
 '
         ;;
-    m64|supervisor-lifecycle)
+    m64|supervisor-lifecycle|m66|memory-lifecycle|m67|address-space-teardown|m68|failure-atomicity|m69|memory-pressure)
         MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
         EXPECT_ACTIVATION_SUCCESS=1
         required_lines='
 manifest dependency graph defines startup ordering
+M66 double-free rejected and accounting unchanged
+M66 foreign-free rejected and accounting unchanged
+M66 failed contiguous allocation leaves accounting unchanged
+M66 restart uses zeroed userspace data
+M68 endpoint_create occupied slot rejected before quota charge
+M68 cap grant failure leaves source and target unchanged
+M68 namespace_resolve occupied slot leaves target unchanged
+M69 repeated failed endpoint creates leave quota usable
+M69 100 create/start/exit cycles return to baseline frame object and cap counts
+M69 100 restart cycles return to baseline frame object and cap counts
+M69 endpoint churn reaches quota and returns to baseline after owner exit
+M69 inspect shows memory high-water marks and current live counts
 service starts only after declared providers are ready
 service lifecycle declared: logd
 service lifecycle starting: logd
 service lifecycle ready: logd
 vertex-init observes failure
+Krust process address space reaped: proc=flaky-service
 service lifecycle restarting: flaky-service
 restart budget remaining=0 backoff-ms=10
 restart backoff sleep elapsed
@@ -837,7 +851,12 @@ runtime inspect lifecycle state verified: ready
 runtime inspect lifecycle state verified: failed
 runtime inspect lifecycle state verified: restarting
 runtime inspect lifecycle state verified: exited
+inspect reports frame owner and lifecycle counters
+inspect reports zero unreachable kernel objects
+inspect reports cap/object leak baseline counters
+inspect reports no live mappings for reaped pids
 inspect reports declared, starting, ready, failed, restarting, and exited states
+M67 kill_process releases sleeping process frames and scheduler state
 Native restart policy ok
 Native service activation ok
 '
@@ -923,7 +942,7 @@ activation failed
 '
         ;;
     *)
-        echo "usage: scripts/krust-test.sh <m13|m14|valid-activation|manifest-cycle|bad-cap|readiness|readiness-timeout|rollback|store-state-services|timer|preemption|m30|user-fault|m31|restart|manifest-v1|cap-lifecycle|typed-arenas|quotas|m32|io-substrate|m33|serial-driver|m34|block-driver|m35|store-service|m36|state-service|m37|generation-switch|m38|introspection|m40|directed-ipc|m41|console-shell|m42|virtio-block|m42-driver-fault|block-driver-fault|m43|vertexdisk|m43-bad-superblock|vertexdisk-bad-superblock|m44|boot-manager|m45|store-verification|m46|native-update|m47|store-executables|m47-corrupt-executable|store-executable-corruption|m48|dynamic-process|m49|config-objects|m49-config-corrupt|config-hash-mismatch|m50|secrets|m54|appliance|m55|driver-framework|m56|virtio-device-stack|m57|networking-v0|m59|namespace-service|m60|policy-typed|m61|abi-authority-hardening|m62|storage-durability|m62-journal-replay|storage-journal-replay|m62-corrupt-journal|storage-corrupt-journal|m63|network-boundary|m64|supervisor-lifecycle|manifest-truncated|manifest-bad-magic|manifest-raw-compact|manifest-old-compact-magic|manifest-unsupported-version|manifest-oob-record|manifest-missing-provider>" >&2
+        echo "usage: scripts/krust-test.sh <m13|m14|valid-activation|manifest-cycle|bad-cap|readiness|readiness-timeout|rollback|store-state-services|timer|preemption|m30|user-fault|m31|restart|manifest-v1|cap-lifecycle|typed-arenas|quotas|m32|io-substrate|m33|serial-driver|m34|block-driver|m35|store-service|m36|state-service|m37|generation-switch|m38|introspection|m40|directed-ipc|m41|console-shell|m42|virtio-block|m42-driver-fault|block-driver-fault|m43|vertexdisk|m43-bad-superblock|vertexdisk-bad-superblock|m44|boot-manager|m45|store-verification|m46|native-update|m47|store-executables|m47-corrupt-executable|store-executable-corruption|m48|dynamic-process|m49|config-objects|m49-config-corrupt|config-hash-mismatch|m50|secrets|m54|appliance|m55|driver-framework|m56|virtio-device-stack|m57|networking-v0|m59|namespace-service|m60|policy-typed|m61|abi-authority-hardening|m62|storage-durability|m62-journal-replay|storage-journal-replay|m62-corrupt-journal|storage-corrupt-journal|m63|network-boundary|m64|supervisor-lifecycle|m66|memory-lifecycle|m67|address-space-teardown|m68|failure-atomicity|m69|memory-pressure|manifest-truncated|manifest-bad-magic|manifest-raw-compact|manifest-old-compact-magic|manifest-unsupported-version|manifest-oob-record|manifest-missing-provider>" >&2
         exit 2
         ;;
 esac

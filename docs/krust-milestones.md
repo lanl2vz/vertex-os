@@ -7,7 +7,7 @@ runtime layered over a host kernel.
 
 ## Status Summary
 
-Current status: M14-M65 are implemented and smoke-tested under
+Current status: M14-M69 are implemented and smoke-tested under
 `qemu-system-x86_64` with Limine. M39 pins the native toolchain, M40 makes
 native IPC directed, and M41 adds a native console shell path over explicit
 console authority. M42 adds the first real virtio-blk sector I/O path over
@@ -27,7 +27,10 @@ typed prototype compilation into the existing boot path. M61 hardens the native
 ABI and authority checks against hostile syscall inputs. M62 adds explicit
 VertexDisk durability and storage corruption cases, M63 tightens the netstack
 service boundary, M64 exposes native supervisor lifecycle semantics, and M65
-defines the first supported standalone appliance release profile.
+defines the first supported standalone appliance release profile. M66-M69 add
+owned frame accounting, address-space teardown, failure-atomic kernel object and
+capability creation, and 100-cycle memory lifecycle soak gates for
+create/start/exit, restart, endpoint churn, and fault/restart paths.
 
 ```sh
 make -C kernel/krust doctor
@@ -74,13 +77,16 @@ scripts/krust-test.sh m62-journal-replay
 scripts/krust-test.sh m62-corrupt-journal
 scripts/krust-test.sh m63
 scripts/krust-test.sh m64
+scripts/krust-test.sh m66
+scripts/krust-test.sh m67
+scripts/krust-test.sh m68
+scripts/krust-test.sh m69
 ```
 
-Next direction: M66-M73 turn the supported M65 appliance profile from a
-credible prototype into a resource-lifetime and device-failure-hardened system.
-Do not broaden the platform until memory reclamation, failure-atomic kernel
-object creation, interrupt delivery, DMA safety, and virtio reset/recovery are
-gate-tested.
+Next direction: M70-M73 turn the supported M69 appliance profile from a
+resource-lifetime-hardened prototype into a device-failure-hardened system. Do
+not broaden the platform until interrupt delivery, DMA safety, and virtio
+reset/recovery are gate-tested.
 
 ## M0: Serial Boot
 
@@ -1484,7 +1490,7 @@ done: locked Cargo dependencies for the top-level host-tool workspace, Krust ker
 done: kernel/krust/rust-toolchain.toml pins Rust 1.95.0, rustfmt, and x86_64-unknown-none
 done: make doctor checks every required tool and reports actionable fixes
 done: legacy hello/ipc userspace crates are removed instead of carried forward
-done: single release-gate script runs the clean-clone M14-M65 proof with the M14-M65 QEMU matrix
+done: single release-gate script runs the clean-clone M14-M69 proof with the M14-M69 QEMU matrix
 ```
 
 Acceptance tests:
@@ -1542,7 +1548,7 @@ done: scripts/krust-test.sh m40 proves the directed IPC ABI and FIFO queue behav
 
 Status: done.
 
-Goal: turn the M14-M65 native proof into a small real operating system target:
+Goal: turn the M14-M69 native proof into a small real operating system target:
 bootable in QEMU, persistent, inspectable, updateable, and capable of running
 several native services under explicit authority.
 
@@ -2716,7 +2722,7 @@ done: M65 supported appliance release profile is checked by the gate
 
 ## M66: Owned Physical Frames And Reclamation
 
-Status: planned.
+Status: done.
 
 Goal: make every allocated physical frame owned, inspectable, and reclaimable
 instead of treating frame allocation as a mostly one-way boot-time resource.
@@ -2753,9 +2759,12 @@ Implementation notes:
   testable.
 - Do not reclaim Limine, kernel image, boot modules, or HHDM backing ranges.
 
+done: M66 owned frame ledger, reclaim counters, double-free/foreign-free checks,
+and failed contiguous allocation accounting are checked by the gate
+
 ## M67: Address Space Teardown And Process Reaping
 
-Status: planned.
+Status: done.
 
 Goal: fully tear down a process address space on exit, fault, kill, failed
 start, and failed restart.
@@ -2790,9 +2799,12 @@ Implementation notes:
   and observable as a no-op.
 - Keep kernel half mappings shared and never freed by process teardown.
 
+done: M67 process exit, restart, fault, and create/start/exit churn reclaim user
+leaf frames and page-table frames and inspect reports reaped pids with no live CR3
+
 ## M68: Kernel Object Lifetime And Failure Atomicity
 
-Status: planned.
+Status: done.
 
 Goal: make kernel object creation and capability installation transactional so
 failed syscalls do not leak objects, caps, quotas, or IDs.
@@ -2830,9 +2842,13 @@ Implementation notes:
 - Keep failure atomicity local and explicit. Do not add broad rollback machinery
   that obscures authority checks.
 
+done: M68 endpoint, cap grant, cap transfer, namespace resolution, process
+creation, and dynamic endpoint lifetime paths are checked for live object/cap
+leak deltas by the gate
+
 ## M69: Memory Pressure, Limits, And Soak Gate
 
-Status: planned.
+Status: done.
 
 Goal: prove the M66-M68 memory lifecycle holds under repeated restarts,
 allocation pressure, and hostile syscall inputs.
@@ -2867,6 +2883,9 @@ Implementation notes:
 - Keep cycle counts small enough for CI/QEMU portability, but high enough to
   catch monotonic leaks.
 - Add a longer optional soak script separately from the default release gate.
+
+done: M69 100-cycle create/start/exit, restart, endpoint churn, and fault/restart
+soak checks are run by the Krust QEMU gate with frame/object/cap leak deltas
 
 ## M70: Interrupt Routing And Blocking IRQ Delivery
 
@@ -3054,7 +3073,7 @@ survive repeated process, memory, interrupt, DMA, and device failures without
 leaking resources or losing isolation.
 ```
 
-M13 proved that native services can run under explicit authority. M14-M65 prove
+M13 proved that native services can run under explicit authority. M14-M69 prove
 that the graph itself decides which native services exist, when they start,
 what they receive, why they are allowed to communicate, and how authority and
 resources are bounded, while timer preemption and user fault containment keep
@@ -3071,6 +3090,7 @@ QEMU-friendly virtio devices, the first UDP-capable network path, the POSIX
 compatibility plan, capability namespaces, and human-readable policy plus typed
 prototype compilation. M61 turns those surfaces into an ABI and authority
 regression baseline, and M62-M65 turn that baseline into the first supported
-standalone appliance profile. M66-M73 are reserved for turning that profile
-into a resource-lifetime and device-failure-hardened system before broadening
-the platform.
+standalone appliance profile. M66-M69 harden resource lifetime with owned frame
+reclamation, address-space teardown, object failure atomicity, and soak gates.
+M70-M73 continue that path through interrupt and device-failure hardening before
+broadening the platform.

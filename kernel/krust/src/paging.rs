@@ -1,4 +1,4 @@
-use crate::memory::{FRAME_SIZE, FrameAllocator, PhysicalFrame};
+use crate::memory::{self, FRAME_SIZE, FrameAllocator, FrameOwner, PhysicalFrame};
 
 const ENTRY_COUNT: usize = 512;
 
@@ -20,6 +20,18 @@ pub enum MapError {
     OutOfFrames,
     AlreadyMapped,
     HugePageEncountered,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReclaimError {
+    HugePageEncountered,
+    Free(memory::FreeError),
+}
+
+pub struct ReclaimStats {
+    pub user_leaf_frames: u64,
+    pub page_table_frames: u64,
+    pub device_mappings: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -150,6 +162,7 @@ pub fn map_page_in_root(
     map_page_in_table(
         hhdm_offset,
         root_table,
+        FrameOwner::page_table(root_table_physical),
         virtual_address,
         frame,
         flags,
@@ -180,6 +193,7 @@ impl Mapper {
         map_page_in_table(
             self.hhdm_offset,
             self.root_table,
+            FrameOwner::kernel(self.root_table_physical()),
             virtual_address,
             frame,
             PageFlags::kernel_writable_no_execute(),
@@ -193,7 +207,12 @@ impl AddressSpace {
         hhdm_offset: u64,
         allocator: &mut FrameAllocator,
     ) -> Result<Self, MapError> {
-        let root_frame = allocator.allocate().ok_or(MapError::OutOfFrames)?;
+        let root_frame = allocator
+            .allocate_owned(FrameOwner::page_table(0))
+            .ok_or(MapError::OutOfFrames)?;
+        allocator
+            .set_owner(root_frame, FrameOwner::page_table(root_frame.start()))
+            .map_err(|_| MapError::OutOfFrames)?;
         let root_table = phys_to_virt(hhdm_offset, root_frame.start());
         let active_root = phys_to_virt(hhdm_offset, read_cr3() & ADDRESS_MASK);
 
@@ -228,6 +247,7 @@ impl AddressSpace {
         map_page_in_table(
             self.hhdm_offset,
             self.root_table,
+            FrameOwner::page_table(self.root_frame.start()),
             virtual_address,
             frame,
             flags,
@@ -236,18 +256,171 @@ impl AddressSpace {
     }
 }
 
+impl ReclaimStats {
+    const fn empty() -> Self {
+        Self {
+            user_leaf_frames: 0,
+            page_table_frames: 0,
+            device_mappings: 0,
+        }
+    }
+}
+
+pub fn reclaim_user_address_space(
+    hhdm_offset: u64,
+    root_table_physical: u64,
+    allocator: &mut FrameAllocator,
+) -> Result<ReclaimStats, ReclaimError> {
+    let root_table = phys_to_virt(hhdm_offset, root_table_physical);
+    let mut stats = ReclaimStats::empty();
+    let mut index = 0;
+
+    while index < ENTRY_COUNT / 2 {
+        let entry = unsafe { (*root_table).entries[index] };
+        if entry.is_present() {
+            if entry.is_huge() {
+                return Err(ReclaimError::HugePageEncountered);
+            }
+
+            reclaim_page_table(
+                hhdm_offset,
+                root_table_physical,
+                entry.address(),
+                1,
+                allocator,
+                &mut stats,
+            )?;
+            unsafe {
+                (*root_table).entries[index] = PageTableEntry::empty();
+            }
+            free_page_table_frame(root_table_physical, entry.address(), allocator, &mut stats)?;
+        }
+        index += 1;
+    }
+
+    free_page_table_frame(
+        root_table_physical,
+        root_table_physical,
+        allocator,
+        &mut stats,
+    )?;
+    Ok(stats)
+}
+
+fn reclaim_page_table(
+    hhdm_offset: u64,
+    root_table_physical: u64,
+    table_physical: u64,
+    level: usize,
+    allocator: &mut FrameAllocator,
+    stats: &mut ReclaimStats,
+) -> Result<(), ReclaimError> {
+    let table = phys_to_virt(hhdm_offset, table_physical);
+    let mut index = 0;
+    while index < ENTRY_COUNT {
+        let entry = unsafe { (*table).entries[index] };
+        if entry.is_present() {
+            if entry.is_huge() {
+                return Err(ReclaimError::HugePageEncountered);
+            }
+
+            if level == 3 {
+                reclaim_leaf_frame(root_table_physical, entry.address(), allocator, stats)?;
+            } else {
+                reclaim_page_table(
+                    hhdm_offset,
+                    root_table_physical,
+                    entry.address(),
+                    level + 1,
+                    allocator,
+                    stats,
+                )?;
+                free_page_table_frame(root_table_physical, entry.address(), allocator, stats)?;
+            }
+            unsafe {
+                (*table).entries[index] = PageTableEntry::empty();
+            }
+        }
+        index += 1;
+    }
+
+    Ok(())
+}
+
+fn reclaim_leaf_frame(
+    root_table_physical: u64,
+    physical_address: u64,
+    allocator: &mut FrameAllocator,
+    stats: &mut ReclaimStats,
+) -> Result<(), ReclaimError> {
+    let frame = frame_from_physical(physical_address)?;
+    let expected_owner = FrameOwner::process_memory(root_table_physical);
+    if allocator.owner_of(frame) == Some(expected_owner) {
+        allocator
+            .free_owned(frame, expected_owner)
+            .map_err(ReclaimError::Free)?;
+        stats.user_leaf_frames = stats.user_leaf_frames.saturating_add(1);
+        return Ok(());
+    }
+
+    stats.device_mappings = stats.device_mappings.saturating_add(1);
+    Ok(())
+}
+
+fn free_page_table_frame(
+    root_table_physical: u64,
+    physical_address: u64,
+    allocator: &mut FrameAllocator,
+    stats: &mut ReclaimStats,
+) -> Result<(), ReclaimError> {
+    let frame = frame_from_physical(physical_address)?;
+    let expected_owner = FrameOwner::page_table(root_table_physical);
+    allocator
+        .free_owned(frame, expected_owner)
+        .map_err(ReclaimError::Free)?;
+    stats.page_table_frames = stats.page_table_frames.saturating_add(1);
+    Ok(())
+}
+
+fn frame_from_physical(physical_address: u64) -> Result<PhysicalFrame, ReclaimError> {
+    PhysicalFrame::from_start(physical_address)
+        .ok_or(ReclaimError::Free(memory::FreeError::UnalignedFrame))
+}
+
 fn map_page_in_table(
     hhdm_offset: u64,
     root_table: *mut PageTable,
+    page_table_owner: FrameOwner,
     virtual_address: u64,
     frame: PhysicalFrame,
     flags: PageFlags,
     allocator: &mut FrameAllocator,
 ) -> Result<(), MapError> {
     let indexes = page_indexes(virtual_address);
-    let table = ensure_next_table(hhdm_offset, root_table, indexes[0], flags, allocator)?;
-    let table = ensure_next_table(hhdm_offset, table, indexes[1], flags, allocator)?;
-    let table = ensure_next_table(hhdm_offset, table, indexes[2], flags, allocator)?;
+    let table = ensure_next_table(
+        hhdm_offset,
+        root_table,
+        indexes[0],
+        flags,
+        page_table_owner,
+        allocator,
+    )?;
+    let table = ensure_next_table(
+        hhdm_offset,
+        table,
+        indexes[1],
+        flags,
+        page_table_owner,
+        allocator,
+    )?;
+    let table = ensure_next_table(
+        hhdm_offset,
+        table,
+        indexes[2],
+        flags,
+        page_table_owner,
+        allocator,
+    )?;
 
     let entry = unsafe { &mut (*table).entries[indexes[3]] };
     if entry.is_present() {
@@ -266,6 +439,7 @@ fn ensure_next_table(
     table: *mut PageTable,
     index: usize,
     flags: PageFlags,
+    owner: FrameOwner,
     allocator: &mut FrameAllocator,
 ) -> Result<*mut PageTable, MapError> {
     let entry = unsafe { &mut (*table).entries[index] };
@@ -282,7 +456,9 @@ fn ensure_next_table(
         return Ok(phys_to_virt(hhdm_offset, entry.address()));
     }
 
-    let frame = allocator.allocate().ok_or(MapError::OutOfFrames)?;
+    let frame = allocator
+        .allocate_owned(owner)
+        .ok_or(MapError::OutOfFrames)?;
     let next_table = phys_to_virt(hhdm_offset, frame.start());
     unsafe {
         zero_table(next_table);

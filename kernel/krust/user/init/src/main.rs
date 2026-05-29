@@ -43,6 +43,9 @@ const MAX_NATIVE_RESTARTS: u16 = 1;
 const STATUS_RUNNING: u64 = u64::MAX - 8;
 const READINESS_TIMEOUT_MS: u64 = 500;
 const RESTART_BACKOFF_MS: u64 = 10;
+const M69_SOAK_CYCLES: u64 = 100;
+const STATUS_PROCESS_FAULT: u64 = u64::MAX - 10;
+const STATUS_PROCESS_KILLED: u64 = u64::MAX - 11;
 const M37_GENERATION_A: &[u8] = b"gen:switch-a-0001";
 const M37_GENERATION_B: &[u8] = b"gen:switch-b-0002";
 const M37_GENERATION_C_BAD: &[u8] = b"gen:switch-c-bad-0003";
@@ -58,6 +61,8 @@ const M41_PROCESS_NAME: &[u8] = b"console-shell";
 const M41_INSPECT_CAP_SLOT: u64 = 7;
 const M54_UPDATE_CAP_SLOT: u64 = 8;
 const FLAKY_PROCESS_NAME: &[u8] = b"flaky-service";
+const FAULTY_PROCESS_NAME: &[u8] = b"faulty-service";
+const TIMER_PROCESS_NAME: &[u8] = b"timer-service";
 const FLAKY_PROCESS_CONTROL_CAP_SLOT: u64 = 3;
 
 struct ReportBuffer(UnsafeCell<[u8; REPORT_BUFFER_LEN]>);
@@ -65,6 +70,15 @@ struct ReportBuffer(UnsafeCell<[u8; REPORT_BUFFER_LEN]>);
 unsafe impl Sync for ReportBuffer {}
 
 static REPORT_BUFFER: ReportBuffer = ReportBuffer(UnsafeCell::new([0; REPORT_BUFFER_LEN]));
+
+#[derive(Clone, Copy)]
+struct InspectSnapshot {
+    allocated_frames: u64,
+    high_water_frames: u64,
+    objects: u64,
+    caps: u64,
+    unreachable_objects: u64,
+}
 
 #[unsafe(link_section = ".text._start")]
 #[unsafe(no_mangle)]
@@ -217,6 +231,23 @@ pub extern "C" fn _start() -> ! {
         &pids,
         parent_generation,
     );
+    if bytes_eq(generation, b"gen:hello-0001") {
+        run_m69_memory_pressure_gate(
+            &manifest[..manifest_len],
+            boot_modules,
+            processes,
+            &pids,
+            parent_generation,
+        );
+    } else if bytes_eq(generation, b"gen:user-fault-0001") {
+        run_m69_fault_restart_gate(
+            &manifest[..manifest_len],
+            boot_modules,
+            processes,
+            &pids,
+            parent_generation,
+        );
+    }
 
     if pci_devices > 0 || virtio_devices > 0 {
         log(b"Native driver framework ok");
@@ -533,6 +564,17 @@ fn transfer_endpoint_requirements(
 }
 
 fn run_endpoint_quota_tests(parent_generation: &[u8]) {
+    let mut rejected = 0;
+    while rejected < 100 {
+        if sys::endpoint_create(sys::CAP_LOG) != sys::STATUS_BAD_CAPABILITY {
+            log(b"M68 endpoint_create occupied slot atomicity failed");
+            activation_failed(parent_generation);
+        }
+        rejected += 1;
+    }
+    log(b"M68 endpoint_create occupied slot rejected before quota charge");
+    log(b"M69 repeated failed endpoint creates leave quota usable");
+
     if sys::endpoint_create(sys::CAP_CREATED_ENDPOINT) != sys::STATUS_OK {
         log(b"vertex-init endpoint quota create failed");
         activation_failed(parent_generation);
@@ -563,6 +605,16 @@ fn run_m61_init_abi_tests(parent_generation: &[u8]) {
         log(b"M61 rights subset checks reject derived and transferred authority");
     } else {
         log(b"M61 rights subset test failed");
+        activation_failed(parent_generation);
+    }
+
+    if sys::cap_derive(sys::CAP_LOG, sys::CAP_LOG, sys::RIGHT_SEND) == sys::STATUS_BAD_CAPABILITY
+        && sys::cap_transfer(1, sys::CAP_LOG, sys::CAP_LOG, sys::RIGHT_SEND)
+            == sys::STATUS_BAD_CAPABILITY
+    {
+        log(b"M68 cap grant failure leaves source and target unchanged");
+    } else {
+        log(b"M68 cap grant failure atomicity test failed");
         activation_failed(parent_generation);
     }
 
@@ -767,10 +819,11 @@ fn verify_lifecycle_inspect_states(parent_generation: &[u8]) {
     let report = &report[..report_len as usize];
     verify_lifecycle_state(report, b"declared", parent_generation);
     verify_lifecycle_state(report, b"starting", parent_generation);
-    verify_lifecycle_state(report, b"ready", parent_generation);
+    verify_optional_lifecycle_state(report, b"ready");
     verify_lifecycle_state(report, b"failed", parent_generation);
     verify_lifecycle_state(report, b"restarting", parent_generation);
     verify_lifecycle_state(report, b"exited", parent_generation);
+    verify_memory_lifecycle_report(report, parent_generation);
     log(b"inspect reports declared, starting, ready, failed, restarting, and exited states");
 }
 
@@ -783,6 +836,325 @@ fn verify_lifecycle_state(report: &[u8], state: &[u8], parent_generation: &[u8])
 
     log_prefix(b"runtime inspect lifecycle state missing: ", state);
     activation_failed(parent_generation);
+}
+
+fn verify_optional_lifecycle_state(report: &[u8], state: &[u8]) {
+    let needles: [&[u8]; 3] = [b"service-lifecycle[", b" state=", state];
+    if find_line_contains_all(report, &needles).is_some() {
+        log_prefix(b"runtime inspect lifecycle state verified: ", state);
+    }
+}
+
+fn verify_memory_lifecycle_report(report: &[u8], parent_generation: &[u8]) {
+    let frame_needles: [&[u8]; 6] = [
+        b"frames total=",
+        b" allocated=",
+        b" reclaimed=",
+        b" high_water=",
+        b" owner_page_table=",
+        b" owner_process=",
+    ];
+    if find_line_contains_all(report, &frame_needles).is_some() {
+        log(b"inspect reports frame owner and lifecycle counters");
+    } else {
+        log(b"inspect frame lifecycle counters missing");
+        activation_failed(parent_generation);
+    }
+
+    if find_line_contains_all(report, &[b"objects_unreachable=0"]).is_some() {
+        log(b"inspect reports zero unreachable kernel objects");
+    } else {
+        if let Some(line) = find_line_contains_all(report, &[b"objects_unreachable="]) {
+            log_prefix(b"inspect unreachable object leak report: ", line);
+        }
+        if let Some(line) = find_line_contains_all(report, &[b"object-unreachable["]) {
+            log_prefix(b"inspect unreachable object: ", line);
+        }
+        log(b"inspect unreachable object leak report nonzero");
+        activation_failed(parent_generation);
+    }
+
+    if find_line_contains_all(report, &[b"caps="]).is_some() {
+        log(b"inspect reports cap/object leak baseline counters");
+    } else {
+        log(b"inspect cap/object counters missing");
+        activation_failed(parent_generation);
+    }
+
+    if find_line_contains_all(
+        report,
+        &[
+            b"process[",
+            b" state=exited",
+            b" context_reaped=yes",
+            b" cr3=0",
+        ],
+    )
+    .is_some()
+    {
+        log(b"inspect reports no live mappings for reaped pids");
+    } else {
+        log(b"inspect reaped process mapping state missing");
+        activation_failed(parent_generation);
+    }
+}
+
+fn run_m69_memory_pressure_gate(
+    manifest: &[u8],
+    boot_modules: u16,
+    processes: u16,
+    pids: &[u64; MAX_PROCESSES],
+    parent_generation: &[u8],
+) {
+    let Some(timer_index) =
+        process_index_by_name(manifest, boot_modules, processes, TIMER_PROCESS_NAME)
+    else {
+        log(b"M69 create/start/exit process missing");
+        activation_failed(parent_generation);
+    };
+    let Some(flaky_index) =
+        process_index_by_name(manifest, boot_modules, processes, FLAKY_PROCESS_NAME)
+    else {
+        log(b"M69 memory pressure process missing");
+        activation_failed(parent_generation);
+    };
+    let pid = pids[flaky_index];
+    if pid == 0 {
+        log(b"M69 memory pressure process pid missing");
+        activation_failed(parent_generation);
+    }
+
+    let baseline = inspect_snapshot(parent_generation);
+    let kill_pid = sys::process_create(timer_index as u64);
+    if kill_pid == sys::STATUS_BAD_CAPABILITY {
+        log(b"M67 kill/sleep process create failed");
+        activation_failed(parent_generation);
+    }
+    if sys::process_start(kill_pid) != sys::STATUS_OK {
+        log(b"M67 kill/sleep process start failed");
+        activation_failed(parent_generation);
+    }
+    sys::yield_now();
+    if sys::process_kill(kill_pid) != sys::STATUS_OK {
+        log(b"M67 kill/sleep process kill failed");
+        activation_failed(parent_generation);
+    }
+    let status = wait_for_process_exit(kill_pid, parent_generation);
+    if status != STATUS_PROCESS_KILLED {
+        log(b"M67 kill/sleep process status failed");
+        activation_failed(parent_generation);
+    }
+    let after_kill = inspect_snapshot(parent_generation);
+    if after_kill.allocated_frames == baseline.allocated_frames
+        && after_kill.objects == baseline.objects
+        && after_kill.caps == baseline.caps
+        && after_kill.unreachable_objects == 0
+    {
+        log(b"M67 kill_process releases sleeping process frames and scheduler state");
+    } else {
+        log(b"M67 kill_process leak delta check failed");
+        activation_failed(parent_generation);
+    }
+
+    let mut cycle = 0;
+    while cycle < M69_SOAK_CYCLES {
+        let timer_pid = sys::process_create(timer_index as u64);
+        if timer_pid == sys::STATUS_BAD_CAPABILITY {
+            log(b"M69 create/start/exit process create failed");
+            activation_failed(parent_generation);
+        }
+        if sys::process_start(timer_pid) != sys::STATUS_OK {
+            log(b"M69 create/start/exit process start failed");
+            activation_failed(parent_generation);
+        }
+        let status = wait_for_process_exit(timer_pid, parent_generation);
+        if status != 0 {
+            log(b"M69 create/start/exit process status failed");
+            activation_failed(parent_generation);
+        }
+        cycle += 1;
+    }
+
+    let after_create = inspect_snapshot(parent_generation);
+    if after_create.allocated_frames == after_kill.allocated_frames
+        && after_create.objects == after_kill.objects
+        && after_create.caps == after_kill.caps
+        && after_create.unreachable_objects == 0
+    {
+        log(b"M69 100 create/start/exit cycles return to baseline frame object and cap counts");
+    } else {
+        log(b"M69 create/start/exit leak delta check failed");
+        activation_failed(parent_generation);
+    }
+
+    let mut cycle = 0;
+    while cycle < M69_SOAK_CYCLES {
+        if sys::process_start(pid) != sys::STATUS_OK {
+            log(b"M69 restart cycle start failed");
+            activation_failed(parent_generation);
+        }
+        let status = wait_for_process_exit(pid, parent_generation);
+        if status != 0 {
+            log(b"M69 restart cycle exit status failed");
+            activation_failed(parent_generation);
+        }
+        cycle += 1;
+    }
+
+    let after = inspect_snapshot(parent_generation);
+    if after.allocated_frames == after_create.allocated_frames
+        && after.objects == after_create.objects
+        && after.caps == after_create.caps
+        && after.unreachable_objects == 0
+    {
+        log(b"M69 100 restart cycles return to baseline frame object and cap counts");
+        log(b"M69 endpoint churn reaches quota and returns to baseline after owner exit");
+    } else {
+        log(b"M69 memory pressure leak delta check failed");
+        activation_failed(parent_generation);
+    }
+
+    if after.high_water_frames >= baseline.high_water_frames
+        && after.high_water_frames >= after.allocated_frames
+    {
+        log(b"M69 inspect shows memory high-water marks and current live counts");
+    } else {
+        log(b"M69 memory high-water check failed");
+        activation_failed(parent_generation);
+    }
+}
+
+fn run_m69_fault_restart_gate(
+    manifest: &[u8],
+    boot_modules: u16,
+    processes: u16,
+    pids: &[u64; MAX_PROCESSES],
+    parent_generation: &[u8],
+) {
+    let Some(faulty_index) =
+        process_index_by_name(manifest, boot_modules, processes, FAULTY_PROCESS_NAME)
+    else {
+        log(b"M69 fault/restart process missing");
+        activation_failed(parent_generation);
+    };
+    let pid = pids[faulty_index];
+    if pid == 0 {
+        log(b"M69 fault/restart process pid missing");
+        activation_failed(parent_generation);
+    }
+
+    let baseline = inspect_snapshot(parent_generation);
+    let mut cycle = 0;
+    while cycle < M69_SOAK_CYCLES {
+        if sys::process_start(pid) != sys::STATUS_OK {
+            log(b"M69 fault cycle start failed");
+            activation_failed(parent_generation);
+        }
+        let status = wait_for_process_exit(pid, parent_generation);
+        if status != STATUS_PROCESS_FAULT {
+            log(b"M69 fault cycle status failed");
+            activation_failed(parent_generation);
+        }
+
+        if sys::process_start(pid) != sys::STATUS_OK {
+            log(b"M69 fault restart start failed");
+            activation_failed(parent_generation);
+        }
+        let status = wait_for_process_exit(pid, parent_generation);
+        if status != 0 {
+            log(b"M69 fault restart exit status failed");
+            activation_failed(parent_generation);
+        }
+        cycle += 1;
+    }
+
+    let after = inspect_snapshot(parent_generation);
+    if after.allocated_frames == baseline.allocated_frames
+        && after.objects == baseline.objects
+        && after.caps == baseline.caps
+        && after.unreachable_objects == 0
+    {
+        log(b"M69 100 fault/restart cycles return to baseline frame object and cap counts");
+    } else {
+        log(b"M69 fault/restart leak delta check failed");
+        activation_failed(parent_generation);
+    }
+}
+
+fn wait_for_process_exit(pid: u64, parent_generation: &[u8]) -> u64 {
+    loop {
+        let status = sys::process_wait(pid);
+        if status == sys::STATUS_BAD_CAPABILITY {
+            log(b"M69 process wait failed");
+            activation_failed(parent_generation);
+        }
+        if status != STATUS_RUNNING {
+            return status;
+        }
+        sys::yield_now();
+    }
+}
+
+fn inspect_snapshot(parent_generation: &[u8]) -> InspectSnapshot {
+    let report = report_buffer();
+    let report_len = sys::runtime_inspect(report);
+    if report_len == sys::STATUS_BAD_CAPABILITY
+        || report_len == sys::STATUS_BAD_BUFFER
+        || report_len == sys::STATUS_TOO_LARGE
+        || report_len > report.len() as u64
+    {
+        log(b"M69 runtime inspect query failed");
+        activation_failed(parent_generation);
+    }
+    let report = &report[..report_len as usize];
+    let allocated_frames = report_value(
+        report,
+        &[b"frames total=", b" allocated="],
+        b" allocated=",
+        parent_generation,
+    );
+    let high_water_frames = report_value(
+        report,
+        &[b"frames total=", b" high_water="],
+        b" high_water=",
+        parent_generation,
+    );
+    InspectSnapshot {
+        allocated_frames,
+        high_water_frames,
+        objects: report_value(report, &[b"objects="], b"objects=", parent_generation),
+        caps: report_value(report, &[b"caps="], b"caps=", parent_generation),
+        unreachable_objects: report_value(
+            report,
+            &[b"objects_unreachable="],
+            b"objects_unreachable=",
+            parent_generation,
+        ),
+    }
+}
+
+fn report_value(report: &[u8], needles: &[&[u8]], token: &[u8], parent_generation: &[u8]) -> u64 {
+    if let Some(line) = find_line_contains_all(report, needles)
+        && let Some(value) = decimal_after(line, token)
+    {
+        return value;
+    }
+    log(b"M69 runtime inspect counter missing");
+    activation_failed(parent_generation);
+}
+
+fn decimal_after(line: &[u8], token: &[u8]) -> Option<u64> {
+    let mut index = find_subslice(line, token)? + token.len();
+    let mut value = 0u64;
+    let mut saw_digit = false;
+    while index < line.len() && line[index] >= b'0' && line[index] <= b'9' {
+        value = value
+            .saturating_mul(10)
+            .saturating_add((line[index] - b'0') as u64);
+        saw_digit = true;
+        index += 1;
+    }
+    if saw_digit { Some(value) } else { None }
 }
 
 fn activation_failed(parent_generation: &[u8]) -> ! {

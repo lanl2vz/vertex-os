@@ -43,6 +43,7 @@ const SYS_ENDPOINT_CREATE: u64 = 25;
 const SYS_QUOTA_DELEGATE: u64 = 26;
 const SYS_RUNTIME_INSPECT: u64 = 31;
 const SYS_PROCESS_START: u64 = 37;
+const SYS_PROCESS_KILL: u64 = 38;
 
 pub fn read_manifest(buffer: &mut [u8]) -> u64 {
     syscall3(
@@ -94,6 +95,10 @@ pub fn process_start(pid: u64) -> u64 {
 
 pub fn process_wait(pid: u64) -> u64 {
     syscall3(SYS_PROCESS_WAIT, CAP_PROCESS_CONTROL, pid, 0)
+}
+
+pub fn process_kill(pid: u64) -> u64 {
+    syscall3(SYS_PROCESS_KILL, CAP_PROCESS_CONTROL, pid, 0)
 }
 
 pub fn sleep_ms(milliseconds: u64) -> u64 {

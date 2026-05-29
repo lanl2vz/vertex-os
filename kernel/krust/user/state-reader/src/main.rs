@@ -8,6 +8,7 @@ use core::panic::PanicInfo;
 const CAP_STATE_REPLY: u64 = 0;
 const CAP_SERIAL_LOG: u64 = 1;
 const CAP_STATE_REQUEST: u64 = 3;
+const CAP_NAMESPACE: u64 = 4;
 
 #[unsafe(link_section = ".text._start")]
 #[unsafe(no_mangle)]
@@ -34,6 +35,15 @@ pub extern "C" fn _start() -> ! {
     }
     log(b"reader-service reads state");
     log(b"reader-service receives state value");
+
+    if sys::namespace_resolve(CAP_NAMESPACE, b"/state/b", CAP_STATE_REQUEST)
+        == sys::STATUS_BAD_CAPABILITY
+    {
+        log(b"M68 namespace_resolve occupied slot leaves target unchanged");
+    } else {
+        log(b"reader-service namespace occupied-slot test failed");
+        sys::exit(1);
+    }
 
     if sys::ipc_send(CAP_STATE_REQUEST, b"W2") != sys::STATUS_OK {
         log(b"reader-service write request failed");
