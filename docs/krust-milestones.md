@@ -89,9 +89,11 @@ scripts/krust-test.sh m72
 scripts/krust-test.sh m73
 ```
 
-Next direction: keep broadening blocked until the M70-M73 device-failure gate
-stays boring under longer optional soak runs and hardware profiles beyond the
-current legacy PIC/QEMU target are deliberately selected.
+Next direction: implement a mature VFS/filesystem model without preserving the
+old ad hoc store/state paths as a compatibility layer. M74-M81 should make file
+authority, name lookup, open-file lifecycle, durable metadata, writeback, mount
+namespaces, and crash recovery first-class Krust surfaces while keeping the
+kernel small and capability-mediated.
 
 ## M0: Serial Boot
 
@@ -3066,16 +3068,344 @@ done: M73 device-fault isolation, DMA/IRQ/virtio leak deltas, bad hardware
 manifest rejection, and operator-visible failure reporting are checked by the
 Krust QEMU gate
 
+## M74: VFS Object Model And Authority
+
+Status: planned.
+
+Goal: introduce a real VFS object model that unifies files, directories,
+devices, immutable store objects, and mutable state volumes behind explicit
+capability-mediated authority.
+
+Scope:
+
+```text
+VFS object kinds: regular file, directory, device node, pipe, synthetic node
+stable vnode/inode identities independent from user path strings
+file rights: lookup, read, write, create, unlink, rename, mount, stat, execute
+filesystem capability objects in the boot manifest
+root directory caps and service-local namespace roots
+typed VFS syscall status values in ABI v2
+runtime inspect report for live VFS objects and authority
+```
+
+Acceptance tests:
+
+```text
+service with only read authority cannot create or unlink a file
+service with no lookup authority cannot resolve a child path
+directory cap can attenuate into read-only subtree authority
+device node open requires both VFS authority and underlying device authority
+immutable store object appears as read-only regular file
+mutable state volume appears below an explicit mounted root
+inspect reports vnode id, object kind, rights, owner process, and mount source
+old store/state-only access paths are rejected once VFS mode is selected
+```
+
+Implementation notes:
+
+- Keep the VFS name and object authority in the kernel, but do not put a full
+  filesystem implementation in the kernel yet. Filesystem services should own
+  persistence and metadata policy behind typed kernel objects.
+- Do not introduce POSIX compatibility as a hidden requirement. The ABI should
+  expose Krust-native file authority first; a POSIX personality can translate
+  later.
+- The boot manifest should select the VFS ABI generation explicitly. Do not
+  accept older compact payloads as a compatibility mode.
+
+## M75: Open Files, Handles, And Descriptor Lifecycle
+
+Status: planned.
+
+Goal: make open files first-class kernel-owned handles with explicit lifetime,
+rights, offsets, blocking behavior, and cleanup on process exit or fault.
+
+Scope:
+
+```text
+per-process handle table separate from capability slots
+open file descriptions with offset, rights, flags, and vnode reference
+open, close, read, write, pread, pwrite, seek, stat, sync syscalls
+handle duplication and attenuation rules
+O_APPEND, O_TRUNC, O_CREATE equivalent semantics as native flags
+process-exit and fault cleanup for open handles
+bounded per-process and global handle quotas
+```
+
+Acceptance tests:
+
+```text
+read-only handle rejects write even when another process has write authority
+duplicated handle shares offset only when explicitly requested
+pread and pwrite do not mutate the shared offset
+process exit closes all handles and releases vnode references
+faulted process cannot leave a file locked or pinned
+handle quota exhaustion fails without leaking handles or vnodes
+close of invalid or already closed handle returns a controlled error
+```
+
+Implementation notes:
+
+- Keep capability slots as authority to obtain handles, not as the handles
+  themselves. That distinction matters for revocation, restart, and audit.
+- Use the existing M66-M69 leak accounting discipline for handle/vnode
+  lifecycle from the first implementation.
+- Avoid inherited Unix assumptions such as ambient current working directory
+  until mount namespaces and process profiles define them explicitly.
+
+## M76: Directory Operations And Atomic Metadata Changes
+
+Status: planned.
+
+Goal: support a useful directory tree with atomic create, unlink, rename, link,
+and metadata update semantics backed by filesystem-service transactions.
+
+Scope:
+
+```text
+component-by-component path walk with bounded path and component lengths
+directory entry cache with generation validation
+create file, mkdir, unlink, rmdir, rename, hard-link policy
+stat metadata: type, size, generation, link count, timestamps or monotonic version
+atomic same-filesystem rename
+negative lookup caching with invalidation
+metadata operation journal records
+```
+
+Acceptance tests:
+
+```text
+rename is atomic: readers see old name or new name, never a missing middle state
+unlink of open file keeps existing handle readable until final close
+rmdir rejects non-empty directory
+hard links cannot cross filesystem boundaries
+path traversal cannot escape a service's namespace root
+very long paths and components are rejected before allocation side effects
+crash during create/unlink/rename replays to a valid directory tree
+```
+
+Implementation notes:
+
+- Treat metadata correctness as security-critical. Path lookup must never fall
+  back to string-prefix checks once vnodes exist.
+- Keep cross-filesystem rename out of scope. Return a clean error and require
+  copy plus unlink at a higher layer later.
+- If timestamps are awkward under the current timer model, use monotonic
+  metadata versions first and document the limitation.
+
+## M77: Block Cache, Page Cache, And Writeback
+
+Status: planned.
+
+Goal: add a bounded cache layer for filesystem data and metadata with explicit
+dirty tracking, writeback ordering, flush, and memory-pressure behavior.
+
+Scope:
+
+```text
+block cache keyed by block device and logical block number
+page-sized file cache entries keyed by vnode and offset
+dirty/clean state and writeback queue
+fsync and global sync plumbing
+read-ahead and write coalescing only after correctness gates pass
+cache memory accounting and eviction under pressure
+I/O error propagation to handles and filesystem services
+```
+
+Acceptance tests:
+
+```text
+repeated file reads hit cache without repeated block-driver reads
+dirty data reaches disk after fsync before syscall returns
+writeback error is reported to the writer or next fsync
+memory pressure evicts clean cache pages without leaking frames
+dirty cache pages are not evicted until written or explicitly failed
+process fault during write does not leave a permanently dirty pinned cache page
+block-driver restart does not corrupt cache ownership or completion records
+```
+
+Implementation notes:
+
+- Do not optimize before the crash and memory-pressure behavior is boring.
+  Correct dirty tracking and bounded memory use matter more than throughput.
+- Keep DMA buffers and cache pages separate unless a later design proves safe
+  zero-copy ownership transfer.
+- The cache should be inspectable enough for release gates to assert dirty
+  counts, pinned counts, writeback errors, and high-water marks.
+
+## M78: VertexFS v1 Persistent Filesystem
+
+Status: planned.
+
+Goal: define and implement the first general-purpose native on-disk filesystem
+format for Krust, replacing the special-purpose VertexDisk store/state layout
+for normal file workloads.
+
+Scope:
+
+```text
+VertexFS superblock with feature flags and generation identity
+inode table or equivalent object table
+directory record format
+extent or block-map file data layout
+free-space allocator with checksums
+metadata journal or copy-on-write transaction log
+offline verifier and image builder in vertexctl
+```
+
+Acceptance tests:
+
+```text
+fresh VertexFS image mounts and exposes declared root files
+file create/write/fsync/sync/remount preserves data and metadata
+corrupt superblock is rejected without mounting
+corrupt directory block is detected and reported
+corrupt free-space metadata cannot allocate overlapping file extents
+journal replay after interrupted write returns either old file or new file
+vertexctl can build, inspect, and verify a VertexFS image reproducibly
+```
+
+Implementation notes:
+
+- Pick one durable update model for v1. A small journal is acceptable; a small
+  copy-on-write tree is acceptable. Mixing both early will make recovery harder.
+- Include an on-disk feature/version field and reject unsupported versions.
+  Do not silently mount older experimental layouts.
+- Keep immutable verified store objects available as files, but move the common
+  persistent namespace to VertexFS instead of expanding special-purpose store
+  records.
+
+## M79: Mount Namespaces And Filesystem Services
+
+Status: planned.
+
+Goal: make mount trees explicit per service or service group, with filesystem
+services, block devices, and synthetic files connected through capability
+grants rather than global ambient paths.
+
+Scope:
+
+```text
+mount objects with source filesystem, root vnode, target vnode, and flags
+per-process mount namespace root
+bind mounts and read-only mounts
+synthetic proc/inspect filesystem for operator views
+device filesystem for authorized device nodes
+mount and unmount rights with busy checks
+manifest syntax for initial mount namespaces
+```
+
+Acceptance tests:
+
+```text
+two services can see different files at the same absolute path
+read-only bind mount rejects write through all aliases
+unmount of busy filesystem is rejected without losing references
+service without mount right cannot attach a filesystem
+synthetic inspect file exposes runtime data without granting process-control rights
+device node cannot be opened unless matching device authority is present
+restart restores the service's declared mount namespace exactly
+```
+
+Implementation notes:
+
+- Mount namespaces should reuse the M59 capability namespace lesson but operate
+  on VFS vnodes and mount objects, not arbitrary string-to-cap records.
+- Keep global `/` as an implementation detail. Service profiles should receive
+  explicit roots and mounts from the manifest.
+- Synthetic filesystems must be read-only unless a specific write protocol and
+  authority are defined.
+
+## M80: File Locking, Notifications, And Streaming Objects
+
+Status: planned.
+
+Goal: add the coordination primitives needed for real services: advisory file
+locks, filesystem change notifications, pipes, and stream-like device files.
+
+Scope:
+
+```text
+advisory whole-file locks and byte-range locks
+poll/wait for readable, writable, hangup, and metadata-change events
+pipe objects with bounded buffers and backpressure
+device-file read/write dispatch through typed driver protocols
+directory watch events for create, unlink, rename, and writeback errors
+deadlock-resistant lock cleanup on process exit
+```
+
+Acceptance tests:
+
+```text
+conflicting exclusive locks block or fail according to requested mode
+process exit releases locks and wakes waiters
+pipe writer blocks or returns would-block when buffer is full
+pipe reader sees EOF after all writers close
+directory watcher receives create, rename, and unlink events in order
+poll on mixed file, pipe, and device handles wakes only for authorized handles
+faulted process cannot strand a lock, pipe endpoint, or watcher
+```
+
+Implementation notes:
+
+- Start with advisory locks only. Mandatory locks create surprising authority
+  interactions and should not be in the first mature VFS pass.
+- Reuse scheduler blocking primitives from IPC/IRQ/timer instead of inventing a
+  separate wait subsystem.
+- Device files should remain authority wrappers around typed device services,
+  not a backdoor to raw hardware.
+
+## M81: Filesystem Crash, Security, And Soak Gate
+
+Status: planned.
+
+Goal: prove the VFS/filesystem stack survives hostile paths, process faults,
+device faults, interrupted writes, restarts, and repeated mount/open/write
+cycles without leaks, authority bypass, or persistent corruption.
+
+Scope:
+
+```text
+malformed path and syscall argument matrix
+capability revocation while handles and mounts are live
+filesystem-service kill/fault during metadata transaction
+block-driver fault during dirty writeback
+forced power-loss checkpoints in QEMU image tests
+long-run create/write/rename/unlink/open/close soak
+fsck/verifier integration into release gate
+operator-visible filesystem health report
+```
+
+Acceptance tests:
+
+```text
+revoked directory authority prevents new opens but preserves existing handle semantics
+revoked file authority prevents handle duplication and new opens
+filesystem-service fault rolls back or completes the active transaction
+block-driver fault during fsync reports error without marking dirty data clean
+100-cycle file churn returns to baseline handle, vnode, frame, and cache counts
+forced crash at each journal checkpoint remounts to a verified filesystem
+path traversal, integer overflow, and bad user buffers are rejected before side effects
+release gate checks VFS/fs leak deltas and verifier output
+```
+
+Implementation notes:
+
+- This milestone is the equivalent of M66-M73 for VFS. Do not treat the
+  filesystem as mature until this gate is boring.
+- The verifier should be useful both offline through `vertexctl` and in the
+  QEMU gate against the post-test disk image.
+- Preserve the capability model: revocation and namespace restrictions must be
+  tested against handles, cached vnodes, mount aliases, and synthetic files.
+
 ## Later Direction
 
 Avoid these until the appliance release profile, storage durability, network
-service boundary, update path, supervisor semantics, memory lifecycle, and
-interrupt/device failure model are solid:
+service boundary, update path, supervisor semantics, memory lifecycle,
+interrupt/device failure model, and VFS/filesystem model are solid:
 
 ```text
 USB
 GPU
-full filesystem
 Linux syscall compatibility
 desktop
 multicore
@@ -3087,9 +3417,10 @@ They matter eventually, but they distract from the next core proof:
 ```text
 A native booted Vertex system should be able to boot from persistent storage,
 install verified generations, run dynamically created services, preserve
-mutable state, explain its authority graph, recover from failed updates, and
-survive repeated process, memory, interrupt, DMA, and device failures without
-leaking resources or losing isolation.
+mutable state as files, explain its authority graph, recover from failed
+updates, and survive repeated process, memory, interrupt, DMA, device, VFS, and
+filesystem failures without leaking resources, corrupting persistent state, or
+losing isolation.
 ```
 
 M13 proved that native services can run under explicit authority. M14-M73 prove
@@ -3112,4 +3443,6 @@ regression baseline, and M62-M65 turn that baseline into the first supported
 standalone appliance profile. M66-M69 harden resource lifetime with owned frame
 reclamation, address-space teardown, object failure atomicity, and soak gates.
 M70-M73 add interrupt routing, DMA ownership, virtio reset/recovery, and
-device-fault isolation before broadening the platform.
+device-fault isolation. M74-M81 should turn the existing special-purpose
+store/state persistence into a mature capability-mediated VFS and filesystem
+stack before broadening the platform.
