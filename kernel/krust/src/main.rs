@@ -20,7 +20,6 @@ mod userspace;
 use core::panic::PanicInfo;
 use core::{arch::asm, cell::UnsafeCell};
 
-const MAX_BOOT_PROCESSES: usize = 16;
 const DMA_KERNEL_ALLOCATED_BASE: u64 = u64::MAX;
 const VERTEXDISK_MODULE_STRING: &[u8] = b"vertexdisk-store";
 const VERTEX_DISK_MAGIC: &[u8; 16] = b"VERTEXDISKV0\0\0\0\0";
@@ -736,11 +735,11 @@ fn run_native_boot(allocator: &mut memory::FrameAllocator, boot_manifests: &Boot
         }
     }
 
+    ipc::install_frame_allocator(allocator as *mut memory::FrameAllocator);
     if ipc::init_from_boot_config(config).is_err() {
         serial::write_str("Native runtime init failed from KrustBoot manifest\n");
         return;
     }
-    ipc::install_frame_allocator(allocator as *mut memory::FrameAllocator);
 
     let Some(initial) = ipc::initial_process_context() else {
         serial::write_str("Native runtime init failed: no initial process\n");
@@ -762,24 +761,6 @@ fn prepare_native_boot_config(
         return None;
     };
 
-    let mut images = [None; MAX_BOOT_PROCESSES];
-    let mut index = 0;
-    while index < boot_manifest.process_count() {
-        let Some(process) = boot_manifest.process(index) else {
-            serial::write_str("KrustBoot IPC plan failed: process gap\n");
-            return None;
-        };
-        if process.initial {
-            let Some(image) =
-                load_boot_process_image(boot_manifest, process, hhdm_offset, allocator)
-            else {
-                return None;
-            };
-            images[index] = Some(image);
-        }
-        index += 1;
-    }
-
     let config = unsafe { &mut *config_slot.0.get() };
     *config = ipc::BootRuntimeConfig::new();
     config.set_generation_id(boot_manifest.generation_id());
@@ -793,7 +774,7 @@ fn prepare_native_boot_config(
     let mut manifest_hash = [0u8; 64];
     store_hash_hex(blake3::hash(source_bytes).as_bytes(), &mut manifest_hash);
     config.set_manifest_hash(manifest_hash);
-    build_boot_runtime_config(boot_manifest, &images, hhdm_offset, allocator, config)?;
+    build_boot_runtime_config(boot_manifest, hhdm_offset, allocator, config)?;
     let Some(_manifest_module) = find_module_by_string(manifest_module_string) else {
         serial::write_str("KrustBoot runtime init failed: manifest module missing\n");
         return None;
@@ -804,33 +785,6 @@ fn prepare_native_boot_config(
         length: boot_manifest.source_len(),
     });
     Some(unsafe { &*config_slot.0.get() })
-}
-
-fn load_boot_process_image(
-    boot_manifest: &boot_manifest::Manifest<'static>,
-    process: boot_manifest::Process<'static>,
-    hhdm_offset: u64,
-    allocator: &mut memory::FrameAllocator,
-) -> Option<userspace::UserImage> {
-    let store_object = verified_process_store_object(boot_manifest, process)?;
-    match userspace::load(store_object.bytes, hhdm_offset, allocator) {
-        Ok(image) => {
-            serial::write_str("Krust process image loaded from native store: process=");
-            serial::write_str(process.name);
-            serial::write_str(" entry=");
-            serial::write_u64_hex(image.entry);
-            serial::write_str(" stack=");
-            serial::write_u64_hex(image.stack_top);
-            serial::write_str(" cr3=");
-            serial::write_u64_hex(image.cr3);
-            serial::write_str("\n");
-            Some(image)
-        }
-        Err(error) => {
-            userspace::print_load_error(error);
-            None
-        }
-    }
 }
 
 fn verified_process_store_object(
@@ -906,7 +860,6 @@ fn verified_process_store_object(
 
 fn build_boot_runtime_config(
     boot_manifest: &boot_manifest::Manifest<'static>,
-    images: &[Option<userspace::UserImage>; MAX_BOOT_PROCESSES],
     hhdm_offset: u64,
     allocator: &mut memory::FrameAllocator,
     config: &mut ipc::BootRuntimeConfig,
@@ -930,27 +883,9 @@ fn build_boot_runtime_config(
     while index < boot_manifest.process_count() {
         let process = boot_manifest.process(index)?;
         let store_object = verified_process_store_object(boot_manifest, process)?;
-        let context = if process.initial {
-            let Some(image) = images[index] else {
-                serial::write_str("KrustBoot runtime plan failed: initial process image gap\n");
-                return None;
-            };
-            ipc::ProcessContext {
-                cr3: image.cr3,
-                entry: image.entry,
-                stack_top: image.stack_top,
-            }
-        } else {
-            ipc::ProcessContext {
-                cr3: 0,
-                entry: 0,
-                stack_top: 0,
-            }
-        };
         if config
             .add_process(ipc::BootProcessConfig {
                 name: process.name,
-                context,
                 image_base: store_object.bytes.as_ptr() as u64,
                 image_length: store_object.bytes.len() as u64,
                 initial: process.initial,
@@ -2187,6 +2122,9 @@ fn print_boot_manifest_error(error: boot_manifest::ParseError) {
         boot_manifest::ParseError::TooManyNamespaces => serial::write_str("too many namespaces"),
         boot_manifest::ParseError::TooManyNamespaceEntries => {
             serial::write_str("too many namespace entries")
+        }
+        boot_manifest::ParseError::TooManyRuntimeObjects => {
+            serial::write_str("too many runtime objects")
         }
         boot_manifest::ParseError::InvalidString => serial::write_str("invalid string"),
         boot_manifest::ParseError::InvalidReference => serial::write_str("invalid reference"),

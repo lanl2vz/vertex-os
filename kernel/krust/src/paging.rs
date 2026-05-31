@@ -23,6 +23,12 @@ pub enum MapError {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnmapError {
+    NotMapped,
+    HugePageEncountered,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReclaimError {
     HugePageEncountered,
     Free(memory::FreeError),
@@ -104,6 +110,10 @@ impl PageTableEntry {
         self.0 = frame.start() | flags;
     }
 
+    fn clear(&mut self) {
+        self.0 = 0;
+    }
+
     fn add_flags(&mut self, flags: u64) {
         self.0 |= flags;
     }
@@ -168,6 +178,91 @@ pub fn map_page_in_root(
         flags,
         allocator,
     )
+}
+
+pub fn unmap_page_in_root(
+    hhdm_offset: u64,
+    root_table_physical: u64,
+    virtual_address: u64,
+) -> Result<(), UnmapError> {
+    let indexes = page_indexes(virtual_address);
+    let mut table = phys_to_virt(hhdm_offset, root_table_physical);
+    let mut level = 0;
+
+    while level < 4 {
+        let index = indexes[level];
+        let entry = unsafe { &mut (*table).entries[index] };
+        if !entry.is_present() {
+            return Err(UnmapError::NotMapped);
+        }
+        if entry.is_huge() {
+            return Err(UnmapError::HugePageEncountered);
+        }
+        if level == 3 {
+            entry.clear();
+            unsafe {
+                invlpg(virtual_address);
+            }
+            return Ok(());
+        }
+
+        table = phys_to_virt(hhdm_offset, entry.address());
+        level += 1;
+    }
+
+    Err(UnmapError::NotMapped)
+}
+
+pub fn prune_empty_user_page_tables(
+    hhdm_offset: u64,
+    root_table_physical: u64,
+    virtual_address: u64,
+    allocator: &mut FrameAllocator,
+) -> Result<(), ReclaimError> {
+    let indexes = page_indexes(virtual_address);
+    let mut table_physical = [0u64; 4];
+    let mut table = phys_to_virt(hhdm_offset, root_table_physical);
+    table_physical[0] = root_table_physical;
+
+    let mut level = 0;
+    while level < 3 {
+        let entry = unsafe { (*table).entries[indexes[level]] };
+        if !entry.is_present() {
+            return Ok(());
+        }
+        if entry.is_huge() {
+            return Err(ReclaimError::HugePageEncountered);
+        }
+        table_physical[level + 1] = entry.address();
+        table = phys_to_virt(hhdm_offset, entry.address());
+        level += 1;
+    }
+
+    let mut stats = ReclaimStats::empty();
+    let mut child_level = 3;
+    while child_level > 0 {
+        let child_physical = table_physical[child_level];
+        let child_table = phys_to_virt(hhdm_offset, child_physical);
+        if !page_table_is_empty(child_table) {
+            return Ok(());
+        }
+
+        let parent_physical = table_physical[child_level - 1];
+        let parent_table = phys_to_virt(hhdm_offset, parent_physical);
+        let parent_index = indexes[child_level - 1];
+        let parent_entry = unsafe { &mut (*parent_table).entries[parent_index] };
+        if !parent_entry.is_present() || parent_entry.address() != child_physical {
+            return Ok(());
+        }
+        if parent_entry.is_huge() {
+            return Err(ReclaimError::HugePageEncountered);
+        }
+        parent_entry.clear();
+        free_page_table_frame(root_table_physical, child_physical, allocator, &mut stats)?;
+        child_level -= 1;
+    }
+
+    Ok(())
 }
 
 impl Mapper {
@@ -621,6 +716,17 @@ fn align_down(value: u64) -> u64 {
 
 fn phys_to_virt(hhdm_offset: u64, physical_address: u64) -> *mut PageTable {
     (hhdm_offset + physical_address) as *mut PageTable
+}
+
+fn page_table_is_empty(table: *mut PageTable) -> bool {
+    let mut index = 0;
+    while index < ENTRY_COUNT {
+        if unsafe { (*table).entries[index].is_present() } {
+            return false;
+        }
+        index += 1;
+    }
+    true
 }
 
 unsafe fn zero_table(table: *mut PageTable) {

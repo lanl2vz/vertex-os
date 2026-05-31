@@ -30,6 +30,7 @@ const PROTOCOL_HEALTH_V0: u16 = 2;
 const MESSAGE_READY: u16 = 1;
 const READY_ENVELOPE_LEN: usize = 16;
 const INIT_TIMER_CAP_SLOT: u64 = 30;
+const LOG_ENDPOINT_NAME: &str = "serial-log";
 const USER_MMIO_MAPPING_BASE: u64 = 0x0000_5000_0000_0000;
 const USER_DMA_MAPPING_BASE: u64 = 0x0000_6000_0000_0000;
 const USER_DEVICE_MAPPING_STRIDE: u64 = 1 << 30;
@@ -213,10 +214,16 @@ pub struct ProcessContext {
 #[derive(Clone, Copy)]
 pub struct BootProcessConfig {
     pub name: &'static str,
-    pub context: ProcessContext,
     pub image_base: u64,
     pub image_length: u64,
     pub initial: bool,
+}
+
+#[derive(Clone, Copy)]
+struct RuntimeReapTarget {
+    pid: ProcessId,
+    name: &'static str,
+    cr3: u64,
 }
 
 #[derive(Clone, Copy)]
@@ -2664,6 +2671,36 @@ fn revoked_contains(revoked_caps: &[u64; MAX_REVOKED_CAPS], count: usize, cap_id
 }
 
 pub fn init_from_boot_config(config: &'static BootRuntimeConfig) -> Result<(), InitError> {
+    validate_boot_config_installable(config)?;
+    let initial_index = initial_process_index(config)?;
+    let initial_process = config.processes[initial_index].ok_or(InitError::InvalidBootManifest)?;
+    let initial_context = load_boot_initial_context(initial_process)?;
+    let (old_contexts, old_context_count) = snapshot_runtime_reap_targets();
+
+    let result = install_boot_config(config, initial_index, initial_process, initial_context);
+    if result.is_err() {
+        reclaim_detached_address_space(initial_process.name, initial_context.cr3);
+        return result;
+    }
+
+    if old_context_count > 0 {
+        unsafe {
+            gdt::switch_address_space(initial_context.cr3);
+        }
+        if reap_runtime_contexts(&old_contexts, old_context_count).is_err() {
+            serial::write_str("Krust old runtime address-space reap incomplete\n");
+        }
+    }
+
+    Ok(())
+}
+
+fn install_boot_config(
+    config: &'static BootRuntimeConfig,
+    initial_index: usize,
+    initial_process: BootProcessConfig,
+    initial_context: ProcessContext,
+) -> Result<(), InitError> {
     boot_manager().start_boot(config.generation_id);
     let runtime = runtime();
     runtime.objects.reset();
@@ -2788,11 +2825,9 @@ pub fn init_from_boot_config(config: &'static BootRuntimeConfig) -> Result<(), I
     );
     serial::write_str("Native secret object registered: secret:logd-token storage=in-memory\n");
 
-    let initial_index = initial_process_index(config)?;
-    let initial_process = config.processes[initial_index].ok_or(InitError::InvalidBootManifest)?;
     let initial_pid = runtime.processes.add_process(
         initial_process.name,
-        initial_process.context,
+        initial_context,
         initial_process.image_base,
         initial_process.image_length,
         ProcessState::Running,
@@ -2800,10 +2835,6 @@ pub fn init_from_boot_config(config: &'static BootRuntimeConfig) -> Result<(), I
     )?;
     runtime.process_template_pids[initial_index] = Some(initial_pid);
     runtime.processes.set_current(initial_pid);
-
-    if config.endpoint_count == 0 {
-        return Err(InitError::InvalidBootManifest);
-    }
 
     grant_config_caps_to_process(runtime, config, initial_index, initial_pid)?;
 
@@ -2852,6 +2883,212 @@ pub fn init_from_boot_config(config: &'static BootRuntimeConfig) -> Result<(), I
     grant_process_cap_by_pid(runtime, initial_pid, INIT_TIMER_CAP_SLOT, cap, true)?;
 
     print_boot_tables(runtime);
+    Ok(())
+}
+
+fn validate_boot_config_installable(config: &BootRuntimeConfig) -> Result<(), InitError> {
+    validate_counted_config_entries(&config.processes, config.process_count)?;
+    validate_counted_config_entries(&config.endpoints, config.endpoint_count)?;
+    validate_counted_config_entries(&config.store_objects, config.store_object_count)?;
+    validate_counted_config_entries(&config.network_ports, config.network_port_count)?;
+    validate_counted_config_entries(&config.io_ports, config.io_port_count)?;
+    validate_counted_config_entries(&config.mmio_regions, config.mmio_region_count)?;
+    validate_counted_config_entries(&config.interrupt_lines, config.interrupt_line_count)?;
+    validate_counted_config_entries(&config.dma_regions, config.dma_region_count)?;
+    validate_counted_config_entries(&config.pci_devices, config.pci_device_count)?;
+    validate_counted_config_entries(&config.virtio_devices, config.virtio_device_count)?;
+    validate_counted_config_entries(&config.namespaces, config.namespace_count)?;
+    validate_counted_config_entries(&config.grants, config.grant_count)?;
+
+    if config.endpoint_count == 0 {
+        return Err(InitError::InvalidBootManifest);
+    }
+    let log_endpoint = config.endpoints[0].ok_or(InitError::InvalidBootManifest)?;
+    if log_endpoint.name != LOG_ENDPOINT_NAME {
+        return Err(InitError::InvalidBootManifest);
+    }
+    let mut endpoint_index = 1;
+    while endpoint_index < config.endpoint_count {
+        let endpoint = config.endpoints[endpoint_index].ok_or(InitError::InvalidBootManifest)?;
+        if endpoint.name == LOG_ENDPOINT_NAME {
+            return Err(InitError::InvalidBootManifest);
+        }
+        endpoint_index += 1;
+    }
+    initial_process_index(config)?;
+
+    let object_count = boot_config_object_count(config).ok_or(InitError::ObjectTableFull)?;
+    if object_count > MAX_OBJECTS {
+        serial::write_str("Krust boot config rejected: object budget exceeded objects=");
+        serial::write_u64_dec(object_count as u64);
+        serial::write_str(" max=");
+        serial::write_u64_dec(MAX_OBJECTS as u64);
+        serial::write_str("\n");
+        return Err(InitError::ObjectTableFull);
+    }
+
+    let mut namespace_index = 0;
+    while namespace_index < config.namespace_count {
+        let namespace = config.namespaces[namespace_index].ok_or(InitError::InvalidBootManifest)?;
+        if namespace.entry_count > MAX_NAMESPACE_ENTRIES {
+            return Err(InitError::InvalidBootManifest);
+        }
+        validate_counted_config_entries(&namespace.entries, namespace.entry_count)?;
+        let mut entry_index = 0;
+        while entry_index < namespace.entry_count {
+            let entry = namespace.entries[entry_index].ok_or(InitError::InvalidBootManifest)?;
+            if !namespace_entry_object_kind_allowed(entry.object_kind)
+                || !boot_object_config_ref_valid(config, entry.object_kind, entry.object_index)
+            {
+                return Err(InitError::InvalidBootManifest);
+            }
+            entry_index += 1;
+        }
+        namespace_index += 1;
+    }
+
+    let mut grant_index = 0;
+    while grant_index < config.grant_count {
+        let grant = config.grants[grant_index].ok_or(InitError::InvalidBootManifest)?;
+        if grant.process_index >= config.process_count {
+            return Err(InitError::InvalidBootManifest);
+        }
+        let Ok(slot) = usize::try_from(grant.cap_slot) else {
+            return Err(InitError::CapabilityTableFull);
+        };
+        if slot >= MAX_CAPS
+            || !boot_object_config_ref_valid(config, grant.object_kind, grant.object_index)
+        {
+            return Err(InitError::InvalidBootManifest);
+        }
+
+        let mut previous = 0;
+        while previous < grant_index {
+            let previous_grant = config.grants[previous].ok_or(InitError::InvalidBootManifest)?;
+            if previous_grant.process_index == grant.process_index
+                && previous_grant.cap_slot == grant.cap_slot
+            {
+                return Err(InitError::InvalidBootManifest);
+            }
+            previous += 1;
+        }
+        grant_index += 1;
+    }
+
+    Ok(())
+}
+
+fn validate_counted_config_entries<T: Copy, const N: usize>(
+    entries: &[Option<T>; N],
+    count: usize,
+) -> Result<(), InitError> {
+    if count > N {
+        return Err(InitError::InvalidBootManifest);
+    }
+    let mut index = 0;
+    while index < count {
+        if entries[index].is_none() {
+            return Err(InitError::InvalidBootManifest);
+        }
+        index += 1;
+    }
+    Ok(())
+}
+
+fn boot_config_object_count(config: &BootRuntimeConfig) -> Option<usize> {
+    let mut count = 0usize;
+    count = count.checked_add(config.endpoint_count)?;
+    count = count.checked_add(config.store_object_count)?;
+    count = count.checked_add(config.network_port_count)?;
+    count = count.checked_add(config.io_port_count)?;
+    count = count.checked_add(config.mmio_region_count)?;
+    count = count.checked_add(config.interrupt_line_count)?;
+    count = count.checked_add(config.dma_region_count)?;
+    count = count.checked_add(config.pci_device_count)?;
+    count = count.checked_add(config.virtio_device_count)?;
+    count = count.checked_add(config.namespace_count)?;
+    count = count.checked_add(1)?; // monotonic timer
+    count = count.checked_add(1)?; // logd secret
+    count = count.checked_add(1)?; // process-control
+    if config.manifest_module.is_some() {
+        count = count.checked_add(1)?;
+    }
+    Some(count)
+}
+
+fn boot_object_config_ref_valid(
+    config: &BootRuntimeConfig,
+    object_kind: u16,
+    object_index: usize,
+) -> bool {
+    match object_kind {
+        BOOT_OBJECT_ENDPOINT => object_index < config.endpoint_count,
+        BOOT_OBJECT_STORE => object_index < config.store_object_count,
+        BOOT_OBJECT_STATE => false,
+        BOOT_OBJECT_TIMER => object_index == 0,
+        BOOT_OBJECT_NETWORK_PORT => object_index < config.network_port_count,
+        BOOT_OBJECT_IO_PORT_RANGE => object_index < config.io_port_count,
+        BOOT_OBJECT_MMIO_REGION => object_index < config.mmio_region_count,
+        BOOT_OBJECT_INTERRUPT_LINE => object_index < config.interrupt_line_count,
+        BOOT_OBJECT_DMA_REGION => object_index < config.dma_region_count,
+        BOOT_OBJECT_PCI_DEVICE => object_index < config.pci_device_count,
+        BOOT_OBJECT_VIRTIO_DEVICE => object_index < config.virtio_device_count,
+        BOOT_OBJECT_NAMESPACE => object_index < config.namespace_count,
+        _ => false,
+    }
+}
+
+fn load_boot_initial_context(process: BootProcessConfig) -> Result<ProcessContext, InitError> {
+    load_process_context(process.name, process.image_base, process.image_length)
+        .map_err(|_| InitError::InvalidBootManifest)
+}
+
+fn snapshot_runtime_reap_targets() -> ([Option<RuntimeReapTarget>; MAX_PROCESSES], usize) {
+    let mut targets = [None; MAX_PROCESSES];
+    let mut count = 0;
+    let runtime = runtime();
+    let mut index = 0;
+    while index < runtime.processes.count {
+        if let Some(process) = runtime.processes.processes[index]
+            && !process.context_reaped
+            && process.context.cr3 != 0
+        {
+            targets[count] = Some(RuntimeReapTarget {
+                pid: process.pid,
+                name: process.name,
+                cr3: process.context.cr3,
+            });
+            count += 1;
+        }
+        index += 1;
+    }
+    (targets, count)
+}
+
+fn reap_runtime_contexts(
+    targets: &[Option<RuntimeReapTarget>; MAX_PROCESSES],
+    count: usize,
+) -> Result<(), IpcError> {
+    let hhdm_offset = limine::hhdm_offset().ok_or(IpcError::BadCapability)?;
+    let allocator = frame_allocator()?;
+    let mut index = 0;
+    while index < count {
+        let target = targets[index].ok_or(IpcError::BadCapability)?;
+        let stats = paging::reclaim_user_address_space(hhdm_offset, target.cr3, allocator)
+            .map_err(|_| IpcError::BadCapability)?;
+        serial::write_str("Krust old runtime address space reaped: proc=");
+        serial::write_str(target.name);
+        serial::write_str(" pid=");
+        serial::write_u64_dec(target.pid.raw());
+        serial::write_str(" user_frames=");
+        serial::write_u64_dec(stats.user_leaf_frames);
+        serial::write_str(" page_tables=");
+        serial::write_u64_dec(stats.page_table_frames);
+        serial::write_str(" device_mappings=");
+        serial::write_u64_dec(stats.device_mappings);
+        serial::write_str("\n");
+        index += 1;
+    }
     Ok(())
 }
 
@@ -3479,7 +3716,7 @@ pub fn log_write(cap_slot: u64, source: *const u8, len: usize) -> Result<(), Ipc
         return Err(IpcError::MessageTooLarge);
     }
 
-    let _endpoint_id = endpoint_from_cap(cap_slot, capability::RIGHT_SEND)?;
+    let _endpoint = serial_log_endpoint_from_cap(cap_slot, capability::RIGHT_SEND)?;
     let mut message = [0u8; MAX_MESSAGE_BYTES];
     usercopy::copy_from_user(&mut message, UserPtr::new(source as u64), len)
         .map_err(|_| IpcError::InvalidUserBuffer)?;
@@ -3561,9 +3798,6 @@ pub fn activate_generation(
         });
     }
 
-    serial::write_str("Native update transaction journal commit\n");
-    boot_manager().install_selected(previous_generation, target.generation_id);
-
     serial::write_str("Krust generation switch accepted: from=");
     serial::write_str(previous_generation);
     serial::write_str(" to=");
@@ -3577,6 +3811,8 @@ pub fn activate_generation(
     serial::write_str("old generation service loses old capability\n");
 
     init_from_boot_config(target.config).map_err(|_| IpcError::BadCapability)?;
+    serial::write_str("Native update transaction journal commit\n");
+    boot_manager().install_selected(previous_generation, target.generation_id);
     let context = initial_process_context().ok_or(IpcError::BadCapability)?;
     serial::write_str("Krust generation switch entering generation: ");
     serial::write_str(target.generation_id);
@@ -3589,6 +3825,7 @@ pub fn activate_generation(
 }
 
 fn verify_generation_transaction(target: GenerationRuntime) -> Result<(), IpcError> {
+    validate_boot_config_installable(target.config).map_err(|_| IpcError::BadCapability)?;
     verify_generation_manifest(target.config)?;
     verify_generation_store_closure(target.config)?;
     Ok(())
@@ -3711,15 +3948,6 @@ pub fn rollback_generation(
             runtime.generation_cap_count(runtime.generation_id),
         )
     };
-    if let Some(previous_config) = previous_config {
-        set_rollback_runtime(GenerationRuntime {
-            generation_id: previous_generation,
-            config: previous_config,
-        });
-        set_failed_generation(previous_generation);
-    }
-    boot_manager().mark_failed_and_fallback(previous_generation, rollback.generation_id);
-
     serial::write_str("Krust rollback generation accepted: target=");
     serial::write_str(rollback.generation_id);
     serial::write_str("\n");
@@ -3730,6 +3958,14 @@ pub fn rollback_generation(
     serial::write_str("\n");
 
     init_from_boot_config(rollback.config).map_err(|_| IpcError::BadCapability)?;
+    if let Some(previous_config) = previous_config {
+        set_rollback_runtime(GenerationRuntime {
+            generation_id: previous_generation,
+            config: previous_config,
+        });
+        set_failed_generation(previous_generation);
+    }
+    boot_manager().mark_failed_and_fallback(previous_generation, rollback.generation_id);
     let context = initial_process_context().ok_or(IpcError::BadCapability)?;
     serial::write_str("Krust rollback entering generation: ");
     serial::write_str(rollback.generation_id);
@@ -5824,6 +6060,26 @@ fn endpoint_from_cap(cap_slot: u64, required_right: u64) -> Result<KernelObjectI
     }
 }
 
+fn serial_log_endpoint_from_cap(
+    cap_slot: u64,
+    required_right: u64,
+) -> Result<IpcEndpoint, IpcError> {
+    let cap = lookup_capability(cap_slot, required_right)?;
+    let runtime = runtime();
+    let log_endpoint_id = runtime.endpoint_ids[0].ok_or(IpcError::BadCapability)?;
+    if cap.object != log_endpoint_id {
+        return Err(IpcError::BadCapability);
+    }
+    let endpoint = runtime
+        .objects
+        .get_endpoint(cap.object)
+        .ok_or(IpcError::BadCapability)?;
+    if endpoint.name != LOG_ENDPOINT_NAME {
+        return Err(IpcError::BadCapability);
+    }
+    Ok(endpoint)
+}
+
 fn boot_module_from_cap(cap_slot: u64, required_right: u64) -> Result<BootModuleObject, IpcError> {
     let cap = lookup_capability(cap_slot, required_right)?;
     runtime()
@@ -6887,6 +7143,7 @@ fn map_current_process_physical_range(
     let allocator = frame_allocator()?;
 
     let mut offset = 0;
+    let mut mapped_length = 0;
     while offset < length {
         let frame = memory::PhysicalFrame::from_start(
             physical_base
@@ -6897,6 +7154,9 @@ fn map_current_process_physical_range(
         let virtual_address = virtual_base
             .checked_add(offset)
             .ok_or(IpcError::BadCapability)?;
+        let next_offset = offset
+            .checked_add(memory::FRAME_SIZE)
+            .ok_or(IpcError::BadCapability)?;
         match paging::map_page_in_root(
             hhdm_offset,
             root_table_physical,
@@ -6906,14 +7166,57 @@ fn map_current_process_physical_range(
             allocator,
         ) {
             Ok(()) => {}
-            Err(_) => return Err(IpcError::BadCapability),
+            Err(_) => {
+                rollback_current_process_physical_range(
+                    hhdm_offset,
+                    root_table_physical,
+                    virtual_base,
+                    mapped_length,
+                    allocator,
+                );
+                return Err(IpcError::BadCapability);
+            }
         }
-        offset = offset
-            .checked_add(memory::FRAME_SIZE)
-            .ok_or(IpcError::BadCapability)?;
+        mapped_length = next_offset;
+        offset = next_offset;
     }
 
     Ok(())
+}
+
+fn rollback_current_process_physical_range(
+    hhdm_offset: u64,
+    root_table_physical: u64,
+    virtual_base: u64,
+    length: u64,
+    allocator: &mut memory::FrameAllocator,
+) {
+    let mut offset = 0;
+    while offset < length {
+        if let Some(virtual_address) = virtual_base.checked_add(offset) {
+            let _ = paging::unmap_page_in_root(hhdm_offset, root_table_physical, virtual_address);
+        }
+        let Some(next_offset) = offset.checked_add(memory::FRAME_SIZE) else {
+            return;
+        };
+        offset = next_offset;
+    }
+
+    offset = 0;
+    while offset < length {
+        if let Some(virtual_address) = virtual_base.checked_add(offset) {
+            let _ = paging::prune_empty_user_page_tables(
+                hhdm_offset,
+                root_table_physical,
+                virtual_address,
+                allocator,
+            );
+        }
+        let Some(next_offset) = offset.checked_add(memory::FRAME_SIZE) else {
+            return;
+        };
+        offset = next_offset;
+    }
 }
 
 fn device_user_mapping_base(

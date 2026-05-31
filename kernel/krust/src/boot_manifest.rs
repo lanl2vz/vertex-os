@@ -28,6 +28,9 @@ const MAX_DMA_REGIONS: usize = 4;
 const MAX_PCI_DEVICES: usize = 4;
 const MAX_VIRTIO_DEVICES: usize = 4;
 const MAX_NAMESPACES: usize = 4;
+const MAX_RUNTIME_OBJECTS: usize = 64;
+const FIXED_RUNTIME_OBJECTS: usize = 4;
+const SERIAL_LOG_ENDPOINT_NAME: &str = "serial-log";
 pub const MAX_NAMESPACE_ENTRIES: usize = 4;
 pub const MAX_PROCESS_REFS: usize = 4;
 
@@ -231,6 +234,7 @@ pub enum ParseError {
     TooManyVirtioDevices,
     TooManyNamespaces,
     TooManyNamespaceEntries,
+    TooManyRuntimeObjects,
     InvalidString,
     InvalidReference,
     InvalidRights,
@@ -610,6 +614,18 @@ fn parse_compact_into(
     let virtio_device_count =
         reader.read_count(MAX_VIRTIO_DEVICES, ParseError::TooManyVirtioDevices)?;
     let namespace_count = reader.read_count(MAX_NAMESPACES, ParseError::TooManyNamespaces)?;
+    validate_runtime_object_budget(
+        endpoint_count,
+        store_object_count,
+        network_port_count,
+        io_port_count,
+        mmio_region_count,
+        interrupt_line_count,
+        dma_region_count,
+        pci_device_count,
+        virtio_device_count,
+        namespace_count,
+    )?;
     let generation_id = reader.read_fixed_str()?;
     let parent_generation_id = reader.read_fixed_str_allow_empty()?;
 
@@ -819,7 +835,56 @@ fn parse_compact_into(
     Ok(())
 }
 
+fn validate_runtime_object_budget(
+    endpoint_count: usize,
+    store_object_count: usize,
+    network_port_count: usize,
+    io_port_count: usize,
+    mmio_region_count: usize,
+    interrupt_line_count: usize,
+    dma_region_count: usize,
+    pci_device_count: usize,
+    virtio_device_count: usize,
+    namespace_count: usize,
+) -> Result<(), ParseError> {
+    let mut count = FIXED_RUNTIME_OBJECTS;
+    count = count
+        .checked_add(endpoint_count)
+        .and_then(|count| count.checked_add(store_object_count))
+        .and_then(|count| count.checked_add(network_port_count))
+        .and_then(|count| count.checked_add(io_port_count))
+        .and_then(|count| count.checked_add(mmio_region_count))
+        .and_then(|count| count.checked_add(interrupt_line_count))
+        .and_then(|count| count.checked_add(dma_region_count))
+        .and_then(|count| count.checked_add(pci_device_count))
+        .and_then(|count| count.checked_add(virtio_device_count))
+        .and_then(|count| count.checked_add(namespace_count))
+        .ok_or(ParseError::TooManyRuntimeObjects)?;
+    if count > MAX_RUNTIME_OBJECTS {
+        return Err(ParseError::TooManyRuntimeObjects);
+    }
+    Ok(())
+}
+
 fn validate_manifest(manifest: &Manifest<'_>) -> Result<(), ParseError> {
+    if manifest.endpoint_count == 0 {
+        return Err(ParseError::InvalidReference);
+    }
+    let serial_log = manifest.endpoint(0).ok_or(ParseError::InvalidReference)?;
+    if serial_log.name != SERIAL_LOG_ENDPOINT_NAME {
+        return Err(ParseError::InvalidReference);
+    }
+    let mut endpoint_index = 1;
+    while endpoint_index < manifest.endpoint_count {
+        let endpoint = manifest
+            .endpoint(endpoint_index)
+            .ok_or(ParseError::InvalidReference)?;
+        if endpoint.name == SERIAL_LOG_ENDPOINT_NAME {
+            return Err(ParseError::InvalidReference);
+        }
+        endpoint_index += 1;
+    }
+
     let mut initial_count = 0;
     let mut index = 0;
     while index < manifest.process_count {
