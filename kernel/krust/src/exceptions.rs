@@ -129,6 +129,7 @@ krust_invalid_opcode_entry:
     xor rsi, rsi
     mov rdx, r14
     mov rcx, rsp
+    cld
     call krust_user_exception_dispatch
     pop_user_frame
     iretq
@@ -136,6 +137,7 @@ krust_invalid_opcode_entry:
     xor rsi, rsi
     xor rdx, rdx
     mov rdi, 6
+    cld
     call krust_exception_dispatch
 1:
     hlt
@@ -154,6 +156,7 @@ krust_general_protection_entry:
     mov rsi, r14
     mov rdx, r15
     mov rcx, rsp
+    cld
     call krust_user_exception_dispatch
     pop_user_frame
     iretq
@@ -161,6 +164,7 @@ krust_general_protection_entry:
     mov rsi, [rsp]
     xor rdx, rdx
     mov rdi, 13
+    cld
     call krust_exception_dispatch
 2:
     hlt
@@ -178,6 +182,7 @@ krust_page_fault_entry:
     mov rdi, r14
     mov rsi, r15
     mov rdx, rsp
+    cld
     call krust_page_fault_user_dispatch
     pop_user_frame
     iretq
@@ -185,6 +190,7 @@ krust_page_fault_entry:
     mov rdi, 14
     mov rsi, r14
     mov rdx, r15
+    cld
     call krust_exception_dispatch
 3:
     hlt
@@ -199,11 +205,13 @@ krust_timer_entry:
     jz 5f
     push_user_frame
     mov rdi, rsp
+    cld
     call krust_timer_user_dispatch
     pop_user_frame
     iretq
 5:
     push_user_frame
+    cld
     call krust_timer_kernel_dispatch
     pop_user_frame
     iretq
@@ -219,12 +227,14 @@ krust_timer_entry:
     push_user_frame
     mov rdi, \line
     mov rsi, rsp
+    cld
     call krust_irq_user_dispatch
     pop_user_frame
     iretq
 9:
     push_user_frame
     mov rdi, \line
+    cld
     call krust_irq_kernel_dispatch
     pop_user_frame
     iretq

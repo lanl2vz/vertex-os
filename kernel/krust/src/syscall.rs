@@ -9,6 +9,7 @@ const IA32_FMASK: u32 = 0xc000_0084;
 
 const EFER_SYSCALL_ENABLE: u64 = 1;
 const RFLAGS_INTERRUPT_ENABLE: u64 = 1 << 9;
+const RFLAGS_DIRECTION_FLAG: u64 = 1 << 10;
 
 const SYSCALL_STACK_SIZE: usize = 256 * 1024;
 const SYS_EXIT: u64 = 2;
@@ -107,6 +108,7 @@ krust_syscall_entry:
     mov rdx, [rsp + {rsi}]
     mov rcx, [rsp + {rdx}]
     mov r8, rsp
+    cld
     call krust_syscall_dispatch
     pop r15
     pop r14
@@ -159,7 +161,7 @@ pub fn init() {
     unsafe {
         write_msr(IA32_STAR, star);
         write_msr(IA32_LSTAR, entry);
-        write_msr(IA32_FMASK, RFLAGS_INTERRUPT_ENABLE);
+        write_msr(IA32_FMASK, RFLAGS_INTERRUPT_ENABLE | RFLAGS_DIRECTION_FLAG);
         write_msr(IA32_EFER, read_msr(IA32_EFER) | EFER_SYSCALL_ENABLE);
     }
 }

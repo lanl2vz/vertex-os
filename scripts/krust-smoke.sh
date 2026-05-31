@@ -336,6 +336,7 @@ serial-driver can write byte
 logd sends log message
 serial-driver writes message to COM1
 echo sent message to logd
+syscall entry clears direction flag
 service with no allocation authority cannot create endpoint
 echo I/O write rejected
 echo cannot write COM1 directly
@@ -346,6 +347,7 @@ Capability inspect: proc=echo
 cap inspect shows parent chain
 Capability copy accepted: proc=echo
 cap copy preserves source slot
+cap revoke reaches descendants through dropped parents
 Capability move accepted: proc=echo
 cap move removes source slot
 Capability revoke accepted: proc=echo

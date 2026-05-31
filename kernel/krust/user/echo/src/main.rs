@@ -9,6 +9,9 @@ const CAP_LOG_SINK: u64 = 0;
 const CAP_SERIAL_LOG: u64 = 1;
 const CAP_NETWORK_PORT: u64 = 3;
 const CAP_NAMESPACE: u64 = 4;
+const CAP_LINEAGE_ROOT: u64 = 20;
+const CAP_LINEAGE_PARENT: u64 = 21;
+const CAP_LINEAGE_CHILD: u64 = 22;
 const CAP_NAMESPACE_RESOLVED: u64 = 24;
 const CAP_NETWORK_BIND_ONLY: u64 = 23;
 const CAP_COPY: u64 = 28;
@@ -17,7 +20,7 @@ const CAP_MOVED: u64 = 27;
 #[unsafe(link_section = ".text._start")]
 #[unsafe(no_mangle)]
 pub extern "C" fn _start() -> ! {
-    if sys::ipc_send(CAP_LOG_SINK, b"hello from echo") != sys::STATUS_OK {
+    if sys::ipc_send_with_direction_flag(CAP_LOG_SINK, b"hello from echo") != sys::STATUS_OK {
         log(b"echo send failed");
         sys::exit(1);
     }
@@ -26,6 +29,7 @@ pub extern "C" fn _start() -> ! {
     } else {
         log(b"echo sent message to logd");
     }
+    log(b"syscall entry clears direction flag");
 
     if sys::endpoint_create(CAP_LOG_SINK, 26) == sys::STATUS_BAD_CAPABILITY {
         log(b"service with no allocation authority cannot create endpoint");
@@ -109,6 +113,28 @@ pub extern "C" fn _start() -> ! {
         sys::exit(1);
     }
     log(b"cap copy preserves source slot");
+
+    if sys::cap_copy(CAP_LOG_SINK, CAP_LINEAGE_ROOT, sys::RIGHT_SEND) != sys::STATUS_OK
+        || sys::cap_copy(CAP_LINEAGE_ROOT, CAP_LINEAGE_PARENT, sys::RIGHT_SEND) != sys::STATUS_OK
+        || sys::cap_copy(CAP_LINEAGE_PARENT, CAP_LINEAGE_CHILD, sys::RIGHT_SEND) != sys::STATUS_OK
+    {
+        log(b"echo cap lineage setup failed");
+        sys::exit(1);
+    }
+    if sys::cap_drop(CAP_LINEAGE_PARENT) != sys::STATUS_OK {
+        log(b"echo cap lineage parent drop failed");
+        sys::exit(1);
+    }
+    if sys::cap_revoke(CAP_LINEAGE_ROOT) != sys::STATUS_OK {
+        log(b"echo cap lineage root revoke failed");
+        sys::exit(1);
+    }
+    if sys::ipc_send(CAP_LINEAGE_CHILD, b"after ancestor revoke") == sys::STATUS_BAD_CAPABILITY {
+        log(b"cap revoke reaches descendants through dropped parents");
+    } else {
+        log(b"cap lineage revoke failed");
+        sys::exit(1);
+    }
 
     if sys::cap_move(CAP_COPY, CAP_MOVED) != sys::STATUS_OK {
         log(b"echo cap move failed");

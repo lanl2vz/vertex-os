@@ -42,6 +42,15 @@ pub fn ipc_send_raw(cap_slot: u64, source: u64, len: u64) -> u64 {
     syscall3(SYS_IPC_SEND, cap_slot, source, len)
 }
 
+pub fn ipc_send_with_direction_flag(cap_slot: u64, message: &[u8]) -> u64 {
+    syscall3_with_direction_flag(
+        SYS_IPC_SEND,
+        cap_slot,
+        message.as_ptr() as u64,
+        message.len() as u64,
+    )
+}
+
 pub fn ipc_recv(cap_slot: u64, buffer: &mut [u8]) -> u64 {
     syscall3(
         SYS_IPC_RECV,
@@ -173,6 +182,27 @@ fn syscall3(number: u64, arg0: u64, arg1: u64, arg2: u64) -> u64 {
     unsafe {
         asm!(
             "syscall",
+            inlateout("rax") number => result,
+            in("rdi") arg0,
+            in("rsi") arg1,
+            in("rdx") arg2,
+            lateout("rcx") _,
+            lateout("r11") _,
+            options(nostack)
+        );
+    }
+
+    result
+}
+
+fn syscall3_with_direction_flag(number: u64, arg0: u64, arg1: u64, arg2: u64) -> u64 {
+    let result: u64;
+
+    unsafe {
+        asm!(
+            "std",
+            "syscall",
+            "cld",
             inlateout("rax") number => result,
             in("rdi") arg0,
             in("rsi") arg1,

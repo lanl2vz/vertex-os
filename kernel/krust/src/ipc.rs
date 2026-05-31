@@ -21,7 +21,8 @@ const MAX_CAPS: usize = 32;
 const MAX_BOOT_GRANTS: usize = 128;
 const MAX_BOOT_NAMESPACES: usize = 4;
 const MAX_NAMESPACE_ENTRIES: usize = 4;
-const MAX_REVOKED_CAPS: usize = 128;
+const MAX_CAP_LINEAGE: usize = 1024;
+const MAX_REVOKED_CAPS: usize = MAX_CAP_LINEAGE;
 const MAX_GENERATION_CONFIGS: usize = 4;
 const MAX_INSPECT_REPORT_BYTES: usize = 64 * 1024;
 const MAX_SERVICE_LIFECYCLE_EVENTS: usize = 128;
@@ -797,6 +798,12 @@ struct ProcessTable {
     next_id: u64,
 }
 
+#[derive(Clone, Copy)]
+struct CapabilityLineage {
+    cap_id: u64,
+    parent_cap_id: u64,
+}
+
 struct RuntimeState {
     objects: ObjectTable,
     processes: ProcessTable,
@@ -805,6 +812,8 @@ struct RuntimeState {
     next_cap_id: u64,
     revoked_caps: [u64; MAX_REVOKED_CAPS],
     revoked_cap_count: usize,
+    cap_lineage: [Option<CapabilityLineage>; MAX_CAP_LINEAGE],
+    cap_lineage_count: usize,
     endpoint_ids: [Option<KernelObjectId>; MAX_OBJECTS],
     store_object_ids: [Option<KernelObjectId>; MAX_OBJECTS],
     network_port_ids: [Option<KernelObjectId>; MAX_OBJECTS],
@@ -2328,6 +2337,8 @@ impl RuntimeState {
             next_cap_id: 1,
             revoked_caps: [0; MAX_REVOKED_CAPS],
             revoked_cap_count: 0,
+            cap_lineage: [None; MAX_CAP_LINEAGE],
+            cap_lineage_count: 0,
             endpoint_ids: [None; MAX_OBJECTS],
             store_object_ids: [None; MAX_OBJECTS],
             network_port_ids: [None; MAX_OBJECTS],
@@ -2352,6 +2363,7 @@ impl RuntimeState {
         self.active_config = Some(config);
         self.next_cap_id = 1;
         self.revoked_cap_count = 0;
+        self.cap_lineage_count = 0;
         self.endpoint_ids = [None; MAX_OBJECTS];
         self.store_object_ids = [None; MAX_OBJECTS];
         self.network_port_ids = [None; MAX_OBJECTS];
@@ -2371,6 +2383,11 @@ impl RuntimeState {
         let mut index = 0;
         while index < self.revoked_caps.len() {
             self.revoked_caps[index] = 0;
+            index += 1;
+        }
+        index = 0;
+        while index < self.cap_lineage.len() {
+            self.cap_lineage[index] = None;
             index += 1;
         }
     }
@@ -2421,9 +2438,14 @@ impl RuntimeState {
         owner_process: ProcessId,
         parent_cap_id: u64,
         delegated_by: ProcessId,
-    ) -> Capability {
+    ) -> Result<Capability, IpcError> {
+        if self.next_cap_id == 0 || self.next_cap_id == u64::MAX {
+            return Err(IpcError::BadCapability);
+        }
+        let cap_id = self.next_cap_id;
+        self.record_cap_lineage(cap_id, parent_cap_id)?;
         let cap = Capability {
-            id: self.next_cap_id,
+            id: cap_id,
             object,
             rights,
             owner_process,
@@ -2432,8 +2454,33 @@ impl RuntimeState {
             delegated_by,
             revoked: false,
         };
-        self.next_cap_id = self.next_cap_id.saturating_add(1);
-        cap
+        self.next_cap_id += 1;
+        Ok(cap)
+    }
+
+    fn record_cap_lineage(&mut self, cap_id: u64, parent_cap_id: u64) -> Result<(), IpcError> {
+        if self.cap_lineage_count == self.cap_lineage.len() {
+            return Err(IpcError::BadCapability);
+        }
+        self.cap_lineage[self.cap_lineage_count] = Some(CapabilityLineage {
+            cap_id,
+            parent_cap_id,
+        });
+        self.cap_lineage_count += 1;
+        Ok(())
+    }
+
+    fn cap_parent_from_lineage(&self, cap_id: u64) -> Option<u64> {
+        let mut index = 0;
+        while index < self.cap_lineage_count {
+            if let Some(lineage) = self.cap_lineage[index]
+                && lineage.cap_id == cap_id
+            {
+                return Some(lineage.parent_cap_id);
+            }
+            index += 1;
+        }
+        None
     }
 
     fn cap_id_revoked(&self, cap_id: u64) -> bool {
@@ -2451,38 +2498,45 @@ impl RuntimeState {
         if cap_id == 0 {
             return Err(IpcError::BadCapability);
         }
-        if !self.cap_id_revoked(cap_id) {
-            if self.revoked_cap_count == self.revoked_caps.len() {
-                return Err(IpcError::BadCapability);
-            }
-            self.revoked_caps[self.revoked_cap_count] = cap_id;
-            self.revoked_cap_count += 1;
-        }
-        self.mark_cap_revoked(cap_id);
+        self.add_revoked_cap(cap_id)?;
 
         let mut changed = true;
         while changed {
             changed = false;
             let mut index = 0;
-            while index < self.processes.count {
-                if let Some(process) = self.processes.processes[index].as_mut() {
-                    changed |= revoke_descendants_in_space(
-                        &mut process.caps,
-                        cap_id,
-                        &mut self.revoked_caps,
-                        &mut self.revoked_cap_count,
-                    )?;
-                    changed |= revoke_descendants_in_space(
-                        &mut process.initial_caps,
-                        cap_id,
-                        &mut self.revoked_caps,
-                        &mut self.revoked_cap_count,
-                    )?;
+            while index < self.cap_lineage_count {
+                if let Some(lineage) = self.cap_lineage[index]
+                    && lineage.parent_cap_id != 0
+                    && self.cap_id_revoked(lineage.parent_cap_id)
+                    && self.add_revoked_cap(lineage.cap_id)?
+                {
+                    changed = true;
                 }
                 index += 1;
             }
         }
+        self.mark_all_revoked_caps();
         Ok(())
+    }
+
+    fn add_revoked_cap(&mut self, cap_id: u64) -> Result<bool, IpcError> {
+        if cap_id == 0 || self.cap_id_revoked(cap_id) {
+            return Ok(false);
+        }
+        if self.revoked_cap_count == self.revoked_caps.len() {
+            return Err(IpcError::BadCapability);
+        }
+        self.revoked_caps[self.revoked_cap_count] = cap_id;
+        self.revoked_cap_count += 1;
+        Ok(true)
+    }
+
+    fn mark_all_revoked_caps(&mut self) {
+        let mut index = 0;
+        while index < self.revoked_cap_count {
+            self.mark_cap_revoked(self.revoked_caps[index]);
+            index += 1;
+        }
     }
 
     fn mark_cap_revoked(&mut self, cap_id: u64) {
@@ -2827,46 +2881,6 @@ fn generation_cap_count_in_space(space: CapabilitySpace, generation_id: &'static
     count
 }
 
-fn revoke_descendants_in_space(
-    space: &mut CapabilitySpace,
-    parent_cap_id: u64,
-    revoked_caps: &mut [u64; MAX_REVOKED_CAPS],
-    revoked_cap_count: &mut usize,
-) -> Result<bool, IpcError> {
-    let mut changed = false;
-    let mut slot = 0;
-    while slot < MAX_CAPS {
-        if let Some(mut cap) = space.caps[slot]
-            && cap.parent_cap_id == parent_cap_id
-            && !cap.revoked
-        {
-            cap.revoked = true;
-            space.caps[slot] = Some(cap);
-            if !revoked_contains(revoked_caps, *revoked_cap_count, cap.id) {
-                if *revoked_cap_count == revoked_caps.len() {
-                    return Err(IpcError::BadCapability);
-                }
-                revoked_caps[*revoked_cap_count] = cap.id;
-                *revoked_cap_count += 1;
-            }
-            changed = true;
-        }
-        slot += 1;
-    }
-    Ok(changed)
-}
-
-fn revoked_contains(revoked_caps: &[u64; MAX_REVOKED_CAPS], count: usize, cap_id: u64) -> bool {
-    let mut index = 0;
-    while index < count {
-        if revoked_caps[index] == cap_id {
-            return true;
-        }
-        index += 1;
-    }
-    false
-}
-
 pub fn init_from_boot_config(config: &'static BootRuntimeConfig) -> Result<(), InitError> {
     validate_boot_config_installable(config)?;
     let initial_index = initial_process_index(config)?;
@@ -3047,13 +3061,15 @@ fn install_boot_config(
         let module_id = runtime
             .objects
             .add_boot_module(module.name, module.base, module.length)?;
-        let cap = runtime.new_capability(
-            module_id,
-            capability::RIGHT_READ,
-            initial_pid,
-            0,
-            ProcessId::empty(),
-        );
+        let cap = runtime
+            .new_capability(
+                module_id,
+                capability::RIGHT_READ,
+                initial_pid,
+                0,
+                ProcessId::empty(),
+            )
+            .map_err(|_| InitError::CapabilityTableFull)?;
         grant_process_cap_by_pid(runtime, initial_pid, 0, cap, true)?;
     }
 
@@ -3068,23 +3084,27 @@ fn install_boot_config(
         | capability::RIGHT_START
         | capability::RIGHT_KILL
         | capability::RIGHT_WAIT;
-    let cap = runtime.new_capability(
-        process_control_id,
-        process_control_rights,
-        initial_pid,
-        0,
-        ProcessId::empty(),
-    );
+    let cap = runtime
+        .new_capability(
+            process_control_id,
+            process_control_rights,
+            initial_pid,
+            0,
+            ProcessId::empty(),
+        )
+        .map_err(|_| InitError::CapabilityTableFull)?;
     grant_process_cap_by_pid(runtime, initial_pid, 2, cap, true)?;
 
     let timer_id = runtime.timer_id.ok_or(InitError::InvalidBootManifest)?;
-    let cap = runtime.new_capability(
-        timer_id,
-        capability::RIGHT_CONTROL,
-        initial_pid,
-        0,
-        ProcessId::empty(),
-    );
+    let cap = runtime
+        .new_capability(
+            timer_id,
+            capability::RIGHT_CONTROL,
+            initial_pid,
+            0,
+            ProcessId::empty(),
+        )
+        .map_err(|_| InitError::CapabilityTableFull)?;
     grant_process_cap_by_pid(runtime, initial_pid, INIT_TIMER_CAP_SLOT, cap, true)?;
 
     print_boot_tables(runtime);
@@ -3489,7 +3509,9 @@ fn grant_config_caps_to_process(
             continue;
         }
         let object = grant_object_id(runtime, grant)?;
-        let cap = runtime.new_capability(object, grant.rights, owner, 0, ProcessId::empty());
+        let cap = runtime
+            .new_capability(object, grant.rights, owner, 0, ProcessId::empty())
+            .map_err(|_| InitError::CapabilityTableFull)?;
         grant_process_cap_by_pid(runtime, owner, grant.cap_slot, cap, true)?;
         grant_index += 1;
     }
@@ -3499,13 +3521,15 @@ fn grant_config_caps_to_process(
     };
     if process.name == "logd" {
         let secret_id = runtime.secret_id.ok_or(InitError::InvalidBootManifest)?;
-        let cap = runtime.new_capability(
-            secret_id,
-            capability::RIGHT_READ | capability::RIGHT_INSPECT_METADATA,
-            owner,
-            0,
-            ProcessId::empty(),
-        );
+        let cap = runtime
+            .new_capability(
+                secret_id,
+                capability::RIGHT_READ | capability::RIGHT_INSPECT_METADATA,
+                owner,
+                0,
+                ProcessId::empty(),
+            )
+            .map_err(|_| InitError::CapabilityTableFull)?;
         grant_process_cap_by_pid(runtime, owner, 5, cap, true)?;
         serial::write_str(
             "Native secret grant: process=logd secret=secret:logd-token rights=read|inspect-metadata\n",
@@ -4653,7 +4677,7 @@ pub fn cap_derive(parent_slot: u64, new_slot: u64, rights_mask: u64) -> Result<(
             return Err(IpcError::BadCapability);
         }
     }
-    let cap = runtime.new_capability(parent.object, rights_mask, owner, parent.id, owner);
+    let cap = runtime.new_capability(parent.object, rights_mask, owner, parent.id, owner)?;
     let Some(process) = runtime.processes.current_process_mut() else {
         return Err(IpcError::BadCapability);
     };
@@ -4753,7 +4777,7 @@ pub fn cap_copy(source_slot: u64, target_slot: u64, rights_mask: u64) -> Result<
             return Err(IpcError::BadCapability);
         }
     }
-    let copied = runtime.new_capability(source.object, rights_mask, owner, source.id, owner);
+    let copied = runtime.new_capability(source.object, rights_mask, owner, source.id, owner)?;
     let Some(process) = runtime.processes.current_process_mut() else {
         return Err(IpcError::BadCapability);
     };
@@ -4848,7 +4872,7 @@ pub fn cap_transfer(
             )
         };
         let transferred =
-            runtime.new_capability(cap.object, rights_mask, target_pid, cap.id, delegated_by);
+            runtime.new_capability(cap.object, rights_mask, target_pid, cap.id, delegated_by)?;
         let transferred_id = transferred.id;
         let Some(target_process) = runtime.processes.process_mut(target_pid) else {
             return Err(IpcError::BadCapability);
@@ -4930,7 +4954,7 @@ pub fn endpoint_create(control_slot: u64, cap_slot: u64) -> Result<(), IpcError>
         owner,
         0,
         owner,
-    );
+    )?;
     let Some(process) = runtime.processes.current_process_mut() else {
         return Err(IpcError::BadCapability);
     };
@@ -5191,6 +5215,15 @@ pub fn virtio_rng_read(
         return Err(IpcError::BadCapability);
     }
     let copy_len = min(max_len, 32);
+    usercopy::validate_user_buffer(
+        UserPtr::new(destination as u64),
+        copy_len,
+        paging::UserAccess::Write,
+    )
+    .map_err(|_| IpcError::InvalidUserBuffer)?;
+    if copy_len == 0 {
+        return Ok(0);
+    }
     let mut bytes = [0u8; 32];
     let actual_len = virtio_rng_fill(&mut bytes[..copy_len])?;
     usercopy::copy_to_user(UserPtr::new(destination as u64), &bytes[..actual_len])
@@ -5241,6 +5274,12 @@ pub fn virtio_net_rx(
     if max_len < ETHERNET_MIN_FRAME_LEN {
         return Err(IpcError::MessageTooLarge);
     }
+    usercopy::validate_user_buffer(
+        UserPtr::new(destination as u64),
+        min(max_len, MAX_MESSAGE_BYTES),
+        paging::UserAccess::Write,
+    )
+    .map_err(|_| IpcError::InvalidUserBuffer)?;
     let mut frame = [0u8; MAX_MESSAGE_BYTES];
     let frame_len = virtio_net_receive_frame(&mut frame)?;
     if frame_len > max_len {
@@ -5934,7 +5973,7 @@ pub fn namespace_resolve(
             return Err(IpcError::BadCapability);
         }
     }
-    let cap = runtime.new_capability(entry.object, entry.rights, owner, namespace_cap.id, owner);
+    let cap = runtime.new_capability(entry.object, entry.rights, owner, namespace_cap.id, owner)?;
     let Some(process) = runtime.processes.current_process_mut() else {
         return Err(IpcError::BadCapability);
     };
@@ -6312,6 +6351,12 @@ pub fn dma_map(cap_slot: u64, destination: *mut u8, max_len: usize) -> Result<()
     if (destination as u64) & 7 != 0 {
         return Err(IpcError::InvalidUserBuffer);
     }
+    usercopy::validate_user_buffer(
+        UserPtr::new(destination as u64),
+        DMA_MAPPING_INFO_BYTES,
+        paging::UserAccess::Write,
+    )
+    .map_err(|_| IpcError::InvalidUserBuffer)?;
     let map_len = align_up(region.length, memory::FRAME_SIZE).ok_or(IpcError::BadCapability)?;
     let virtual_base = device_user_mapping_base(USER_DMA_MAPPING_BASE, region.id, map_len)?;
     if let Some(mapping) = runtime()
@@ -7227,6 +7272,10 @@ fn capability_has_revoked_ancestor(runtime: &RuntimeState, cap: Capability) -> b
 }
 
 fn find_cap_parent(runtime: &RuntimeState, cap_id: u64) -> Option<u64> {
+    if let Some(parent) = runtime.cap_parent_from_lineage(cap_id) {
+        return Some(parent);
+    }
+
     let mut process_index = 0;
     while process_index < runtime.processes.count {
         if let Some(process) = runtime.processes.processes[process_index] {
