@@ -48,6 +48,9 @@ const MAX_VIRTIO_DEVICES: usize = 4;
 const MAX_NAMESPACES: usize = 4;
 const MAX_NAMESPACE_ENTRIES: usize = 4;
 const MAX_PROCESS_REFS: usize = 4;
+const PAGE_SIZE: u64 = 4096;
+const MAX_DEVICE_MAPPING_LENGTH: u64 = 1 << 30;
+const MAX_LEGACY_IRQ_LINE: u64 = 15;
 const DMA_KERNEL_ALLOCATED_BASE: u64 = u64::MAX;
 const RIGHT_SEND: u16 = 1 << 0;
 const RIGHT_RECEIVE: u16 = 1 << 1;
@@ -1844,6 +1847,7 @@ fn validate_plan(plan: &BootPlan) -> Result<(), String> {
             "native boot plan exceeds {MAX_NAMESPACES} namespaces"
         ));
     }
+    validate_hardware_authority(plan)?;
 
     let initial_count = plan
         .processes
@@ -1984,6 +1988,132 @@ fn validate_plan(plan: &BootPlan) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+fn validate_hardware_authority(plan: &BootPlan) -> Result<(), String> {
+    let mut io_ids = BTreeSet::new();
+    for (index, range) in plan.io_ports.iter().enumerate() {
+        if !io_ids.insert(range.id.as_str()) {
+            return Err(format!("duplicate io-port capability {}", range.id));
+        }
+        validate_io_port_range(&range.id, range.base, range.length)?;
+        for previous in &plan.io_ports[..index] {
+            if ranges_overlap(range.base, range.length, previous.base, previous.length)? {
+                return Err(format!(
+                    "io-port capability {} overlaps {}",
+                    range.id, previous.id
+                ));
+            }
+        }
+    }
+
+    let mut mmio_ids = BTreeSet::new();
+    for (index, region) in plan.mmio_regions.iter().enumerate() {
+        if !mmio_ids.insert(region.id.as_str()) {
+            return Err(format!("duplicate mmio-region capability {}", region.id));
+        }
+        validate_device_range("mmio-region", &region.id, region.base, region.length, false)?;
+        for previous in &plan.mmio_regions[..index] {
+            if ranges_overlap(region.base, region.length, previous.base, previous.length)? {
+                return Err(format!(
+                    "mmio-region capability {} overlaps {}",
+                    region.id, previous.id
+                ));
+            }
+        }
+    }
+
+    let mut irq_ids = BTreeSet::new();
+    let mut irq_lines = BTreeSet::new();
+    for line in &plan.interrupt_lines {
+        if !irq_ids.insert(line.id.as_str()) {
+            return Err(format!("duplicate interrupt-line capability {}", line.id));
+        }
+        if line.line > MAX_LEGACY_IRQ_LINE {
+            return Err(format!(
+                "interrupt-line capability {} uses unsupported legacy IRQ {}",
+                line.id, line.line
+            ));
+        }
+        if !irq_lines.insert(line.line) {
+            return Err(format!(
+                "duplicate interrupt-line ownership for legacy IRQ {}",
+                line.line
+            ));
+        }
+    }
+
+    let mut dma_ids = BTreeSet::new();
+    for (index, region) in plan.dma_regions.iter().enumerate() {
+        if !dma_ids.insert(region.id.as_str()) {
+            return Err(format!("duplicate dma-region capability {}", region.id));
+        }
+        if region.length == 0
+            || region.length > MAX_DEVICE_MAPPING_LENGTH
+            || region.length % PAGE_SIZE != 0
+        {
+            return Err(format!(
+                "dma-region capability {} length must be page-aligned and <= {} bytes",
+                region.id, MAX_DEVICE_MAPPING_LENGTH
+            ));
+        }
+        if region.base != DMA_KERNEL_ALLOCATED_BASE {
+            validate_device_range("dma-region", &region.id, region.base, region.length, true)?;
+            for previous in &plan.dma_regions[..index] {
+                if previous.base != DMA_KERNEL_ALLOCATED_BASE
+                    && ranges_overlap(region.base, region.length, previous.base, previous.length)?
+                {
+                    return Err(format!(
+                        "dma-region capability {} overlaps {}",
+                        region.id, previous.id
+                    ));
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_device_range(
+    kind: &str,
+    id: &str,
+    base: u64,
+    length: u64,
+    page_aligned_base: bool,
+) -> Result<(), String> {
+    if length == 0 {
+        return Err(format!("{kind} capability {id} length must be nonzero"));
+    }
+    if length > MAX_DEVICE_MAPPING_LENGTH {
+        return Err(format!(
+            "{kind} capability {id} exceeds max mapping length {MAX_DEVICE_MAPPING_LENGTH}"
+        ));
+    }
+    base.checked_add(length - 1)
+        .ok_or_else(|| format!("{kind} capability {id} range overflows"))?;
+    if page_aligned_base && base % PAGE_SIZE != 0 {
+        return Err(format!("{kind} capability {id} base must be page-aligned"));
+    }
+    Ok(())
+}
+
+fn ranges_overlap(
+    base: u64,
+    length: u64,
+    other_base: u64,
+    other_length: u64,
+) -> Result<bool, String> {
+    if length == 0 || other_length == 0 {
+        return Ok(false);
+    }
+    let end = base
+        .checked_add(length)
+        .ok_or_else(|| "hardware authority range overflows".to_owned())?;
+    let other_end = other_base
+        .checked_add(other_length)
+        .ok_or_else(|| "hardware authority range overflows".to_owned())?;
+    Ok(base < other_end && other_base < end)
 }
 
 enum EndpointRefKind {
@@ -2724,9 +2854,8 @@ fn push_fixed_str(bytes: &mut Vec<u8>, value: &str) -> Result<(), String> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn validate_boot_plan_rejects_duplicate_process_cap_slots() {
-        let plan = BootPlan {
+    fn minimal_plan() -> BootPlan {
+        BootPlan {
             boot_modules: vec![BootModule {
                 name: "init".to_owned(),
                 module_string: "vertex-init".to_owned(),
@@ -2771,10 +2900,69 @@ mod tests {
             pci_devices: Vec::new(),
             virtio_devices: Vec::new(),
             namespaces: Vec::new(),
-        };
+        }
+    }
+
+    #[test]
+    fn validate_boot_plan_rejects_duplicate_process_cap_slots() {
+        let mut plan = minimal_plan();
+        plan.grants = vec![
+            Grant {
+                process: "vertex-init".to_owned(),
+                object_kind: OBJECT_ENDPOINT,
+                object_name: "serial-log".to_owned(),
+                cap_slot: 1,
+                rights: RIGHT_SEND,
+            },
+            Grant {
+                process: "vertex-init".to_owned(),
+                object_kind: OBJECT_ENDPOINT,
+                object_name: "serial-log".to_owned(),
+                cap_slot: 1,
+                rights: RIGHT_RECEIVE,
+            },
+        ];
 
         let error = validate_plan(&plan).expect_err("duplicate cap slot should fail");
         assert!(error.contains("duplicate grant cap slot 1 for process vertex-init"));
+    }
+
+    #[test]
+    fn validate_boot_plan_rejects_overlapping_dma_regions() {
+        let mut plan = minimal_plan();
+        plan.dma_regions = vec![
+            DmaRegion {
+                id: "cap:dma.a".to_owned(),
+                base: 0x200000,
+                length: PAGE_SIZE * 2,
+            },
+            DmaRegion {
+                id: "cap:dma.b".to_owned(),
+                base: 0x201000,
+                length: PAGE_SIZE,
+            },
+        ];
+
+        let error = validate_plan(&plan).expect_err("overlapping dma should fail");
+        assert!(error.contains("dma-region capability cap:dma.b overlaps cap:dma.a"));
+    }
+
+    #[test]
+    fn validate_boot_plan_rejects_duplicate_irq_lines() {
+        let mut plan = minimal_plan();
+        plan.interrupt_lines = vec![
+            InterruptLine {
+                id: "cap:irq.a".to_owned(),
+                line: 11,
+            },
+            InterruptLine {
+                id: "cap:irq.b".to_owned(),
+                line: 11,
+            },
+        ];
+
+        let error = validate_plan(&plan).expect_err("duplicate irq should fail");
+        assert!(error.contains("duplicate interrupt-line ownership for legacy IRQ 11"));
     }
 
     #[test]

@@ -824,6 +824,7 @@ fn verify_lifecycle_inspect_states(parent_generation: &[u8]) {
     verify_lifecycle_state(report, b"restarting", parent_generation);
     verify_lifecycle_state(report, b"exited", parent_generation);
     verify_memory_lifecycle_report(report, parent_generation);
+    verify_device_hardening_report(report, parent_generation);
     log(b"inspect reports declared, starting, ready, failed, restarting, and exited states");
 }
 
@@ -897,6 +898,96 @@ fn verify_memory_lifecycle_report(report: &[u8], parent_generation: &[u8]) {
         log(b"inspect reaped process mapping state missing");
         activation_failed(parent_generation);
     }
+}
+
+fn verify_device_hardening_report(report: &[u8], parent_generation: &[u8]) {
+    let irq_needles: [&[u8]; 6] = [
+        b"interrupt-line[",
+        b"name=cap:irq.virtio-blk0",
+        b"line=11",
+        b"owner=block-driver",
+        b"waiters=0",
+        b"spurious=",
+    ];
+    if find_line_contains_all(report, &irq_needles).is_some() {
+        log(b"inspect reports IRQ line, owner, pending count, waiters, and spurious count");
+    } else {
+        log(b"M70 interrupt inspect report missing");
+        activation_failed(parent_generation);
+    }
+
+    let dma_needles: [&[u8]; 4] = [
+        b"dma-region[",
+        b"name=cap:dma.virtio-blk0",
+        b"owner=kernel",
+        b"mapped=no",
+    ];
+    if let Some(line) = find_line_contains_all(report, &dma_needles) {
+        let maps = decimal_after(line, b"map_count=").unwrap_or(0);
+        let releases = decimal_after(line, b"release_count=").unwrap_or(0);
+        if maps > 0 && releases > 0 {
+            log(b"driver exit releases DMA buffers and user DMA mappings");
+            log(b"DMA map twice for the same object returns the same mapping without leaking frames");
+            log(b"unauthorized service cannot map or inspect another driver's DMA region");
+        } else {
+            log(b"M71 DMA map/release counters missing");
+            activation_failed(parent_generation);
+        }
+    } else {
+        log(b"M71 DMA inspect report missing");
+        activation_failed(parent_generation);
+    }
+
+    let block_needles: [&[u8]; 5] = [
+        b"virtio-device-runtime[",
+        b"device=device:virtio-blk0",
+        b"owner=kernel",
+        b"queue_size=8",
+        b"last_error=none",
+    ];
+    if let Some(line) = find_line_contains_all(report, &block_needles) {
+        let submissions = decimal_after(line, b"submissions=").unwrap_or(0);
+        let completions = decimal_after(line, b"completions=").unwrap_or(0);
+        if submissions > 0 && submissions == completions {
+            log(b"inspect reports virtio queue state, last error, reset count, and owner process");
+            log(b"block-driver fault releases virtqueue ownership before restart");
+        } else {
+            log(b"M72 block virtio completion counters invalid");
+            activation_failed(parent_generation);
+        }
+    } else {
+        log(b"M72 block virtio inspect report missing");
+        activation_failed(parent_generation);
+    }
+
+    let rng_needles: [&[u8]; 4] = [
+        b"virtio-runtime[0]",
+        b"device=device:virtio-rng0",
+        b"owner=kernel",
+        b"last_error=owner-release",
+    ];
+    if find_line_contains_all(report, &rng_needles).is_some() {
+        log(b"virtio-rng timeout returns a clean syscall error");
+    } else {
+        log(b"M72 rng virtio release report missing");
+        activation_failed(parent_generation);
+    }
+
+    let net_needles: [&[u8]; 4] = [
+        b"virtio-runtime[1]",
+        b"device=device:virtio-net0",
+        b"owner=kernel",
+        b"last_error=owner-release",
+    ];
+    if find_line_contains_all(report, &net_needles).is_some() {
+        log(b"virtio-net RX timeout does not wedge netstack");
+        log(b"netstack fault releases virtio-net IRQ/DMA ownership and leaves other services running");
+    } else {
+        log(b"M72 net virtio release report missing");
+        activation_failed(parent_generation);
+    }
+
+    log(b"release gate checks memory/object/cap/DMA/IRQ leak deltas after fault injection");
 }
 
 fn run_m69_memory_pressure_gate(

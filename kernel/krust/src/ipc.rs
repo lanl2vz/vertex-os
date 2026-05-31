@@ -5,7 +5,7 @@ use core::{
 };
 
 use crate::{
-    capability, gdt, limine, memory, paging, serial,
+    capability, gdt, limine, memory, paging, serial, timer,
     usercopy::{self, UserPtr},
     userspace,
 };
@@ -43,6 +43,7 @@ const PCI_COMMAND: u8 = 0x04;
 const PCI_BAR0: u8 = 0x10;
 const PCI_COMMAND_IO: u16 = 1 << 0;
 const PCI_COMMAND_BUS_MASTER: u16 = 1 << 2;
+const PCI_COMMAND_INTERRUPT_DISABLE: u16 = 1 << 10;
 const VIRTIO_PCI_HOST_FEATURES: u16 = 0x00;
 const VIRTIO_PCI_GUEST_FEATURES: u16 = 0x04;
 const VIRTIO_PCI_QUEUE_PFN: u16 = 0x08;
@@ -73,6 +74,12 @@ const VIRTIO_DESC_F_NEXT: u16 = 1;
 const VIRTIO_RNG_DEVICE_ID: &str = "device:virtio-rng0";
 const VIRTIO_NET_DEVICE_ID: &str = "device:virtio-net0";
 const VIRTIO_PCI_IO_TRANSPORT_ID: &str = "virtio-pci-io";
+const VIRTIO_DRIVER_REPORT_BYTES: usize = 64;
+const VIRTIO_ERROR_NONE: u64 = 0;
+const VIRTIO_ERROR_COMPLETION_TIMEOUT: u64 = 1;
+const VIRTIO_ERROR_RESET_FAILED: u64 = 2;
+const VIRTIO_ERROR_INIT_FAILED: u64 = 3;
+const VIRTIO_ERROR_STATUS: u64 = 4;
 const NATIVE_SECRET_VALUE: &[u8] = b"native-secret-value";
 const INITIAL_USER_RFLAGS: u64 = 0x202;
 const STATUS_BAD_BUFFER: u64 = u64::MAX - 2;
@@ -227,6 +234,14 @@ struct RuntimeReapTarget {
 }
 
 #[derive(Clone, Copy)]
+struct DmaUserMapping {
+    region: KernelObjectId,
+    virtual_base: u64,
+    physical_base: u64,
+    length: u64,
+}
+
+#[derive(Clone, Copy)]
 pub struct BootEndpointConfig {
     pub name: &'static str,
 }
@@ -357,6 +372,10 @@ enum ProcessState {
         max_len: usize,
         timeout_tsc: Option<u64>,
     },
+    BlockedOnInterrupt {
+        interrupt: KernelObjectId,
+        timeout_tsc: Option<u64>,
+    },
     Sleeping {
         wake_tsc: u64,
     },
@@ -371,6 +390,7 @@ impl ProcessState {
             Self::Ready => "ready",
             Self::Running => "running",
             Self::BlockedOnEndpoint { .. } => "blocked",
+            Self::BlockedOnInterrupt { .. } => "blocked-irq",
             Self::Sleeping { .. } => "sleeping",
             Self::Exited => "exited",
         }
@@ -466,6 +486,7 @@ struct Process {
     start_count: u64,
     quota: ProcessQuota,
     initial_quota: ProcessQuota,
+    dma_mappings: [Option<DmaUserMapping>; MAX_OBJECTS],
 }
 
 #[derive(Clone, Copy)]
@@ -546,6 +567,9 @@ struct InterruptLineObject {
     id: KernelObjectId,
     name: &'static str,
     line: u64,
+    pending_count: u64,
+    delivered_count: u64,
+    spurious_count: u64,
 }
 
 #[derive(Clone, Copy)]
@@ -554,6 +578,9 @@ struct DmaRegionObject {
     name: &'static str,
     base: u64,
     length: u64,
+    mapped_by: ProcessId,
+    map_count: u64,
+    release_count: u64,
 }
 
 #[derive(Clone, Copy)]
@@ -568,6 +595,15 @@ struct VirtioDeviceObject {
     id: KernelObjectId,
     name: &'static str,
     transport: &'static str,
+    owner: ProcessId,
+    queue_size: u16,
+    avail_idx: u16,
+    used_idx: u16,
+    submissions: u64,
+    completions: u64,
+    timeouts: u64,
+    reset_count: u64,
+    last_error: &'static str,
 }
 
 #[derive(Clone, Copy)]
@@ -580,6 +616,11 @@ struct VirtioQueueState {
     data_offset: usize,
     avail_idx: u16,
     used_idx: u16,
+    submissions: u64,
+    completions: u64,
+    interrupt_waits: u64,
+    timeouts: u64,
+    last_error: &'static str,
 }
 
 impl VirtioQueueState {
@@ -593,6 +634,11 @@ impl VirtioQueueState {
             data_offset: 0,
             avail_idx: 0,
             used_idx: 0,
+            submissions: 0,
+            completions: 0,
+            interrupt_waits: 0,
+            timeouts: 0,
+            last_error: "none",
         }
     }
 
@@ -606,6 +652,11 @@ impl VirtioQueueState {
             data_offset: 0,
             avail_idx: 0,
             used_idx: 0,
+            submissions: 0,
+            completions: 0,
+            interrupt_waits: 0,
+            timeouts: 0,
+            last_error: "none",
         }
     }
 }
@@ -615,6 +666,9 @@ struct VirtioRngState {
     initialized: bool,
     io_base: u16,
     queue: VirtioQueueState,
+    owner: ProcessId,
+    reset_count: u64,
+    last_error: &'static str,
 }
 
 impl VirtioRngState {
@@ -623,6 +677,9 @@ impl VirtioRngState {
             initialized: false,
             io_base: 0,
             queue: VirtioQueueState::empty(),
+            owner: ProcessId::empty(),
+            reset_count: 0,
+            last_error: "none",
         }
     }
 }
@@ -634,6 +691,9 @@ struct VirtioNetState {
     rx: VirtioQueueState,
     tx: VirtioQueueState,
     rx_posted: bool,
+    owner: ProcessId,
+    reset_count: u64,
+    last_error: &'static str,
 }
 
 impl VirtioNetState {
@@ -644,6 +704,9 @@ impl VirtioNetState {
             rx: VirtioQueueState::empty(),
             tx: VirtioQueueState::empty(),
             rx_posted: false,
+            owner: ProcessId::empty(),
+            reset_count: 0,
+            last_error: "none",
         }
     }
 }
@@ -913,6 +976,7 @@ impl Process {
             start_count: 0,
             quota: ProcessQuota::service(),
             initial_quota: ProcessQuota::service(),
+            dma_mappings: [None; MAX_OBJECTS],
         }
     }
 
@@ -949,6 +1013,43 @@ impl Process {
             start_count,
             quota,
             initial_quota: quota,
+            dma_mappings: [None; MAX_OBJECTS],
+        }
+    }
+
+    fn dma_mapping(&self, region: KernelObjectId) -> Option<DmaUserMapping> {
+        let mut index = 0;
+        while index < self.dma_mappings.len() {
+            if let Some(mapping) = self.dma_mappings[index]
+                && mapping.region == region
+            {
+                return Some(mapping);
+            }
+            index += 1;
+        }
+        None
+    }
+
+    fn add_dma_mapping(&mut self, mapping: DmaUserMapping) -> Result<(), IpcError> {
+        if self.dma_mapping(mapping.region).is_some() {
+            return Ok(());
+        }
+        let mut index = 0;
+        while index < self.dma_mappings.len() {
+            if self.dma_mappings[index].is_none() {
+                self.dma_mappings[index] = Some(mapping);
+                return Ok(());
+            }
+            index += 1;
+        }
+        Err(IpcError::BadCapability)
+    }
+
+    fn clear_dma_mappings(&mut self) {
+        let mut index = 0;
+        while index < self.dma_mappings.len() {
+            self.dma_mappings[index] = None;
+            index += 1;
         }
     }
 }
@@ -1247,7 +1348,14 @@ impl MmioRegionObject {
 
 impl InterruptLineObject {
     const fn new(id: KernelObjectId, name: &'static str, line: u64) -> Self {
-        Self { id, name, line }
+        Self {
+            id,
+            name,
+            line,
+            pending_count: 0,
+            delivered_count: 0,
+            spurious_count: 0,
+        }
     }
 }
 
@@ -1258,6 +1366,9 @@ impl DmaRegionObject {
             name,
             base,
             length,
+            mapped_by: ProcessId::empty(),
+            map_count: 0,
+            release_count: 0,
         }
     }
 }
@@ -1274,6 +1385,15 @@ impl VirtioDeviceObject {
             id,
             name,
             transport,
+            owner: ProcessId::empty(),
+            queue_size: 0,
+            avail_idx: 0,
+            used_idx: 0,
+            submissions: 0,
+            completions: 0,
+            timeouts: 0,
+            reset_count: 0,
+            last_error: "none",
         }
     }
 }
@@ -1848,6 +1968,41 @@ impl ObjectTable {
         None
     }
 
+    fn get_interrupt_line_mut(&mut self, id: KernelObjectId) -> Option<&mut InterruptLineObject> {
+        let mut index = 0;
+        while index < self.count {
+            if let Some(KernelObject::InterruptLine(line)) = self.objects[index]
+                && line.id == id
+            {
+                break;
+            }
+            index += 1;
+        }
+
+        if index == self.count {
+            return None;
+        }
+
+        match self.objects[index].as_mut() {
+            Some(KernelObject::InterruptLine(line)) => Some(line),
+            _ => None,
+        }
+    }
+
+    fn get_interrupt_line_by_number(&self, irq_line: u64) -> Option<InterruptLineObject> {
+        let mut index = 0;
+        while index < self.count {
+            if let Some(KernelObject::InterruptLine(line)) = self.objects[index]
+                && line.line == irq_line
+            {
+                return Some(line);
+            }
+            index += 1;
+        }
+
+        None
+    }
+
     fn get_dma_region(&self, id: KernelObjectId) -> Option<DmaRegionObject> {
         let mut index = 0;
         while index < self.count {
@@ -1862,6 +2017,27 @@ impl ObjectTable {
         None
     }
 
+    fn get_dma_region_mut(&mut self, id: KernelObjectId) -> Option<&mut DmaRegionObject> {
+        let mut index = 0;
+        while index < self.count {
+            if let Some(KernelObject::DmaRegion(region)) = self.objects[index]
+                && region.id == id
+            {
+                break;
+            }
+            index += 1;
+        }
+
+        if index == self.count {
+            return None;
+        }
+
+        match self.objects[index].as_mut() {
+            Some(KernelObject::DmaRegion(region)) => Some(region),
+            _ => None,
+        }
+    }
+
     fn get_virtio_device(&self, id: KernelObjectId) -> Option<VirtioDeviceObject> {
         let mut index = 0;
         while index < self.count {
@@ -1874,6 +2050,27 @@ impl ObjectTable {
         }
 
         None
+    }
+
+    fn get_virtio_device_mut(&mut self, id: KernelObjectId) -> Option<&mut VirtioDeviceObject> {
+        let mut index = 0;
+        while index < self.count {
+            if let Some(KernelObject::VirtioDevice(device)) = self.objects[index]
+                && device.id == id
+            {
+                break;
+            }
+            index += 1;
+        }
+
+        if index == self.count {
+            return None;
+        }
+
+        match self.objects[index].as_mut() {
+            Some(KernelObject::VirtioDevice(device)) => Some(device),
+            _ => None,
+        }
     }
 
     fn get_namespace(&self, id: KernelObjectId) -> Option<NamespaceObject> {
@@ -2702,10 +2899,12 @@ fn install_boot_config(
     initial_context: ProcessContext,
 ) -> Result<(), InitError> {
     boot_manager().start_boot(config.generation_id);
+    release_all_runtime_dma_mappings();
     let runtime = runtime();
     runtime.objects.reset();
     runtime.processes.reset();
     runtime.reset_capability_lifecycle(config);
+    timer::reset_legacy_irq_masks();
 
     let mut endpoint_index = 0;
     while endpoint_index < config.endpoint_count {
@@ -2760,6 +2959,12 @@ fn install_boot_config(
         let line = config.interrupt_lines[irq_index].ok_or(InitError::InvalidBootManifest)?;
         runtime.interrupt_line_ids[irq_index] =
             Some(runtime.objects.add_interrupt_line(line.id, line.line)?);
+        timer::enable_legacy_irq(line.line as u8);
+        serial::write_str("Legacy IRQ unmasked: interrupt-line=");
+        serial::write_str(line.id);
+        serial::write_str(" line=");
+        serial::write_u64_dec(line.line);
+        serial::write_str("\n");
         irq_index += 1;
     }
 
@@ -2926,6 +3131,7 @@ fn validate_boot_config_installable(config: &BootRuntimeConfig) -> Result<(), In
         serial::write_str("\n");
         return Err(InitError::ObjectTableFull);
     }
+    validate_boot_config_hardware_authority(config)?;
 
     let mut namespace_index = 0;
     while namespace_index < config.namespace_count {
@@ -3036,6 +3242,122 @@ fn boot_object_config_ref_valid(
         BOOT_OBJECT_NAMESPACE => object_index < config.namespace_count,
         _ => false,
     }
+}
+
+fn validate_boot_config_hardware_authority(config: &BootRuntimeConfig) -> Result<(), InitError> {
+    let mut index = 0;
+    while index < config.io_port_count {
+        let range = config.io_ports[index].ok_or(InitError::InvalidBootManifest)?;
+        validate_io_boot_range(range.base, range.length)?;
+        let mut previous = 0;
+        while previous < index {
+            let prior = config.io_ports[previous].ok_or(InitError::InvalidBootManifest)?;
+            if boot_ranges_overlap(range.base, range.length, prior.base, prior.length)? {
+                return Err(InitError::InvalidBootManifest);
+            }
+            previous += 1;
+        }
+        index += 1;
+    }
+
+    index = 0;
+    while index < config.mmio_region_count {
+        let region = config.mmio_regions[index].ok_or(InitError::InvalidBootManifest)?;
+        validate_device_boot_range(region.base, region.length, false)?;
+        let mut previous = 0;
+        while previous < index {
+            let prior = config.mmio_regions[previous].ok_or(InitError::InvalidBootManifest)?;
+            if boot_ranges_overlap(region.base, region.length, prior.base, prior.length)? {
+                return Err(InitError::InvalidBootManifest);
+            }
+            previous += 1;
+        }
+        index += 1;
+    }
+
+    index = 0;
+    while index < config.interrupt_line_count {
+        let line = config.interrupt_lines[index].ok_or(InitError::InvalidBootManifest)?;
+        if line.line > 15 {
+            return Err(InitError::InvalidBootManifest);
+        }
+        let mut previous = 0;
+        while previous < index {
+            let prior = config.interrupt_lines[previous].ok_or(InitError::InvalidBootManifest)?;
+            if prior.line == line.line {
+                return Err(InitError::InvalidBootManifest);
+            }
+            previous += 1;
+        }
+        index += 1;
+    }
+
+    index = 0;
+    while index < config.dma_region_count {
+        let region = config.dma_regions[index].ok_or(InitError::InvalidBootManifest)?;
+        validate_device_boot_range(region.base, region.length, true)?;
+        if region.length % memory::FRAME_SIZE != 0 || region.length > USER_DEVICE_MAPPING_STRIDE {
+            return Err(InitError::InvalidBootManifest);
+        }
+        let mut previous = 0;
+        while previous < index {
+            let prior = config.dma_regions[previous].ok_or(InitError::InvalidBootManifest)?;
+            if boot_ranges_overlap(region.base, region.length, prior.base, prior.length)? {
+                return Err(InitError::InvalidBootManifest);
+            }
+            previous += 1;
+        }
+        index += 1;
+    }
+
+    Ok(())
+}
+
+fn validate_io_boot_range(base: u64, length: u64) -> Result<(), InitError> {
+    if length == 0 {
+        return Err(InitError::InvalidBootManifest);
+    }
+    let Some(last) = base.checked_add(length - 1) else {
+        return Err(InitError::InvalidBootManifest);
+    };
+    if last > u16::MAX as u64 {
+        return Err(InitError::InvalidBootManifest);
+    }
+    Ok(())
+}
+
+fn validate_device_boot_range(
+    base: u64,
+    length: u64,
+    page_aligned_base: bool,
+) -> Result<(), InitError> {
+    if length == 0 || length > USER_DEVICE_MAPPING_STRIDE {
+        return Err(InitError::InvalidBootManifest);
+    }
+    base.checked_add(length - 1)
+        .ok_or(InitError::InvalidBootManifest)?;
+    if page_aligned_base && base % memory::FRAME_SIZE != 0 {
+        return Err(InitError::InvalidBootManifest);
+    }
+    Ok(())
+}
+
+fn boot_ranges_overlap(
+    base: u64,
+    length: u64,
+    other_base: u64,
+    other_length: u64,
+) -> Result<bool, InitError> {
+    if length == 0 || other_length == 0 {
+        return Ok(false);
+    }
+    let end = base
+        .checked_add(length)
+        .ok_or(InitError::InvalidBootManifest)?;
+    let other_end = other_base
+        .checked_add(other_length)
+        .ok_or(InitError::InvalidBootManifest)?;
+    Ok(base < other_end && other_base < end)
 }
 
 fn load_boot_initial_context(process: BootProcessConfig) -> Result<ProcessContext, InitError> {
@@ -3320,6 +3642,14 @@ pub fn current_process_name() -> &'static str {
         .current_process()
         .map(|process| process.name)
         .unwrap_or("<none>")
+}
+
+fn current_process_id() -> ProcessId {
+    runtime()
+        .processes
+        .current_process()
+        .map(|process| process.pid)
+        .unwrap_or_else(ProcessId::empty)
 }
 
 pub fn exit_current_process(status: u64, frame: &mut SyscallFrame) -> ScheduleResult {
@@ -4196,6 +4526,7 @@ pub fn start_process(cap_slot: u64, pid: u64) -> Result<(), IpcError> {
             process.context_reaped = false;
             process.caps = process.initial_caps;
             process.quota = process.initial_quota;
+            process.clear_dma_mappings();
             serial::write_str("Krust process restart reload: proc=");
             serial::write_str(process.name);
             serial::write_str("\n");
@@ -4741,6 +5072,7 @@ pub fn virtio_device_probe(cap_slot: u64) -> Result<(), IpcError> {
     if device.transport != VIRTIO_PCI_IO_TRANSPORT_ID {
         return Err(IpcError::BadCapability);
     }
+    record_virtio_device_owner(device.id)?;
     serial::write_str("Virtio device probe accepted: proc=");
     serial::write_str(current_process_name());
     serial::write_str(" virtio-device=");
@@ -4749,6 +5081,104 @@ pub fn virtio_device_probe(cap_slot: u64) -> Result<(), IpcError> {
     serial::write_str(device.transport);
     serial::write_str("\n");
     Ok(())
+}
+
+pub fn virtio_device_report(
+    cap_slot: u64,
+    source: *const u8,
+    len: usize,
+) -> Result<(), IpcError> {
+    if len != VIRTIO_DRIVER_REPORT_BYTES {
+        return Err(IpcError::InvalidUserBuffer);
+    }
+    let device = virtio_device_from_cap(cap_slot, capability::RIGHT_CONTROL)?;
+    if device.transport != VIRTIO_PCI_IO_TRANSPORT_ID {
+        return Err(IpcError::BadCapability);
+    }
+
+    let mut bytes = [0u8; VIRTIO_DRIVER_REPORT_BYTES];
+    usercopy::copy_from_user(&mut bytes, UserPtr::new(source as u64), len)
+        .map_err(|_| IpcError::InvalidUserBuffer)?;
+    let queue_size = read_report_u64(&bytes, 0);
+    if queue_size > VIRTIO_QUEUE_MAX_SIZE as u64 {
+        return Err(IpcError::BadCapability);
+    }
+    let avail_idx = read_report_u64(&bytes, 8);
+    let used_idx = read_report_u64(&bytes, 16);
+    if avail_idx > u16::MAX as u64 || used_idx > u16::MAX as u64 {
+        return Err(IpcError::BadCapability);
+    }
+    let last_error = virtio_error_label(read_report_u64(&bytes, 56))?;
+
+    let process = current_process_id();
+    let process_name = current_process_name();
+    let runtime = runtime();
+    let Some(device) = runtime.objects.get_virtio_device_mut(device.id) else {
+        return Err(IpcError::BadCapability);
+    };
+    if device.owner != ProcessId::empty() && device.owner != process {
+        return Err(IpcError::BadCapability);
+    }
+    device.owner = process;
+    device.queue_size = queue_size as u16;
+    device.avail_idx = avail_idx as u16;
+    device.used_idx = used_idx as u16;
+    device.submissions = read_report_u64(&bytes, 24);
+    device.completions = read_report_u64(&bytes, 32);
+    device.timeouts = read_report_u64(&bytes, 40);
+    device.reset_count = read_report_u64(&bytes, 48);
+    device.last_error = last_error;
+
+    serial::write_str("Virtio driver report accepted: proc=");
+    serial::write_str(process_name);
+    serial::write_str(" virtio-device=");
+    serial::write_str(device.name);
+    serial::write_str(" submissions=");
+    serial::write_u64_dec(device.submissions);
+    serial::write_str(" completions=");
+    serial::write_u64_dec(device.completions);
+    serial::write_str(" timeouts=");
+    serial::write_u64_dec(device.timeouts);
+    serial::write_str(" resets=");
+    serial::write_u64_dec(device.reset_count);
+    serial::write_str(" last_error=");
+    serial::write_str(device.last_error);
+    serial::write_str("\n");
+    Ok(())
+}
+
+fn record_virtio_device_owner(device_id: KernelObjectId) -> Result<(), IpcError> {
+    let process = current_process_id();
+    let runtime = runtime();
+    let Some(device) = runtime.objects.get_virtio_device_mut(device_id) else {
+        return Err(IpcError::BadCapability);
+    };
+    if device.owner != ProcessId::empty() && device.owner != process {
+        return Err(IpcError::BadCapability);
+    }
+    device.owner = process;
+    Ok(())
+}
+
+fn virtio_error_label(code: u64) -> Result<&'static str, IpcError> {
+    match code {
+        VIRTIO_ERROR_NONE => Ok("none"),
+        VIRTIO_ERROR_COMPLETION_TIMEOUT => Ok("completion-timeout"),
+        VIRTIO_ERROR_RESET_FAILED => Ok("reset-failed"),
+        VIRTIO_ERROR_INIT_FAILED => Ok("init-failed"),
+        VIRTIO_ERROR_STATUS => Ok("status-error"),
+        _ => Err(IpcError::BadCapability),
+    }
+}
+
+fn read_report_u64(bytes: &[u8; VIRTIO_DRIVER_REPORT_BYTES], offset: usize) -> u64 {
+    let mut value = 0u64;
+    let mut index = 0;
+    while index < 8 {
+        value |= (bytes[offset + index] as u64) << (index * 8);
+        index += 1;
+    }
+    value
 }
 
 pub fn virtio_rng_read(
@@ -4903,13 +5333,21 @@ fn virtio_rng_fill(destination: &mut [u8]) -> Result<usize, IpcError> {
     let state = virtio_rng_state()?;
     let data = queue_data_virtual(&state.queue);
     zero_dma(data, destination.len());
-    let used_len = virtio_submit_single(
+    let used_len = match virtio_submit_single(
         state.io_base,
         0,
         &mut state.queue,
         destination.len() as u32,
         true,
-    )?;
+    ) {
+        Ok(used_len) => used_len,
+        Err(error) => {
+            if error == IpcError::Empty {
+                reset_virtio_rng_state(state, "rng-timeout");
+            }
+            return Err(error);
+        }
+    };
     let actual_len = min(destination.len(), used_len as usize);
     read_dma_bytes(data, &mut destination[..actual_len]);
     Ok(actual_len)
@@ -4926,7 +5364,16 @@ fn virtio_net_receive_frame(destination: &mut [u8]) -> Result<usize, IpcError> {
         virtio_net_post_rx_buffer(state)?;
     }
 
-    let used_len = virtio_wait_used(state.io_base, &mut state.rx)?;
+    serial::write_str("virtio-net RX waits for interrupt-backed completion\n");
+    let used_len = match virtio_wait_used(state.io_base, &mut state.rx) {
+        Ok(used_len) => used_len,
+        Err(error) => {
+            if error == IpcError::Empty {
+                reset_virtio_net_state(state, "net-rx-timeout");
+            }
+            return Err(error);
+        }
+    };
     state.rx_posted = false;
     if used_len as usize <= VIRTIO_NET_HDR_LEN {
         virtio_net_post_rx_buffer(state)?;
@@ -4969,8 +5416,14 @@ fn virtio_net_state() -> Result<&'static mut VirtioNetState, IpcError> {
 
 fn init_virtio_rng(state: &mut VirtioRngState) -> Result<(), IpcError> {
     let io_base = discover_virtio_pci_io_device(PCI_DEVICE_VIRTIO_RNG_IO_TRANSPORT)?;
-    let (dma_physical, dma_virtual) = allocate_virtio_dma(VIRTIO_RNG_DMA_FRAMES)?;
+    let (dma_physical, dma_virtual) = if state.queue.dma_physical == 0 {
+        allocate_virtio_dma(VIRTIO_RNG_DMA_FRAMES)?
+    } else {
+        (state.queue.dma_physical, state.queue.dma_virtual)
+    };
     let mut queue = VirtioQueueState::new(dma_physical, dma_virtual);
+    let reset_count = state.reset_count;
+    let last_error = state.last_error;
 
     virtio_write8(io_base, VIRTIO_PCI_STATUS, 0);
     virtio_write8(io_base, VIRTIO_PCI_STATUS, VIRTIO_STATUS_ACKNOWLEDGE);
@@ -4995,6 +5448,9 @@ fn init_virtio_rng(state: &mut VirtioRngState) -> Result<(), IpcError> {
         initialized: true,
         io_base,
         queue,
+        owner: current_process_id(),
+        reset_count,
+        last_error,
     };
     serial::write_str("Virtio RNG PCI queue initialized\n");
     Ok(())
@@ -5002,12 +5458,18 @@ fn init_virtio_rng(state: &mut VirtioRngState) -> Result<(), IpcError> {
 
 fn init_virtio_net(state: &mut VirtioNetState) -> Result<(), IpcError> {
     let io_base = discover_virtio_pci_io_device(PCI_DEVICE_VIRTIO_NET_IO_TRANSPORT)?;
-    let (dma_physical, dma_virtual) = allocate_virtio_dma(VIRTIO_NET_DMA_FRAMES)?;
+    let (dma_physical, dma_virtual) = if state.rx.dma_physical == 0 {
+        allocate_virtio_dma(VIRTIO_NET_DMA_FRAMES)?
+    } else {
+        (state.rx.dma_physical, state.rx.dma_virtual)
+    };
     let mut rx = VirtioQueueState::new(dma_physical, dma_virtual);
     let mut tx = VirtioQueueState::new(
         dma_physical + VIRTIO_QUEUE_STRIDE as u64,
         dma_virtual + VIRTIO_QUEUE_STRIDE as u64,
     );
+    let reset_count = state.reset_count;
+    let last_error = state.last_error;
 
     virtio_write8(io_base, VIRTIO_PCI_STATUS, 0);
     virtio_write8(io_base, VIRTIO_PCI_STATUS, VIRTIO_STATUS_ACKNOWLEDGE);
@@ -5036,10 +5498,45 @@ fn init_virtio_net(state: &mut VirtioNetState) -> Result<(), IpcError> {
         rx,
         tx,
         rx_posted: false,
+        owner: current_process_id(),
+        reset_count,
+        last_error,
     };
     virtio_net_post_rx_buffer(state)?;
     serial::write_str("Virtio net PCI queues initialized\n");
     Ok(())
+}
+
+fn reset_virtio_rng_state(state: &mut VirtioRngState, reason: &'static str) {
+    if state.io_base != 0 {
+        virtio_write8(state.io_base, VIRTIO_PCI_STATUS, 0);
+    }
+    state.initialized = false;
+    state.reset_count = state.reset_count.saturating_add(1);
+    state.last_error = reason;
+    state.queue.last_error = reason;
+    serial::write_str("Virtio RNG reset after error: reason=");
+    serial::write_str(reason);
+    serial::write_str(" resets=");
+    serial::write_u64_dec(state.reset_count);
+    serial::write_str("\n");
+}
+
+fn reset_virtio_net_state(state: &mut VirtioNetState, reason: &'static str) {
+    if state.io_base != 0 {
+        virtio_write8(state.io_base, VIRTIO_PCI_STATUS, 0);
+    }
+    state.initialized = false;
+    state.rx_posted = false;
+    state.reset_count = state.reset_count.saturating_add(1);
+    state.last_error = reason;
+    state.rx.last_error = reason;
+    state.tx.last_error = reason;
+    serial::write_str("Virtio net reset after error: reason=");
+    serial::write_str(reason);
+    serial::write_str(" resets=");
+    serial::write_u64_dec(state.reset_count);
+    serial::write_str("\n");
 }
 
 fn virtio_setup_queue(
@@ -5132,7 +5629,12 @@ fn virtio_net_send_frame_locked(state: &mut VirtioNetState, frame: &[u8]) -> Res
         0,
     );
     virtio_kick_queue_head(state.io_base, 1, &mut state.tx, 0);
-    let _used_len = virtio_wait_used(state.io_base, &mut state.tx)?;
+    if let Err(error) = virtio_wait_used(state.io_base, &mut state.tx) {
+        if error == IpcError::Empty {
+            reset_virtio_net_state(state, "net-tx-timeout");
+        }
+        return Err(error);
+    }
     Ok(())
 }
 
@@ -5164,6 +5666,7 @@ fn virtio_kick_queue_head(io_base: u16, queue_index: u16, queue: &mut VirtioQueu
     let ring_offset = queue.avail_offset + 4 + ((queue.avail_idx % queue.queue_size) as usize * 2);
     write_dma_u16(queue.dma_virtual + ring_offset as u64, head);
     queue.avail_idx = queue.avail_idx.wrapping_add(1);
+    queue.submissions = queue.submissions.saturating_add(1);
     compiler_fence(Ordering::SeqCst);
     write_dma_u16(
         queue.dma_virtual + queue.avail_offset as u64 + 2,
@@ -5179,9 +5682,14 @@ fn virtio_wait_used(io_base: u16, queue: &mut VirtioQueueState) -> Result<u32, I
     while read_dma_u16(queue.dma_virtual + queue.used_offset as u64 + 2) != target_used {
         spins += 1;
         if spins > VIRTIO_POLL_SPINS {
+            queue.timeouts = queue.timeouts.saturating_add(1);
+            queue.last_error = "completion-timeout";
             return Err(IpcError::Empty);
         }
-        if spins & 0xfff == 0 {
+        if spins & 0xffff == 0 {
+            queue.interrupt_waits = queue.interrupt_waits.saturating_add(1);
+            timer::wait_for_interrupt();
+        } else if spins & 0xfff == 0 {
             pause_cpu();
         }
     }
@@ -5189,6 +5697,7 @@ fn virtio_wait_used(io_base: u16, queue: &mut VirtioQueueState) -> Result<u32, I
     let used_offset = queue.used_offset + 4 + ((queue.used_idx % queue.queue_size) as usize * 8);
     let used_len = read_dma_u32(queue.dma_virtual + used_offset as u64 + 4);
     queue.used_idx = target_used;
+    queue.completions = queue.completions.saturating_add(1);
     let _isr = virtio_read8(io_base, VIRTIO_PCI_ISR);
     Ok(used_len)
 }
@@ -5245,7 +5754,8 @@ fn discover_virtio_pci_io_device(device_id: u16) -> Result<u16, IpcError> {
                 slot,
                 0,
                 PCI_COMMAND,
-                command | PCI_COMMAND_IO | PCI_COMMAND_BUS_MASTER,
+                (command | PCI_COMMAND_IO | PCI_COMMAND_BUS_MASTER)
+                    & !PCI_COMMAND_INTERRUPT_DISABLE,
             );
             let bar0 = pci_read_u32(0, slot, 0, PCI_BAR0);
             if bar0 & 1 == 0 {
@@ -5513,8 +6023,24 @@ pub fn io_write32(cap_slot: u64, port: u64, value: u64) -> Result<(), IpcError> 
     Ok(())
 }
 
-pub fn irq_wait(cap_slot: u64, _timeout_ms: u64) -> Result<(), IpcError> {
+pub fn irq_wait(
+    cap_slot: u64,
+    timeout_ms: u64,
+    frame: &mut SyscallFrame,
+) -> Result<(), IpcError> {
     let line = interrupt_line_from_cap(cap_slot, capability::RIGHT_LISTEN)?;
+    if consume_pending_interrupt(line.id) {
+        serial::write_str("IRQ wait delivered pending: proc=");
+        serial::write_str(current_process_name());
+        serial::write_str(" interrupt-line=");
+        serial::write_str(line.name);
+        serial::write_str(" line=");
+        serial::write_u64_dec(line.line);
+        serial::write_str("\n");
+        frame.rax = STATUS_OK;
+        return Ok(());
+    }
+
     serial::write_str("IRQ wait accepted: proc=");
     serial::write_str(current_process_name());
     serial::write_str(" interrupt-line=");
@@ -5522,7 +6048,212 @@ pub fn irq_wait(cap_slot: u64, _timeout_ms: u64) -> Result<(), IpcError> {
     serial::write_str(" line=");
     serial::write_u64_dec(line.line);
     serial::write_str("\n");
-    Ok(())
+
+    if timeout_ms == 0 {
+        frame.rax = STATUS_OK;
+        return Ok(());
+    }
+
+    let timeout_tsc = Some(deadline_after_ms(timeout_ms));
+    if block_current_on_interrupt(line.id, timeout_tsc, frame) {
+        return Ok(());
+    }
+
+    Err(IpcError::Empty)
+}
+
+fn consume_pending_interrupt(interrupt: KernelObjectId) -> bool {
+    let runtime = runtime();
+    let Some(line) = runtime.objects.get_interrupt_line_mut(interrupt) else {
+        return false;
+    };
+    if line.pending_count == 0 {
+        return false;
+    }
+    line.pending_count -= 1;
+    line.delivered_count = line.delivered_count.saturating_add(1);
+    true
+}
+
+fn block_current_on_interrupt(
+    interrupt: KernelObjectId,
+    timeout_tsc: Option<u64>,
+    frame: &mut SyscallFrame,
+) -> bool {
+    let (name, line_name, line_number) = {
+        let runtime = runtime();
+        let Some(line) = runtime.objects.get_interrupt_line(interrupt) else {
+            return false;
+        };
+        let Some(process) = runtime.processes.current_process_mut() else {
+            return false;
+        };
+
+        process.saved_frame = *frame;
+        process.saved_frame.rax = STATUS_OK;
+        process.has_saved_frame = true;
+        process.state = ProcessState::BlockedOnInterrupt {
+            interrupt,
+            timeout_tsc,
+        };
+        (process.name, line.name, line.line)
+    };
+
+    serial::write_str("IRQ wait blocked: proc=");
+    serial::write_str(name);
+    serial::write_str(" interrupt-line=");
+    serial::write_str(line_name);
+    serial::write_str(" line=");
+    serial::write_u64_dec(line_number);
+    if timeout_tsc.is_some() {
+        serial::write_str(" timeout=yes");
+    }
+    serial::write_str("\n");
+
+    if schedule_next_ready(frame) {
+        return true;
+    }
+
+    let runtime = runtime();
+    if let Some(process) = runtime.processes.current_process_mut() {
+        process.state = ProcessState::Running;
+    }
+
+    serial::write_str("Scheduler blocked: proc=");
+    serial::write_str(name);
+    serial::write_str(" no ready process\n");
+    false
+}
+
+pub fn record_hardware_irq(irq_line: u64) {
+    let Some(line) = runtime().objects.get_interrupt_line_by_number(irq_line) else {
+        serial::write_str("Spurious legacy IRQ: line=");
+        serial::write_u64_dec(irq_line);
+        serial::write_str("\n");
+        return;
+    };
+
+    if let Some(waiter_index) = blocked_interrupt_waiter_index(line.id) {
+        let waiter_name = {
+            let runtime = runtime();
+            let Some(waiter) = runtime.processes.processes[waiter_index].as_mut() else {
+                return;
+            };
+            waiter.saved_frame.rax = STATUS_OK;
+            waiter.state = ProcessState::Ready;
+            waiter.name
+        };
+        if let Some(line) = runtime().objects.get_interrupt_line_mut(line.id) {
+            line.delivered_count = line.delivered_count.saturating_add(1);
+        }
+        serial::write_str("IRQ delivered: line=");
+        serial::write_u64_dec(irq_line);
+        serial::write_str(" interrupt-line=");
+        serial::write_str(line.name);
+        serial::write_str("\n");
+        serial::write_str("IRQ wake waiter: proc=");
+        serial::write_str(waiter_name);
+        serial::write_str(" interrupt-line=");
+        serial::write_str(line.name);
+        serial::write_str("\n");
+        return;
+    }
+
+    if let Some(line) = runtime().objects.get_interrupt_line_mut(line.id) {
+        line.pending_count = line.pending_count.saturating_add(1);
+        serial::write_str("IRQ pending recorded: line=");
+        serial::write_u64_dec(irq_line);
+        serial::write_str(" interrupt-line=");
+        serial::write_str(line.name);
+        serial::write_str(" pending=");
+        serial::write_u64_dec(line.pending_count);
+        serial::write_str("\n");
+    }
+}
+
+fn blocked_interrupt_waiter_index(interrupt: KernelObjectId) -> Option<usize> {
+    let runtime = runtime();
+    let mut index = 0;
+    while index < runtime.processes.count {
+        if let Some(process) = runtime.processes.processes[index]
+            && let ProcessState::BlockedOnInterrupt {
+                interrupt: waiting_interrupt,
+                ..
+            } = process.state
+            && waiting_interrupt == interrupt
+        {
+            return Some(index);
+        }
+        index += 1;
+    }
+
+    None
+}
+
+fn interrupt_waiter_count(runtime: &RuntimeState, interrupt: KernelObjectId) -> u64 {
+    let mut count = 0;
+    let mut index = 0;
+    while index < runtime.processes.count {
+        if let Some(process) = runtime.processes.processes[index]
+            && let ProcessState::BlockedOnInterrupt {
+                interrupt: waiting_interrupt,
+                ..
+            } = process.state
+            && waiting_interrupt == interrupt
+        {
+            count += 1;
+        }
+        index += 1;
+    }
+    count
+}
+
+fn interrupt_owner_name(runtime: &RuntimeState, interrupt: KernelObjectId) -> &'static str {
+    let mut index = 0;
+    while index < runtime.processes.count {
+        if let Some(process) = runtime.processes.processes[index] {
+            if capability_space_has_live_right(
+                runtime,
+                process.caps,
+                interrupt,
+                capability::RIGHT_LISTEN,
+            )
+                || capability_space_has_live_right(
+                    runtime,
+                    process.initial_caps,
+                    interrupt,
+                    capability::RIGHT_LISTEN,
+                )
+            {
+                return process.name;
+            }
+        }
+        index += 1;
+    }
+
+    "<none>"
+}
+
+fn capability_space_has_live_right(
+    runtime: &RuntimeState,
+    space: CapabilitySpace,
+    object: KernelObjectId,
+    right: u64,
+) -> bool {
+    let mut slot = 0;
+    while slot < MAX_CAPS {
+        if let Some(cap) = space.caps[slot]
+            && cap.object == object
+            && cap.rights & right != 0
+            && !cap.revoked
+            && !runtime.cap_id_revoked(cap.id)
+        {
+            return true;
+        }
+        slot += 1;
+    }
+
+    false
 }
 
 pub fn mmio_map(cap_slot: u64) -> Result<u64, IpcError> {
@@ -5573,24 +6304,77 @@ pub fn dma_map(cap_slot: u64, destination: *mut u8, max_len: usize) -> Result<()
         cap_slot,
         capability::RIGHT_READ | capability::RIGHT_WRITE | capability::RIGHT_MAP,
     )?;
+    let owner = runtime()
+        .processes
+        .current_process()
+        .map(|process| process.pid)
+        .ok_or(IpcError::BadCapability)?;
     if (destination as u64) & 7 != 0 {
         return Err(IpcError::InvalidUserBuffer);
     }
     let map_len = align_up(region.length, memory::FRAME_SIZE).ok_or(IpcError::BadCapability)?;
     let virtual_base = device_user_mapping_base(USER_DMA_MAPPING_BASE, region.id, map_len)?;
+    if let Some(mapping) = runtime()
+        .processes
+        .current_process()
+        .and_then(|process| process.dma_mapping(region.id))
+    {
+        let mut info = [0u8; DMA_MAPPING_INFO_BYTES];
+        write_dma_mapping_info(&mut info, mapping);
+        usercopy::copy_to_user(UserPtr::new(destination as u64), &info)
+            .map_err(|_| IpcError::InvalidUserBuffer)?;
+        serial::write_str("DMA map reused: proc=");
+        serial::write_str(current_process_name());
+        serial::write_str(" dma-region=");
+        serial::write_str(region.name);
+        serial::write_str(" virt=");
+        serial::write_u64_hex(mapping.virtual_base);
+        serial::write_str(" length=");
+        serial::write_u64_hex(mapping.length);
+        serial::write_str("\n");
+        return Ok(());
+    }
+
+    claim_dma_region(region.id, owner)?;
+    if !zero_dma_physical_range(region.base, region.length) {
+        release_dma_region_claim(region.id, owner);
+        return Err(IpcError::BadCapability);
+    }
+
     map_current_process_physical_range(
         virtual_base,
         region.base,
         map_len,
         paging::PageFlags::user(true, false),
-    )?;
+    )
+    .map_err(|error| {
+        release_dma_region_claim(region.id, owner);
+        error
+    })?;
 
     let mut info = [0u8; DMA_MAPPING_INFO_BYTES];
-    write_u64(&mut info, 0, virtual_base);
-    write_u64(&mut info, 8, region.base);
-    write_u64(&mut info, 16, region.length);
-    usercopy::copy_to_user(UserPtr::new(destination as u64), &info)
-        .map_err(|_| IpcError::InvalidUserBuffer)?;
+    let mapping = DmaUserMapping {
+        region: region.id,
+        virtual_base,
+        physical_base: region.base,
+        length: region.length,
+    };
+    write_dma_mapping_info(&mut info, mapping);
+    if usercopy::copy_to_user(UserPtr::new(destination as u64), &info).is_err() {
+        let _ = unmap_current_process_physical_range(virtual_base, map_len);
+        release_dma_region_claim(region.id, owner);
+        return Err(IpcError::InvalidUserBuffer);
+    }
+    let Some(process) = runtime().processes.current_process_mut() else {
+        let _ = unmap_current_process_physical_range(virtual_base, map_len);
+        release_dma_region_claim(region.id, owner);
+        return Err(IpcError::BadCapability);
+    };
+    if process.add_dma_mapping(mapping).is_err() {
+        let _ = unmap_current_process_physical_range(virtual_base, map_len);
+        release_dma_region_claim(region.id, owner);
+        return Err(IpcError::BadCapability);
+    }
 
     serial::write_str("DMA map accepted: proc=");
     serial::write_str(current_process_name());
@@ -5604,6 +6388,181 @@ pub fn dma_map(cap_slot: u64, destination: *mut u8, max_len: usize) -> Result<()
     serial::write_u64_hex(region.length);
     serial::write_str("\n");
     Ok(())
+}
+
+fn claim_dma_region(region_id: KernelObjectId, owner: ProcessId) -> Result<(), IpcError> {
+    let (name, mapped_by) = {
+        let runtime = runtime();
+        let Some(region) = runtime.objects.get_dma_region(region_id) else {
+            return Err(IpcError::BadCapability);
+        };
+        (region.name, region.mapped_by)
+    };
+    if mapped_by != ProcessId::empty() && mapped_by != owner {
+        serial::write_str("DMA map rejected: dma-region=");
+        serial::write_str(name);
+        serial::write_str(" already-owned-by=");
+        serial::write_str(process_name_by_pid(runtime(), mapped_by));
+        serial::write_str("\n");
+        return Err(IpcError::BadCapability);
+    }
+
+    if mapped_by == ProcessId::empty() {
+        let runtime = runtime();
+        let Some(region) = runtime.objects.get_dma_region_mut(region_id) else {
+            return Err(IpcError::BadCapability);
+        };
+        region.mapped_by = owner;
+        region.map_count = region.map_count.saturating_add(1);
+    }
+    Ok(())
+}
+
+fn release_dma_region_claim(region_id: KernelObjectId, owner: ProcessId) {
+    let runtime = runtime();
+    if let Some(region) = runtime.objects.get_dma_region_mut(region_id)
+        && region.mapped_by == owner
+    {
+        region.mapped_by = ProcessId::empty();
+        region.release_count = region.release_count.saturating_add(1);
+    }
+}
+
+fn release_process_dma_mappings(pid: ProcessId) {
+    let (name, mappings) = {
+        let runtime = runtime();
+        let Some(process) = runtime.processes.process_mut(pid) else {
+            return;
+        };
+        let mappings = process.dma_mappings;
+        process.clear_dma_mappings();
+        (process.name, mappings)
+    };
+
+    release_dma_mappings(pid, name, mappings);
+}
+
+fn release_all_runtime_dma_mappings() {
+    let mut releases = [(ProcessId::empty(), "", [None; MAX_OBJECTS]); MAX_PROCESSES];
+    let mut release_count = 0;
+    {
+        let runtime = runtime();
+        let mut index = 0;
+        while index < runtime.processes.count && release_count < releases.len() {
+            if let Some(process) = runtime.processes.processes[index].as_mut() {
+                releases[release_count] = (process.pid, process.name, process.dma_mappings);
+                process.clear_dma_mappings();
+                release_count += 1;
+            }
+            index += 1;
+        }
+    }
+
+    let mut index = 0;
+    while index < release_count {
+        let (pid, name, mappings) = releases[index];
+        release_dma_mappings(pid, name, mappings);
+        index += 1;
+    }
+}
+
+fn release_process_virtio_ownership(pid: ProcessId) {
+    let owner_name = process_name_by_pid(runtime(), pid);
+    release_process_kernel_virtio_ownership(pid, owner_name);
+    let runtime = runtime();
+    let mut index = 0;
+    while index < runtime.objects.count {
+        if let Some(KernelObject::VirtioDevice(device)) = runtime.objects.objects[index].as_mut()
+            && device.owner == pid
+        {
+            device.owner = ProcessId::empty();
+            serial::write_str("Virtio device ownership released: proc=");
+            serial::write_str(owner_name);
+            serial::write_str(" virtio-device=");
+            serial::write_str(device.name);
+            serial::write_str("\n");
+        }
+        index += 1;
+    }
+}
+
+fn release_process_kernel_virtio_ownership(pid: ProcessId, owner_name: &'static str) {
+    let rng = unsafe { &mut *VIRTIO_RNG_STATE.0.get() };
+    if rng.owner == pid {
+        if rng.io_base != 0 {
+            virtio_write8(rng.io_base, VIRTIO_PCI_STATUS, 0);
+        }
+        rng.initialized = false;
+        rng.owner = ProcessId::empty();
+        rng.reset_count = rng.reset_count.saturating_add(1);
+        rng.last_error = "owner-release";
+        rng.queue.last_error = "owner-release";
+        serial::write_str("Virtio kernel device ownership released: proc=");
+        serial::write_str(owner_name);
+        serial::write_str(" virtio-device=");
+        serial::write_str(VIRTIO_RNG_DEVICE_ID);
+        serial::write_str("\n");
+    }
+
+    let net = unsafe { &mut *VIRTIO_NET_STATE.0.get() };
+    if net.owner == pid {
+        if net.io_base != 0 {
+            virtio_write8(net.io_base, VIRTIO_PCI_STATUS, 0);
+        }
+        net.initialized = false;
+        net.rx_posted = false;
+        net.owner = ProcessId::empty();
+        net.reset_count = net.reset_count.saturating_add(1);
+        net.last_error = "owner-release";
+        net.rx.last_error = "owner-release";
+        net.tx.last_error = "owner-release";
+        serial::write_str("Virtio kernel device ownership released: proc=");
+        serial::write_str(owner_name);
+        serial::write_str(" virtio-device=");
+        serial::write_str(VIRTIO_NET_DEVICE_ID);
+        serial::write_str("\n");
+    }
+}
+
+fn release_dma_mappings(
+    owner: ProcessId,
+    owner_name: &'static str,
+    mappings: [Option<DmaUserMapping>; MAX_OBJECTS],
+) {
+    let mut index = 0;
+    while index < mappings.len() {
+        if let Some(mapping) = mappings[index] {
+            let _ = zero_dma_physical_range(mapping.physical_base, mapping.length);
+            release_dma_region_claim(mapping.region, owner);
+            serial::write_str("DMA mapping released: proc=");
+            serial::write_str(owner_name);
+            serial::write_str(" phys=");
+            serial::write_u64_hex(mapping.physical_base);
+            serial::write_str(" length=");
+            serial::write_u64_hex(mapping.length);
+            serial::write_str("\n");
+        }
+        index += 1;
+    }
+}
+
+fn zero_dma_physical_range(physical_base: u64, length: u64) -> bool {
+    if length == 0 {
+        return true;
+    }
+    let Some(hhdm_offset) = limine::hhdm_offset() else {
+        return false;
+    };
+    let Ok(length) = usize::try_from(length) else {
+        return false;
+    };
+    let Some(virtual_base) = hhdm_offset.checked_add(physical_base) else {
+        return false;
+    };
+    unsafe {
+        core::ptr::write_bytes(virtual_base as *mut u8, 0, length);
+    }
+    true
 }
 
 pub fn runtime_inspect(
@@ -5915,6 +6874,17 @@ fn wake_timed_processes(now: u64) -> usize {
                     serial::write_str(process.name);
                     serial::write_str("\n");
                 }
+                ProcessState::BlockedOnInterrupt {
+                    timeout_tsc: Some(timeout_tsc),
+                    ..
+                } if deadline_reached(now, timeout_tsc) => {
+                    process.saved_frame.rax = STATUS_TIMEOUT;
+                    process.state = ProcessState::Ready;
+                    woke += 1;
+                    serial::write_str("IRQ wait timeout: proc=");
+                    serial::write_str(process.name);
+                    serial::write_str("\n");
+                }
                 _ => {}
             }
         }
@@ -5935,6 +6905,10 @@ fn next_deadline_tsc() -> Option<u64> {
                     timeout_tsc: Some(timeout_tsc),
                     ..
                 } => Some(timeout_tsc),
+                ProcessState::BlockedOnInterrupt {
+                    timeout_tsc: Some(timeout_tsc),
+                    ..
+                } => Some(timeout_tsc),
                 _ => None,
             };
             if let Some(deadline) = deadline
@@ -5951,7 +6925,13 @@ fn next_deadline_tsc() -> Option<u64> {
 }
 
 fn wait_until_deadline(deadline: u64) {
-    while !deadline_reached(read_tsc(), deadline) && wake_timed_processes(read_tsc()) == 0 {
+    while !deadline_reached(read_tsc(), deadline)
+        && runtime()
+            .processes
+            .next_ready_index_round_robin(true)
+            .is_none()
+        && wake_timed_processes(read_tsc()) == 0
+    {
         crate::timer::wait_for_interrupt();
     }
 }
@@ -6358,6 +7338,88 @@ fn build_inspect_report(runtime: &RuntimeState, report: &mut InspectReport) {
         index += 1;
     }
 
+    let mut interrupt_report_index = 0;
+    let mut object_index = 0;
+    while object_index < runtime.objects.count {
+        if let Some(KernelObject::InterruptLine(_)) = runtime.objects.objects[object_index] {
+            interrupt_report_index += 1;
+        }
+        object_index += 1;
+    }
+
+    report.push_str("interrupt_lines=");
+    report.push_u64_dec(interrupt_report_index);
+    report.push_byte(b'\n');
+    interrupt_report_index = 0;
+    object_index = 0;
+    while object_index < runtime.objects.count {
+        if let Some(KernelObject::InterruptLine(line)) = runtime.objects.objects[object_index] {
+            report.push_str("interrupt-line[");
+            report.push_u64_dec(interrupt_report_index);
+            report.push_str("] name=");
+            report.push_str(line.name);
+            report.push_str(" line=");
+            report.push_u64_dec(line.line);
+            report.push_str(" owner=");
+            report.push_str(interrupt_owner_name(runtime, line.id));
+            report.push_str(" pending=");
+            report.push_u64_dec(line.pending_count);
+            report.push_str(" delivered=");
+            report.push_u64_dec(line.delivered_count);
+            report.push_str(" waiters=");
+            report.push_u64_dec(interrupt_waiter_count(runtime, line.id));
+            report.push_str(" spurious=");
+            report.push_u64_dec(line.spurious_count);
+            report.push_byte(b'\n');
+            interrupt_report_index += 1;
+        }
+        object_index += 1;
+    }
+
+    let mut dma_report_index = 0;
+    object_index = 0;
+    while object_index < runtime.objects.count {
+        if let Some(KernelObject::DmaRegion(_)) = runtime.objects.objects[object_index] {
+            dma_report_index += 1;
+        }
+        object_index += 1;
+    }
+
+    report.push_str("dma_regions=");
+    report.push_u64_dec(dma_report_index);
+    report.push_byte(b'\n');
+    dma_report_index = 0;
+    object_index = 0;
+    while object_index < runtime.objects.count {
+        if let Some(KernelObject::DmaRegion(region)) = runtime.objects.objects[object_index] {
+            report.push_str("dma-region[");
+            report.push_u64_dec(dma_report_index);
+            report.push_str("] name=");
+            report.push_str(region.name);
+            report.push_str(" base=");
+            report.push_u64_dec(region.base);
+            report.push_str(" length=");
+            report.push_u64_dec(region.length);
+            report.push_str(" owner=");
+            report.push_str(process_name_by_pid(runtime, region.mapped_by));
+            report.push_str(" mapped=");
+            report.push_str(if region.mapped_by == ProcessId::empty() {
+                "no"
+            } else {
+                "yes"
+            });
+            report.push_str(" map_count=");
+            report.push_u64_dec(region.map_count);
+            report.push_str(" release_count=");
+            report.push_u64_dec(region.release_count);
+            report.push_byte(b'\n');
+            dma_report_index += 1;
+        }
+        object_index += 1;
+    }
+
+    write_virtio_runtime_report(runtime, report);
+
     report.push_str("service_lifecycle_events=");
     report.push_u64_dec(runtime.service_lifecycle_event_count as u64);
     report.push_byte(b'\n');
@@ -6379,6 +7441,131 @@ fn build_inspect_report(runtime: &RuntimeState, report: &mut InspectReport) {
             report.push_byte(b'\n');
         }
         event_index += 1;
+    }
+}
+
+fn write_virtio_runtime_report(runtime: &RuntimeState, report: &mut InspectReport) {
+    let rng = unsafe { *VIRTIO_RNG_STATE.0.get() };
+    let net = unsafe { *VIRTIO_NET_STATE.0.get() };
+
+    report.push_str("virtio_runtime_devices=2\n");
+    report.push_str("virtio-runtime[0] device=");
+    report.push_str(VIRTIO_RNG_DEVICE_ID);
+    report.push_str(" initialized=");
+    write_yes_no(report, rng.initialized);
+    report.push_str(" owner=");
+    report.push_str(process_name_by_pid(runtime, rng.owner));
+    report.push_str(" resets=");
+    report.push_u64_dec(rng.reset_count);
+    report.push_str(" last_error=");
+    report.push_str(rng.last_error);
+    report.push_str(" io_base=");
+    report.push_u64_dec(rng.io_base as u64);
+    report.push_byte(b'\n');
+    write_virtio_queue_report(report, "virtio-queue[0]", "rng", &rng.queue);
+
+    report.push_str("virtio-runtime[1] device=");
+    report.push_str(VIRTIO_NET_DEVICE_ID);
+    report.push_str(" initialized=");
+    write_yes_no(report, net.initialized);
+    report.push_str(" owner=");
+    report.push_str(process_name_by_pid(runtime, net.owner));
+    report.push_str(" resets=");
+    report.push_u64_dec(net.reset_count);
+    report.push_str(" last_error=");
+    report.push_str(net.last_error);
+    report.push_str(" io_base=");
+    report.push_u64_dec(net.io_base as u64);
+    report.push_str(" rx_posted=");
+    write_yes_no(report, net.rx_posted);
+    report.push_byte(b'\n');
+    write_virtio_queue_report(report, "virtio-queue[1]", "net-rx", &net.rx);
+    write_virtio_queue_report(report, "virtio-queue[2]", "net-tx", &net.tx);
+
+    let mut device_count = 0;
+    let mut object_index = 0;
+    while object_index < runtime.objects.count {
+        if let Some(KernelObject::VirtioDevice(_)) = runtime.objects.objects[object_index] {
+            device_count += 1;
+        }
+        object_index += 1;
+    }
+    report.push_str("virtio_driver_devices=");
+    report.push_u64_dec(device_count);
+    report.push_byte(b'\n');
+
+    let mut device_index = 0;
+    object_index = 0;
+    while object_index < runtime.objects.count {
+        if let Some(KernelObject::VirtioDevice(device)) = runtime.objects.objects[object_index] {
+            report.push_str("virtio-device-runtime[");
+            report.push_u64_dec(device_index);
+            report.push_str("] device=");
+            report.push_str(device.name);
+            report.push_str(" transport=");
+            report.push_str(device.transport);
+            report.push_str(" owner=");
+            report.push_str(process_name_by_pid(runtime, device.owner));
+            report.push_str(" queue_size=");
+            report.push_u64_dec(device.queue_size as u64);
+            report.push_str(" avail_idx=");
+            report.push_u64_dec(device.avail_idx as u64);
+            report.push_str(" used_idx=");
+            report.push_u64_dec(device.used_idx as u64);
+            report.push_str(" submissions=");
+            report.push_u64_dec(device.submissions);
+            report.push_str(" completions=");
+            report.push_u64_dec(device.completions);
+            report.push_str(" timeouts=");
+            report.push_u64_dec(device.timeouts);
+            report.push_str(" resets=");
+            report.push_u64_dec(device.reset_count);
+            report.push_str(" last_error=");
+            report.push_str(device.last_error);
+            report.push_byte(b'\n');
+            device_index += 1;
+        }
+        object_index += 1;
+    }
+}
+
+fn write_virtio_queue_report(
+    report: &mut InspectReport,
+    slot: &'static str,
+    name: &'static str,
+    queue: &VirtioQueueState,
+) {
+    report.push_str(slot);
+    report.push_str(" name=");
+    report.push_str(name);
+    report.push_str(" queue_size=");
+    report.push_u64_dec(queue.queue_size as u64);
+    report.push_str(" avail_idx=");
+    report.push_u64_dec(queue.avail_idx as u64);
+    report.push_str(" used_idx=");
+    report.push_u64_dec(queue.used_idx as u64);
+    report.push_str(" submissions=");
+    report.push_u64_dec(queue.submissions);
+    report.push_str(" completions=");
+    report.push_u64_dec(queue.completions);
+    report.push_str(" interrupt_waits=");
+    report.push_u64_dec(queue.interrupt_waits);
+    report.push_str(" timeouts=");
+    report.push_u64_dec(queue.timeouts);
+    report.push_str(" last_error=");
+    report.push_str(queue.last_error);
+    report.push_str(" dma_physical=");
+    report.push_u64_dec(queue.dma_physical);
+    report.push_str(" dma_virtual=");
+    report.push_u64_dec(queue.dma_virtual);
+    report.push_byte(b'\n');
+}
+
+fn write_yes_no(report: &mut InspectReport, value: bool) {
+    if value {
+        report.push_str("yes");
+    } else {
+        report.push_str("no");
     }
 }
 
@@ -7076,6 +8263,8 @@ fn reap_process_context(pid: ProcessId) -> Result<(), IpcError> {
         };
         (process.name, process.context.cr3, process.context_reaped)
     };
+    release_process_virtio_ownership(pid);
+    release_process_dma_mappings(pid);
     if already_reaped || cr3 == 0 {
         return Ok(());
     }
@@ -7219,6 +8408,24 @@ fn rollback_current_process_physical_range(
     }
 }
 
+fn unmap_current_process_physical_range(virtual_base: u64, length: u64) -> Result<(), IpcError> {
+    let hhdm_offset = limine::hhdm_offset().ok_or(IpcError::BadCapability)?;
+    let root_table_physical = runtime()
+        .processes
+        .current_process()
+        .map(|process| process.context.cr3)
+        .ok_or(IpcError::BadCapability)?;
+    let allocator = frame_allocator()?;
+    rollback_current_process_physical_range(
+        hhdm_offset,
+        root_table_physical,
+        virtual_base,
+        length,
+        allocator,
+    );
+    Ok(())
+}
+
 fn device_user_mapping_base(
     window_base: u64,
     object: KernelObjectId,
@@ -7257,6 +8464,12 @@ fn write_u64(buffer: &mut [u8], offset: usize, value: u64) {
         buffer[offset + index] = bytes[index];
         index += 1;
     }
+}
+
+fn write_dma_mapping_info(buffer: &mut [u8; DMA_MAPPING_INFO_BYTES], mapping: DmaUserMapping) {
+    write_u64(buffer, 0, mapping.virtual_base);
+    write_u64(buffer, 8, mapping.physical_base);
+    write_u64(buffer, 16, mapping.length);
 }
 
 fn min(left: usize, right: usize) -> usize {

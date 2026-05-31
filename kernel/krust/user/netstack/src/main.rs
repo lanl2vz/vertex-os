@@ -57,6 +57,7 @@ pub extern "C" fn _start() -> ! {
     let arp_reply = receive_arp_reply_from_gateway(&mut rx_frame);
     log(b"ARP cache owned by netstack");
     log(b"virtio-net driver can receive raw frames");
+    log(b"netstack sleeps on virtio-net IRQ instead of polling for RX completion");
     log(b"QEMU user-mode network delivered a raw frame");
 
     let gateway_mac = ethernet_source(&rx_frame[..arp_reply]);

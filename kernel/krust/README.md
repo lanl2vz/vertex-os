@@ -1,6 +1,6 @@
 # Krust Kernel
 
-Krust now covers the M14-M69 native graph-activation proof path, substrate
+Krust now covers the M14-M73 native graph-activation proof path, substrate
 hardening, reproducible build environment, directed IPC ABI v1, and native
 console shell plus virtio device I/O, VertexDisk v0 persistence, native boot
 selection, verified store objects, native update transactions, and store-loaded
@@ -10,7 +10,8 @@ transcript, first-class native driver objects, capability namespaces,
 policy/typed generation compilation, storage durability, network boundaries,
 supervisor lifecycle semantics, the supported appliance release profile, owned
 frame reclamation, address-space teardown, failure-atomic kernel object
-creation, and memory lifecycle soak gates. M44-M69 are tracked in
+creation, memory lifecycle soak gates, interrupt routing, DMA ownership,
+virtio recovery, and device-fault isolation. M44-M73 are tracked in
 `../../docs/krust-milestones.md`.
 
 The target is intentionally small:
@@ -386,18 +387,18 @@ make smoke
 ```
 
 The smoke test boots QEMU headlessly, captures serial output to
-`build/serial.log`, and passes when it sees the M14-M69 directed IPC, console,
+`build/serial.log`, and passes when it sees the M14-M73 directed IPC, console,
 virtio-block, VertexDisk, verified store, update, store-executable, dynamic
 process, config, secret, package-boundary, appliance, virtio device, networking,
 namespace, policy, ABI-hardening, storage durability, network-boundary, and
-lifecycle, memory-lifecycle, and soak transcripts. The same check is available
-from the repository root:
+lifecycle, memory-lifecycle, soak, interrupt, DMA, virtio recovery, and
+device-fault transcripts. The same check is available from the repository root:
 
 ```sh
 scripts/krust-smoke.sh
 ```
 
-## M26-M69 Substrate Gate
+## M26-M73 Substrate Gate
 
 Run the clean-clone gate from the repository root:
 
@@ -412,12 +413,12 @@ make release-gate
 ```
 
 The gate checks script executability and shell syntax, verifies Makefile recipe
-parsing, checks Rust formatting and Markdown whitespace, confirms the M14-M69
+parsing, checks Rust formatting and Markdown whitespace, confirms the M14-M73
 documentation anchors, checks the pinned M39 toolchain and Cargo lockfiles, runs
 `cargo metadata --locked --offline` and `cargo build --locked --offline`,
 validates `examples/hello-generation.vertex.json`, runs `make doctor`, rebuilds
 from `make clean`, runs `make smoke`, checks package/link/build import commands,
-and then runs the M14-M69 QEMU cases:
+and then runs the M14-M73 QEMU cases:
 `m14`,
 `manifest-cycle`, `bad-cap`, `readiness-timeout`, `rollback`, `store-state-services`,
 `timer`, `preemption`, `user-fault`, `restart`, `manifest-v1`, `cap-lifecycle`,
@@ -426,7 +427,7 @@ and then runs the M14-M69 QEMU cases:
 `m46`, `m47`, `m47-corrupt-executable`, `m48`, `m49`,
 `m49-config-corrupt`, `m50`, `m54`, `m55`, `m56`, `m57`, `m59`, `m60`, `m61`,
 `m62`, `m62-journal-replay`, `m62-corrupt-journal`, `m63`, `m64`, `m66`,
-`m67`, `m68`, `m69`, and the
+`m67`, `m68`, `m69`, `m70`, `m71`, `m72`, `m73`, and the
 malformed-manifest cases. If the offline build
 fails, the gate prints the Cargo cache or vendoring prerequisite explicitly.
 

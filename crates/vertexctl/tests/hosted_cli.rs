@@ -845,6 +845,123 @@ fn compile_boot_manifest_rejects_implicit_dma_base_zero() {
 }
 
 #[test]
+fn compile_boot_manifest_rejects_unaligned_dma_length() {
+    let dir = temp_dir("krustboot-dma-unaligned");
+    let input_path = dir.join("bad-dma-unaligned.vertex.json");
+    let output_path = dir.join("bad-dma-unaligned.krustboot");
+    let mut manifest: Value = serde_json::from_str(
+        &fs::read_to_string(repo_root().join("examples/hello-generation.vertex.json"))
+            .expect("read hello manifest"),
+    )
+    .expect("hello manifest should be json");
+
+    let capabilities = manifest["capabilities"]
+        .as_array_mut()
+        .expect("capabilities should be an array");
+    let dma = capabilities
+        .iter_mut()
+        .find(|capability| capability["id"] == "cap:dma.virtio-blk0")
+        .expect("virtio DMA capability should exist");
+    dma["properties"] = serde_json::json!({
+        "allocation": "kernel-dma",
+        "length": 12345
+    });
+
+    fs::write(
+        &input_path,
+        serde_json::to_string_pretty(&manifest).expect("serialize bad manifest"),
+    )
+    .expect("write bad manifest");
+
+    let stderr = assert_failure(run(&[
+        "compile-boot-manifest",
+        &input_path.to_string_lossy(),
+        &output_path.to_string_lossy(),
+    ]));
+
+    assert!(stderr.contains("length must be page-aligned"));
+    assert!(!output_path.exists());
+}
+
+#[test]
+fn compile_boot_manifest_rejects_oversized_dma_length() {
+    let dir = temp_dir("krustboot-dma-oversized");
+    let input_path = dir.join("bad-dma-oversized.vertex.json");
+    let output_path = dir.join("bad-dma-oversized.krustboot");
+    let mut manifest: Value = serde_json::from_str(
+        &fs::read_to_string(repo_root().join("examples/hello-generation.vertex.json"))
+            .expect("read hello manifest"),
+    )
+    .expect("hello manifest should be json");
+
+    let capabilities = manifest["capabilities"]
+        .as_array_mut()
+        .expect("capabilities should be an array");
+    let dma = capabilities
+        .iter_mut()
+        .find(|capability| capability["id"] == "cap:dma.virtio-blk0")
+        .expect("virtio DMA capability should exist");
+    dma["properties"] = serde_json::json!({
+        "allocation": "kernel-dma",
+        "length": 2147483648u64
+    });
+
+    fs::write(
+        &input_path,
+        serde_json::to_string_pretty(&manifest).expect("serialize bad manifest"),
+    )
+    .expect("write bad manifest");
+
+    let stderr = assert_failure(run(&[
+        "compile-boot-manifest",
+        &input_path.to_string_lossy(),
+        &output_path.to_string_lossy(),
+    ]));
+
+    assert!(stderr.contains("length must be page-aligned"));
+    assert!(!output_path.exists());
+}
+
+#[test]
+fn compile_boot_manifest_rejects_overlapping_io_ranges() {
+    let dir = temp_dir("krustboot-io-overlap");
+    let input_path = dir.join("bad-io-overlap.vertex.json");
+    let output_path = dir.join("bad-io-overlap.krustboot");
+    let mut manifest: Value = serde_json::from_str(
+        &fs::read_to_string(repo_root().join("examples/hello-generation.vertex.json"))
+            .expect("read hello manifest"),
+    )
+    .expect("hello manifest should be json");
+
+    let capabilities = manifest["capabilities"]
+        .as_array_mut()
+        .expect("capabilities should be an array");
+    let io_port = capabilities
+        .iter_mut()
+        .find(|capability| capability["id"] == "cap:io.virtio-blk0")
+        .expect("virtio I/O capability should exist");
+    io_port["properties"] = serde_json::json!({
+        "base": "0xcf8",
+        "length": 8
+    });
+
+    fs::write(
+        &input_path,
+        serde_json::to_string_pretty(&manifest).expect("serialize bad manifest"),
+    )
+    .expect("write bad manifest");
+
+    let stderr = assert_failure(run(&[
+        "compile-boot-manifest",
+        &input_path.to_string_lossy(),
+        &output_path.to_string_lossy(),
+    ]));
+
+    assert!(stderr.contains("io-port capability cap:io.virtio-blk0 overlaps cap:io.pci-config"));
+    assert!(!output_path.exists());
+}
+
+#[test]
 fn compile_boot_manifest_rejects_io_port_span_past_16_bit_space() {
     let dir = temp_dir("krustboot-io-span");
     let input_path = dir.join("bad-io-span.vertex.json");

@@ -19,6 +19,7 @@ const CAP_IRQ: u64 = 7;
 const CAP_DMA: u64 = 8;
 const CAP_VIRTIO_IO: u64 = 9;
 const CAP_FAULT_INJECTION: u64 = 10;
+const CAP_VIRTIO_DEVICE: u64 = 11;
 const FAULT_INJECTION_TOKEN: &[u8] = b"krust-block-driver-fault\n";
 
 const PROTOCOL_HEALTH_V0: u16 = 2;
@@ -50,6 +51,7 @@ const PCI_COMMAND: u8 = 0x04;
 const PCI_BAR0: u8 = 0x10;
 const PCI_COMMAND_IO: u16 = 1 << 0;
 const PCI_COMMAND_BUS_MASTER: u16 = 1 << 2;
+const PCI_COMMAND_INTERRUPT_DISABLE: u16 = 1 << 10;
 
 const VIRTIO_PCI_HOST_FEATURES: u16 = 0x00;
 const VIRTIO_PCI_GUEST_FEATURES: u16 = 0x04;
@@ -76,10 +78,16 @@ const DMA_REQUIRED_LEN: u64 = (DATA_OFFSET + SECTOR_SIZE) as u64;
 
 const DESC_F_NEXT: u16 = 1;
 const DESC_F_WRITE: u16 = 2;
-const AVAIL_F_NO_INTERRUPT: u16 = 1;
+const IRQ_WAIT_TIMEOUT_MS: u64 = 25;
+const IRQ_WAIT_ATTEMPTS: u64 = 128;
 const VIRTIO_BLK_T_IN: u32 = 0;
 const VIRTIO_BLK_T_OUT: u32 = 1;
 const VIRTIO_BLK_S_OK: u8 = 0;
+const VIRTIO_ERROR_NONE: u64 = 0;
+const VIRTIO_ERROR_COMPLETION_TIMEOUT: u64 = 1;
+const VIRTIO_ERROR_RESET_FAILED: u64 = 2;
+const VIRTIO_ERROR_INIT_FAILED: u64 = 3;
+const VIRTIO_ERROR_STATUS: u64 = 4;
 
 #[unsafe(link_section = ".text._start")]
 #[unsafe(no_mangle)]
@@ -132,6 +140,11 @@ struct VirtioBlock {
     dma_physical: u64,
     avail_idx: u16,
     used_idx: u16,
+    submissions: u64,
+    completions: u64,
+    timeouts: u64,
+    reset_count: u64,
+    last_error: u64,
     store_read_logged: bool,
     state_read_logged: bool,
 }
@@ -139,10 +152,15 @@ struct VirtioBlock {
 impl VirtioBlock {
     fn init() -> Option<Self> {
         let io_base = discover_virtio_blk()?;
+        if sys::virtio_probe(CAP_VIRTIO_DEVICE) != sys::STATUS_OK {
+            log(b"block-driver virtio device authority failed");
+            return None;
+        }
         if sys::irq_wait(CAP_IRQ, 0) != sys::STATUS_OK {
             log(b"block-driver IRQ authority failed");
             return None;
         }
+        log(b"block-driver sleeps on virtio-blk IRQ instead of polling for completion");
 
         let mut dma = sys::DmaMapping {
             virtual_base: 0,
@@ -160,12 +178,20 @@ impl VirtioBlock {
             dma_physical: dma.physical_base,
             avail_idx: 0,
             used_idx: 0,
+            submissions: 0,
+            completions: 0,
+            timeouts: 0,
+            reset_count: 0,
+            last_error: VIRTIO_ERROR_NONE,
             store_read_logged: false,
             state_read_logged: false,
         };
         if device.setup_queue().is_none() {
+            device.last_error = VIRTIO_ERROR_INIT_FAILED;
+            device.report_state();
             return None;
         }
+        device.report_state();
         Some(device)
     }
 
@@ -183,8 +209,10 @@ impl VirtioBlock {
             return None;
         }
 
+        self.avail_idx = 0;
+        self.used_idx = 0;
         zero_dma(self.dma_virtual, DMA_REQUIRED_LEN as usize);
-        write_dma_u16(self.dma_virtual, QUEUE_AVAIL_OFFSET, AVAIL_F_NO_INTERRUPT);
+        write_dma_u16(self.dma_virtual, QUEUE_AVAIL_OFFSET, 0);
         self.write32(
             VIRTIO_PCI_QUEUE_PFN,
             ((self.dma_physical + QUEUE_DESC_OFFSET as u64) >> 12) as u32,
@@ -248,28 +276,73 @@ impl VirtioBlock {
         compiler_fence(Ordering::SeqCst);
         write_dma_u16(self.dma_virtual, QUEUE_AVAIL_OFFSET + 2, self.avail_idx);
         compiler_fence(Ordering::SeqCst);
+        self.submissions = self.submissions.saturating_add(1);
         if self.write16(VIRTIO_PCI_QUEUE_NOTIFY, 0).is_none() {
             log(b"virtio-blk queue notify failed");
+            self.last_error = VIRTIO_ERROR_STATUS;
+            self.report_state();
             return false;
         }
 
         let target_used = self.used_idx.wrapping_add(1);
-        let mut spins = 0u64;
+        let mut attempts = 0u64;
         while read_dma_u16(self.dma_virtual, QUEUE_USED_OFFSET + 2) != target_used {
-            spins += 1;
-            if spins & 0xffff == 0 {
-                sys::yield_now();
+            let status = sys::irq_wait(CAP_IRQ, IRQ_WAIT_TIMEOUT_MS);
+            if status != sys::STATUS_OK && status != sys::STATUS_TIMEOUT {
+                log(b"virtio-blk IRQ wait failed");
+                return false;
             }
-            if spins > 20_000_000 {
+            attempts += 1;
+            if attempts > IRQ_WAIT_ATTEMPTS {
                 log(b"virtio-blk request timeout");
+                self.timeouts = self.timeouts.saturating_add(1);
+                self.last_error = VIRTIO_ERROR_COMPLETION_TIMEOUT;
+                self.reset_after_error(VIRTIO_ERROR_COMPLETION_TIMEOUT);
                 return false;
             }
         }
         compiler_fence(Ordering::SeqCst);
         self.used_idx = target_used;
+        self.completions = self.completions.saturating_add(1);
         let _isr = self.read8(VIRTIO_PCI_ISR);
 
-        read_dma_u8(self.dma_virtual, STATUS_OFFSET) == VIRTIO_BLK_S_OK
+        let ok = read_dma_u8(self.dma_virtual, STATUS_OFFSET) == VIRTIO_BLK_S_OK;
+        if ok {
+            self.last_error = VIRTIO_ERROR_NONE;
+        } else {
+            self.last_error = VIRTIO_ERROR_STATUS;
+        }
+        self.report_state();
+        ok
+    }
+
+    fn reset_after_error(&mut self, reason: u64) {
+        self.reset_count = self.reset_count.saturating_add(1);
+        self.last_error = reason;
+        let _ = self.write_status(0);
+        if self.setup_queue().is_none() {
+            self.last_error = VIRTIO_ERROR_RESET_FAILED;
+            log(b"virtio-blk reset failed");
+        } else {
+            log(b"virtio-blk reset after timeout");
+        }
+        self.report_state();
+    }
+
+    fn report_state(&self) {
+        let report = sys::VirtioDriverReport {
+            queue_size: QUEUE_SIZE as u64,
+            avail_idx: self.avail_idx as u64,
+            used_idx: self.used_idx as u64,
+            submissions: self.submissions,
+            completions: self.completions,
+            timeouts: self.timeouts,
+            reset_count: self.reset_count,
+            last_error: self.last_error,
+        };
+        if sys::virtio_report(CAP_VIRTIO_DEVICE, &report) != sys::STATUS_OK {
+            log(b"virtio-blk inspect report failed");
+        }
     }
 
     fn write_desc(&self, index: usize, addr: u64, len: u32, flags: u16, next: u16) {
@@ -317,7 +390,8 @@ fn discover_virtio_blk() -> Option<u16> {
                 slot,
                 0,
                 PCI_COMMAND,
-                command | PCI_COMMAND_IO | PCI_COMMAND_BUS_MASTER,
+                (command | PCI_COMMAND_IO | PCI_COMMAND_BUS_MASTER)
+                    & !PCI_COMMAND_INTERRUPT_DISABLE,
             )?;
             let bar0 = pci_read_u32(0, slot, 0, PCI_BAR0)?;
             if bar0 & 1 == 0 {

@@ -31,6 +31,10 @@ const MAX_NAMESPACES: usize = 4;
 const MAX_RUNTIME_OBJECTS: usize = 64;
 const FIXED_RUNTIME_OBJECTS: usize = 4;
 const SERIAL_LOG_ENDPOINT_NAME: &str = "serial-log";
+const PAGE_SIZE: u64 = 4096;
+const DMA_KERNEL_ALLOCATED_BASE: u64 = u64::MAX;
+const MAX_DEVICE_MAPPING_LENGTH: u64 = 1 << 30;
+const MAX_LEGACY_IRQ_LINE: u64 = 15;
 pub const MAX_NAMESPACE_ENTRIES: usize = 4;
 pub const MAX_PROCESS_REFS: usize = 4;
 
@@ -866,6 +870,139 @@ fn validate_runtime_object_budget(
     Ok(())
 }
 
+fn validate_hardware_authority(manifest: &Manifest<'_>) -> Result<(), ParseError> {
+    let mut index = 0;
+    while index < manifest.io_port_count {
+        let range = manifest.io_port(index).ok_or(ParseError::InvalidReference)?;
+        validate_io_range(range.base, range.length)?;
+        let mut previous = 0;
+        while previous < index {
+            let prior = manifest
+                .io_port(previous)
+                .ok_or(ParseError::InvalidReference)?;
+            if ranges_overlap(range.base, range.length, prior.base, prior.length)? {
+                return Err(ParseError::InvalidReference);
+            }
+            previous += 1;
+        }
+        index += 1;
+    }
+
+    index = 0;
+    while index < manifest.mmio_region_count {
+        let region = manifest
+            .mmio_region(index)
+            .ok_or(ParseError::InvalidReference)?;
+        validate_device_range(region.base, region.length, false)?;
+        let mut previous = 0;
+        while previous < index {
+            let prior = manifest
+                .mmio_region(previous)
+                .ok_or(ParseError::InvalidReference)?;
+            if ranges_overlap(region.base, region.length, prior.base, prior.length)? {
+                return Err(ParseError::InvalidReference);
+            }
+            previous += 1;
+        }
+        index += 1;
+    }
+
+    index = 0;
+    while index < manifest.interrupt_line_count {
+        let line = manifest
+            .interrupt_line(index)
+            .ok_or(ParseError::InvalidReference)?;
+        if line.line > MAX_LEGACY_IRQ_LINE {
+            return Err(ParseError::InvalidReference);
+        }
+        let mut previous = 0;
+        while previous < index {
+            let prior = manifest
+                .interrupt_line(previous)
+                .ok_or(ParseError::InvalidReference)?;
+            if prior.line == line.line {
+                return Err(ParseError::InvalidReference);
+            }
+            previous += 1;
+        }
+        index += 1;
+    }
+
+    index = 0;
+    while index < manifest.dma_region_count {
+        let region = manifest.dma_region(index).ok_or(ParseError::InvalidReference)?;
+        if region.length == 0
+            || region.length > MAX_DEVICE_MAPPING_LENGTH
+            || region.length % PAGE_SIZE != 0
+        {
+            return Err(ParseError::InvalidReference);
+        }
+        if region.base != DMA_KERNEL_ALLOCATED_BASE {
+            validate_device_range(region.base, region.length, true)?;
+            let mut previous = 0;
+            while previous < index {
+                let prior = manifest
+                    .dma_region(previous)
+                    .ok_or(ParseError::InvalidReference)?;
+                if prior.base != DMA_KERNEL_ALLOCATED_BASE
+                    && ranges_overlap(region.base, region.length, prior.base, prior.length)?
+                {
+                    return Err(ParseError::InvalidReference);
+                }
+                previous += 1;
+            }
+        }
+        index += 1;
+    }
+
+    Ok(())
+}
+
+fn validate_io_range(base: u64, length: u64) -> Result<(), ParseError> {
+    if length == 0 {
+        return Err(ParseError::InvalidReference);
+    }
+    let Some(last) = base.checked_add(length - 1) else {
+        return Err(ParseError::InvalidReference);
+    };
+    if last > u16::MAX as u64 {
+        return Err(ParseError::InvalidReference);
+    }
+    Ok(())
+}
+
+fn validate_device_range(
+    base: u64,
+    length: u64,
+    page_aligned_base: bool,
+) -> Result<(), ParseError> {
+    if length == 0 || length > MAX_DEVICE_MAPPING_LENGTH {
+        return Err(ParseError::InvalidReference);
+    }
+    base.checked_add(length - 1)
+        .ok_or(ParseError::InvalidReference)?;
+    if page_aligned_base && base % PAGE_SIZE != 0 {
+        return Err(ParseError::InvalidReference);
+    }
+    Ok(())
+}
+
+fn ranges_overlap(
+    base: u64,
+    length: u64,
+    other_base: u64,
+    other_length: u64,
+) -> Result<bool, ParseError> {
+    if length == 0 || other_length == 0 {
+        return Ok(false);
+    }
+    let end = base.checked_add(length).ok_or(ParseError::InvalidReference)?;
+    let other_end = other_base
+        .checked_add(other_length)
+        .ok_or(ParseError::InvalidReference)?;
+    Ok(base < other_end && other_base < end)
+}
+
 fn validate_manifest(manifest: &Manifest<'_>) -> Result<(), ParseError> {
     if manifest.endpoint_count == 0 {
         return Err(ParseError::InvalidReference);
@@ -884,6 +1021,7 @@ fn validate_manifest(manifest: &Manifest<'_>) -> Result<(), ParseError> {
         }
         endpoint_index += 1;
     }
+    validate_hardware_authority(manifest)?;
 
     let mut initial_count = 0;
     let mut index = 0;

@@ -54,6 +54,7 @@ const SYS_VIRTIO_NET_RX: u64 = 43;
 const SYS_NETWORK_SEND_UDP: u64 = 44;
 const SYS_NAMESPACE_RESOLVE: u64 = 45;
 const SYS_NETWORK_RECV_UDP: u64 = 46;
+const SYS_VIRTIO_DEVICE_REPORT: u64 = 47;
 
 const STATUS_OK: u64 = 0;
 const STATUS_BAD_CAPABILITY: u64 = u64::MAX - 1;
@@ -337,6 +338,14 @@ pub extern "C" fn krust_syscall_dispatch(
             Ok(()) => frame.rax = STATUS_OK,
             Err(error) => frame.rax = ipc_error_status("SYS_VIRTIO_DEVICE_PROBE", error),
         },
+        SYS_VIRTIO_DEVICE_REPORT => match ipc::virtio_device_report(
+            arg0,
+            arg1 as *const u8,
+            usize::try_from(arg2).unwrap_or(usize::MAX),
+        ) {
+            Ok(()) => frame.rax = STATUS_OK,
+            Err(error) => frame.rax = ipc_error_status("SYS_VIRTIO_DEVICE_REPORT", error),
+        },
         SYS_VIRTIO_RNG_READ => match ipc::virtio_rng_read(
             arg0,
             arg1 as *mut u8,
@@ -377,8 +386,8 @@ pub extern "C" fn krust_syscall_dispatch(
             Ok(len) => frame.rax = len as u64,
             Err(error) => frame.rax = ipc_error_status("SYS_NETWORK_RECV_UDP", error),
         },
-        SYS_IRQ_WAIT => match ipc::irq_wait(arg0, arg1) {
-            Ok(()) => frame.rax = STATUS_OK,
+        SYS_IRQ_WAIT => match ipc::irq_wait(arg0, arg1, frame) {
+            Ok(()) => {}
             Err(error) => frame.rax = ipc_error_status("SYS_IRQ_WAIT", error),
         },
         SYS_MMIO_MAP => match ipc::mmio_map(arg0) {

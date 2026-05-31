@@ -1,6 +1,6 @@
 use core::{
     arch::asm,
-    sync::atomic::{AtomicU64, Ordering},
+    sync::atomic::{AtomicU8, AtomicU64, Ordering},
 };
 
 use crate::serial;
@@ -20,6 +20,8 @@ const TIMER_HZ: u32 = 100;
 const PIT_DIVISOR: u16 = (PIT_BASE_HZ / TIMER_HZ) as u16;
 
 static TICKS: AtomicU64 = AtomicU64::new(0);
+static PIC1_MASK: AtomicU8 = AtomicU8::new(PIC_MASTER_IRQ0_ONLY);
+static PIC2_MASK: AtomicU8 = AtomicU8::new(PIC_SLAVE_ALL_MASKED);
 
 pub fn init() {
     remap_pic();
@@ -37,8 +39,45 @@ pub fn handle_tick() -> u64 {
 }
 
 pub fn eoi() {
+    eoi_irq(0);
+}
+
+pub fn eoi_irq(line: u8) {
     unsafe {
+        if line >= 8 {
+            outb(PIC2_COMMAND, PIC_EOI);
+        }
         outb(PIC1_COMMAND, PIC_EOI);
+    }
+}
+
+pub fn enable_legacy_irq(line: u8) {
+    if line < 8 {
+        let bit = 1u8 << line;
+        let mask = PIC1_MASK.fetch_and(!bit, Ordering::SeqCst) & !bit;
+        unsafe {
+            outb(PIC1_DATA, mask);
+        }
+        return;
+    }
+
+    if line < 16 {
+        let slave_bit = 1u8 << (line - 8);
+        let slave_mask = PIC2_MASK.fetch_and(!slave_bit, Ordering::SeqCst) & !slave_bit;
+        let master_mask = PIC1_MASK.fetch_and(!(1u8 << 2), Ordering::SeqCst) & !(1u8 << 2);
+        unsafe {
+            outb(PIC2_DATA, slave_mask);
+            outb(PIC1_DATA, master_mask);
+        }
+    }
+}
+
+pub fn reset_legacy_irq_masks() {
+    PIC1_MASK.store(PIC_MASTER_IRQ0_ONLY, Ordering::SeqCst);
+    PIC2_MASK.store(PIC_SLAVE_ALL_MASKED, Ordering::SeqCst);
+    unsafe {
+        outb(PIC1_DATA, PIC_MASTER_IRQ0_ONLY);
+        outb(PIC2_DATA, PIC_SLAVE_ALL_MASKED);
     }
 }
 
@@ -67,8 +106,8 @@ fn remap_pic() {
         outb(PIC2_DATA, 0x01);
         io_wait();
 
-        outb(PIC1_DATA, PIC_MASTER_IRQ0_ONLY);
-        outb(PIC2_DATA, PIC_SLAVE_ALL_MASKED);
+        outb(PIC1_DATA, PIC1_MASK.load(Ordering::SeqCst));
+        outb(PIC2_DATA, PIC2_MASK.load(Ordering::SeqCst));
     }
 }
 

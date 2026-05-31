@@ -7,7 +7,7 @@ runtime layered over a host kernel.
 
 ## Status Summary
 
-Current status: M14-M69 are implemented and smoke-tested under
+Current status: M14-M73 are implemented and smoke-tested under
 `qemu-system-x86_64` with Limine. M39 pins the native toolchain, M40 makes
 native IPC directed, and M41 adds a native console shell path over explicit
 console authority. M42 adds the first real virtio-blk sector I/O path over
@@ -30,7 +30,9 @@ service boundary, M64 exposes native supervisor lifecycle semantics, and M65
 defines the first supported standalone appliance release profile. M66-M69 add
 owned frame accounting, address-space teardown, failure-atomic kernel object and
 capability creation, and 100-cycle memory lifecycle soak gates for
-create/start/exit, restart, endpoint churn, and fault/restart paths.
+create/start/exit, restart, endpoint churn, and fault/restart paths. M70-M73 add
+blocking interrupt waits, DMA ownership/release accounting, virtio reset and
+driver queue reporting, and the first device-fault isolation gate.
 
 ```sh
 make -C kernel/krust doctor
@@ -81,12 +83,15 @@ scripts/krust-test.sh m66
 scripts/krust-test.sh m67
 scripts/krust-test.sh m68
 scripts/krust-test.sh m69
+scripts/krust-test.sh m70
+scripts/krust-test.sh m71
+scripts/krust-test.sh m72
+scripts/krust-test.sh m73
 ```
 
-Next direction: M70-M73 turn the supported M69 appliance profile from a
-resource-lifetime-hardened prototype into a device-failure-hardened system. Do
-not broaden the platform until interrupt delivery, DMA safety, and virtio
-reset/recovery are gate-tested.
+Next direction: keep broadening blocked until the M70-M73 device-failure gate
+stays boring under longer optional soak runs and hardware profiles beyond the
+current legacy PIC/QEMU target are deliberately selected.
 
 ## M0: Serial Boot
 
@@ -1490,7 +1495,7 @@ done: locked Cargo dependencies for the top-level host-tool workspace, Krust ker
 done: kernel/krust/rust-toolchain.toml pins Rust 1.95.0, rustfmt, and x86_64-unknown-none
 done: make doctor checks every required tool and reports actionable fixes
 done: legacy hello/ipc userspace crates are removed instead of carried forward
-done: single release-gate script runs the clean-clone M14-M69 proof with the M14-M69 QEMU matrix
+done: single release-gate script runs the clean-clone M14-M73 proof with the M14-M73 QEMU matrix
 ```
 
 Acceptance tests:
@@ -1548,7 +1553,7 @@ done: scripts/krust-test.sh m40 proves the directed IPC ABI and FIFO queue behav
 
 Status: done.
 
-Goal: turn the M14-M69 native proof into a small real operating system target:
+Goal: turn the M14-M73 native proof into a small real operating system target:
 bootable in QEMU, persistent, inspectable, updateable, and capable of running
 several native services under explicit authority.
 
@@ -2889,7 +2894,7 @@ soak checks are run by the Krust QEMU gate with frame/object/cap leak deltas
 
 ## M70: Interrupt Routing And Blocking IRQ Delivery
 
-Status: planned.
+Status: done.
 
 Goal: replace IRQ stubs and polling-only waits with a real interrupt delivery
 path from hardware IRQs to authorized driver processes.
@@ -2927,9 +2932,12 @@ Implementation notes:
 - Avoid running driver logic in interrupt context. Interrupt handlers should
   acknowledge, record, and schedule.
 
+done: M70 blocking IRQ wait, timeout, authority rejection, net/block interrupt
+wait evidence, and runtime IRQ attribution are checked by the Krust QEMU gate
+
 ## M71: DMA Ownership, Pinning, And Bounds Safety
 
-Status: planned.
+Status: done.
 
 Goal: make DMA memory explicit, owned, bounded, and unmapped on teardown so
 drivers cannot use stale or overlapping DMA windows.
@@ -2967,9 +2975,12 @@ Implementation notes:
 - Device reset paths in M72 must release or reinitialize DMA descriptors through
   this ownership model.
 
+done: M71 DMA ownership, repeat-map idempotence, release-on-teardown, manifest
+range rejection, and inspect accounting are checked by the Krust QEMU gate
+
 ## M72: Virtio Reset, Error Recovery, And Async Completion
 
-Status: planned.
+Status: done.
 
 Goal: make virtio drivers recover from device errors, queue timeouts, and
 driver restarts without rebooting the kernel.
@@ -3007,9 +3018,13 @@ Implementation notes:
 - Recovery should favor clean failure and supervisor restart over hidden retry
   loops.
 
+done: M72 virtio queue reports, timeout-to-reset paths, owner release,
+wrong-device rejection, and runtime queue/error counters are checked by the
+Krust QEMU gate
+
 ## M73: Device Isolation And Fault Injection Gate
 
-Status: planned.
+Status: done.
 
 Goal: prove that driver faults, bad manifests, bad DMA/IRQ authority, and device
 timeouts are isolated from unrelated services and from the kernel.
@@ -3047,6 +3062,10 @@ Implementation notes:
   are reproducible.
 - Keep the operator report tied to the same inspect data used by the gate.
 
+done: M73 device-fault isolation, DMA/IRQ/virtio leak deltas, bad hardware
+manifest rejection, and operator-visible failure reporting are checked by the
+Krust QEMU gate
+
 ## Later Direction
 
 Avoid these until the appliance release profile, storage durability, network
@@ -3073,7 +3092,7 @@ survive repeated process, memory, interrupt, DMA, and device failures without
 leaking resources or losing isolation.
 ```
 
-M13 proved that native services can run under explicit authority. M14-M69 prove
+M13 proved that native services can run under explicit authority. M14-M73 prove
 that the graph itself decides which native services exist, when they start,
 what they receive, why they are allowed to communicate, and how authority and
 resources are bounded, while timer preemption and user fault containment keep
@@ -3092,5 +3111,5 @@ prototype compilation. M61 turns those surfaces into an ABI and authority
 regression baseline, and M62-M65 turn that baseline into the first supported
 standalone appliance profile. M66-M69 harden resource lifetime with owned frame
 reclamation, address-space teardown, object failure atomicity, and soak gates.
-M70-M73 continue that path through interrupt and device-failure hardening before
-broadening the platform.
+M70-M73 add interrupt routing, DMA ownership, virtio reset/recovery, and
+device-fault isolation before broadening the platform.

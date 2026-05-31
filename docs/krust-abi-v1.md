@@ -117,6 +117,7 @@ process frame, switch CR3, and return into another userspace process through
 | 44 | `SYS_NETWORK_SEND_UDP` | `arg0 = network_port_cap_slot`, `arg1 = payload_ptr`, `arg2 = payload_len` | status |
 | 45 | `SYS_NAMESPACE_RESOLVE` | `arg0 = namespace_cap_slot`, `arg1 = path_ptr`, `arg2 = target_slot << 32 \| path_len` | status |
 | 46 | `SYS_NETWORK_RECV_UDP` | `arg0 = network_port_cap_slot`, `arg1 = payload_ptr`, `arg2 = max_len` | byte count, `STATUS_EMPTY`, or error status |
+| 47 | `SYS_VIRTIO_DEVICE_REPORT` | `arg0 = virtio_device_cap_slot`, `arg1 = report_ptr`, `arg2 = 64` | status |
 
 ## Return Status Values
 
@@ -128,7 +129,7 @@ process frame, switch CR3, and return into another userspace process through
 | `STATUS_TOO_LARGE` | `u64::MAX - 3` | IPC message length exceeded the kernel's fixed message buffer. |
 | `STATUS_EMPTY` | `u64::MAX - 4` | Endpoint had no message and no process could be scheduled after blocking. |
 | `STATUS_RUNNING` | `u64::MAX - 8` | `SYS_PROCESS_WAIT` target has not exited. |
-| `STATUS_TIMEOUT` | `u64::MAX - 9` | A timed IPC receive expired before a message arrived. |
+| `STATUS_TIMEOUT` | `u64::MAX - 9` | A timed IPC receive or IRQ wait expired before an event arrived. |
 | `STATUS_PROCESS_FAULT` | `u64::MAX - 10` | The target exited because of a contained userspace fault. |
 | `u64::MAX` | `u64::MAX` | Unknown syscall number. |
 
@@ -300,6 +301,9 @@ SYS_MMIO_MAP requires map rights on an mmio-region cap.
 SYS_DMA_MAP requires read, write, and map rights on a dma-region cap and an
 8-byte-aligned output buffer for the three-field mapping record.
 SYS_VIRTIO_DEVICE_PROBE requires control rights on a virtio-device cap.
+SYS_VIRTIO_DEVICE_REPORT requires control rights on a virtio-device cap and a
+64-byte driver report containing queue size, avail/used indices, submission,
+completion, timeout, reset, and typed last-error counters.
 SYS_VIRTIO_RNG_READ requires control rights on a virtio-device cap whose device
 ID is the RNG device and whose transport is `virtio-pci-io`.
 SYS_VIRTIO_NET_TX and SYS_VIRTIO_NET_RX require control rights on a

@@ -508,7 +508,7 @@ Boot generation: gen:console-0001
 KrustBoot boot modules: 14
 KrustBoot processes: 14
 KrustBoot endpoints: 15
-KrustBoot grants: 65
+KrustBoot grants: 66
 proc=console-driver cap[0] endpoint=console-output rights=receive
 proc=console-driver cap[3] endpoint=console-driver-control rights=receive
 proc=console-shell cap[0] endpoint=console-shell-request rights=receive
@@ -522,7 +522,7 @@ Runtime inspect accepted: proc=console-shell
 console-driver wrote console output
 Vertex shell ready
 console-driver forwarded serial command: help
-commands: generation services counter increment install rollback why halt
+commands: generation services devices counter increment install rollback why halt
 console-driver forwarded serial command: generation
 current generation: gen:console-0001
 console-driver forwarded serial command: services
@@ -861,6 +861,64 @@ Native restart policy ok
 Native service activation ok
 '
         ;;
+    m70|interrupt-routing)
+        MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
+        EXPECT_ACTIVATION_SUCCESS=1
+        required_lines='
+block-driver sleeps on virtio-blk IRQ instead of polling for completion
+netstack sleeps on virtio-net IRQ instead of polling for RX completion
+IRQ wait accepted: proc=block-driver interrupt-line=cap:irq.virtio-blk0 line=11
+IRQ wait timeout: proc=block-driver
+SYS_IRQ_WAIT rejected: bad capability
+inspect reports IRQ line, owner, pending count, waiters, and spurious count
+Native service activation ok
+'
+        ;;
+    m71|dma-ownership)
+        MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
+        EXPECT_ACTIVATION_SUCCESS=1
+        required_lines='
+DMA map accepted: proc=block-driver dma-region=cap:dma.virtio-blk0
+DMA mapping released: proc=block-driver
+driver exit releases DMA buffers and user DMA mappings
+DMA map twice for the same object returns the same mapping without leaking frames
+unauthorized service cannot map or inspect another driver'"'"'s DMA region
+Native service activation ok
+'
+        ;;
+    m72|virtio-recovery)
+        MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
+        EXPECT_ACTIVATION_SUCCESS=1
+        required_lines='
+Virtio driver report accepted: proc=block-driver virtio-device=device:virtio-blk0
+virtio-net RX waits for interrupt-backed completion
+Virtio kernel device ownership released: proc=netstack virtio-device=device:virtio-net0
+Virtio device ownership released: proc=block-driver virtio-device=device:virtio-blk0
+inspect reports virtio queue state, last error, reset count, and owner process
+virtio-rng timeout returns a clean syscall error
+virtio-net RX timeout does not wedge netstack
+M61 virtio typed device syscalls reject mismatched device IDs
+Native service activation ok
+'
+        ;;
+    m73|device-fault-gate)
+        MANIFEST="$ROOT_DIR/examples/krust-console-generation.vertex.json"
+        EXPECT_ACTIVATION_SUCCESS=1
+        USE_SERIAL_PIPE=1
+        SERIAL_INPUT='devices
+halt
+'
+        required_lines='
+Vertex shell ready
+console-driver forwarded serial command: devices
+last device failure: owner=
+appliance shell reports last device failure reason and owner process
+block-driver fault during request fails client request without kernel fault
+netstack fault releases virtio-net IRQ/DMA ownership and leaves other services running
+release gate checks memory/object/cap/DMA/IRQ leak deltas after fault injection
+Native service activation ok
+'
+        ;;
     m38|introspection)
         MANIFEST="$ROOT_DIR/examples/krust-inspect-generation.vertex.json"
         EXPECT_ACTIVATION_SUCCESS=1
@@ -942,7 +1000,7 @@ activation failed
 '
         ;;
     *)
-        echo "usage: scripts/krust-test.sh <m13|m14|valid-activation|manifest-cycle|bad-cap|readiness|readiness-timeout|rollback|store-state-services|timer|preemption|m30|user-fault|m31|restart|manifest-v1|cap-lifecycle|typed-arenas|quotas|m32|io-substrate|m33|serial-driver|m34|block-driver|m35|store-service|m36|state-service|m37|generation-switch|m38|introspection|m40|directed-ipc|m41|console-shell|m42|virtio-block|m42-driver-fault|block-driver-fault|m43|vertexdisk|m43-bad-superblock|vertexdisk-bad-superblock|m44|boot-manager|m45|store-verification|m46|native-update|m47|store-executables|m47-corrupt-executable|store-executable-corruption|m48|dynamic-process|m49|config-objects|m49-config-corrupt|config-hash-mismatch|m50|secrets|m54|appliance|m55|driver-framework|m56|virtio-device-stack|m57|networking-v0|m59|namespace-service|m60|policy-typed|m61|abi-authority-hardening|m62|storage-durability|m62-journal-replay|storage-journal-replay|m62-corrupt-journal|storage-corrupt-journal|m63|network-boundary|m64|supervisor-lifecycle|m66|memory-lifecycle|m67|address-space-teardown|m68|failure-atomicity|m69|memory-pressure|manifest-truncated|manifest-bad-magic|manifest-raw-compact|manifest-old-compact-magic|manifest-unsupported-version|manifest-oob-record|manifest-missing-provider>" >&2
+        echo "usage: scripts/krust-test.sh <m13|m14|valid-activation|manifest-cycle|bad-cap|readiness|readiness-timeout|rollback|store-state-services|timer|preemption|m30|user-fault|m31|restart|manifest-v1|cap-lifecycle|typed-arenas|quotas|m32|io-substrate|m33|serial-driver|m34|block-driver|m35|store-service|m36|state-service|m37|generation-switch|m38|introspection|m40|directed-ipc|m41|console-shell|m42|virtio-block|m42-driver-fault|block-driver-fault|m43|vertexdisk|m43-bad-superblock|vertexdisk-bad-superblock|m44|boot-manager|m45|store-verification|m46|native-update|m47|store-executables|m47-corrupt-executable|store-executable-corruption|m48|dynamic-process|m49|config-objects|m49-config-corrupt|config-hash-mismatch|m50|secrets|m54|appliance|m55|driver-framework|m56|virtio-device-stack|m57|networking-v0|m59|namespace-service|m60|policy-typed|m61|abi-authority-hardening|m62|storage-durability|m62-journal-replay|storage-journal-replay|m62-corrupt-journal|storage-corrupt-journal|m63|network-boundary|m64|supervisor-lifecycle|m66|memory-lifecycle|m67|address-space-teardown|m68|failure-atomicity|m69|memory-pressure|m70|interrupt-routing|m71|dma-ownership|m72|virtio-recovery|m73|device-fault-gate|manifest-truncated|manifest-bad-magic|manifest-raw-compact|manifest-old-compact-magic|manifest-unsupported-version|manifest-oob-record|manifest-missing-provider>" >&2
         exit 2
         ;;
 esac

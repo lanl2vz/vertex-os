@@ -1126,6 +1126,12 @@ fn allocate_dma_region(
     hhdm_offset: u64,
     allocator: &mut memory::FrameAllocator,
 ) -> Option<u64> {
+    if length == 0 || length % memory::FRAME_SIZE != 0 {
+        serial::write_str("KrustBoot runtime plan failed: dma region length alignment id=");
+        serial::write_str(id);
+        serial::write_str("\n");
+        return None;
+    }
     let frames = length
         .checked_add(memory::FRAME_SIZE - 1)?
         .checked_div(memory::FRAME_SIZE)?;

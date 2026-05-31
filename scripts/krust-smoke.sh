@@ -445,6 +445,11 @@ flaky-service restart quota restored
 flaky-service exits 0
 Krust process wait observed exit: proc=logd
 vertex-init waits for service exit status
+block-driver sleeps on virtio-blk IRQ instead of polling for completion
+netstack sleeps on virtio-net IRQ instead of polling for RX completion
+driver exit releases DMA buffers and user DMA mappings
+inspect reports virtio queue state, last error, reset count, and owner process
+release gate checks memory/object/cap/DMA/IRQ leak deltas after fault injection
 Native restart policy ok
 Native manifest-driven activation ok
 Native readiness activation ok
@@ -514,7 +519,7 @@ done
 
 cleanup
 pid=
-echo "smoke failed: serial output did not contain the full M14-M65 native activation transcript after $QEMU_ATTEMPTS checks"
+echo "smoke failed: serial output did not contain the full M14-M73 native activation transcript after $QEMU_ATTEMPTS checks"
 echo "serial log: $SERIAL_LOG"
 if [ -n "$missing_required" ]; then
     echo "missing required transcript lines:"

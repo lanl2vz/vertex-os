@@ -50,9 +50,9 @@ pub extern "C" fn _start() -> ! {
         let command = &command[..received as usize];
         if bytes_eq(command, b"help") {
             log(b"console-shell command: help");
-            log(b"commands: generation services counter increment install rollback why halt");
+            log(b"commands: generation services devices counter increment install rollback why halt");
             console_write(
-                b"commands: generation services counter increment install rollback why halt\n> ",
+                b"commands: generation services devices counter increment install rollback why halt\n> ",
             );
             continue;
         }
@@ -67,6 +67,12 @@ pub extern "C" fn _start() -> ! {
             log(b"console-shell command: services");
             let report = runtime_report();
             console_write_services(report);
+            continue;
+        }
+        if bytes_eq(command, b"devices") {
+            log(b"console-shell command: devices");
+            let report = runtime_report();
+            console_write_devices(report);
             continue;
         }
         if bytes_eq(command, b"why svc:echo cap:log.sink") {
@@ -201,6 +207,33 @@ fn console_write_services(report: &[u8]) {
     append(&mut payload, &mut len, b"\n> ");
     console_write(&payload[..len]);
     log(b"native shell services query ok");
+}
+
+fn console_write_devices(report: &[u8]) {
+    let needles: [&[u8]; 2] = [b"virtio-device-runtime[", b"device=device:virtio-blk0"];
+    let Some(line) = find_line_contains_all(report, &needles) else {
+        log(b"console-shell device query failed");
+        sys::exit(1);
+    };
+    let Some(owner) = field_slice(line, b"owner=") else {
+        log(b"console-shell device owner query failed");
+        sys::exit(1);
+    };
+    let Some(reason) = field_slice(line, b"last_error=") else {
+        log(b"console-shell device error query failed");
+        sys::exit(1);
+    };
+
+    let mut payload = [0u8; 128];
+    let mut len = 0;
+    append(&mut payload, &mut len, b"last device failure: owner=");
+    append(&mut payload, &mut len, owner);
+    append(&mut payload, &mut len, b" reason=");
+    append(&mut payload, &mut len, reason);
+    log(&payload[..len]);
+    log(b"appliance shell reports last device failure reason and owner process");
+    append(&mut payload, &mut len, b"\n> ");
+    console_write(&payload[..len]);
 }
 
 fn counter_request(request: &[u8]) -> &[u8] {

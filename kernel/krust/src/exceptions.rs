@@ -10,6 +10,7 @@ const VECTOR_INVALID_OPCODE: usize = 6;
 const VECTOR_GENERAL_PROTECTION: usize = 13;
 const VECTOR_PAGE_FAULT: usize = 14;
 const VECTOR_TIMER_IRQ: usize = 32;
+const VECTOR_LEGACY_IRQ_BASE: usize = 32;
 
 #[derive(Clone, Copy)]
 #[repr(C, packed)]
@@ -62,6 +63,21 @@ unsafe extern "C" {
     fn krust_general_protection_entry();
     fn krust_page_fault_entry();
     fn krust_timer_entry();
+    fn krust_irq1_entry();
+    fn krust_irq2_entry();
+    fn krust_irq3_entry();
+    fn krust_irq4_entry();
+    fn krust_irq5_entry();
+    fn krust_irq6_entry();
+    fn krust_irq7_entry();
+    fn krust_irq8_entry();
+    fn krust_irq9_entry();
+    fn krust_irq10_entry();
+    fn krust_irq11_entry();
+    fn krust_irq12_entry();
+    fn krust_irq13_entry();
+    fn krust_irq14_entry();
+    fn krust_irq15_entry();
 }
 
 global_asm!(
@@ -191,6 +207,44 @@ krust_timer_entry:
     call krust_timer_kernel_dispatch
     pop_user_frame
     iretq
+
+    .macro legacy_irq_entry name line
+    .global \name
+\name:
+    push rax
+    mov rax, [rsp + 16]
+    test rax, 3
+    pop rax
+    jz 9f
+    push_user_frame
+    mov rdi, \line
+    mov rsi, rsp
+    call krust_irq_user_dispatch
+    pop_user_frame
+    iretq
+9:
+    push_user_frame
+    mov rdi, \line
+    call krust_irq_kernel_dispatch
+    pop_user_frame
+    iretq
+    .endm
+
+    legacy_irq_entry krust_irq1_entry, 1
+    legacy_irq_entry krust_irq2_entry, 2
+    legacy_irq_entry krust_irq3_entry, 3
+    legacy_irq_entry krust_irq4_entry, 4
+    legacy_irq_entry krust_irq5_entry, 5
+    legacy_irq_entry krust_irq6_entry, 6
+    legacy_irq_entry krust_irq7_entry, 7
+    legacy_irq_entry krust_irq8_entry, 8
+    legacy_irq_entry krust_irq9_entry, 9
+    legacy_irq_entry krust_irq10_entry, 10
+    legacy_irq_entry krust_irq11_entry, 11
+    legacy_irq_entry krust_irq12_entry, 12
+    legacy_irq_entry krust_irq13_entry, 13
+    legacy_irq_entry krust_irq14_entry, 14
+    legacy_irq_entry krust_irq15_entry, 15
 "#
 );
 
@@ -200,6 +254,21 @@ pub fn init() {
     idt[VECTOR_GENERAL_PROTECTION].set_handler(krust_general_protection_entry as *const () as u64);
     idt[VECTOR_PAGE_FAULT].set_handler(krust_page_fault_entry as *const () as u64);
     idt[VECTOR_TIMER_IRQ].set_handler(krust_timer_entry as *const () as u64);
+    idt[VECTOR_LEGACY_IRQ_BASE + 1].set_handler(krust_irq1_entry as *const () as u64);
+    idt[VECTOR_LEGACY_IRQ_BASE + 2].set_handler(krust_irq2_entry as *const () as u64);
+    idt[VECTOR_LEGACY_IRQ_BASE + 3].set_handler(krust_irq3_entry as *const () as u64);
+    idt[VECTOR_LEGACY_IRQ_BASE + 4].set_handler(krust_irq4_entry as *const () as u64);
+    idt[VECTOR_LEGACY_IRQ_BASE + 5].set_handler(krust_irq5_entry as *const () as u64);
+    idt[VECTOR_LEGACY_IRQ_BASE + 6].set_handler(krust_irq6_entry as *const () as u64);
+    idt[VECTOR_LEGACY_IRQ_BASE + 7].set_handler(krust_irq7_entry as *const () as u64);
+    idt[VECTOR_LEGACY_IRQ_BASE + 8].set_handler(krust_irq8_entry as *const () as u64);
+    idt[VECTOR_LEGACY_IRQ_BASE + 9].set_handler(krust_irq9_entry as *const () as u64);
+    idt[VECTOR_LEGACY_IRQ_BASE + 10].set_handler(krust_irq10_entry as *const () as u64);
+    idt[VECTOR_LEGACY_IRQ_BASE + 11].set_handler(krust_irq11_entry as *const () as u64);
+    idt[VECTOR_LEGACY_IRQ_BASE + 12].set_handler(krust_irq12_entry as *const () as u64);
+    idt[VECTOR_LEGACY_IRQ_BASE + 13].set_handler(krust_irq13_entry as *const () as u64);
+    idt[VECTOR_LEGACY_IRQ_BASE + 14].set_handler(krust_irq14_entry as *const () as u64);
+    idt[VECTOR_LEGACY_IRQ_BASE + 15].set_handler(krust_irq15_entry as *const () as u64);
 
     let pointer = DescriptorTablePointer {
         limit: (core::mem::size_of_val(idt) - 1) as u16,
@@ -211,6 +280,7 @@ pub fn init() {
     }
 
     serial::write_str("IDT initialized: #UD #GP #PF IRQ0\n");
+    serial::write_str("IDT hardware IRQ entries initialized: IRQ1-IRQ15\n");
 }
 
 #[unsafe(no_mangle)]
@@ -229,6 +299,24 @@ extern "C" fn krust_timer_kernel_dispatch() {
     timer::handle_tick();
     ipc::wake_timed_from_interrupt();
     timer::eoi();
+}
+
+#[unsafe(no_mangle)]
+extern "C" fn krust_irq_user_dispatch(line: u64, frame: &mut ipc::SyscallFrame) {
+    ipc::record_hardware_irq(line);
+    timer::eoi_irq(line as u8);
+    let result = ipc::preempt_current_process(frame);
+    if let ipc::ScheduleResult::Halt { ok } = result {
+        print_halt_status(ok);
+        halt_loop();
+    }
+}
+
+#[unsafe(no_mangle)]
+extern "C" fn krust_irq_kernel_dispatch(line: u64) {
+    ipc::record_hardware_irq(line);
+    ipc::wake_timed_from_interrupt();
+    timer::eoi_irq(line as u8);
 }
 
 #[unsafe(no_mangle)]

@@ -6,7 +6,6 @@ pub const STATUS_TIMEOUT: u64 = u64::MAX - 9;
 const SYS_EXIT: u64 = 2;
 const SYS_IPC_SEND: u64 = 3;
 const SYS_IPC_RECV: u64 = 4;
-const SYS_YIELD: u64 = 5;
 const SYS_LOG_WRITE: u64 = 7;
 const SYS_OBJECT_READ: u64 = 13;
 const SYS_IPC_RECV_TIMEOUT: u64 = 19;
@@ -19,6 +18,8 @@ const SYS_IO_READ16: u64 = 33;
 const SYS_IO_WRITE16: u64 = 34;
 const SYS_IO_READ32: u64 = 35;
 const SYS_IO_WRITE32: u64 = 36;
+const SYS_VIRTIO_DEVICE_PROBE: u64 = 40;
+const SYS_VIRTIO_DEVICE_REPORT: u64 = 47;
 
 #[repr(C)]
 pub struct DmaMapping {
@@ -113,8 +114,29 @@ pub fn dma_map(cap_slot: u64, mapping: &mut DmaMapping) -> u64 {
     )
 }
 
-pub fn yield_now() -> u64 {
-    syscall3(SYS_YIELD, 0, 0, 0)
+pub fn virtio_probe(cap_slot: u64) -> u64 {
+    syscall3(SYS_VIRTIO_DEVICE_PROBE, cap_slot, 0, 0)
+}
+
+pub fn virtio_report(cap_slot: u64, report: &VirtioDriverReport) -> u64 {
+    syscall3(
+        SYS_VIRTIO_DEVICE_REPORT,
+        cap_slot,
+        report as *const VirtioDriverReport as u64,
+        core::mem::size_of::<VirtioDriverReport>() as u64,
+    )
+}
+
+#[repr(C)]
+pub struct VirtioDriverReport {
+    pub queue_size: u64,
+    pub avail_idx: u64,
+    pub used_idx: u64,
+    pub submissions: u64,
+    pub completions: u64,
+    pub timeouts: u64,
+    pub reset_count: u64,
+    pub last_error: u64,
 }
 
 pub fn exit(status: u64) -> ! {
