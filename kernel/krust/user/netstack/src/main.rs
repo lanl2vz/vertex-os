@@ -13,6 +13,7 @@ const CAP_NETWORK_PORT: u64 = 6;
 const PROTOCOL_HEALTH_V0: u16 = 2;
 const MESSAGE_READY: u16 = 1;
 const ENVELOPE_LEN: usize = 16;
+const RAW_NET_FRAME_BYTES: usize = 512;
 
 #[unsafe(link_section = ".text._start")]
 #[unsafe(no_mangle)]
@@ -53,7 +54,7 @@ pub extern "C" fn _start() -> ! {
     }
     log(b"virtio-net driver can send raw frames");
 
-    let mut rx_frame = [0u8; 128];
+    let mut rx_frame = [0u8; RAW_NET_FRAME_BYTES];
     let arp_reply = receive_arp_reply_from_gateway(&mut rx_frame);
     log(b"ARP cache owned by netstack");
     log(b"virtio-net driver can receive raw frames");
@@ -226,7 +227,7 @@ fn ethernet_source(frame: &[u8]) -> [u8; 6] {
     mac
 }
 
-fn receive_arp_reply_from_gateway(buffer: &mut [u8; 128]) -> usize {
+fn receive_arp_reply_from_gateway(buffer: &mut [u8; RAW_NET_FRAME_BYTES]) -> usize {
     let mut attempts = 0;
     while attempts < 4 {
         let received = receive_net_frame(buffer, b"netstack virtio-net receive failed");
@@ -239,7 +240,10 @@ fn receive_arp_reply_from_gateway(buffer: &mut [u8; 128]) -> usize {
     sys::exit(1);
 }
 
-fn receive_icmp_echo_reply_from_gateway(buffer: &mut [u8; 128], random: &[u8; 32]) -> usize {
+fn receive_icmp_echo_reply_from_gateway(
+    buffer: &mut [u8; RAW_NET_FRAME_BYTES],
+    random: &[u8; 32],
+) -> usize {
     let mut attempts = 0;
     while attempts < 4 {
         let received = receive_net_frame(buffer, b"netstack ICMP echo reply failed");
@@ -252,7 +256,7 @@ fn receive_icmp_echo_reply_from_gateway(buffer: &mut [u8; 128], random: &[u8; 32
     sys::exit(1);
 }
 
-fn receive_net_frame(buffer: &mut [u8; 128], failure: &[u8]) -> usize {
+fn receive_net_frame(buffer: &mut [u8; RAW_NET_FRAME_BYTES], failure: &[u8]) -> usize {
     let received = sys::virtio_net_rx(CAP_VIRTIO_NET, buffer);
     if received < 60 || received > buffer.len() as u64 {
         log(failure);

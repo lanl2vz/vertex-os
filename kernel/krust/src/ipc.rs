@@ -1545,10 +1545,12 @@ impl IpcEndpoint {
         None
     }
 
-    fn remove_first_from_sender(&mut self, sender: ProcessId) -> bool {
+    fn remove_vfs_state_request(&mut self, sender: ProcessId, transaction_id: u64) -> bool {
         let mut index = 0;
         while index < self.queue_len {
-            if self.queue[index].sender == sender {
+            if self.queue[index].sender == sender
+                && ipc_message_transaction_id(self.queue[index]) == Some(transaction_id)
+            {
                 while index + 1 < self.queue_len {
                     self.queue[index] = self.queue[index + 1];
                     index += 1;
@@ -5461,6 +5463,7 @@ pub fn exit_current_process(status: u64, frame: &mut SyscallFrame) -> ScheduleRe
             (None, None, None)
         }
     };
+    release_unreferenced_derived_vfs_roots(runtime());
     if let Some((service, lifecycle_state)) = lifecycle_event {
         runtime().record_service_lifecycle(service, lifecycle_state, Some(status));
     }
@@ -5581,6 +5584,7 @@ pub fn fault_current_process(
         runtime.release_process_file_descriptions(pid);
         (name, initial, pid)
     };
+    release_unreferenced_derived_vfs_roots(runtime());
     if !initial_faulted {
         runtime().record_service_lifecycle(
             name,
@@ -6334,6 +6338,7 @@ pub fn start_process(cap_slot: u64, pid: u64) -> Result<(), IpcError> {
     if release_files {
         runtime().release_process_file_descriptions(pid);
     }
+    release_unreferenced_derived_vfs_roots(runtime());
     runtime().record_service_lifecycle(target, lifecycle_state, None);
 
     serial::write_str("Krust process start accepted: proc=");
@@ -6411,6 +6416,7 @@ pub fn kill_process(cap_slot: u64, pid: u64) -> Result<(), IpcError> {
         process.name
     };
     runtime().release_process_file_descriptions(pid);
+    release_unreferenced_derived_vfs_roots(runtime());
 
     serial::write_str("Krust process kill accepted: proc=");
     serial::write_str(caller);
@@ -6491,7 +6497,11 @@ pub fn cap_drop(slot: u64) -> Result<(), IpcError> {
 pub fn cap_revoke(slot: u64) -> Result<(), IpcError> {
     let cap = lookup_capability(slot, 0)?;
     let process_name = current_process_name();
-    runtime().revoke_cap_id(cap.id)?;
+    {
+        let runtime = runtime();
+        runtime.revoke_cap_id(cap.id)?;
+        release_unreferenced_derived_vfs_roots(runtime);
+    }
 
     serial::write_str("Capability revoke accepted: proc=");
     serial::write_str(process_name);
@@ -6508,10 +6518,31 @@ fn release_unreferenced_derived_vfs_root(runtime: &mut RuntimeState, object: Ker
         return;
     }
     if runtime.objects.remove_derived_vfs_root(object) {
-        serial::write_str("Derived VFS root released: object=");
-        serial::write_u64_dec(object.raw());
-        serial::write_str("\n");
+        log_derived_vfs_root_released(object);
     }
+}
+
+fn release_unreferenced_derived_vfs_roots(runtime: &mut RuntimeState) {
+    let mut index = 0;
+    while index < runtime.objects.count {
+        if let Some(KernelObject::VfsRoot(root)) = runtime.objects.objects[index]
+            && root.derived
+            && !object_reachable_by_cap(runtime, root.id)
+        {
+            let object = root.id;
+            if runtime.objects.remove_derived_vfs_root(object) {
+                log_derived_vfs_root_released(object);
+                continue;
+            }
+        }
+        index += 1;
+    }
+}
+
+fn log_derived_vfs_root_released(object: KernelObjectId) {
+    serial::write_str("Derived VFS root released: object=");
+    serial::write_u64_dec(object.raw());
+    serial::write_str("\n");
 }
 
 pub fn cap_inspect(slot: u64) -> Result<u64, IpcError> {
@@ -8588,20 +8619,17 @@ pub fn virtio_net_rx(
     if !virtio_device_is(device, VIRTIO_NET_DEVICE_ID) {
         return Err(IpcError::BadCapability);
     }
-    if max_len < ETHERNET_MIN_FRAME_LEN {
+    if max_len < MAX_MESSAGE_BYTES {
         return Err(IpcError::MessageTooLarge);
     }
     usercopy::validate_user_buffer(
         UserPtr::new(destination as u64),
-        min(max_len, MAX_MESSAGE_BYTES),
+        MAX_MESSAGE_BYTES,
         paging::UserAccess::Write,
     )
     .map_err(|_| IpcError::InvalidUserBuffer)?;
     let mut frame = [0u8; MAX_MESSAGE_BYTES];
     let frame_len = virtio_net_receive_frame(&mut frame)?;
-    if frame_len > max_len {
-        return Err(IpcError::MessageTooLarge);
-    }
     usercopy::copy_to_user(UserPtr::new(destination as u64), &frame[..frame_len])
         .map_err(|_| IpcError::InvalidUserBuffer)?;
 
@@ -10427,7 +10455,7 @@ fn start_vfs_state_transaction(
 
     restore_current_vfs_state_waiter(reply_endpoint);
     if let Some(endpoint) = runtime().objects.get_endpoint_mut(request_endpoint) {
-        let _ = endpoint.remove_first_from_sender(ProcessId::empty());
+        let _ = endpoint.remove_vfs_state_request(ProcessId::empty(), transaction_id);
     }
 
     serial::write_str("Scheduler blocked: proc=");
@@ -11961,8 +11989,10 @@ fn object_reachable_by_cap(runtime: &RuntimeState, object_id: KernelObjectId) ->
     let mut process_index = 0;
     while process_index < runtime.processes.count {
         if let Some(process) = runtime.processes.processes[process_index]
-            && (cap_space_reaches_object(process.caps, object_id)
-                || cap_space_reaches_object(process.initial_caps, object_id))
+            && process.state != ProcessState::Empty
+            && ((process.state != ProcessState::Exited
+                && cap_space_reaches_live_object(runtime, process.caps, object_id))
+                || cap_space_reaches_live_object(runtime, process.initial_caps, object_id))
         {
             return true;
         }
@@ -12016,11 +12046,19 @@ fn id_list_contains(ids: &[Option<KernelObjectId>], object_id: KernelObjectId) -
     false
 }
 
-fn cap_space_reaches_object(space: CapabilitySpace, object_id: KernelObjectId) -> bool {
+fn cap_space_reaches_live_object(
+    runtime: &RuntimeState,
+    space: CapabilitySpace,
+    object_id: KernelObjectId,
+) -> bool {
     let mut slot = 0;
     while slot < MAX_CAPS {
         if let Some(cap) = space.caps[slot]
             && cap.object == object_id
+            && !cap.revoked
+            && !runtime.cap_id_revoked(cap.id)
+            && !capability_has_revoked_ancestor(runtime, cap)
+            && cap.generation_id == runtime.generation_id
         {
             return true;
         }
@@ -12638,6 +12676,7 @@ fn reap_process_context(pid: ProcessId) -> Result<(), IpcError> {
         process.clear_file_handles();
     }
     runtime.release_process_file_descriptions(pid);
+    release_unreferenced_derived_vfs_roots(runtime);
     if already_reaped || cr3 == 0 {
         return Ok(());
     }
