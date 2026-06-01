@@ -30,12 +30,12 @@ vertex-os/
     netstack/            Demo network capability provider
     echo-server/         Demo service consuming log and network capabilities
   kernel/
-    krust/               Bootable Krust kernel prototype, currently covering M14-M75 native graph activation, substrate hardening, pinned tooling, ABI v1 IPC, console shell, virtio device I/O, VertexDisk v0 durability, native boot selection, verified store objects, native updates, store-loaded executables, dynamic process creation, native config/secrets, package/link/build import, the first appliance transcript, native user-space driver objects, netstack boundaries, capability namespaces, policy compilation, lifecycle supervision, a supported standalone appliance profile, owned frame reclamation, address-space teardown, failure-atomic kernel object creation, memory lifecycle soak gates, interrupt routing, DMA ownership, virtio recovery, device-fault isolation, VFS root authority, and open-file handles
+    krust/               Bootable Krust kernel prototype, currently covering M14-M77 native graph activation, substrate hardening, pinned tooling, ABI v1 IPC, console shell, virtio device I/O, VertexDisk v0 durability, native boot selection, verified store objects, native updates, store-loaded executables, dynamic process creation, native config/secrets, package/link/build import, the first appliance transcript, native user-space driver objects, netstack boundaries, capability namespaces, policy compilation, lifecycle supervision, a supported standalone appliance profile, owned frame reclamation, address-space teardown, failure-atomic kernel object creation, memory lifecycle soak gates, interrupt routing, DMA ownership, virtio recovery, device-fault isolation, VFS root authority, open-file handles, directory metadata operations, and bounded block-cache writeback
   lang/
     vertex-lang/         Planned typed system-definition language
 ```
 
-## Krust M14-M75
+## Krust M14-M77
 
 The current native activation path lives in `kernel/krust`. It is isolated
 from the host-side Cargo workspace and boots a Limine ISO under QEMU. The ISO
@@ -67,7 +67,8 @@ M63 network service boundaries, M64 supervisor lifecycle semantics, M65 release
 profile recording, M66 owned frame accounting, M67 address-space teardown, M68
 failure-atomic object/capability creation, M69 lifecycle soak gates, M70
 interrupt routing, M71 DMA ownership, M72 virtio recovery, M73 device-fault
-isolation, M74 VFS object authority, M75 open-file handle lifecycle, and a real
+isolation, M74 VFS object authority, M75 open-file handle lifecycle, M76
+directory metadata operations, M77 bounded block-cache writeback, and a real
 restart of `flaky-service`, not init-owned transcript logging.
 
 ```sh
@@ -76,13 +77,13 @@ scripts/krust-smoke.sh
 
 The clean-clone release gate validates the host-side tool build, checks the
 Krust toolchain, rebuilds the standalone ISO from clean kernel artifacts, and
-runs the M14-M75 substrate gate with the M14-M75 QEMU test matrix:
+runs the M14-M77 substrate gate with the M14-M77 QEMU test matrix:
 
 ```sh
 scripts/krust-release-gate.sh
 ```
 
-See [docs/krust-milestones.md](docs/krust-milestones.md) for M0 through M75
+See [docs/krust-milestones.md](docs/krust-milestones.md) for M0 through M77
 current status and the appliance OS MVP profile,
 [docs/krust-toolchain.md](docs/krust-toolchain.md) for the pinned M39 toolchain,
 and [docs/krust-abi-v1.md](docs/krust-abi-v1.md) for the current syscall,

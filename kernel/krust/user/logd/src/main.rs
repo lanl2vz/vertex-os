@@ -59,7 +59,7 @@ pub extern "C" fn _start() -> ! {
         log(b"logd config open failed");
         sys::exit(1);
     }
-    let mut config_stat = [0u8; 32];
+    let mut config_stat = [0u8; 64];
     if sys::vfs_stat(config_handle, &mut config_stat) != config_stat.len() as u64 {
         log(b"logd config stat failed");
         sys::exit(1);

@@ -1,6 +1,6 @@
 # Krust Kernel
 
-Krust now covers the M14-M75 native graph-activation proof path, substrate
+Krust now covers the M14-M77 native graph-activation proof path, substrate
 hardening, reproducible build environment, directed IPC ABI v1, and native
 console shell plus virtio device I/O, VertexDisk v0 persistence, native boot
 selection, verified store objects, native update transactions, and store-loaded
@@ -13,7 +13,8 @@ frame reclamation, address-space teardown, failure-atomic kernel object
 creation, memory lifecycle soak gates, interrupt routing, DMA ownership,
 virtio recovery, device-fault isolation, VFS root authority, service-local
 mount roots, service-backed state-volume VFS transactions, and kernel-owned
-open-file handles. M44-M75 are tracked in
+open-file handles, directory metadata operations, and bounded block-cache
+writeback. M44-M77 are tracked in
 `../../docs/krust-milestones.md`.
 
 The target is intentionally small:
@@ -369,7 +370,7 @@ VFS state transaction wake: proc=echo file=value op=read result=2
 vertex-state serves VFS state read
 mounted state volume value uses VFS service transaction
 VFS state transaction request: proc=echo state=state:counter op=stat file=value
-VFS state transaction wake: proc=echo file=value op=stat result=32
+VFS state transaction wake: proc=echo file=value op=stat result=64
 vertex-state serves VFS state stat
 service-backed state value stat reports durable length
 vertex-state writes state volume to disk
@@ -414,7 +415,7 @@ make smoke
 ```
 
 The smoke test boots QEMU headlessly, captures serial output to
-`build/serial.log`, and passes when it sees the M14-M75 directed IPC, console,
+`build/serial.log`, and passes when it sees the M14-M77 directed IPC, console,
 virtio-block, VertexDisk, verified store, update, store-executable, dynamic
 process, config, secret, package-boundary, appliance, virtio device, networking,
 namespace, policy, ABI-hardening, storage durability, network-boundary, and
@@ -425,7 +426,7 @@ device-fault transcripts. The same check is available from the repository root:
 scripts/krust-smoke.sh
 ```
 
-## M26-M75 Substrate Gate
+## M26-M77 Substrate Gate
 
 Run the clean-clone gate from the repository root:
 
@@ -440,12 +441,12 @@ make release-gate
 ```
 
 The gate checks script executability and shell syntax, verifies Makefile recipe
-parsing, checks Rust formatting and Markdown whitespace, confirms the M14-M75
+parsing, checks Rust formatting and Markdown whitespace, confirms the M14-M77
 documentation anchors, checks the pinned M39 toolchain and Cargo lockfiles, runs
 `cargo metadata --locked --offline` and `cargo build --locked --offline`,
 validates `examples/hello-generation.vertex.json`, runs `make doctor`, rebuilds
 from `make clean`, runs `make smoke`, checks package/link/build import commands,
-and then runs the M14-M75 QEMU cases:
+and then runs the M14-M77 QEMU cases:
 `m14`,
 `manifest-cycle`, `bad-cap`, `readiness-timeout`, `rollback`, `store-state-services`,
 `timer`, `preemption`, `user-fault`, `restart`, `manifest-v1`, `cap-lifecycle`,
@@ -454,7 +455,7 @@ and then runs the M14-M75 QEMU cases:
 `m46`, `m47`, `m47-corrupt-executable`, `m48`, `m49`,
 `m49-config-corrupt`, `m50`, `m54`, `m55`, `m56`, `m57`, `m59`, `m60`, `m61`,
 `m62`, `m62-journal-replay`, `m62-corrupt-journal`, `m63`, `m64`, `m66`,
-`m67`, `m68`, `m69`, `m70`, `m71`, `m72`, `m73`, `m75`, and the
+`m67`, `m68`, `m69`, `m70`, `m71`, `m72`, `m73`, `m75`, `m76`, `m77`, and the
 malformed-manifest cases. If the offline build
 fails, the gate prints the Cargo cache or vendoring prerequisite explicitly.
 

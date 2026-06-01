@@ -75,6 +75,9 @@ const SYS_VFS_READDIR: u64 = 63;
 const SYS_VFS_MOUNT: u64 = 64;
 const SYS_VFS_UNMOUNT: u64 = 65;
 const SYS_VFS_RENAME: u64 = 66;
+const SYS_VFS_MKDIR: u64 = 67;
+const SYS_VFS_RMDIR: u64 = 68;
+const SYS_VFS_LINK: u64 = 69;
 
 const STATUS_OK: u64 = 0;
 const STATUS_BAD_CAPABILITY: u64 = u64::MAX - 1;
@@ -484,6 +487,28 @@ pub extern "C" fn krust_syscall_dispatch(
             ) {
                 Ok(()) => frame.rax = STATUS_OK,
                 Err(error) => frame.rax = ipc_error_status("SYS_VFS_RENAME", error),
+            }
+        }
+        SYS_VFS_MKDIR => match ipc::vfs_mkdir(arg0, arg1 as *const u8, arg2) {
+            Ok(()) => frame.rax = STATUS_OK,
+            Err(error) => frame.rax = ipc_error_status("SYS_VFS_MKDIR", error),
+        },
+        SYS_VFS_RMDIR => match ipc::vfs_rmdir(
+            arg0,
+            arg1 as *const u8,
+            usize::try_from(arg2).unwrap_or(usize::MAX),
+        ) {
+            Ok(()) => frame.rax = STATUS_OK,
+            Err(error) => frame.rax = ipc_error_status("SYS_VFS_RMDIR", error),
+        },
+        SYS_VFS_LINK => {
+            match ipc::vfs_link(
+                arg0,
+                arg1 as *const u8,
+                usize::try_from(arg2).unwrap_or(usize::MAX),
+            ) {
+                Ok(()) => frame.rax = STATUS_OK,
+                Err(error) => frame.rax = ipc_error_status("SYS_VFS_LINK", error),
             }
         }
         SYS_VIRTIO_RNG_READ => match ipc::virtio_rng_read(

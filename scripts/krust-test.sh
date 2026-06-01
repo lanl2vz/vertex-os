@@ -328,7 +328,7 @@ VFS state transaction wake: proc=echo file=value op=read result=2
 vertex-state serves VFS state read
 mounted state volume value uses VFS service transaction
 VFS state transaction request: proc=echo state=state:counter op=stat file=value
-VFS state transaction wake: proc=echo file=value op=stat result=32
+VFS state transaction wake: proc=echo file=value op=stat result=64
 vertex-state serves VFS state stat
 service-backed state value stat reports durable length
 vertex-state writes journal record to disk
@@ -758,7 +758,7 @@ mounted state volume appears at /state/counter
 generic state volume uses VFS service transaction
 mounted state volume value uses VFS service transaction
 VFS state transaction request: proc=echo state=state:counter op=stat file=value
-VFS state transaction wake: proc=echo file=value op=stat result=32
+VFS state transaction wake: proc=echo file=value op=stat result=64
 vertex-state serves VFS state stat
 service-backed state value stat reports durable length
 VFS root derive accepted: proc=echo source=6 target=25 root=/state/sub rights=read|write|create|unlink|rename|mount|resolve
@@ -774,8 +774,6 @@ VFS unmount accepted: proc=echo path=/mnt canonical=/state/mnt
 VFS mount object creates busy-checks and unmounts volatile root
 SYS_VFS_CREATE returned STATUS_VFS_PERMISSION
 VFS create accepted: proc=echo path=/new
-SYS_VFS_UNLINK returned STATUS_VFS_BUSY
-busy VFS file cannot be unlinked while open
 VFS unlink accepted: proc=echo path=/new canonical=/state/new
 manifest-granted VFS writer can create write read and unlink a file
 SYS_VFS_RENAME returned STATUS_VFS_PERMISSION
@@ -824,11 +822,40 @@ VFS state transaction wake: proc=echo file=value op=read result=2
 vertex-state serves VFS state read
 mounted state volume value uses VFS service transaction
 VFS state transaction request: proc=echo state=state:counter op=stat file=value
-VFS state transaction wake: proc=echo file=value op=stat result=32
+VFS state transaction wake: proc=echo file=value op=stat result=64
 vertex-state serves VFS state stat
 service-backed state value stat reports durable length
 VFS state transaction request: proc=echo state=state:counter op=control file=control
 VFS state transaction wake: proc=echo file=control op=control result=1
+Native service activation ok
+'
+        ;;
+    m76|directory-metadata)
+        MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
+        EXPECT_ACTIVATION_SUCCESS=1
+        required_lines='
+VFS rename moves volatile file and preserves vnode identity
+VFS stat reports monotonic metadata version and link count
+VFS rmdir rejects non-empty directory
+VFS mkdir creates directories and rmdir removes empty directories
+VFS unlink of open file keeps existing handle readable until close
+VFS hard links share volatile file backing and report link count
+VFS hard links cannot cross filesystem boundaries
+long VFS paths and components are rejected before allocation
+path traversal cannot escape service namespace root
+Native service activation ok
+'
+        ;;
+    m77|cache-writeback)
+        MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
+        EXPECT_ACTIVATION_SUCCESS=1
+        required_lines='
+vertex-state block cache hit
+vertex-state block cache writeback clean
+vertex-state cache inspect dirty=0 pinned=0 writeback_errors=0
+vertex-state writes state volume to disk
+vertex-state serves VFS state write
+vertex-state serves VFS state read
 Native service activation ok
 '
         ;;
@@ -1119,7 +1146,7 @@ activation failed
 '
         ;;
     *)
-        echo "usage: scripts/krust-test.sh <m13|m14|valid-activation|manifest-cycle|bad-cap|readiness|readiness-timeout|rollback|store-state-services|timer|preemption|m30|user-fault|m31|restart|manifest-v1|cap-lifecycle|typed-arenas|quotas|m32|io-substrate|m33|serial-driver|m34|block-driver|m35|store-service|m36|state-service|m37|generation-switch|m38|introspection|m40|directed-ipc|m41|console-shell|m42|virtio-block|m42-driver-fault|block-driver-fault|m43|vertexdisk|m43-bad-superblock|vertexdisk-bad-superblock|m44|boot-manager|m45|store-verification|m46|native-update|m47|store-executables|m47-corrupt-executable|store-executable-corruption|m48|dynamic-process|m49|config-objects|m49-config-corrupt|config-hash-mismatch|m50|secrets|m54|appliance|m55|driver-framework|m56|virtio-device-stack|m57|networking-v0|m59|namespace-service|m60|policy-typed|m61|abi-authority-hardening|m62|storage-durability|m62-journal-replay|storage-journal-replay|m62-corrupt-journal|storage-corrupt-journal|m63|network-boundary|m64|supervisor-lifecycle|m66|memory-lifecycle|m67|address-space-teardown|m68|failure-atomicity|m69|memory-pressure|m70|interrupt-routing|m71|dma-ownership|m72|virtio-recovery|m73|device-fault-gate|manifest-truncated|manifest-bad-magic|manifest-raw-compact|manifest-old-compact-magic|manifest-unsupported-version|manifest-oob-record|manifest-missing-provider>" >&2
+        echo "usage: scripts/krust-test.sh <m13|m14|valid-activation|manifest-cycle|bad-cap|readiness|readiness-timeout|rollback|store-state-services|timer|preemption|m30|user-fault|m31|restart|manifest-v1|cap-lifecycle|typed-arenas|quotas|m32|io-substrate|m33|serial-driver|m34|block-driver|m35|store-service|m36|state-service|m37|generation-switch|m38|introspection|m40|directed-ipc|m41|console-shell|m42|virtio-block|m42-driver-fault|block-driver-fault|m43|vertexdisk|m43-bad-superblock|vertexdisk-bad-superblock|m44|boot-manager|m45|store-verification|m46|native-update|m47|store-executables|m47-corrupt-executable|store-executable-corruption|m48|dynamic-process|m49|config-objects|m49-config-corrupt|config-hash-mismatch|m50|secrets|m54|appliance|m55|driver-framework|m56|virtio-device-stack|m57|networking-v0|m59|namespace-service|m60|policy-typed|m61|abi-authority-hardening|m62|storage-durability|m62-journal-replay|storage-journal-replay|m62-corrupt-journal|storage-corrupt-journal|m63|network-boundary|m64|supervisor-lifecycle|m66|memory-lifecycle|m67|address-space-teardown|m68|failure-atomicity|m69|memory-pressure|m70|interrupt-routing|m71|dma-ownership|m72|virtio-recovery|m73|device-fault-gate|m75|vfs-blocking|m76|directory-metadata|m77|cache-writeback|manifest-truncated|manifest-bad-magic|manifest-raw-compact|manifest-old-compact-magic|manifest-unsupported-version|manifest-oob-record|manifest-missing-provider>" >&2
         exit 2
         ;;
 esac

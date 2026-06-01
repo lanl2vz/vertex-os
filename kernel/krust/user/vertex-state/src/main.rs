@@ -17,6 +17,7 @@ const BLOCK_OP_WRITE_SECTOR: u16 = 2;
 const BLOCK_REQUEST_LEN: usize = 16;
 const BLOCK_WRITE_ACK_LEN: usize = 16;
 const SECTOR_SIZE: usize = 512;
+const BLOCK_CACHE_ENTRIES: usize = 8;
 const MAX_STATE_VALUE_BYTES: usize = 16;
 const MAX_STATE_VOLUMES: usize = 4;
 const STATE_ID_BYTES: usize = 64;
@@ -91,9 +92,10 @@ pub extern "C" fn _start() -> ! {
         }
 
         if parsed.op == VFS_STATE_OP_READ_VALUE && payload.is_empty() {
-            let value_len = read_state_value(&table.entries[entry_index], &mut value);
+            let value_len = read_state_value(&mut table, entry_index, &mut value);
             send_vfs_response(transaction_id, &value[..value_len]);
             log(b"vertex-state serves VFS state read");
+            log_cache_report(&table.cache);
             continue;
         }
 
@@ -141,6 +143,50 @@ struct StateTable {
     count: usize,
     index_sector: u64,
     journal_sector: u64,
+    cache: BlockCache,
+}
+
+#[derive(Clone, Copy)]
+struct CacheEntry {
+    valid: bool,
+    dirty: bool,
+    sector: u64,
+    bytes: [u8; SECTOR_SIZE],
+}
+
+impl CacheEntry {
+    const fn empty() -> Self {
+        Self {
+            valid: false,
+            dirty: false,
+            sector: 0,
+            bytes: [0; SECTOR_SIZE],
+        }
+    }
+}
+
+struct BlockCache {
+    entries: [CacheEntry; BLOCK_CACHE_ENTRIES],
+    hits: u64,
+    misses: u64,
+    writebacks: u64,
+    dirty_pages: u64,
+    high_water_dirty: u64,
+    write_errors: u64,
+}
+
+impl BlockCache {
+    const fn new() -> Self {
+        Self {
+            entries: [CacheEntry::empty(); BLOCK_CACHE_ENTRIES],
+            hits: 0,
+            misses: 0,
+            writebacks: 0,
+            dirty_pages: 0,
+            high_water_dirty: 0,
+            write_errors: 0,
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -160,8 +206,9 @@ struct VfsStateRequest {
 }
 
 fn load_state_table() -> StateTable {
+    let mut cache = BlockCache::new();
     let mut superblock = [0u8; SECTOR_SIZE];
-    read_block_sector(0, &mut superblock);
+    read_block_sector_cached(&mut cache, 0, &mut superblock);
     if !valid_superblock(&superblock) {
         log(b"VertexDisk superblock rejected");
         sys::exit(1);
@@ -186,7 +233,7 @@ fn load_state_table() -> StateTable {
     };
 
     let mut index_sector = [0u8; SECTOR_SIZE];
-    read_block_sector(state_index_sector, &mut index_sector);
+    read_block_sector_cached(&mut cache, state_index_sector, &mut index_sector);
     if !valid_index_header(&index_sector, STATE_INDEX_MAGIC) {
         log(b"vertex-state index rejected");
         sys::exit(1);
@@ -202,6 +249,7 @@ fn load_state_table() -> StateTable {
         count: 0,
         index_sector: state_index_sector,
         journal_sector,
+        cache,
     };
     let mut index = 0;
     while index < count {
@@ -256,13 +304,18 @@ fn load_state_table() -> StateTable {
     table
 }
 
-fn read_state_value(state: &StateEntry, value: &mut [u8; MAX_STATE_VALUE_BYTES]) -> usize {
+fn read_state_value(
+    table: &mut StateTable,
+    entry_index: usize,
+    value: &mut [u8; MAX_STATE_VALUE_BYTES],
+) -> usize {
+    let state = table.entries[entry_index];
     if state.value_len == 0 {
         return 0;
     }
 
     let mut sector = [0u8; SECTOR_SIZE];
-    read_block_sector(state.data_sector, &mut sector);
+    read_block_sector_cached(&mut table.cache, state.data_sector, &mut sector);
     if checksum32(&sector[..state.value_len]) != state.checksum {
         log(b"vertex-state disk checksum failed");
         sys::exit(1);
@@ -281,18 +334,19 @@ fn write_state_value(table: &mut StateTable, entry_index: usize, value: &[u8]) {
     let state = table.entries[entry_index];
     let checksum = checksum32(value);
     let journal_sector = state_journal_sector(state, value, checksum);
-    write_block_sector(table.journal_sector, &journal_sector);
+    write_block_sector_cached(&mut table.cache, table.journal_sector, &journal_sector);
     log(b"vertex-state writes journal record to disk");
 
     let mut data_sector = [0u8; SECTOR_SIZE];
     data_sector[..value.len()].copy_from_slice(value);
-    write_block_sector(state.data_sector, &data_sector);
+    write_block_sector_cached(&mut table.cache, state.data_sector, &data_sector);
 
     table.entries[entry_index].value_len = value.len();
     table.entries[entry_index].checksum = checksum;
     let index_sector = state_index_sector(table);
-    write_block_sector(table.index_sector, &index_sector);
+    write_block_sector_cached(&mut table.cache, table.index_sector, &index_sector);
     log(b"vertex-state writes state volume to disk");
+    log_cache_report(&table.cache);
 }
 
 fn state_index_sector(table: &StateTable) -> [u8; SECTOR_SIZE] {
@@ -336,7 +390,7 @@ fn state_journal_sector(state: StateEntry, value: &[u8], checksum: u32) -> [u8; 
 
 fn recover_state_from_journal(table: &mut StateTable) {
     let mut journal = [0u8; SECTOR_SIZE];
-    read_block_sector(table.journal_sector, &mut journal);
+    read_block_sector_cached(&mut table.cache, table.journal_sector, &mut journal);
     let record = match parse_state_journal_record(&journal, table) {
         JournalStatus::Empty => return,
         JournalStatus::Corrupt => {
@@ -354,13 +408,14 @@ fn recover_state_from_journal(table: &mut StateTable) {
     let mut data_sector = [0u8; SECTOR_SIZE];
     data_sector[..record.value_len]
         .copy_from_slice(&journal[JOURNAL_VALUE_OFFSET..JOURNAL_VALUE_OFFSET + record.value_len]);
-    write_block_sector(state.data_sector, &data_sector);
+    write_block_sector_cached(&mut table.cache, state.data_sector, &data_sector);
     table.entries[record.entry_index].value_len = record.value_len;
     table.entries[record.entry_index].checksum = record.checksum;
     let index_sector = state_index_sector(table);
-    write_block_sector(table.index_sector, &index_sector);
+    write_block_sector_cached(&mut table.cache, table.index_sector, &index_sector);
     log(b"vertex-state replays journal record");
     log(b"interrupted state journal replays deterministically");
+    log_cache_report(&table.cache);
 }
 
 enum JournalStatus {
@@ -481,27 +536,127 @@ fn parse_vfs_state_request(
     })
 }
 
-fn read_block_sector(sector: u64, out: &mut [u8; SECTOR_SIZE]) {
+fn read_block_sector_cached(cache: &mut BlockCache, sector: u64, out: &mut [u8; SECTOR_SIZE]) {
+    let mut index = 0;
+    while index < BLOCK_CACHE_ENTRIES {
+        let entry = cache.entries[index];
+        if entry.valid && entry.sector == sector {
+            out.copy_from_slice(&entry.bytes);
+            cache.hits = cache.hits.saturating_add(1);
+            log(b"vertex-state block cache hit");
+            return;
+        }
+        index += 1;
+    }
+
+    cache.misses = cache.misses.saturating_add(1);
+    let Some(slot) = block_cache_slot(cache, sector) else {
+        log(b"vertex-state block cache dirty eviction blocked");
+        sys::exit(1);
+    };
+    if !read_block_sector_uncached(sector, out) {
+        log(b"vertex-state block cache read error");
+        sys::exit(1);
+    }
+    cache.entries[slot].valid = true;
+    cache.entries[slot].dirty = false;
+    cache.entries[slot].sector = sector;
+    cache.entries[slot].bytes.copy_from_slice(out);
+}
+
+fn write_block_sector_cached(cache: &mut BlockCache, sector: u64, bytes: &[u8; SECTOR_SIZE]) {
+    let Some(slot) = block_cache_slot(cache, sector) else {
+        log(b"vertex-state block cache dirty eviction blocked");
+        sys::exit(1);
+    };
+    let was_dirty = cache.entries[slot].valid && cache.entries[slot].dirty;
+    cache.entries[slot].valid = true;
+    cache.entries[slot].dirty = true;
+    cache.entries[slot].sector = sector;
+    cache.entries[slot].bytes.copy_from_slice(bytes);
+    if !was_dirty {
+        cache.dirty_pages = cache.dirty_pages.saturating_add(1);
+    }
+    if cache.dirty_pages > cache.high_water_dirty {
+        cache.high_water_dirty = cache.dirty_pages;
+    }
+
+    if !write_block_sector_uncached(sector, bytes) {
+        cache.write_errors = cache.write_errors.saturating_add(1);
+        log(b"vertex-state block cache writeback error");
+        sys::exit(1);
+    }
+    cache.entries[slot].dirty = false;
+    if cache.dirty_pages > 0 {
+        cache.dirty_pages -= 1;
+    }
+    cache.writebacks = cache.writebacks.saturating_add(1);
+    log(b"vertex-state block cache writeback clean");
+}
+
+fn block_cache_slot(cache: &BlockCache, sector: u64) -> Option<usize> {
+    let mut index = 0;
+    while index < BLOCK_CACHE_ENTRIES {
+        let entry = cache.entries[index];
+        if entry.valid && entry.sector == sector {
+            return Some(index);
+        }
+        index += 1;
+    }
+
+    index = 0;
+    while index < BLOCK_CACHE_ENTRIES {
+        if !cache.entries[index].valid {
+            return Some(index);
+        }
+        index += 1;
+    }
+
+    let preferred = sector as usize % BLOCK_CACHE_ENTRIES;
+    if !cache.entries[preferred].dirty {
+        return Some(preferred);
+    }
+
+    index = 0;
+    while index < BLOCK_CACHE_ENTRIES {
+        if !cache.entries[index].dirty {
+            return Some(index);
+        }
+        index += 1;
+    }
+    None
+}
+
+fn log_cache_report(cache: &BlockCache) {
+    if cache.dirty_pages == 0 && cache.write_errors == 0 {
+        log(b"vertex-state cache inspect dirty=0 pinned=0 writeback_errors=0");
+    } else {
+        log(b"vertex-state cache inspect dirty-or-writeback-error");
+    }
+}
+
+fn read_block_sector_uncached(sector: u64, out: &mut [u8; SECTOR_SIZE]) -> bool {
     let request = block_request(BLOCK_OP_READ_SECTOR, sector);
     if sys::ipc_send(CAP_BLOCK_REQUEST, &request) != sys::STATUS_OK {
         log(b"vertex-state block read request failed");
-        sys::exit(1);
+        return false;
     }
 
     let received = sys::ipc_recv(CAP_BLOCK_REPLY, out);
     if received != SECTOR_SIZE as u64 {
         log(b"vertex-state block read response failed");
-        sys::exit(1);
+        return false;
     }
+    true
 }
 
-fn write_block_sector(sector: u64, bytes: &[u8; SECTOR_SIZE]) {
+fn write_block_sector_uncached(sector: u64, bytes: &[u8; SECTOR_SIZE]) -> bool {
     let request = block_request(BLOCK_OP_WRITE_SECTOR, sector);
     if sys::ipc_send(CAP_BLOCK_REQUEST, &request) != sys::STATUS_OK
         || sys::ipc_send(CAP_BLOCK_REQUEST, bytes) != sys::STATUS_OK
     {
         log(b"vertex-state block write request failed");
-        sys::exit(1);
+        return false;
     }
 
     let mut ack = [0u8; BLOCK_WRITE_ACK_LEN];
@@ -513,8 +668,9 @@ fn write_block_sector(sector: u64, bytes: &[u8; SECTOR_SIZE]) {
         || read_u64(&ack, 8) != sector
     {
         log(b"vertex-state block write ack failed");
-        sys::exit(1);
+        return false;
     }
+    true
 }
 
 fn block_request(op: u16, sector: u64) -> [u8; BLOCK_REQUEST_LEN] {

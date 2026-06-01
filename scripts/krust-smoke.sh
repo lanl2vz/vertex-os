@@ -410,13 +410,24 @@ VFS state transaction wake: proc=echo file=value op=read result=2
 vertex-state serves VFS state read
 mounted state volume value uses VFS service transaction
 VFS state transaction request: proc=echo state=state:counter op=stat file=value
-VFS state transaction wake: proc=echo file=value op=stat result=32
+VFS state transaction wake: proc=echo file=value op=stat result=64
 vertex-state serves VFS state stat
 service-backed state value stat reports durable length
+vertex-state block cache hit
+vertex-state block cache writeback clean
+vertex-state cache inspect dirty=0 pinned=0 writeback_errors=0
 SYS_VFS_RENAME returned STATUS_VFS_PERMISSION
 VFS rename requires explicit rename authority
 VFS rename accepted: proc=echo old=/rename-old new=/rename-new canonical_old=/state/rename-old canonical_new=/state/rename-new vnode=
 VFS rename moves volatile file and preserves vnode identity
+VFS stat reports monotonic metadata version and link count
+VFS rmdir rejects non-empty directory
+VFS mkdir creates directories and rmdir removes empty directories
+VFS unlink of open file keeps existing handle readable until close
+VFS hard links share volatile file backing and report link count
+VFS hard links cannot cross filesystem boundaries
+long VFS paths and components are rejected before allocation
+path traversal cannot escape service namespace root
 virtio-blk driver ready
 virtio-blk PCI device discovered
 IRQ wait accepted: proc=block-driver interrupt-line=cap:irq.virtio-blk0
@@ -551,7 +562,7 @@ while [ "$attempt" -le "$QEMU_ATTEMPTS" ]; do
     if check_transcript; then
         cleanup
         pid=
-        echo "smoke ok: Krust completed manifest v1, directed IPC, typed arenas, cap lifecycle, quotas, service-local store/state/timer access, restart, verified store execution, update checks, dynamic process creation, config/secret authority, VFS roots, VFS rename, blocking VFS pipe reads, service-backed state-volume VFS transactions, and native service activation"
+        echo "smoke ok: Krust completed manifest v1, directed IPC, typed arenas, cap lifecycle, quotas, service-local store/state/timer access, restart, verified store execution, update checks, dynamic process creation, config/secret authority, VFS roots, VFS rename, directory metadata, block-cache writeback, blocking VFS pipe reads, service-backed state-volume VFS transactions, and native service activation"
         exit 0
     fi
 

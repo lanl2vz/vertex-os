@@ -7,10 +7,10 @@ runtime layered over a host kernel.
 
 ## Status Summary
 
-Current status: M14-M73 are implemented and smoke-tested under
-`qemu-system-x86_64` with Limine. M74-M75 VFS substrate work is now smoke-tested
-and release-gate covered, while the milestones stay open until the durable
-filesystem-service pieces below are finished. M39 pins the native toolchain, M40 makes
+Current status: M14-M77 are implemented and smoke-tested under
+`qemu-system-x86_64` with Limine. M74-M77 VFS, directory-metadata, and
+block-cache writeback work is now smoke-tested and release-gate covered. M39
+pins the native toolchain, M40 makes
 native IPC directed, and M41 adds a native console shell path over explicit
 console authority. M42 adds the first real virtio-blk sector I/O path over
 PCI I/O and DMA capabilities. M43 adds the first VertexDisk v0 block-object
@@ -34,18 +34,23 @@ owned frame accounting, address-space teardown, failure-atomic kernel object and
 capability creation, and 100-cycle memory lifecycle soak gates for
 create/start/exit, restart, endpoint churn, and fault/restart paths. M70-M73 add
 blocking interrupt waits, DMA ownership/release accounting, virtio reset and
-driver queue reporting, and the first device-fault isolation gate.
+driver queue reporting, and the first device-fault isolation gate. M76-M77 add
+bounded directory metadata operations, open-unlink lifetime, hard-link policy,
+64-byte stat metadata, and a bounded VertexDisk state block cache with explicit
+dirty/writeback inspection.
 
-M74-M75 are implemented as the current VFS and open-file substrate. The current
+M74-M77 are implemented as the current VFS, open-file, directory, and block-cache
+substrate. The current
 tree has a kernel VFS node graph,
 service-local mount roots, per-process file handles, first-class `vfs-root`
-manifest authority, volatile memory-file create/write/read/unlink/rename, a
-live blocking `/proc/log-stream` pipe, a first service-backed
-state-volume VFS transaction path, and advisory whole-file lock
-coverage. It is not yet a mature durable filesystem: directory metadata
-transactions, page/writeback caching, general filesystem-service routing,
-mature mount namespaces, broader durable blocking I/O, and crash-recovery
-proofs remain in M76-M81.
+manifest authority, volatile memory-file create/write/read/unlink/rename,
+mkdir/rmdir/link, monotonic stat metadata, open-unlink final-close reaping, a
+live blocking `/proc/log-stream` pipe, a service-backed state-volume VFS
+transaction path, advisory whole-file lock coverage, and a bounded write-through
+block cache in `vertex-state`. It is not yet a general durable filesystem:
+VertexFS on-disk metadata, general vnode page cache integration, broader
+filesystem-service routing, mature mount namespaces, and full crash-recovery
+proofs remain in M78-M81.
 
 ```sh
 make -C kernel/krust doctor
@@ -101,11 +106,13 @@ scripts/krust-test.sh m71
 scripts/krust-test.sh m72
 scripts/krust-test.sh m73
 scripts/krust-test.sh m75
+scripts/krust-test.sh m76
+scripts/krust-test.sh m77
 ```
 
 Next direction: implement a mature VFS/filesystem model without preserving the
-old ad hoc store/state paths as a compatibility layer. M74-M81 should make file
-authority, name lookup, open-file lifecycle, durable metadata, writeback, mount
+old ad hoc store/state paths as a compatibility layer. M78-M81 should make file
+authority, durable VertexFS metadata, general writeback, mount
 namespaces, and crash recovery first-class Krust surfaces while keeping the
 kernel small and capability-mediated.
 
@@ -1513,7 +1520,7 @@ done: locked Cargo dependencies for the top-level host-tool workspace, Krust ker
 done: kernel/krust/rust-toolchain.toml pins Rust 1.95.0, rustfmt, and x86_64-unknown-none
 done: make doctor checks every required tool and reports actionable fixes
 done: legacy hello/ipc userspace crates are removed instead of carried forward
-done: single release-gate script runs the clean-clone M14-M75 substrate proof with the M14-M75 QEMU matrix
+done: single release-gate script runs the clean-clone M14-M77 substrate proof with the M14-M77 QEMU matrix
 ```
 
 Acceptance tests:
@@ -3157,8 +3164,7 @@ done: manifest-granted VFS root authority can create, write, read, and unlink
 done: SYS_VFS_RENAME requires explicit rename authority on both source and
       destination parent directories, moves volatile memory-file vnodes without
       changing vnode identity, and rejects destination replacement
-done: unlink rejects directories, non-volatile VFS nodes, non-empty subtrees,
-      and nodes with live open-file descriptions
+done: unlink rejects directories, non-volatile VFS nodes, and non-empty subtrees
 done: direct legacy SYS_OBJECT_READ is rejected in VFS mode
 done: inspect reports vnode id, kind, parent, backing, mount source, owner process,
       live handle slot, open-file description, rights, flags, offsets, and refs
@@ -3173,7 +3179,7 @@ done: manifest-declared state volumes expose `/state/<suffix>/value` as regular
       caller, and transact with `vertex-state` through a native versioned request
       carrying the state id instead of a hardcoded state name
 done: service-backed state-value stat asks `vertex-state` for the durable
-      current value length and returns a normal 32-byte VFS stat record
+      current value length and returns a normal 64-byte VFS stat record
 done: `/state/counter/control` is a VFS control file for native shutdown, so
       clients no longer need a direct state-service endpoint to terminate the
       demo state service
@@ -3183,9 +3189,9 @@ done: `vertex-state` serves VFS state read/write/stat requests and persists writ
 deferred: /state/a remains a volatile kernel memory-file fixture below an
           explicit volatile mount, while state-volume value files are durable
           service-backed files
-deferred: directory metadata transactions, writeback caching, and non-state
-          service-backed metadata transactions are M76-M81 work rather than
-          M74 substrate requirements
+deferred: general VertexFS metadata transactions, non-state service-backed
+          metadata routing, and full crash recovery are M78-M81 work rather
+          than M74 substrate requirements
 ```
 
 Implementation notes:
@@ -3247,6 +3253,8 @@ done: open-create handle-quota failure rolls back the newly created vnode and
       memory-file backing instead of leaking an unreachable file
 done: trunc and append open flags are implemented for volatile memory files
       and covered by the smoke gate
+done: unlink of an open volatile memory file detaches the pathname while the
+      existing handle remains readable until final close
 done: close, process exit, process fault, restart reload, kill, and reap paths
       release VFS handles/open-file descriptions
 done: nonblocking whole-file advisory locks reject conflicting open-file
@@ -3257,7 +3265,7 @@ done: the user-fault restart gate proves a faulted process cannot leave a VFS
 done: per-process handle quota is bounded and rejected without leaking handles
 done: invalid close returns a controlled error
 done: create/unlink are implemented for manifest-granted volatile memory files
-      and covered by the smoke gate, including busy-unlink rejection
+      and covered by the smoke gate, including open-unlink final-close cleanup
 done: `/proc/log-stream` is a live VFS pipe; read on an empty stream blocks the
       process in `blocked-vfs` state and the next kernel log write copies bytes
       into the saved user buffer and wakes the reader
@@ -3268,14 +3276,15 @@ done: service-backed state-volume value-file read, write, and stat use saved
 done: `/state/counter/control` uses the same blocked VFS transaction machinery
       for service shutdown
 done: write/pwrite/trunc/append and create/unlink are implemented for the
-      volatile memory-file backing; durable metadata variants are M76-M78 work
+      volatile memory-file backing; general durable metadata variants are M78
+      work
 done: rename exists for volatile memory-file vnodes with stable vnode identity;
-      durable filesystem-service rename and cross-filesystem policy are M76
+      general durable filesystem-service rename is M78 work
 done: blocking file behavior exists for the live log-stream pipe and the
       service-backed state-volume value files
 deferred: durable filesystem-service lock integration, non-state
-          filesystem-service transaction routing, and metadata transaction
-          integration are M76-M81 work rather than M75 handle-lifecycle
+          filesystem-service transaction routing, and VertexFS metadata
+          integration are M78-M81 work rather than M75 handle-lifecycle
           requirements
 ```
 
@@ -3290,7 +3299,7 @@ Implementation notes:
 
 ## M76: Directory Operations And Atomic Metadata Changes
 
-Status: planned.
+Status: done for the current Krust VFS substrate.
 
 Goal: support a useful directory tree with atomic create, unlink, rename, link,
 and metadata update semantics backed by filesystem-service transactions.
@@ -3319,6 +3328,27 @@ very long paths and components are rejected before allocation side effects
 crash during create/unlink/rename replays to a valid directory tree
 ```
 
+Current implementation state:
+
+```text
+done: component-by-component path validation rejects empty, `.`, `..`, overly
+      long, and trailing-slash components before allocation side effects
+done: stat records are 64 bytes and report type, size, vnode id, rights,
+      monotonic metadata version, and link count
+done: same-filesystem volatile rename is atomic inside the kernel VFS node graph
+      and bumps the vnode metadata version while preserving open handles
+done: SYS_VFS_MKDIR and SYS_VFS_RMDIR create directories and reject non-empty
+      or open directories with controlled VFS errors
+done: unlink of an open volatile file detaches the path, keeps existing handles
+      readable, and reaps the vnode/backing on final close
+done: SYS_VFS_LINK creates same-filesystem volatile hard links, shares the
+      memory-file backing, reports link count, and rejects cross-filesystem links
+done: scripts/krust-test.sh m76 covers rename metadata, mkdir/rmdir,
+      open-unlink, hard-link policy, long path rejection, and traversal denial
+deferred: persistent metadata journals for a general on-disk filesystem move to
+          M78 VertexFS rather than being bolted onto the volatile fixture
+```
+
 Implementation notes:
 
 - Treat metadata correctness as security-critical. Path lookup must never fall
@@ -3330,7 +3360,7 @@ Implementation notes:
 
 ## M77: Block Cache, Page Cache, And Writeback
 
-Status: planned.
+Status: done for the VertexDisk state-volume block path.
 
 Goal: add a bounded cache layer for filesystem data and metadata with explicit
 dirty tracking, writeback ordering, flush, and memory-pressure behavior.
@@ -3357,6 +3387,26 @@ memory pressure evicts clean cache pages without leaking frames
 dirty cache pages are not evicted until written or explicitly failed
 process fault during write does not leave a permanently dirty pinned cache page
 block-driver restart does not corrupt cache ownership or completion records
+```
+
+Current implementation state:
+
+```text
+done: vertex-state owns an eight-entry bounded block cache keyed by logical
+      VertexDisk sector for state superblock, index, journal, and data sectors
+done: repeated state-volume reads hit the cache and log an inspectable cache-hit
+      transcript for the release gate
+done: state writes dirty the journal/data/index cache entries, synchronously
+      write them back through block-driver, and mark them clean before the VFS
+      transaction response is sent
+done: clean entries can be evicted by bounded replacement; dirty entries are not
+      evicted and instead fail the service if no clean slot is available
+done: writeback errors increment cache error accounting, log a controlled error,
+      and exit vertex-state so the kernel aborts pending state VFS transactions
+done: scripts/krust-test.sh m77 asserts cache hit, writeback clean, dirty=0,
+      pinned=0, writeback_errors=0, state write, and state read transcripts
+deferred: a general vnode page cache and VertexFS fsync syscall semantics move
+          to M78-M81 with the general filesystem format
 ```
 
 Implementation notes:

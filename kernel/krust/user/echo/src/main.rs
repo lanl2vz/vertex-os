@@ -126,7 +126,7 @@ pub extern "C" fn _start() -> ! {
         }
         let state_value_reader = sys::vfs_open_path_read(CAP_VFS_WRITER, COUNTER_VALUE_PATH);
         let mut state_value = [0u8; 2];
-        let mut state_value_stat = [0u8; 32];
+        let mut state_value_stat = [0u8; 64];
         if status_is_error(state_value_reader)
             || sys::vfs_read(state_value_reader, &mut state_value) != state_value.len() as u64
             || sys::vfs_stat(state_value_reader, &mut state_value_stat)
@@ -258,12 +258,6 @@ pub extern "C" fn _start() -> ! {
         log(b"VFS manifest writer write failed");
         sys::exit(1);
     }
-    if sys::vfs_unlink(CAP_VFS_WRITER, b"/new") == sys::STATUS_VFS_BUSY {
-        log(b"busy VFS file cannot be unlinked while open");
-    } else {
-        log(b"VFS busy unlink denial failed");
-        sys::exit(1);
-    }
     if sys::vfs_close(writer) != sys::STATUS_OK {
         log(b"VFS manifest writer close failed");
         sys::exit(1);
@@ -317,7 +311,7 @@ pub extern "C" fn _start() -> ! {
         sys::exit(1);
     }
     let rename_handle = sys::vfs_open_path_readwrite(CAP_VFS_WRITER, b"/rename-old");
-    let mut stat_before = [0u8; 32];
+    let mut stat_before = [0u8; 64];
     if status_is_error(rename_handle)
         || sys::vfs_write(rename_handle, b"moved") != 5
         || sys::vfs_stat(rename_handle, &mut stat_before) != stat_before.len() as u64
@@ -326,15 +320,18 @@ pub extern "C" fn _start() -> ! {
         sys::exit(1);
     }
     let old_vnode = read_u64_le(&stat_before, 16);
+    let old_metadata = read_u64_le(&stat_before, 32);
     if sys::vfs_rename(CAP_VFS_WRITER, b"/rename-old", b"/rename-new") != sys::STATUS_OK
         || sys::vfs_open_path_read(CAP_VFS_WRITER, b"/rename-old") != sys::STATUS_VFS_NOT_FOUND
     {
         log(b"VFS rename move failed");
         sys::exit(1);
     }
-    let mut stat_after = [0u8; 32];
+    let mut stat_after = [0u8; 64];
     if sys::vfs_stat(rename_handle, &mut stat_after) != stat_after.len() as u64
         || read_u64_le(&stat_after, 16) != old_vnode
+        || read_u64_le(&stat_after, 32) <= old_metadata
+        || read_u64_le(&stat_after, 40) != 1
         || sys::vfs_close(rename_handle) != sys::STATUS_OK
     {
         log(b"VFS rename vnode identity failed");
@@ -342,7 +339,7 @@ pub extern "C" fn _start() -> ! {
     }
     let renamed_reader = sys::vfs_open_path_read(CAP_VFS_WRITER, b"/rename-new");
     let mut renamed = [0u8; 5];
-    let mut stat_new = [0u8; 32];
+    let mut stat_new = [0u8; 64];
     if status_is_error(renamed_reader)
         || sys::vfs_read(renamed_reader, &mut renamed) != renamed.len() as u64
         || !bytes_eq(&renamed, b"moved")
@@ -355,6 +352,119 @@ pub extern "C" fn _start() -> ! {
         sys::exit(1);
     }
     log(b"VFS rename moves volatile file and preserves vnode identity");
+    log(b"VFS stat reports monotonic metadata version and link count");
+
+    if sys::vfs_mkdir(CAP_VFS_WRITER, b"/dir") != sys::STATUS_OK
+        || sys::vfs_create(CAP_VFS_WRITER, b"/dir/file") != sys::STATUS_OK
+    {
+        log(b"VFS mkdir fixture setup failed");
+        sys::exit(1);
+    }
+    if sys::vfs_rmdir(CAP_VFS_WRITER, b"/dir") == sys::STATUS_VFS_BUSY {
+        log(b"VFS rmdir rejects non-empty directory");
+    } else {
+        log(b"VFS rmdir non-empty denial failed");
+        sys::exit(1);
+    }
+    if sys::vfs_unlink(CAP_VFS_WRITER, b"/dir/file") != sys::STATUS_OK
+        || sys::vfs_rmdir(CAP_VFS_WRITER, b"/dir") != sys::STATUS_OK
+        || sys::vfs_open_path_read(CAP_VFS_WRITER, b"/dir") != sys::STATUS_VFS_NOT_FOUND
+    {
+        log(b"VFS mkdir rmdir lifecycle failed");
+        sys::exit(1);
+    }
+    log(b"VFS mkdir creates directories and rmdir removes empty directories");
+
+    if sys::vfs_create(CAP_VFS_WRITER, b"/open-unlink") != sys::STATUS_OK {
+        log(b"VFS open-unlink fixture create failed");
+        sys::exit(1);
+    }
+    let open_unlink_writer = sys::vfs_open_path_readwrite(CAP_VFS_WRITER, b"/open-unlink");
+    if status_is_error(open_unlink_writer)
+        || sys::vfs_write(open_unlink_writer, b"live") != 4
+        || sys::vfs_close(open_unlink_writer) != sys::STATUS_OK
+    {
+        log(b"VFS open-unlink fixture write failed");
+        sys::exit(1);
+    }
+    let open_unlink_reader = sys::vfs_open_path_read(CAP_VFS_WRITER, b"/open-unlink");
+    let mut open_unlink_bytes = [0u8; 4];
+    if status_is_error(open_unlink_reader)
+        || sys::vfs_unlink(CAP_VFS_WRITER, b"/open-unlink") != sys::STATUS_OK
+        || sys::vfs_open_path_read(CAP_VFS_WRITER, b"/open-unlink") != sys::STATUS_VFS_NOT_FOUND
+        || sys::vfs_read(open_unlink_reader, &mut open_unlink_bytes) != open_unlink_bytes.len() as u64
+        || !bytes_eq(&open_unlink_bytes, b"live")
+        || sys::vfs_close(open_unlink_reader) != sys::STATUS_OK
+    {
+        log(b"VFS open-unlink readable handle failed");
+        sys::exit(1);
+    }
+    log(b"VFS unlink of open file keeps existing handle readable until close");
+
+    if sys::vfs_create(CAP_VFS_WRITER, b"/link-src") != sys::STATUS_OK {
+        log(b"VFS link fixture create failed");
+        sys::exit(1);
+    }
+    let link_writer = sys::vfs_open_path_readwrite(CAP_VFS_WRITER, b"/link-src");
+    if status_is_error(link_writer)
+        || sys::vfs_write(link_writer, b"ln") != 2
+        || sys::vfs_close(link_writer) != sys::STATUS_OK
+        || sys::vfs_link(CAP_VFS_WRITER, b"/link-src", b"/link-copy") != sys::STATUS_OK
+    {
+        log(b"VFS hard link setup failed");
+        sys::exit(1);
+    }
+    let link_reader = sys::vfs_open_path_read(CAP_VFS_WRITER, b"/link-copy");
+    let mut link_bytes = [0u8; 2];
+    let mut link_stat = [0u8; 64];
+    if status_is_error(link_reader)
+        || sys::vfs_read(link_reader, &mut link_bytes) != link_bytes.len() as u64
+        || !bytes_eq(&link_bytes, b"ln")
+        || sys::vfs_stat(link_reader, &mut link_stat) != link_stat.len() as u64
+        || read_u64_le(&link_stat, 40) != 2
+        || sys::vfs_close(link_reader) != sys::STATUS_OK
+    {
+        log(b"VFS hard link readback failed");
+        sys::exit(1);
+    }
+    log(b"VFS hard links share volatile file backing and report link count");
+    if sys::vfs_mount_volatile(CAP_VFS_WRITER, b"/link-mnt") != sys::STATUS_OK {
+        log(b"VFS hard link mount fixture failed");
+        sys::exit(1);
+    }
+    if sys::vfs_link(CAP_VFS_WRITER, b"/link-copy", b"/link-mnt/cross") == sys::STATUS_VFS_UNSUPPORTED
+    {
+        log(b"VFS hard links cannot cross filesystem boundaries");
+    } else {
+        log(b"VFS cross-filesystem hard link denial failed");
+        sys::exit(1);
+    }
+    if sys::vfs_unmount(CAP_VFS_WRITER, b"/link-mnt") != sys::STATUS_OK
+        || sys::vfs_unlink(CAP_VFS_WRITER, b"/link-src") != sys::STATUS_OK
+        || sys::vfs_unlink(CAP_VFS_WRITER, b"/link-copy") != sys::STATUS_OK
+    {
+        log(b"VFS hard link cleanup failed");
+        sys::exit(1);
+    }
+
+    let mut long_component = [b'x'; 66];
+    long_component[0] = b'/';
+    let mut long_path = [b'y'; 129];
+    long_path[0] = b'/';
+    if sys::vfs_create(CAP_VFS_WRITER, &long_component) == sys::STATUS_VFS_BAD_PATH
+        && sys::vfs_create(CAP_VFS_WRITER, &long_path) == sys::STATUS_VFS_BAD_PATH
+    {
+        log(b"long VFS paths and components are rejected before allocation");
+    } else {
+        log(b"long VFS path rejection failed");
+        sys::exit(1);
+    }
+    if sys::vfs_open_path_read(CAP_VFS_READ, b"/../b") == sys::STATUS_VFS_BAD_PATH {
+        log(b"path traversal cannot escape service namespace root");
+    } else {
+        log(b"VFS traversal escape denial failed");
+        sys::exit(1);
+    }
 
     let open_created = sys::vfs_open_path_create_readwrite(CAP_VFS_WRITER, b"/opened");
     if status_is_error(open_created) {
@@ -647,7 +757,7 @@ fn prove_optional_scratch_state_volume() {
     }
 
     let scratch_reader = sys::vfs_open_path_read(CAP_VFS_WRITER, SCRATCH_VALUE_PATH);
-    let mut scratch_stat = [0u8; 32];
+    let mut scratch_stat = [0u8; 64];
     if status_is_error(scratch_reader)
         || sys::vfs_read(scratch_reader, &mut scratch_value) != scratch_value.len() as u64
         || !bytes_eq(&scratch_value, b"ok")

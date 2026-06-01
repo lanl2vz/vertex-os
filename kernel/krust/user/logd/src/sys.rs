@@ -107,7 +107,7 @@ pub fn vfs_pread(handle: u64, buffer: &mut [u8], offset: u64) -> u64 {
     )
 }
 
-pub fn vfs_stat(handle: u64, buffer: &mut [u8; 32]) -> u64 {
+pub fn vfs_stat(handle: u64, buffer: &mut [u8]) -> u64 {
     syscall3(
         SYS_VFS_STAT,
         handle,

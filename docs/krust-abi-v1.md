@@ -5,7 +5,7 @@ native Krust QEMU/Limine milestone. It is intentionally small and unstable. Its
 current job is to boot native `vertex-init`, create services from verified
 process templates, and enforce explicit process-local capabilities.
 
-Milestone status: ABI v1 now covers the M14-M75 native activation and substrate
+Milestone status: ABI v1 now covers the M14-M77 native activation and substrate
 proof. M25 adds the release gate. M26-M29 add Manifest v1 parsing, capability
 provenance/revocation, typed arena allocation checks, and resource quotas.
 M30-M31 add PIT-backed preemption and user page-fault containment. M32-M36 add
@@ -31,7 +31,9 @@ security regression baseline. M62-M65 add the storage durability checks,
 network boundary assertions, lifecycle reporting, and supported appliance
 profile artifact without adding legacy compatibility paths. M74-M75 add the
 native VFS object model, service-local mount roots, open-file handle table,
-descriptor lifecycle, and volatile create/unlink path. The ABI is still
+descriptor lifecycle, and volatile create/unlink path. M76-M77 add directory
+metadata syscalls, 64-byte stat metadata, open-unlink lifetime, hard-link
+policy, and bounded state-volume block-cache writeback. The ABI is still
 intentionally small, but this subset is the current native contract.
 
 ## Machine ABI
@@ -139,6 +141,9 @@ process frame, switch CR3, and return into another userspace process through
 | 64 | `SYS_VFS_MOUNT` | `arg0 = vfs_root_cap_slot`, `arg1 = path_ptr`, `arg2 = mount_flags << 32 \| path_len` | status |
 | 65 | `SYS_VFS_UNMOUNT` | `arg0 = vfs_root_cap_slot`, `arg1 = path_ptr`, `arg2 = path_len` | status |
 | 66 | `SYS_VFS_RENAME` | `arg0 = vfs_root_cap_slot`, `arg1 = rename_request_ptr`, `arg2 = request_len` | status |
+| 67 | `SYS_VFS_MKDIR` | `arg0 = vfs_root_cap_slot`, `arg1 = path_ptr`, `arg2 = mkdir_flags << 32 \| path_len` | status |
+| 68 | `SYS_VFS_RMDIR` | `arg0 = vfs_root_cap_slot`, `arg1 = path_ptr`, `arg2 = path_len` | status |
+| 69 | `SYS_VFS_LINK` | `arg0 = vfs_root_cap_slot`, `arg1 = link_request_ptr`, `arg2 = request_len` | status |
 
 ## Return Status Values
 
@@ -157,7 +162,7 @@ process frame, switch CR3, and return into another userspace process through
 | `STATUS_VFS_NOT_FOUND` | `u64::MAX - 34` | No VFS node exists at the requested path. |
 | `STATUS_VFS_NOT_DIRECTORY` | `u64::MAX - 35` | The operation required a directory node. |
 | `STATUS_VFS_NOT_FILE` | `u64::MAX - 36` | The operation required a readable/writable file node. |
-| `STATUS_VFS_BUSY` | `u64::MAX - 37` | The VFS node is pinned by live handles, children, or a conflicting advisory lock. |
+| `STATUS_VFS_BUSY` | `u64::MAX - 37` | The VFS node is pinned by live directory handles, children, mount state, or a conflicting advisory lock. |
 | `STATUS_VFS_BAD_HANDLE` | `u64::MAX - 38` | The file handle is invalid, stale, or already closed. |
 | `STATUS_VFS_UNSUPPORTED` | `u64::MAX - 39` | The VFS node or flag combination is not supported by this ABI generation. |
 | `STATUS_VFS_NO_SPACE` | `u64::MAX - 40` | The VFS handle, object, or memory-file quota is exhausted. |
@@ -188,7 +193,7 @@ becoming uncontrolled kernel faults.
 Capabilities are process-local. A capability slot number is meaningful only in
 the current process's capability space.
 
-Current M14-M75 layout:
+Current M14-M77 layout:
 
 ```text
 vertex-init:
@@ -338,11 +343,12 @@ hardware-device caps are not filesystem authority. Device-node opens through a
 VFS root additionally require that the current process holds the underlying
 virtio-device control cap. The open flags are native Krust bits: read `1`,
 write `2`, create `4`, trunc `8`, append `16`. Create, trunc, and append
-require write. `SYS_VFS_STAT` returns 32 bytes:
-kind, byte length, vnode id, and handle rights as little-endian `u64` values.
+require write. `SYS_VFS_STAT` returns 64 bytes:
+kind, byte length, vnode id, handle rights, monotonic metadata version, link
+count, and two reserved zero `u64` values as little-endian fields.
 For service-backed state-volume value files, stat validates the destination
 buffer, blocks in `blocked-vfs-state`, asks the state service for the durable
-current length, and then copies the normal 32-byte stat record into userspace.
+current length, and then copies the normal 64-byte stat record into userspace.
 Node kinds are regular file `1`, directory `2`, device node `3`, pipe `4`, and
 synthetic node `5`. VFS syscalls return `STATUS_VFS_*` for filesystem
 conditions such as permission denial, not-found paths, busy nodes, stale
@@ -364,8 +370,10 @@ new vnode and memory-file backing before returning the quota error.
 SYS_VFS_CREATE creates a volatile regular memory file below an existing VFS
 directory covered by a vfs-root authority that has both `resolve` and `create`.
 SYS_VFS_UNLINK removes a volatile memory file covered by `resolve` and
-`unlink`; it rejects directories, non-volatile nodes, non-empty subtrees, and
-nodes with live open-file descriptions. SYS_VFS_DERIVE_ROOT creates a new
+`unlink`; it rejects directories, non-volatile nodes, and non-empty subtrees.
+If the file has live open-file descriptions, unlink detaches the pathname and
+the existing handles remain usable until final close, when the kernel reaps the
+unlinked vnode and memory-file backing. SYS_VFS_DERIVE_ROOT creates a new
 kernel VFS-root object for an existing directory path covered by the source
 VFS-root cap; the derived cap keeps the source file-right mask and is linked to
 the source cap id, so normal cap-copy or cap-transfer attenuation can delegate
@@ -397,7 +405,15 @@ SYS_VFS_RENAME takes a native request buffer:
 requires `resolve` and `rename` authority over both parent directories, rejects
 replacement if the destination already exists, and currently supports volatile
 memory-file vnodes. The vnode id is preserved across the rename, so live handles
-continue to reference the same open file description.
+continue to reference the same open file description. SYS_VFS_MKDIR creates an
+empty directory below a covered parent when the caller has `resolve` and
+`create`; flags are currently rejected. SYS_VFS_RMDIR removes an empty
+non-mounted directory covered by `resolve` and `unlink`, returning
+`STATUS_VFS_BUSY` for children or open directory handles. SYS_VFS_LINK uses the
+same packed two-path request shape as rename, requires `resolve` on the source
+parent and `create` on the destination parent, shares volatile memory-file
+backing, updates link-count metadata, and rejects cross-filesystem links with
+`STATUS_VFS_UNSUPPORTED`.
 SYS_SECRET_READ requires read rights on a secret cap and logs metadata only.
 Native state-volume records are installed as explicit VFS mount roots below
 `/state/<state-id suffix>`; direct state-object grants are rejected. Each
