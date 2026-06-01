@@ -4,8 +4,8 @@ use std::fs;
 use std::path::PathBuf;
 use vertex_ir::{GenerationManifest, Service};
 
-const COMPACT_MAGIC: &[u8; 16] = b"KRUSTBOOTM65\0\0\0\0";
-const COMPACT_VERSION: u16 = 8;
+const COMPACT_MAGIC: &[u8; 16] = b"KRUSTBOOTM75\0\0\0\0";
+const COMPACT_VERSION: u16 = 11;
 const V1_MAGIC: &[u8; 16] = b"KRUSTBOOTV1\0\0\0\0\0";
 const V1_VERSION: u16 = 1;
 const V1_HEADER_SIZE: usize = 164;
@@ -13,13 +13,13 @@ const V1_CHECKSUM_OFFSET: usize = 32;
 const V1_RECORD_SIZE: usize = 12;
 const V1_RECORD_COUNT: usize = 9;
 const V1_PAYLOAD_OFFSET: usize = V1_HEADER_SIZE + V1_RECORD_COUNT * V1_RECORD_SIZE;
-const COMPACT_HEADER_SIZE: usize = 174;
+const COMPACT_HEADER_SIZE: usize = 176;
 const STRING_LEN: usize = 64;
 const BOOT_MODULE_RECORD_LEN: usize = STRING_LEN * 2;
 const PROCESS_REF_LIST_LEN: usize = 2 + MAX_PROCESS_REFS * 2;
 const ENDPOINT_REQUIREMENT_LIST_LEN: usize = 2 + MAX_PROCESS_REFS * 4;
 const PROCESS_RECORD_LEN: usize =
-    STRING_LEN * 4 + 4 + PROCESS_REF_LIST_LEN * 2 + ENDPOINT_REQUIREMENT_LIST_LEN;
+    STRING_LEN * 5 + 4 + PROCESS_REF_LIST_LEN * 2 + ENDPOINT_REQUIREMENT_LIST_LEN;
 const ENDPOINT_RECORD_LEN: usize = STRING_LEN;
 const GRANT_RECORD_LEN: usize = 12;
 const STORE_OBJECT_RECORD_LEN: usize = STRING_LEN * 3 + 8;
@@ -32,6 +32,7 @@ const DMA_REGION_RECORD_LEN: usize = STRING_LEN + 16;
 const PCI_DEVICE_RECORD_LEN: usize = STRING_LEN * 2;
 const VIRTIO_DEVICE_RECORD_LEN: usize = STRING_LEN * 2;
 const NAMESPACE_ENTRY_RECORD_LEN: usize = STRING_LEN + 8;
+const VFS_ROOT_RECORD_LEN: usize = STRING_LEN * 2;
 const MAX_BOOT_MODULES: usize = 16;
 const MAX_PROCESSES: usize = 16;
 const MAX_ENDPOINTS: usize = 16;
@@ -46,6 +47,7 @@ const MAX_DMA_REGIONS: usize = 4;
 const MAX_PCI_DEVICES: usize = 4;
 const MAX_VIRTIO_DEVICES: usize = 4;
 const MAX_NAMESPACES: usize = 4;
+const MAX_VFS_ROOTS: usize = 8;
 const MAX_NAMESPACE_ENTRIES: usize = 4;
 const MAX_PROCESS_REFS: usize = 4;
 const PAGE_SIZE: u64 = 4096;
@@ -63,6 +65,10 @@ const RIGHT_BIND: u16 = 1 << 7;
 const RIGHT_LISTEN: u16 = 1 << 8;
 const RIGHT_MAP: u16 = 1 << 9;
 const RIGHT_RESOLVE: u16 = 1 << 10;
+const RIGHT_CREATE: u16 = 1 << 11;
+const RIGHT_UNLINK: u16 = 1 << 12;
+const RIGHT_RENAME: u16 = 1 << 13;
+const RIGHT_MOUNT: u16 = 1 << 14;
 const OBJECT_ENDPOINT: u16 = 1;
 const OBJECT_STORE: u16 = 2;
 const OBJECT_STATE: u16 = 3;
@@ -75,6 +81,7 @@ const OBJECT_DMA_REGION: u16 = 9;
 const OBJECT_PCI_DEVICE: u16 = 10;
 const OBJECT_VIRTIO_DEVICE: u16 = 11;
 const OBJECT_NAMESPACE: u16 = 12;
+const OBJECT_VFS_ROOT: u16 = 13;
 const RECORD_BOOT_MODULE: u16 = 1;
 const RECORD_PROCESS: u16 = 2;
 const RECORD_ENDPOINT: u16 = 3;
@@ -107,7 +114,7 @@ pub struct KrustBootIdentity {
 impl KrustBootIdentity {
     pub fn release_profile_label(&self) -> String {
         format!(
-            "Manifest v1 compact KRUSTBOOTM65 version {}",
+            "Manifest v1 compact KRUSTBOOTM75 version {}",
             self.compact_version
         )
     }
@@ -134,6 +141,7 @@ pub fn compile(manifest: &GenerationManifest) -> Result<Vec<u8>, String> {
     push_count(&mut body, plan.pci_devices.len(), "pci_devices")?;
     push_count(&mut body, plan.virtio_devices.len(), "virtio_devices")?;
     push_count(&mut body, plan.namespaces.len(), "namespaces")?;
+    push_count(&mut body, plan.vfs_roots.len(), "vfs_roots")?;
     push_fixed_str(&mut body, &manifest.generation.id)?;
     push_fixed_str(
         &mut body,
@@ -152,6 +160,7 @@ pub fn compile(manifest: &GenerationManifest) -> Result<Vec<u8>, String> {
         push_u16(&mut body, process.restart);
         push_fixed_str(&mut body, &process.service_id)?;
         push_fixed_str(&mut body, &process.health_kind)?;
+        push_fixed_str(&mut body, &process.mount_root)?;
         push_process_ref_list(&mut body, &process.start_after, &plan)?;
         push_endpoint_requirement_list(&mut body, &process.requires_endpoints, &plan)?;
         push_endpoint_ref_list(&mut body, &process.provides_endpoints, &plan)?;
@@ -233,6 +242,11 @@ pub fn compile(manifest: &GenerationManifest) -> Result<Vec<u8>, String> {
         }
     }
 
+    for root in &plan.vfs_roots {
+        push_fixed_str(&mut body, &root.id)?;
+        push_fixed_str(&mut body, &root.root_path)?;
+    }
+
     wrap_v1(manifest, &plan, &body)
 }
 
@@ -258,6 +272,7 @@ pub fn summary(manifest: &GenerationManifest, output_path: &str, byte_len: usize
          pci_devices: {}\n\
          virtio_devices: {}\n\
          namespaces: {}\n\
+         vfs_roots: {}\n\
          bytes: {byte_len}",
         manifest.generation.id,
         manifest.generation.parent.as_deref().unwrap_or("<none>"),
@@ -274,7 +289,8 @@ pub fn summary(manifest: &GenerationManifest, output_path: &str, byte_len: usize
         plan.dma_regions.len(),
         plan.pci_devices.len(),
         plan.virtio_devices.len(),
-        plan.namespaces.len()
+        plan.namespaces.len(),
+        plan.vfs_roots.len()
     )
 }
 
@@ -401,7 +417,7 @@ pub fn validate_release_artifact(bytes: &[u8]) -> Result<KrustBootIdentity, Stri
 
     let payload = V1_PAYLOAD_OFFSET;
     if &bytes[payload..payload + COMPACT_MAGIC.len()] != COMPACT_MAGIC {
-        return Err("unsupported KrustBoot compact magic; expected KRUSTBOOTM65".to_owned());
+        return Err("unsupported KrustBoot compact magic; expected KRUSTBOOTM75".to_owned());
     }
     let compact_version = read_u16_at(bytes, payload + COMPACT_MAGIC.len())?;
     if compact_version != COMPACT_VERSION {
@@ -485,6 +501,7 @@ struct BootPlan {
     pci_devices: Vec<PciDevice>,
     virtio_devices: Vec<VirtioDevice>,
     namespaces: Vec<Namespace>,
+    vfs_roots: Vec<VfsRoot>,
 }
 
 #[derive(Debug, Clone)]
@@ -503,6 +520,7 @@ struct NativeProcess {
     requires_endpoints: Vec<EndpointRequirement>,
     provides_endpoints: Vec<String>,
     health_kind: String,
+    mount_root: String,
     restart: u16,
 }
 
@@ -597,6 +615,12 @@ struct NamespaceEntry {
     rights: u16,
 }
 
+#[derive(Debug, Clone)]
+struct VfsRoot {
+    id: String,
+    root_path: String,
+}
+
 fn derive_plan(manifest: &GenerationManifest) -> Result<BootPlan, String> {
     let root_service = manifest
         .service(&manifest.activation.root_service)
@@ -635,6 +659,7 @@ fn derive_plan(manifest: &GenerationManifest) -> Result<BootPlan, String> {
         requires_endpoints: Vec::new(),
         provides_endpoints: Vec::new(),
         health_kind: String::new(),
+        mount_root: service_mount_root(root_service)?,
         restart: RESTART_NEVER,
     });
 
@@ -673,6 +698,7 @@ fn derive_plan(manifest: &GenerationManifest) -> Result<BootPlan, String> {
                 .as_ref()
                 .map(|health| health.kind.clone())
                 .unwrap_or_default(),
+            mount_root: service_mount_root(service)?,
             restart: restart_policy(&service.restart)?,
         });
     }
@@ -832,7 +858,13 @@ fn derive_plan(manifest: &GenerationManifest) -> Result<BootPlan, String> {
     }
 
     let mut store_objects = executable_store_objects;
-    let state_volumes = Vec::new();
+    let state_volumes = manifest
+        .state_volumes
+        .iter()
+        .map(|state| StateVolume {
+            id: state.id.clone(),
+        })
+        .collect::<Vec<_>>();
     let mut network_ports = Vec::new();
     let mut io_ports = Vec::new();
     let mut mmio_regions = Vec::new();
@@ -841,6 +873,7 @@ fn derive_plan(manifest: &GenerationManifest) -> Result<BootPlan, String> {
     let mut pci_devices = Vec::new();
     let mut virtio_devices = Vec::new();
     let mut namespaces = Vec::new();
+    let mut vfs_roots = Vec::new();
     let mut next_object_slots = initial_object_cap_slots(&processes);
     add_vertex_store_verifier_grants(&mut grants, &store_objects, &processes);
     reserve_vertex_store_verifier_slots(&mut next_object_slots, &processes);
@@ -881,8 +914,8 @@ fn derive_plan(manifest: &GenerationManifest) -> Result<BootPlan, String> {
                 }
                 "state-volume" => {
                     return Err(format!(
-                        "native KrustBoot uses vertexdisk-v0 state service IPC; legacy state backend capability {} required by {} is not supported",
-                        capability.id, service.id
+                        "native KrustBoot does not grant direct state-volume capability {}; use a VFS-root capability for mounted state instead",
+                        capability.id
                     ));
                 }
                 "timer" => {
@@ -917,6 +950,20 @@ fn derive_plan(manifest: &GenerationManifest) -> Result<BootPlan, String> {
                     grants.push(Grant {
                         process: process_name.clone(),
                         object_kind: OBJECT_NAMESPACE,
+                        object_name: capability.id.clone(),
+                        cap_slot: next_object_cap_slot(&mut next_object_slots, &process_name)?,
+                        rights: rights_mask(
+                            &requirement.rights,
+                            &capability.rights,
+                            &capability.id,
+                        )?,
+                    });
+                }
+                "vfs-root" => {
+                    push_unique_vfs_root(&mut vfs_roots, capability)?;
+                    grants.push(Grant {
+                        process: process_name.clone(),
+                        object_kind: OBJECT_VFS_ROOT,
                         object_name: capability.id.clone(),
                         cap_slot: next_object_cap_slot(&mut next_object_slots, &process_name)?,
                         rights: rights_mask(
@@ -1062,6 +1109,7 @@ fn derive_plan(manifest: &GenerationManifest) -> Result<BootPlan, String> {
         pci_devices,
         virtio_devices,
         namespaces,
+        vfs_roots,
     })
 }
 
@@ -1389,6 +1437,41 @@ fn object_kind_for_namespace_entry(capability: &vertex_ir::Capability) -> Result
     }
 }
 
+fn push_unique_vfs_root(
+    roots: &mut Vec<VfsRoot>,
+    capability: &vertex_ir::Capability,
+) -> Result<(), String> {
+    if roots.iter().any(|root| root.id == capability.id) {
+        return Ok(());
+    }
+    let root_path = capability
+        .properties
+        .get("root")
+        .and_then(Value::as_str)
+        .ok_or_else(|| format!("vfs-root capability {} missing root", capability.id))?;
+    validate_manifest_vfs_path(&capability.id, root_path)?;
+    roots.push(VfsRoot {
+        id: capability.id.clone(),
+        root_path: root_path.to_owned(),
+    });
+    Ok(())
+}
+
+fn validate_manifest_vfs_path(context: &str, path: &str) -> Result<(), String> {
+    if !path.starts_with('/') || path.len() > STRING_LEN - 1 || (path.ends_with('/') && path != "/")
+    {
+        return Err(format!(
+            "vfs-root capability {context} root {path} must be an absolute non-trailing-slash path"
+        ));
+    }
+    if path.as_bytes().windows(2).any(|window| window == b"//") {
+        return Err(format!(
+            "vfs-root capability {context} root {path} must not contain empty components"
+        ));
+    }
+    Ok(())
+}
+
 fn object_name_for_capability(capability: &vertex_ir::Capability) -> String {
     match capability.kind.as_str() {
         "timer" => "monotonic-timer".to_owned(),
@@ -1396,7 +1479,7 @@ fn object_name_for_capability(capability: &vertex_ir::Capability) -> String {
             capability.id.clone()
         }
         "ipc-endpoint" => endpoint_name(&capability.id),
-        "network-port" | "virtio-device" | "namespace" => capability.id.clone(),
+        "network-port" | "virtio-device" | "namespace" | "vfs-root" => capability.id.clone(),
         _ => capability.id.clone(),
     }
 }
@@ -1847,6 +1930,11 @@ fn validate_plan(plan: &BootPlan) -> Result<(), String> {
             "native boot plan exceeds {MAX_NAMESPACES} namespaces"
         ));
     }
+    if plan.vfs_roots.len() > MAX_VFS_ROOTS {
+        return Err(format!(
+            "native boot plan exceeds {MAX_VFS_ROOTS} vfs roots"
+        ));
+    }
     validate_hardware_authority(plan)?;
 
     let initial_count = plan
@@ -1885,6 +1973,7 @@ fn validate_plan(plan: &BootPlan) -> Result<(), String> {
                 process.name, process.module_string
             ));
         }
+        validate_manifest_vfs_path(&process.name, &process.mount_root)?;
         if process.start_after.len() > MAX_PROCESS_REFS
             || process.requires_endpoints.len() > MAX_PROCESS_REFS
             || process.provides_endpoints.len() > MAX_PROCESS_REFS
@@ -1915,6 +2004,17 @@ fn validate_plan(plan: &BootPlan) -> Result<(), String> {
     for endpoint in &plan.endpoints {
         if !endpoint_names.insert(endpoint.name.as_str()) {
             return Err(format!("duplicate endpoint {}", endpoint.name));
+        }
+    }
+
+    let mut state_volume_names = BTreeSet::new();
+    for state in &plan.state_volumes {
+        let mount_name = state_volume_mount_component(&state.id)?;
+        if !state_volume_names.insert(mount_name) {
+            return Err(format!(
+                "duplicate state volume mount component {mount_name} from {}",
+                state.id
+            ));
         }
     }
 
@@ -1959,6 +2059,14 @@ fn validate_plan(plan: &BootPlan) -> Result<(), String> {
                 ));
             }
         }
+    }
+
+    let mut vfs_root_names = BTreeSet::new();
+    for root in &plan.vfs_roots {
+        if !vfs_root_names.insert(root.id.as_str()) {
+            return Err(format!("duplicate vfs root {}", root.id));
+        }
+        validate_manifest_vfs_path(&root.id, &root.root_path)?;
     }
 
     for grant in &plan.grants {
@@ -2256,6 +2364,10 @@ fn rights_mask(required: &[String], capability: &[String], context: &str) -> Res
             "listen" => mask |= RIGHT_LISTEN,
             "map" => mask |= RIGHT_MAP,
             "resolve" => mask |= RIGHT_RESOLVE,
+            "create" => mask |= RIGHT_CREATE,
+            "unlink" => mask |= RIGHT_UNLINK,
+            "rename" => mask |= RIGHT_RENAME,
+            "mount" => mask |= RIGHT_MOUNT,
             other => return Err(format!("unsupported native right {other} for {context}")),
         }
     }
@@ -2267,12 +2379,43 @@ fn rights_mask(required: &[String], capability: &[String], context: &str) -> Res
     Ok(mask)
 }
 
+fn service_mount_root(service: &Service) -> Result<String, String> {
+    let Some(value) = service.extra.get("mountRoot") else {
+        return Ok("/".to_owned());
+    };
+    let Some(root) = value.as_str() else {
+        return Err(format!("service {} mountRoot must be a string", service.id));
+    };
+    validate_manifest_vfs_path(&service.id, root)?;
+    Ok(root.to_owned())
+}
+
 fn service_label(service: &Service) -> String {
     if !service.name.is_empty() {
         service.name.clone()
     } else {
         module_basename(&service.id)
     }
+}
+
+fn state_volume_mount_component(id: &str) -> Result<&str, String> {
+    let Some(component) = id.strip_prefix("state:") else {
+        return Err(format!(
+            "state volume {id} must use the state: id namespace"
+        ));
+    };
+    if component.is_empty()
+        || component.len() > STRING_LEN
+        || component
+            .as_bytes()
+            .iter()
+            .any(|byte| *byte == b'/' || *byte == 0)
+    {
+        return Err(format!(
+            "state volume {id} has invalid VFS mount component {component}"
+        ));
+    }
+    Ok(component)
 }
 
 fn endpoint_name(capability_id: &str) -> String {
@@ -2460,8 +2603,16 @@ fn object_index_for_kind(
         OBJECT_PCI_DEVICE => pci_device_index(plan, object_name),
         OBJECT_VIRTIO_DEVICE => virtio_device_index(plan, object_name),
         OBJECT_NAMESPACE => namespace_index(plan, object_name),
+        OBJECT_VFS_ROOT => vfs_root_index(plan, object_name),
         other => Err(format!("unsupported native object kind {other}")),
     }
+}
+
+fn vfs_root_index(plan: &BootPlan, id: &str) -> Result<usize, String> {
+    plan.vfs_roots
+        .iter()
+        .position(|root| root.id == id)
+        .ok_or_else(|| format!("unknown vfs root {id}"))
 }
 
 fn object_index(plan: &BootPlan, grant: &Grant) -> Result<usize, String> {
@@ -2564,6 +2715,7 @@ struct BodySections {
     pci_devices: (usize, usize),
     virtio_devices: (usize, usize),
     namespaces: (usize, usize),
+    vfs_roots: (usize, usize),
 }
 
 fn wrap_v1(manifest: &GenerationManifest, plan: &BootPlan, body: &[u8]) -> Result<Vec<u8>, String> {
@@ -2654,7 +2806,8 @@ fn wrap_v1(manifest: &GenerationManifest, plan: &BootPlan, body: &[u8]) -> Resul
             + sections.dma_regions.1
             + sections.pci_devices.1
             + sections.virtio_devices.1
-            + sections.namespaces.1,
+            + sections.namespaces.1
+            + sections.vfs_roots.1,
     )?;
     debug_assert_eq!(bytes.len(), payload_offset);
 
@@ -2665,7 +2818,7 @@ fn wrap_v1(manifest: &GenerationManifest, plan: &BootPlan, body: &[u8]) -> Resul
 
 impl BodySections {
     fn new(plan: &BootPlan) -> Self {
-        let generation = (46, STRING_LEN * 2);
+        let generation = (48, STRING_LEN * 2);
         let boot_modules = (
             COMPACT_HEADER_SIZE,
             plan.boot_modules.len() * BOOT_MODULE_RECORD_LEN,
@@ -2724,6 +2877,10 @@ impl BodySections {
             .map(|namespace| STRING_LEN + 2 + namespace.entries.len() * NAMESPACE_ENTRY_RECORD_LEN)
             .sum();
         let namespaces = (virtio_devices.0 + virtio_devices.1, namespace_len);
+        let vfs_roots = (
+            namespaces.0 + namespaces.1,
+            plan.vfs_roots.len() * VFS_ROOT_RECORD_LEN,
+        );
 
         Self {
             generation,
@@ -2741,6 +2898,7 @@ impl BodySections {
             pci_devices,
             virtio_devices,
             namespaces,
+            vfs_roots,
         }
     }
 }
@@ -2869,6 +3027,7 @@ mod tests {
                 requires_endpoints: Vec::new(),
                 provides_endpoints: Vec::new(),
                 health_kind: String::new(),
+                mount_root: "/".to_owned(),
                 restart: RESTART_NEVER,
             }],
             endpoints: vec![Endpoint {
@@ -2900,6 +3059,7 @@ mod tests {
             pci_devices: Vec::new(),
             virtio_devices: Vec::new(),
             namespaces: Vec::new(),
+            vfs_roots: Vec::new(),
         }
     }
 

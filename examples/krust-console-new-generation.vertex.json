@@ -469,12 +469,53 @@
         "entries": [
           {
             "path": "/state/a",
-            "capability": "cap:state.counter.request",
+            "capability": "cap:store.hello-text.request",
             "rights": [
               "send"
             ]
           }
         ]
+      }
+    },
+    {
+      "id": "cap:vfs.echo-state-a",
+      "kind": "vfs-root",
+      "provider": "svc:vertex-supervisor",
+      "rights": [
+        "resolve",
+        "read"
+      ],
+      "properties": {
+        "root": "/state/a"
+      }
+    },
+    {
+      "id": "cap:vfs.echo-state-writer",
+      "kind": "vfs-root",
+      "provider": "svc:vertex-supervisor",
+      "rights": [
+        "resolve",
+        "read",
+        "write",
+        "create",
+        "unlink",
+        "rename",
+        "mount"
+      ],
+      "properties": {
+        "root": "/state"
+      }
+    },
+    {
+      "id": "cap:vfs.block-dev-blk0",
+      "kind": "vfs-root",
+      "provider": "svc:vertex-supervisor",
+      "rights": [
+        "resolve",
+        "read"
+      ],
+      "properties": {
+        "root": "/dev/device:virtio-blk0"
       }
     },
     {
@@ -625,19 +666,6 @@
       }
     },
     {
-      "id": "cap:state.counter.request",
-      "kind": "ipc-endpoint",
-      "provider": "svc:vertex-state",
-      "rights": [
-        "send"
-      ],
-      "properties": {
-        "protocol": "vertex.state.v1",
-        "role": "request",
-        "volume": "state:counter"
-      }
-    },
-    {
       "id": "cap:counter.request",
       "kind": "ipc-endpoint",
       "provider": "svc:counter-service",
@@ -659,6 +687,43 @@
       ],
       "properties": {
         "clock": "monotonic"
+      }
+    },
+    {
+      "id": "cap:vfs.logd-log-stream",
+      "kind": "vfs-root",
+      "provider": "svc:vertex-supervisor",
+      "rights": [
+        "resolve",
+        "read"
+      ],
+      "properties": {
+        "root": "/proc/log-stream"
+      }
+    },
+    {
+      "id": "cap:vfs.counter-state",
+      "kind": "vfs-root",
+      "provider": "svc:vertex-supervisor",
+      "rights": [
+        "resolve",
+        "read",
+        "write"
+      ],
+      "properties": {
+        "root": "/state/counter"
+      }
+    },
+    {
+      "id": "cap:vfs.counter-state-control",
+      "kind": "vfs-root",
+      "provider": "svc:vertex-supervisor",
+      "rights": [
+        "resolve",
+        "write"
+      ],
+      "properties": {
+        "root": "/state/counter/control"
       }
     }
   ],
@@ -751,6 +816,13 @@
           "capability": "cap:console.output",
           "rights": [
             "send"
+          ]
+        },
+        {
+          "capability": "cap:vfs.logd-log-stream",
+          "rights": [
+            "resolve",
+            "read"
           ]
         }
       ],
@@ -859,6 +931,13 @@
             "read",
             "write"
           ]
+        },
+        {
+          "capability": "cap:vfs.block-dev-blk0",
+          "rights": [
+            "resolve",
+            "read"
+          ]
         }
       ],
       "provides": [
@@ -940,7 +1019,6 @@
         }
       ],
       "provides": [
-        "cap:state.counter.request",
         "cap:vertex-state.block.reply"
       ],
       "state": [
@@ -954,7 +1032,7 @@
       },
       "health": {
         "kind": "ipc-ping",
-        "target": "cap:state.counter.request"
+        "target": "cap:vertex-state.block.reply"
       },
       "lifecycle": {
         "startAfter": [
@@ -997,6 +1075,25 @@
           "rights": [
             "resolve"
           ]
+        },
+        {
+          "capability": "cap:vfs.echo-state-a",
+          "rights": [
+            "resolve",
+            "read"
+          ]
+        },
+        {
+          "capability": "cap:vfs.echo-state-writer",
+          "rights": [
+            "resolve",
+            "read",
+            "write",
+            "create",
+            "unlink",
+            "rename",
+            "mount"
+          ]
         }
       ],
       "provides": [
@@ -1016,7 +1113,8 @@
           "svc:netstack"
         ],
         "stopBefore": []
-      }
+      },
+      "mountRoot": "/state"
     },
     {
       "id": "svc:model-reader",
@@ -1058,15 +1156,24 @@
       "env": {},
       "requires": [
         {
-          "capability": "cap:state.counter.request",
+          "capability": "cap:console-shell.counter.reply",
           "rights": [
             "send"
           ]
         },
         {
-          "capability": "cap:console-shell.counter.reply",
+          "capability": "cap:vfs.counter-state",
           "rights": [
-            "send"
+            "resolve",
+            "read",
+            "write"
+          ]
+        },
+        {
+          "capability": "cap:vfs.counter-state-control",
+          "rights": [
+            "resolve",
+            "write"
           ]
         }
       ],

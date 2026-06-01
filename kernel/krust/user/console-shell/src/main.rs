@@ -338,10 +338,11 @@ fn require_echo_log_authority(report: &[u8]) {
 }
 
 fn require_counter_state_authority(report: &[u8]) {
-    let needles: [&[u8]; 5] = [
+    let needles: [&[u8]; 6] = [
         b"proc=counter-service",
-        b"endpoint=state-counter-request",
-        b"rights=send",
+        b"vfs-root=cap:vfs.counter-state",
+        b"root=/state/counter",
+        b"rights=read|write|resolve",
         b"owner=counter-service",
         b"delegated_by=vertex-init",
     ];

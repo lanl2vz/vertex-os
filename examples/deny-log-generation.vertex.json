@@ -161,6 +161,18 @@
       "properties": {
         "protocol": "vertex.echo.v1"
       }
+    },
+    {
+      "id": "cap:vfs.logd-log-stream",
+      "kind": "vfs-root",
+      "provider": "svc:vertex-supervisor",
+      "rights": [
+        "resolve",
+        "read"
+      ],
+      "properties": {
+        "root": "/proc/log-stream"
+      }
     }
   ],
   "services": [
@@ -204,6 +216,13 @@
         {
           "capability": "cap:clock.monotonic",
           "rights": [
+            "read"
+          ]
+        },
+        {
+          "capability": "cap:vfs.logd-log-stream",
+          "rights": [
+            "resolve",
             "read"
           ]
         }

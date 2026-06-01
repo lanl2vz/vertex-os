@@ -432,7 +432,7 @@
         "entries": [
           {
             "path": "/state/a",
-            "capability": "cap:state.counter.request",
+            "capability": "cap:store.hello-text.request",
             "rights": [
               "send"
             ]
@@ -588,32 +588,6 @@
       }
     },
     {
-      "id": "cap:state.counter.request",
-      "kind": "ipc-endpoint",
-      "provider": "svc:vertex-state",
-      "rights": [
-        "send"
-      ],
-      "properties": {
-        "protocol": "vertex.state.v1",
-        "role": "request",
-        "volume": "state:counter"
-      }
-    },
-    {
-      "id": "cap:state-reader.state.reply",
-      "kind": "ipc-endpoint",
-      "provider": "svc:state-reader",
-      "rights": [
-        "send"
-      ],
-      "properties": {
-        "protocol": "vertex.state.v1",
-        "role": "reply",
-        "client": "svc:state-reader"
-      }
-    },
-    {
       "id": "cap:timer.sleep",
       "kind": "timer",
       "provider": "kernel:hosted-linux-placeholder",
@@ -634,6 +608,55 @@
       "properties": {
         "object": "store:block-driver-fault-token",
         "purpose": "m42-driver-fault-injection"
+      }
+    },
+    {
+      "id": "cap:vfs.logd-log-stream",
+      "kind": "vfs-root",
+      "provider": "svc:vertex-supervisor",
+      "rights": [
+        "resolve",
+        "read"
+      ],
+      "properties": {
+        "root": "/proc/log-stream"
+      }
+    },
+    {
+      "id": "cap:vfs.counter-state",
+      "kind": "vfs-root",
+      "provider": "svc:vertex-supervisor",
+      "rights": [
+        "resolve",
+        "read",
+        "write"
+      ],
+      "properties": {
+        "root": "/state/counter"
+      }
+    },
+    {
+      "id": "cap:vfs.state-reader-state",
+      "kind": "vfs-root",
+      "provider": "svc:vertex-supervisor",
+      "rights": [
+        "resolve",
+        "read"
+      ],
+      "properties": {
+        "root": "/state/counter"
+      }
+    },
+    {
+      "id": "cap:vfs.state-reader-control",
+      "kind": "vfs-root",
+      "provider": "svc:vertex-supervisor",
+      "rights": [
+        "resolve",
+        "write"
+      ],
+      "properties": {
+        "root": "/state/counter/control"
       }
     }
   ],
@@ -721,6 +744,13 @@
           "capability": "cap:serial.console",
           "rights": [
             "send"
+          ]
+        },
+        {
+          "capability": "cap:vfs.logd-log-stream",
+          "rights": [
+            "resolve",
+            "read"
           ]
         }
       ],
@@ -913,16 +943,9 @@
           "rights": [
             "send"
           ]
-        },
-        {
-          "capability": "cap:state-reader.state.reply",
-          "rights": [
-            "send"
-          ]
         }
       ],
       "provides": [
-        "cap:state.counter.request",
         "cap:vertex-state.block.reply"
       ],
       "state": [
@@ -936,7 +959,7 @@
       },
       "health": {
         "kind": "ipc-ping",
-        "target": "cap:state.counter.request"
+        "target": "cap:vertex-state.block.reply"
       },
       "lifecycle": {
         "startAfter": [
@@ -1040,9 +1063,11 @@
       "env": {},
       "requires": [
         {
-          "capability": "cap:state.counter.request",
+          "capability": "cap:vfs.counter-state",
           "rights": [
-            "send"
+            "resolve",
+            "read",
+            "write"
           ]
         }
       ],
@@ -1072,15 +1097,21 @@
       "env": {},
       "requires": [
         {
-          "capability": "cap:state.counter.request",
+          "capability": "cap:vfs.state-reader-state",
           "rights": [
-            "send"
+            "resolve",
+            "read"
+          ]
+        },
+        {
+          "capability": "cap:vfs.state-reader-control",
+          "rights": [
+            "resolve",
+            "write"
           ]
         }
       ],
-      "provides": [
-        "cap:state-reader.state.reply"
-      ],
+      "provides": [],
       "state": [
         "state:counter"
       ],

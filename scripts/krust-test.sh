@@ -51,7 +51,8 @@ activation failed
         EXPECT_ACTIVATION_SUCCESS=1
         required_lines='
 negative test: echo receive rejected: bad capability
-echo read rejected: bad capability
+echo VFS open rejected: permission
+unauthorized process cannot open file
 echo send after drop rejected
 negative test: logd process-create rejected: bad capability
 reader-service write rejected
@@ -127,10 +128,13 @@ logd received: hello from echo
 faulty-service triggers direct invalid load
 User page fault: proc=faulty-service
 User process fault contained: proc=faulty-service
+VFS lock accepted: proc=faulty-service file=a
+faulty-service holds VFS lock before fault
 vertex-init observes failure
 restart policy = on-failure
 vertex-init restarts faulty-service once
 Krust process restart reload: proc=faulty-service
+faulty-service reacquires VFS lock after fault cleanup
 faulty-service exits 0 after restart
 M69 100 fault/restart cycles return to baseline frame object and cap counts
 Native service activation ok
@@ -246,7 +250,7 @@ unauthorized service cannot access PCI I/O, IRQ, or DMA capabilities
         MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
         EXPECT_ACTIVATION_SUCCESS=1
         required_lines='
-KrustBoot grants: 61
+KrustBoot grants: 64
 KrustBoot io port ranges: 3
 KrustBoot mmio regions: 0
 KrustBoot pci devices: 4
@@ -257,9 +261,12 @@ interrupt_line[0] id=cap:irq.virtio-blk0 line=11
 dma_region[0] id=cap:dma.virtio-blk0 base=
 proc=block-driver cap[6] io-port=cap:io.pci-config rights=read|write
 proc=block-driver cap[9] io-port=cap:io.virtio-blk0 rights=read|write
-proc=block-driver cap[10] pci-device=device:virtio-blk0 kind=virtio-blk-pci rights=control
-proc=block-driver cap[11] virtio-device=device:virtio-blk0 transport=virtio-pci-io rights=control
+proc=block-driver cap[10] vfs-root=cap:vfs.block-dev-blk0 root=/dev/device:virtio-blk0 rights=read|resolve
+proc=block-driver cap[11] pci-device=device:virtio-blk0 kind=virtio-blk-pci rights=control
+proc=block-driver cap[12] virtio-device=device:virtio-blk0 transport=virtio-pci-io rights=control
 virtio-blk PCI device discovered
+direct virtio-device cap is not VFS path authority
+device node open requires VFS authority and underlying device authority
 DMA map accepted: proc=block-driver dma-region=cap:dma.virtio-blk0
 virtio-blk driver ready
 block-driver reads sector 0
@@ -280,7 +287,8 @@ Boot generation: gen:block-driver-fault-0001
 KrustBoot grants: 61
 KrustBoot store objects:
 proc=block-driver cap[10] store-object=store:block-driver-fault-token rights=read
-Object read accepted: proc=block-driver object=store:block-driver-fault-token bytes=25
+VFS open accepted: proc=block-driver file=store:block-driver-fault-token
+VFS read accepted: proc=block-driver file=store:block-driver-fault-token bytes=25
 block-driver fault injection triggers direct invalid load
 User page fault: proc=block-driver
 User process fault contained: proc=block-driver
@@ -293,19 +301,43 @@ Native service activation failed
         MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
         EXPECT_ACTIVATION_SUCCESS=1
         required_lines='
-KrustBoot endpoints: 12
-KrustBoot grants: 61
-KrustBoot state volumes: 0
+KrustBoot endpoints: 10
+KrustBoot grants: 64
+KrustBoot state volumes: 2
+state_volume[0] id=state:counter
+state_volume[1] id=state:scratch
+VFS state volume mounted: state=state:counter path=/state/counter source=vertex-state
+VFS state volume value file mounted: state=state:counter path=/state/counter/value source=vertex-state
+VFS state volume control file mounted: state=state:counter path=/state/counter/control source=vertex-state
+VFS state volume mounted: state=state:scratch path=/state/scratch source=vertex-state
+VFS state volume value file mounted: state=state:scratch path=/state/scratch/value source=vertex-state
+VFS state volume control file mounted: state=state:scratch path=/state/scratch/control source=vertex-state
 QEMU boots with VertexDisk image attached
 VertexDisk superblock accepted
 vertex-store reads object index from disk
 vertex-state reads state volume from disk
+VFS state transaction request: proc=echo state=state:scratch op=write file=value
+VFS state transaction request: proc=echo state=state:scratch op=read file=value
+VFS state transaction request: proc=echo state=state:scratch op=stat file=value
+generic state volume uses VFS service transaction
+VFS state transaction request: proc=echo state=state:counter op=write file=value
+VFS state transaction wake: proc=echo file=value op=write result=2
+vertex-state serves VFS state write
+VFS state transaction request: proc=echo state=state:counter op=read file=value
+VFS state transaction wake: proc=echo file=value op=read result=2
+vertex-state serves VFS state read
+mounted state volume value uses VFS service transaction
+VFS state transaction request: proc=echo state=state:counter op=stat file=value
+VFS state transaction wake: proc=echo file=value op=stat result=32
+vertex-state serves VFS state stat
+service-backed state value stat reports durable length
 vertex-state writes journal record to disk
 vertex-state writes state volume to disk
 Native service activation ok
 '
-        REBOOT_REQUIRED_LINES='
+REBOOT_REQUIRED_LINES='
 reboot preserves state value
+reboot preserves state:scratch value
 vertex-state reads state volume from disk
 Native service activation ok
 '
@@ -408,10 +440,13 @@ unauthorized process cannot read object
         MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
         EXPECT_ACTIVATION_SUCCESS=1
         required_lines='
-counter-service writes state
+counter-service has VFS state file
+counter-service writes state through VFS
+reader-service has VFS state file
 reader-service reads state
-reader-service write denied
-snapshot created
+reader-service write rejected
+VFS state transaction request: proc=echo state=state:counter op=control file=control
+VFS state transaction wake: proc=echo file=control op=control result=1
 state restored
 system generation rollback does not automatically roll back state unless policy says so
 '
@@ -452,8 +487,8 @@ Native service activation ok
         MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
         EXPECT_ACTIVATION_SUCCESS=1
         required_lines='
-KrustBoot endpoints: 12
-KrustBoot grants: 61
+KrustBoot endpoints: 10
+KrustBoot grants: 64
 IPC FIFO regression: queued sends preserve FIFO order
 IPC FIFO regression: queue-full send rejected
 IPC FIFO regression: receiver-specific dequeue preserves eligible ordering
@@ -465,16 +500,15 @@ endpoint[6] name=vertex-store-block-reply
 endpoint[7] name=vertex-state-block-reply
 endpoint[8] name=store-hello-text-request
 endpoint[9] name=model-reader-store-reply
-endpoint[10] name=state-counter-request
-endpoint[11] name=state-reader-state-reply
 process=block-driver cap[0] endpoint=vertex-store-block-request rights=receive
 process=block-driver cap[3] endpoint=vertex-state-block-request rights=receive
 process=vertex-store cap[3] endpoint=vertex-store-block-reply rights=receive
 process=vertex-store cap[0] endpoint=store-hello-text-request rights=receive
 process=model-reader cap[0] endpoint=model-reader-store-reply rights=receive
-process=vertex-state cap[0] endpoint=state-counter-request rights=receive
-process=vertex-state cap[3] endpoint=vertex-state-block-reply rights=receive
-process=reader-service cap[0] endpoint=state-reader-state-reply rights=receive
+process=vertex-state cap[0] endpoint=vertex-state-block-reply rights=receive
+process=counter-service cap[0] vfs-root=cap:vfs.counter-state rights=read|write|resolve
+process=reader-service cap[0] vfs-root=cap:vfs.state-reader-state rights=read|resolve
+process=reader-service cap[3] vfs-root=cap:vfs.state-reader-control rights=write|resolve
 vertex-init observed ready: serial-driver
 vertex-init observed ready: block-driver
 vertex-init observed ready: vertex-store
@@ -484,10 +518,7 @@ vertex-init derives endpoint cap for block-driver from endpoint[7] rights=send
 vertex-init derives endpoint cap for vertex-store from endpoint[4] rights=send
 vertex-init derives endpoint cap for vertex-store from endpoint[9] rights=send
 vertex-init derives endpoint cap for vertex-state from endpoint[5] rights=send
-vertex-init derives endpoint cap for vertex-state from endpoint[11] rights=send
 vertex-init derives endpoint cap for model-reader from endpoint[8] rights=send
-vertex-init derives endpoint cap for counter-service from endpoint[10] rights=send
-vertex-init derives endpoint cap for reader-service from endpoint[10] rights=send
 model-reader reads bytes successfully
 reader-service write rejected
 Native service activation ok
@@ -508,7 +539,7 @@ Boot generation: gen:console-0001
 KrustBoot boot modules: 14
 KrustBoot processes: 14
 KrustBoot endpoints: 15
-KrustBoot grants: 66
+KrustBoot grants: 70
 proc=console-driver cap[0] endpoint=console-output rights=receive
 proc=console-driver cap[3] endpoint=console-driver-control rights=receive
 proc=console-shell cap[0] endpoint=console-shell-request rights=receive
@@ -559,8 +590,9 @@ Native service activation ok
         EXPECT_ACTIVATION_SUCCESS=1
         required_lines='
 Krust native config hash verified: config=config:logd
-Config object read accepted: proc=logd config=config:logd
-logd reads config object
+VFS open accepted: proc=logd file=config:logd
+VFS read accepted: proc=logd file=config:logd bytes=33
+logd reads config through VFS handle
 echo cannot read logd config
 vertex-inspect shows config authority without dumping content
 Native service activation ok
@@ -654,8 +686,9 @@ proc=serial-driver cap[5] virtio-device=device:virtio-console0 transport=virtio-
 proc=netstack cap[3] virtio-device=device:virtio-rng0 transport=virtio-pci-io rights=control
 proc=netstack cap[5] virtio-device=device:virtio-net0 transport=virtio-pci-io rights=control
 proc=netstack cap[6] network-port=cap:net.udp.9000 rights=control
-proc=block-driver cap[10] pci-device=device:virtio-blk0 kind=virtio-blk-pci rights=control
-proc=block-driver cap[11] virtio-device=device:virtio-blk0 transport=virtio-pci-io rights=control
+proc=block-driver cap[10] vfs-root=cap:vfs.block-dev-blk0 root=/dev/device:virtio-blk0 rights=read|resolve
+proc=block-driver cap[11] pci-device=device:virtio-blk0 kind=virtio-blk-pci rights=control
+proc=block-driver cap[12] virtio-device=device:virtio-blk0 transport=virtio-pci-io rights=control
 serial-driver ready
 virtio-console replaces raw serial shell transport
 netstack ready
@@ -705,12 +738,97 @@ Native service activation ok
 KrustBoot namespaces: 2
 namespace[0] id=cap:namespace.echo entries=1
 namespace[1] id=cap:namespace.reader entries=1
+KrustBoot vfs roots: 7
+VFS state volume mounted: state=state:counter path=/state/counter source=vertex-state
+VFS state volume value file mounted: state=state:counter path=/state/counter/value source=vertex-state
+VFS state volume mounted: state=state:scratch path=/state/scratch source=vertex-state
+VFS state volume value file mounted: state=state:scratch path=/state/scratch/value source=vertex-state
 proc=echo cap[4] namespace=cap:namespace.echo rights=resolve
+proc=echo cap[5] vfs-root=cap:vfs.echo-state-a root=/state/a rights=read|resolve
+proc=echo cap[6] vfs-root=cap:vfs.echo-state-writer root=/state rights=read|write|create|unlink|rename|mount|resolve
 proc=reader-service cap[4] namespace=cap:namespace.reader rights=resolve
 Namespace resolve accepted: proc=echo namespace=cap:namespace.echo path=/state/a
 service A namespace contains /state/a
 Namespace resolve rejected: proc=echo namespace=cap:namespace.echo path=/state/b
 service A cannot resolve /state/b
+service-local VFS root opens /state/a
+per-process mount namespace maps /a to /state/a
+service-local VFS root rejects /state/b
+mounted state volume appears at /state/counter
+generic state volume uses VFS service transaction
+mounted state volume value uses VFS service transaction
+VFS state transaction request: proc=echo state=state:counter op=stat file=value
+VFS state transaction wake: proc=echo file=value op=stat result=32
+vertex-state serves VFS state stat
+service-backed state value stat reports durable length
+VFS root derive accepted: proc=echo source=6 target=25 root=/state/sub rights=read|write|create|unlink|rename|mount|resolve
+directory cap attenuates into read-only subtree authority
+service with no lookup authority cannot resolve a child path
+VFS namespace root resolved: proc=echo root=/state
+VFS readdir accepted: proc=echo dir=state entry=a
+VFS directory handle lists child vnode entries
+VFS mount requires explicit mount authority
+VFS mount accepted: proc=echo path=/mnt canonical=/state/mnt source=volatilefs
+SYS_VFS_UNMOUNT returned STATUS_VFS_BUSY
+VFS unmount accepted: proc=echo path=/mnt canonical=/state/mnt
+VFS mount object creates busy-checks and unmounts volatile root
+SYS_VFS_CREATE returned STATUS_VFS_PERMISSION
+VFS create accepted: proc=echo path=/new
+SYS_VFS_UNLINK returned STATUS_VFS_BUSY
+busy VFS file cannot be unlinked while open
+VFS unlink accepted: proc=echo path=/new canonical=/state/new
+manifest-granted VFS writer can create write read and unlink a file
+SYS_VFS_RENAME returned STATUS_VFS_PERMISSION
+VFS rename requires explicit rename authority
+VFS rename accepted: proc=echo old=/rename-old new=/rename-new canonical_old=/state/rename-old canonical_new=/state/rename-new vnode=
+VFS rename moves volatile file and preserves vnode identity
+VFS open-create accepted: proc=echo path=/opened
+VFS unlink accepted: proc=echo path=/opened canonical=/state/opened
+VFS open-create creates truncates and appends via native flags
+SYS_VFS_LOCK returned STATUS_VFS_BUSY
+VFS advisory locks reject conflicts and release on close
+VFS open-create quota failure rolls back vnode
+Native service activation ok
+'
+        ;;
+    m75|vfs-blocking)
+        MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
+        EXPECT_ACTIVATION_SUCCESS=1
+        required_lines='
+KrustBoot vfs roots: 7
+Endpoint table entries: 12
+endpoint[10] id=11 name=state-vfs-request
+endpoint[11] id=12 name=state-vfs-reply
+Native VFS state request grant: process=vertex-state endpoint=state-vfs-request rights=receive
+Native VFS state reply grant: process=vertex-state endpoint=state-vfs-reply rights=send
+proc=vertex-state cap[6] endpoint=state-vfs-reply rights=send
+proc=vertex-state cap[7] endpoint=state-vfs-request rights=receive
+proc=logd cap[4] vfs-root=cap:vfs.logd-log-stream root=/proc/log-stream rights=read|resolve
+VFS open accepted: proc=logd file=log-stream
+VFS read blocked: proc=logd
+VFS pipe wake reader: proc=logd file=log-stream
+VFS pipe read blocks until writer log
+VFS state volume value file mounted: state=state:counter path=/state/counter/value source=vertex-state
+VFS state volume control file mounted: state=state:counter path=/state/counter/control source=vertex-state
+VFS state volume value file mounted: state=state:scratch path=/state/scratch/value source=vertex-state
+VFS state volume control file mounted: state=state:scratch path=/state/scratch/control source=vertex-state
+VFS state transaction request: proc=echo state=state:scratch op=write file=value
+VFS state transaction request: proc=echo state=state:scratch op=read file=value
+VFS state transaction request: proc=echo state=state:scratch op=stat file=value
+generic state volume uses VFS service transaction
+VFS state transaction request: proc=echo state=state:counter op=write file=value
+VFS state transaction wake: proc=echo file=value op=write result=2
+vertex-state serves VFS state write
+VFS state transaction request: proc=echo state=state:counter op=read file=value
+VFS state transaction wake: proc=echo file=value op=read result=2
+vertex-state serves VFS state read
+mounted state volume value uses VFS service transaction
+VFS state transaction request: proc=echo state=state:counter op=stat file=value
+VFS state transaction wake: proc=echo file=value op=stat result=32
+vertex-state serves VFS state stat
+service-backed state value stat reports durable length
+VFS state transaction request: proc=echo state=state:counter op=control file=control
+VFS state transaction wake: proc=echo file=control op=control result=1
 Native service activation ok
 '
         ;;
@@ -761,16 +879,17 @@ virtio-blk request completion status ok
 block-driver enforces sector-range and alignment
 immutable store endpoint is read-only
 immutable store object served read-only
-state endpoint write bounds and owner checks ok
-vertex-state owner check accepted: state:counter via vertex-state endpoint
+state VFS write bounds and owner checks ok
+VFS state transaction request: proc=counter-service state=state:counter op=write file=value
 vertex-state write bounds enforced
 block-driver propagates request completion to client
 update commit interrupted before final pointer leaves previous generation bootable
 block-driver fault during request fails client request without kernel fault
 Native service activation ok
 '
-        REBOOT_REQUIRED_LINES='
+REBOOT_REQUIRED_LINES='
 reboot preserves state value
+reboot preserves state:scratch value
 vertex-state reads state volume from disk
 Native service activation ok
 '

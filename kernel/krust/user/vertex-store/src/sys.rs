@@ -1,12 +1,17 @@
 use core::arch::asm;
 
 pub const STATUS_OK: u64 = 0;
+pub const STATUS_BAD_CAPABILITY: u64 = u64::MAX - 1;
 
 const SYS_EXIT: u64 = 2;
 const SYS_IPC_SEND: u64 = 3;
 const SYS_IPC_RECV: u64 = 4;
 const SYS_LOG_WRITE: u64 = 7;
-const SYS_OBJECT_READ: u64 = 13;
+const SYS_VFS_OPEN: u64 = 48;
+const SYS_VFS_READ: u64 = 49;
+const SYS_VFS_CLOSE: u64 = 50;
+
+const VFS_OPEN_READ: u64 = 1;
 
 pub fn ipc_send(cap_slot: u64, message: &[u8]) -> u64 {
     syscall3(
@@ -35,13 +40,21 @@ pub fn log(cap_slot: u64, message: &[u8]) -> u64 {
     )
 }
 
-pub fn object_read(cap_slot: u64, buffer: &mut [u8]) -> u64 {
+pub fn vfs_open_read(cap_slot: u64) -> u64 {
+    syscall3(SYS_VFS_OPEN, cap_slot, 0, VFS_OPEN_READ << 32)
+}
+
+pub fn vfs_read(handle: u64, buffer: &mut [u8]) -> u64 {
     syscall3(
-        SYS_OBJECT_READ,
-        cap_slot,
+        SYS_VFS_READ,
+        handle,
         buffer.as_mut_ptr() as u64,
         buffer.len() as u64,
     )
+}
+
+pub fn vfs_close(handle: u64) -> u64 {
+    syscall3(SYS_VFS_CLOSE, handle, 0, 0)
 }
 
 pub fn exit(status: u64) -> ! {

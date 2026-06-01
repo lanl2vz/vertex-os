@@ -5,27 +5,18 @@ mod sys;
 
 use core::panic::PanicInfo;
 
-const CAP_STATE_REPLY: u64 = 0;
+const CAP_STATE_VFS: u64 = 0;
 const CAP_SERIAL_LOG: u64 = 1;
-const CAP_STATE_REQUEST: u64 = 3;
 const CAP_NAMESPACE: u64 = 4;
+const STATE_VALUE_PATH: &[u8] = b"/state/counter/value";
 
 #[unsafe(link_section = ".text._start")]
 #[unsafe(no_mangle)]
 pub extern "C" fn _start() -> ! {
     let mut buffer = [0u8; 8];
-    log(b"reader-service has state API cap");
-    if sys::ipc_send(CAP_STATE_REQUEST, b"R") != sys::STATUS_OK {
-        log(b"reader-service state read request failed");
-        sys::exit(1);
-    }
-    let mut read = sys::ipc_recv(CAP_STATE_REPLY, &mut buffer);
-    let mut attempts = 0;
-    while read == sys::STATUS_EMPTY && attempts < 64 {
-        sys::yield_now();
-        read = sys::ipc_recv(CAP_STATE_REPLY, &mut buffer);
-        attempts += 1;
-    }
+    log(b"reader-service has VFS state file");
+    let handle = sys::vfs_open_path_read(CAP_STATE_VFS, STATE_VALUE_PATH);
+    let read = sys::vfs_read(handle, &mut buffer);
     if read == sys::STATUS_BAD_CAPABILITY
         || read == sys::STATUS_BAD_BUFFER
         || read > buffer.len() as u64
@@ -33,10 +24,11 @@ pub extern "C" fn _start() -> ! {
         log(b"reader-service state read failed");
         sys::exit(1);
     }
+    let _ = sys::vfs_close(handle);
     log(b"reader-service reads state");
     log(b"reader-service receives state value");
 
-    if sys::namespace_resolve(CAP_NAMESPACE, b"/state/b", CAP_STATE_REQUEST)
+    if sys::namespace_resolve(CAP_NAMESPACE, b"/state/b", CAP_STATE_VFS)
         == sys::STATUS_BAD_CAPABILITY
     {
         log(b"M68 namespace_resolve occupied slot leaves target unchanged");
@@ -45,18 +37,13 @@ pub extern "C" fn _start() -> ! {
         sys::exit(1);
     }
 
-    if sys::ipc_send(CAP_STATE_REQUEST, b"W2") != sys::STATUS_OK {
-        log(b"reader-service write request failed");
-        sys::exit(1);
-    }
-    let mut denial = [0u8; 8];
-    let denied = sys::ipc_recv(CAP_STATE_REPLY, &mut denial);
-    if denied == 6 && bytes_eq(&denial[..6], b"DENIED") {
+    if sys::vfs_open_path_readwrite(CAP_STATE_VFS, STATE_VALUE_PATH) == sys::STATUS_VFS_PERMISSION {
         log(b"reader-service write rejected");
     } else {
         log(b"reader-service write denial failed");
         sys::exit(1);
     }
+
     log(b"Native state service client ok");
     sys::exit(0)
 }
@@ -65,20 +52,6 @@ fn log(message: &[u8]) {
     if sys::log(CAP_SERIAL_LOG, message) != sys::STATUS_OK {
         sys::exit(1);
     }
-}
-
-fn bytes_eq(left: &[u8], right: &[u8]) -> bool {
-    if left.len() != right.len() {
-        return false;
-    }
-    let mut index = 0;
-    while index < left.len() {
-        if left[index] != right[index] {
-            return false;
-        }
-        index += 1;
-    }
-    true
 }
 
 #[panic_handler]

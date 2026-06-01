@@ -5,14 +5,12 @@ mod sys;
 
 use core::panic::PanicInfo;
 
-const CAP_STATE_REQUEST: u64 = 0;
+const CAP_BLOCK_REPLY: u64 = 0;
 const CAP_SERIAL_LOG: u64 = 1;
 const CAP_READINESS: u64 = 2;
-const CAP_BLOCK_REPLY: u64 = 3;
-const CAP_BLOCK_REQUEST: u64 = 4;
-const CAP_READER_REPLY: u64 = 5;
-const CAP_COUNTER_REPLY: u64 = 5;
-const STATE_VOLUME_ID: &[u8] = b"state:counter";
+const CAP_BLOCK_REQUEST: u64 = 3;
+const CAP_VFS_REPLY: u64 = 6;
+const CAP_STATE_VFS_REQUEST: u64 = 7;
 const BLOCK_PROTOCOL_V1: u16 = 1;
 const BLOCK_OP_READ_SECTOR: u16 = 1;
 const BLOCK_OP_WRITE_SECTOR: u16 = 2;
@@ -20,6 +18,10 @@ const BLOCK_REQUEST_LEN: usize = 16;
 const BLOCK_WRITE_ACK_LEN: usize = 16;
 const SECTOR_SIZE: usize = 512;
 const MAX_STATE_VALUE_BYTES: usize = 16;
+const MAX_STATE_VOLUMES: usize = 4;
+const STATE_ID_BYTES: usize = 64;
+const STATE_ENTRY_LEN: usize = 84;
+const MAX_VFS_STATE_REQUEST_BYTES: usize = 512;
 const VERTEX_DISK_MAGIC: &[u8; 16] = b"VERTEXDISKV0\0\0\0\0";
 const STATE_INDEX_MAGIC: &[u8; 16] = b"VDISKSTATEV0\0\0\0\0";
 const JOURNAL_RECORD_MAGIC: &[u8; 16] = b"VDISKJOURNALV0\0\0";
@@ -35,6 +37,12 @@ const VERTEX_DISK_JOURNAL_SECTION: usize = 5;
 const STATE_ENTRY_OFFSET: usize = 32;
 const JOURNAL_STATE_ID_OFFSET: usize = 48;
 const JOURNAL_VALUE_OFFSET: usize = 128;
+const VFS_STATE_REQUEST_HEADER_BYTES: usize = 8;
+const VFS_STATE_REQUEST_VERSION: u8 = 1;
+const VFS_STATE_OP_READ_VALUE: u8 = b'R';
+const VFS_STATE_OP_WRITE_VALUE: u8 = b'W';
+const VFS_STATE_OP_STAT_VALUE: u8 = b'S';
+const VFS_STATE_OP_CONTROL: u8 = b'C';
 const PROTOCOL_HEALTH_V0: u16 = 2;
 const MESSAGE_READY: u16 = 1;
 const ENVELOPE_LEN: usize = 16;
@@ -42,70 +50,65 @@ const ENVELOPE_LEN: usize = 16;
 #[unsafe(link_section = ".text._start")]
 #[unsafe(no_mangle)]
 pub extern "C" fn _start() -> ! {
-    let mut state = load_state_entry();
+    let mut table = load_state_table();
     send_ready();
     log(b"vertex-state ready");
 
-    let mut request = [0u8; 16];
+    let mut request = [0u8; MAX_VFS_STATE_REQUEST_BYTES];
     let mut value = [0u8; MAX_STATE_VALUE_BYTES];
-    let mut value_len = read_state_value(&state, &mut value);
-    if value_len > 0 {
+    if table_has_value(&table) {
         log(b"reboot preserves state value");
     }
 
-    let mut wrote_value = value_len > 0;
-    let mut pending_read = false;
     loop {
-        let received = sys::ipc_recv(CAP_STATE_REQUEST, &mut request);
-        if received == 1 && request[0] == b'Q' {
-            write_state_value(&mut state, &value[..value_len]);
-            log(b"state restored");
-            log(b"system generation rollback does not automatically roll back state unless policy says so");
-            log(b"Native VertexDisk state service ok");
-            sys::exit(0);
+        let received = sys::ipc_recv(CAP_STATE_VFS_REQUEST, &mut request);
+        if received > request.len() as u64 {
+            log(b"vertex-state request invalid");
+            sys::exit(1);
         }
-
-        if received == 2 && request[0] == b'R' && request[1] == b'C' {
-            send_counter_response(&value[..value_len]);
-            continue;
-        }
-
-        if received == 1 && request[0] == b'R' {
-            if wrote_value {
-                value_len = read_state_value(&state, &mut value);
-                send_reader_response(&value[..value_len]);
-                continue;
-            }
-            pending_read = true;
-            continue;
-        }
-
-        if received == 2 && request[0] == b'W' && request[1] == b'2' {
-            log(b"reader-service write denied");
-            if sys::ipc_send(CAP_READER_REPLY, b"DENIED") != sys::STATUS_OK {
-                log(b"vertex-state denial response failed");
+        let received_len = received as usize;
+        let parsed = match parse_vfs_state_request(&request, received_len) {
+            Some(parsed) => parsed,
+            None => {
+                log(b"vertex-state request invalid");
                 sys::exit(1);
             }
-            write_state_value(&mut state, &value[..value_len]);
+        };
+        let transaction_id = read_u64(&request, 0);
+        let state_id = &request[parsed.state_offset..parsed.state_offset + parsed.state_len];
+        let Some(entry_index) = state_entry_index(&table, state_id) else {
+            log(b"vertex-state request invalid");
+            sys::exit(1);
+        };
+        let payload = &request[parsed.payload_offset..parsed.payload_offset + parsed.payload_len];
+
+        if parsed.op == VFS_STATE_OP_CONTROL && payload == b"Q" {
+            send_vfs_response(transaction_id, b"OK");
             log(b"state restored");
             log(b"system generation rollback does not automatically roll back state unless policy says so");
             log(b"Native VertexDisk state service ok");
             sys::exit(0);
         }
 
-        if received >= 2 && received <= request.len() as u64 && request[0] == b'W' {
-            let input = &request[1..received as usize];
-            log(b"vertex-state owner check accepted: state:counter via vertex-state endpoint");
-            write_state_value(&mut state, input);
-            value[..input.len()].copy_from_slice(input);
-            value_len = input.len();
-            log(b"counter-service writes state");
-            wrote_value = true;
-            if pending_read {
-                value_len = read_state_value(&state, &mut value);
-                send_reader_response(&value[..value_len]);
-                pending_read = false;
-            }
+        if parsed.op == VFS_STATE_OP_READ_VALUE && payload.is_empty() {
+            let value_len = read_state_value(&table.entries[entry_index], &mut value);
+            send_vfs_response(transaction_id, &value[..value_len]);
+            log(b"vertex-state serves VFS state read");
+            continue;
+        }
+
+        if parsed.op == VFS_STATE_OP_STAT_VALUE && payload.is_empty() {
+            let mut length = [0u8; 8];
+            write_u64(&mut length, 0, table.entries[entry_index].value_len as u64);
+            send_vfs_response(transaction_id, &length);
+            log(b"vertex-state serves VFS state stat");
+            continue;
+        }
+
+        if parsed.op == VFS_STATE_OP_WRITE_VALUE && payload.len() <= MAX_STATE_VALUE_BYTES {
+            write_state_value(&mut table, entry_index, payload);
+            send_vfs_response(transaction_id, b"OK");
+            log(b"vertex-state serves VFS state write");
             continue;
         }
 
@@ -116,20 +119,47 @@ pub extern "C" fn _start() -> ! {
 
 #[derive(Clone, Copy)]
 struct StateEntry {
+    id: [u8; STATE_ID_BYTES],
+    id_len: usize,
     index_sector: u64,
     data_sector: u64,
+    value_len: usize,
+    checksum: u32,
+}
+
+const EMPTY_STATE_ENTRY: StateEntry = StateEntry {
+    id: [0; STATE_ID_BYTES],
+    id_len: 0,
+    index_sector: 0,
+    data_sector: 0,
+    value_len: 0,
+    checksum: 0,
+};
+
+struct StateTable {
+    entries: [StateEntry; MAX_STATE_VOLUMES],
+    count: usize,
+    index_sector: u64,
     journal_sector: u64,
+}
+
+#[derive(Clone, Copy)]
+struct JournalRecord {
+    entry_index: usize,
     value_len: usize,
     checksum: u32,
 }
 
 #[derive(Clone, Copy)]
-struct JournalRecord {
-    value_len: usize,
-    checksum: u32,
+struct VfsStateRequest {
+    op: u8,
+    state_offset: usize,
+    state_len: usize,
+    payload_offset: usize,
+    payload_len: usize,
 }
 
-fn load_state_entry() -> StateEntry {
+fn load_state_table() -> StateTable {
     let mut superblock = [0u8; SECTOR_SIZE];
     read_block_sector(0, &mut superblock);
     if !valid_superblock(&superblock) {
@@ -163,42 +193,67 @@ fn load_state_entry() -> StateEntry {
     }
 
     let count = read_u16(&index_sector, 18) as usize;
+    if count == 0 || count > MAX_STATE_VOLUMES {
+        log(b"vertex-state index record bounds invalid");
+        sys::exit(1);
+    }
+    let mut table = StateTable {
+        entries: [EMPTY_STATE_ENTRY; MAX_STATE_VOLUMES],
+        count: 0,
+        index_sector: state_index_sector,
+        journal_sector,
+    };
     let mut index = 0;
     while index < count {
-        let offset = STATE_ENTRY_OFFSET + index * 84;
-        if offset + 84 > index_sector.len() {
+        let offset = STATE_ENTRY_OFFSET + index * STATE_ENTRY_LEN;
+        if offset + STATE_ENTRY_LEN > index_sector.len() {
             log(b"vertex-state index record bounds invalid");
             sys::exit(1);
         }
-        if fixed_string_eq(&index_sector, offset, STATE_VOLUME_ID) {
-            let data_sector = read_u64(&index_sector, offset + 64);
-            let sector_count = read_u32(&index_sector, offset + 72);
-            let value_len = read_u32(&index_sector, offset + 76) as usize;
-            let checksum = read_u32(&index_sector, offset + 80);
-            if sector_count != 1
-                || value_len > MAX_STATE_VALUE_BYTES
-                || data_sector < state_data_start
-                || data_sector >= state_data_start + state_data_count
-            {
-                log(b"vertex-state value bounds invalid");
+        let Some((id, id_len)) = read_fixed_string(&index_sector, offset) else {
+            log(b"vertex-state index record bounds invalid");
+            sys::exit(1);
+        };
+        if !bytes_starts_with(&id[..id_len], b"state:") {
+            log(b"vertex-state index record bounds invalid");
+            sys::exit(1);
+        }
+        let data_sector = read_u64(&index_sector, offset + 64);
+        let sector_count = read_u32(&index_sector, offset + 72);
+        let value_len = read_u32(&index_sector, offset + 76) as usize;
+        let checksum = read_u32(&index_sector, offset + 80);
+        if sector_count != 1
+            || value_len > MAX_STATE_VALUE_BYTES
+            || data_sector < state_data_start
+            || data_sector >= state_data_start + state_data_count
+        {
+            log(b"vertex-state value bounds invalid");
+            sys::exit(1);
+        }
+        let mut previous = 0;
+        while previous < table.count {
+            let prior = table.entries[previous];
+            if state_id_eq(&prior, &id[..id_len]) || prior.data_sector == data_sector {
+                log(b"vertex-state index record bounds invalid");
                 sys::exit(1);
             }
-            log(b"vertex-state reads state volume from disk");
-            let mut state = StateEntry {
-                index_sector: state_index_sector,
-                data_sector,
-                journal_sector,
-                value_len,
-                checksum,
-            };
-            recover_state_from_journal(&mut state);
-            return state;
+            previous += 1;
         }
+        table.entries[index] = StateEntry {
+            id,
+            id_len,
+            index_sector: state_index_sector,
+            data_sector,
+            value_len,
+            checksum,
+        };
+        table.count += 1;
+        log(b"vertex-state reads state volume from disk");
         index += 1;
     }
 
-    log(b"vertex-state volume missing from disk index");
-    sys::exit(1);
+    recover_state_from_journal(&mut table);
+    table
 }
 
 fn read_state_value(state: &StateEntry, value: &mut [u8; MAX_STATE_VALUE_BYTES]) -> usize {
@@ -216,39 +271,46 @@ fn read_state_value(state: &StateEntry, value: &mut [u8; MAX_STATE_VALUE_BYTES])
     state.value_len
 }
 
-fn write_state_value(state: &mut StateEntry, value: &[u8]) {
+fn write_state_value(table: &mut StateTable, entry_index: usize, value: &[u8]) {
     if value.len() > MAX_STATE_VALUE_BYTES {
         log(b"vertex-state value too large");
         sys::exit(1);
     }
     log(b"vertex-state write bounds enforced");
 
+    let state = table.entries[entry_index];
     let checksum = checksum32(value);
-    let journal_sector = state_journal_sector(*state, value, checksum);
-    write_block_sector(state.journal_sector, &journal_sector);
+    let journal_sector = state_journal_sector(state, value, checksum);
+    write_block_sector(table.journal_sector, &journal_sector);
     log(b"vertex-state writes journal record to disk");
 
     let mut data_sector = [0u8; SECTOR_SIZE];
     data_sector[..value.len()].copy_from_slice(value);
     write_block_sector(state.data_sector, &data_sector);
 
-    state.value_len = value.len();
-    state.checksum = checksum;
-    let index_sector = state_index_sector(*state);
-    write_block_sector(state.index_sector, &index_sector);
+    table.entries[entry_index].value_len = value.len();
+    table.entries[entry_index].checksum = checksum;
+    let index_sector = state_index_sector(table);
+    write_block_sector(table.index_sector, &index_sector);
     log(b"vertex-state writes state volume to disk");
 }
 
-fn state_index_sector(state: StateEntry) -> [u8; SECTOR_SIZE] {
+fn state_index_sector(table: &StateTable) -> [u8; SECTOR_SIZE] {
     let mut sector = [0u8; SECTOR_SIZE];
     sector[..STATE_INDEX_MAGIC.len()].copy_from_slice(STATE_INDEX_MAGIC);
     write_u16(&mut sector, 16, VERTEX_DISK_VERSION);
-    write_u16(&mut sector, 18, 1);
-    write_fixed_string(&mut sector, STATE_ENTRY_OFFSET, STATE_VOLUME_ID);
-    write_u64(&mut sector, STATE_ENTRY_OFFSET + 64, state.data_sector);
-    write_u32(&mut sector, STATE_ENTRY_OFFSET + 72, 1);
-    write_u32(&mut sector, STATE_ENTRY_OFFSET + 76, state.value_len as u32);
-    write_u32(&mut sector, STATE_ENTRY_OFFSET + 80, state.checksum);
+    write_u16(&mut sector, 18, table.count as u16);
+    let mut index = 0;
+    while index < table.count {
+        let state = table.entries[index];
+        let offset = STATE_ENTRY_OFFSET + index * STATE_ENTRY_LEN;
+        write_fixed_string(&mut sector, offset, &state.id[..state.id_len]);
+        write_u64(&mut sector, offset + 64, state.data_sector);
+        write_u32(&mut sector, offset + 72, 1);
+        write_u32(&mut sector, offset + 76, state.value_len as u32);
+        write_u32(&mut sector, offset + 80, state.checksum);
+        index += 1;
+    }
     write_metadata_checksum(&mut sector);
     sector
 }
@@ -262,16 +324,20 @@ fn state_journal_sector(state: StateEntry, value: &[u8], checksum: u32) -> [u8; 
     write_u64(&mut sector, 32, state.data_sector);
     write_u32(&mut sector, 40, value.len() as u32);
     write_u32(&mut sector, 44, checksum);
-    write_fixed_string(&mut sector, JOURNAL_STATE_ID_OFFSET, STATE_VOLUME_ID);
+    write_fixed_string(
+        &mut sector,
+        JOURNAL_STATE_ID_OFFSET,
+        &state.id[..state.id_len],
+    );
     sector[JOURNAL_VALUE_OFFSET..JOURNAL_VALUE_OFFSET + value.len()].copy_from_slice(value);
     write_metadata_checksum(&mut sector);
     sector
 }
 
-fn recover_state_from_journal(state: &mut StateEntry) {
+fn recover_state_from_journal(table: &mut StateTable) {
     let mut journal = [0u8; SECTOR_SIZE];
-    read_block_sector(state.journal_sector, &mut journal);
-    let record = match parse_state_journal_record(&journal, *state) {
+    read_block_sector(table.journal_sector, &mut journal);
+    let record = match parse_state_journal_record(&journal, table) {
         JournalStatus::Empty => return,
         JournalStatus::Corrupt => {
             log(b"vertex-state corrupt journal detected");
@@ -280,6 +346,7 @@ fn recover_state_from_journal(state: &mut StateEntry) {
         }
         JournalStatus::Valid(record) => record,
     };
+    let state = table.entries[record.entry_index];
     if state.value_len == record.value_len && state.checksum == record.checksum {
         return;
     }
@@ -288,10 +355,10 @@ fn recover_state_from_journal(state: &mut StateEntry) {
     data_sector[..record.value_len]
         .copy_from_slice(&journal[JOURNAL_VALUE_OFFSET..JOURNAL_VALUE_OFFSET + record.value_len]);
     write_block_sector(state.data_sector, &data_sector);
-    state.value_len = record.value_len;
-    state.checksum = record.checksum;
-    let index_sector = state_index_sector(*state);
-    write_block_sector(state.index_sector, &index_sector);
+    table.entries[record.entry_index].value_len = record.value_len;
+    table.entries[record.entry_index].checksum = record.checksum;
+    let index_sector = state_index_sector(table);
+    write_block_sector(table.index_sector, &index_sector);
     log(b"vertex-state replays journal record");
     log(b"interrupted state journal replays deterministically");
 }
@@ -302,7 +369,7 @@ enum JournalStatus {
     Valid(JournalRecord),
 }
 
-fn parse_state_journal_record(sector: &[u8; SECTOR_SIZE], state: StateEntry) -> JournalStatus {
+fn parse_state_journal_record(sector: &[u8; SECTOR_SIZE], table: &StateTable) -> JournalStatus {
     if !starts_with(sector, JOURNAL_RECORD_MAGIC) {
         return JournalStatus::Empty;
     }
@@ -310,10 +377,18 @@ fn parse_state_journal_record(sector: &[u8; SECTOR_SIZE], state: StateEntry) -> 
     if read_u16(sector, 16) != VERTEX_DISK_VERSION
         || read_u16(sector, 18) != JOURNAL_RECORD_STATE_WRITE
         || !metadata_checksum_valid(sector)
-        || read_u64(sector, 24) != state.index_sector
-        || read_u64(sector, 32) != state.data_sector
-        || !fixed_string_eq(sector, JOURNAL_STATE_ID_OFFSET, STATE_VOLUME_ID)
+        || read_u64(sector, 24) != table.index_sector
     {
+        return JournalStatus::Corrupt;
+    }
+
+    let Some((state_id, state_id_len)) = read_fixed_string(sector, JOURNAL_STATE_ID_OFFSET) else {
+        return JournalStatus::Corrupt;
+    };
+    let Some(entry_index) = state_entry_index(table, &state_id[..state_id_len]) else {
+        return JournalStatus::Corrupt;
+    };
+    if read_u64(sector, 32) != table.entries[entry_index].data_sector {
         return JournalStatus::Corrupt;
     }
 
@@ -329,8 +404,80 @@ fn parse_state_journal_record(sector: &[u8; SECTOR_SIZE], state: StateEntry) -> 
     }
 
     JournalStatus::Valid(JournalRecord {
+        entry_index,
         value_len,
         checksum,
+    })
+}
+
+fn table_has_value(table: &StateTable) -> bool {
+    let mut index = 0;
+    while index < table.count {
+        if table.entries[index].value_len > 0 {
+            return true;
+        }
+        index += 1;
+    }
+    false
+}
+
+fn state_entry_index(table: &StateTable, state_id: &[u8]) -> Option<usize> {
+    let mut index = 0;
+    while index < table.count {
+        if state_id_eq(&table.entries[index], state_id) {
+            return Some(index);
+        }
+        index += 1;
+    }
+    None
+}
+
+fn state_id_eq(entry: &StateEntry, state_id: &[u8]) -> bool {
+    if entry.id_len != state_id.len() {
+        return false;
+    }
+    bytes_eq(&entry.id[..entry.id_len], state_id)
+}
+
+fn parse_vfs_state_request(
+    buffer: &[u8; MAX_VFS_STATE_REQUEST_BYTES],
+    len: usize,
+) -> Option<VfsStateRequest> {
+    let header_offset = 8;
+    if len < header_offset + VFS_STATE_REQUEST_HEADER_BYTES {
+        return None;
+    }
+    if buffer[header_offset] != b'V'
+        || buffer[header_offset + 1] != b'S'
+        || buffer[header_offset + 2] != VFS_STATE_REQUEST_VERSION
+    {
+        return None;
+    }
+    let op = buffer[header_offset + 3];
+    if op != VFS_STATE_OP_READ_VALUE
+        && op != VFS_STATE_OP_WRITE_VALUE
+        && op != VFS_STATE_OP_STAT_VALUE
+        && op != VFS_STATE_OP_CONTROL
+    {
+        return None;
+    }
+    let state_len = read_u16(buffer, header_offset + 4) as usize;
+    let payload_len = read_u16(buffer, header_offset + 6) as usize;
+    if state_len == 0 || state_len > STATE_ID_BYTES || payload_len > MAX_STATE_VALUE_BYTES {
+        return None;
+    }
+    let state_offset = header_offset + VFS_STATE_REQUEST_HEADER_BYTES;
+    let payload_offset = state_offset.checked_add(state_len)?;
+    let end = payload_offset.checked_add(payload_len)?;
+    if end != len {
+        return None;
+    }
+    Some(VfsStateRequest {
+        op,
+        state_offset,
+        state_len,
+        payload_offset,
+        payload_len,
     })
 }
 
@@ -457,19 +604,46 @@ fn checksum32(bytes: &[u8]) -> u32 {
     checksum
 }
 
-fn fixed_string_eq(buffer: &[u8], offset: usize, value: &[u8]) -> bool {
-    if offset + 64 > buffer.len() || value.len() > 64 {
+fn read_fixed_string(buffer: &[u8], offset: usize) -> Option<([u8; STATE_ID_BYTES], usize)> {
+    if offset + STATE_ID_BYTES > buffer.len() {
+        return None;
+    }
+    let mut value = [0u8; STATE_ID_BYTES];
+    let mut len = 0;
+    while len < STATE_ID_BYTES && buffer[offset + len] != 0 {
+        value[len] = buffer[offset + len];
+        len += 1;
+    }
+    if len == 0 {
+        return None;
+    }
+    Some((value, len))
+}
+
+fn bytes_eq(left: &[u8], right: &[u8]) -> bool {
+    if left.len() != right.len() {
         return false;
     }
     let mut index = 0;
-    while index < value.len() {
-        if buffer[offset + index] != value[index] {
+    while index < left.len() {
+        if left[index] != right[index] {
             return false;
         }
         index += 1;
     }
-    if value.len() < 64 && buffer[offset + value.len()] != 0 {
+    true
+}
+
+fn bytes_starts_with(value: &[u8], prefix: &[u8]) -> bool {
+    if value.len() < prefix.len() {
         return false;
+    }
+    let mut index = 0;
+    while index < prefix.len() {
+        if value[index] != prefix[index] {
+            return false;
+        }
+        index += 1;
     }
     true
 }
@@ -488,17 +662,12 @@ fn starts_with(value: &[u8], prefix: &[u8]) -> bool {
     true
 }
 
-fn send_reader_response(value: &[u8]) {
-    log(b"snapshot created");
-    if sys::ipc_send(CAP_READER_REPLY, value) != sys::STATUS_OK {
-        log(b"vertex-state read response failed");
-        sys::exit(1);
-    }
-}
-
-fn send_counter_response(value: &[u8]) {
-    if sys::ipc_send(CAP_COUNTER_REPLY, value) != sys::STATUS_OK {
-        log(b"vertex-state counter read response failed");
+fn send_vfs_response(transaction_id: u64, value: &[u8]) {
+    let mut response = [0u8; 32];
+    write_u64(&mut response, 0, transaction_id);
+    response[8..8 + value.len()].copy_from_slice(value);
+    if sys::ipc_send(CAP_VFS_REPLY, &response[..8 + value.len()]) != sys::STATUS_OK {
+        log(b"vertex-state VFS response failed");
         sys::exit(1);
     }
 }

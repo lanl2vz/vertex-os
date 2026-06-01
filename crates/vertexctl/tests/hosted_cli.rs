@@ -322,10 +322,10 @@ fn compile_boot_manifest_emits_krustboot_plan() {
     assert!(stdout.contains("generation: gen:hello-0001"));
     assert!(stdout.contains("boot_modules: 13"));
     assert!(stdout.contains("processes: 13"));
-    assert!(stdout.contains("endpoints: 12"));
-    assert!(stdout.contains("grants: 61"));
+    assert!(stdout.contains("endpoints: 10"));
+    assert!(stdout.contains("grants: 64"));
     assert!(stdout.contains("store_objects: 14"));
-    assert!(stdout.contains("state_volumes: 0"));
+    assert!(stdout.contains("state_volumes: 2"));
     assert!(stdout.contains("network_ports: 1"));
     assert!(stdout.contains("io_ports: 3"));
     assert!(stdout.contains("mmio_regions: 0"));
@@ -334,6 +334,7 @@ fn compile_boot_manifest_emits_krustboot_plan() {
     assert!(stdout.contains("pci_devices: 4"));
     assert!(stdout.contains("virtio_devices: 4"));
     assert!(stdout.contains("namespaces: 2"));
+    assert!(stdout.contains("vfs_roots: 7"));
 
     let bytes = fs::read(&output_path).expect("read krustboot output");
     assert!(bytes.starts_with(b"KRUSTBOOTV1\0\0\0\0\0"));
@@ -360,9 +361,13 @@ fn compile_boot_manifest_emits_krustboot_plan() {
     assert!(contains_bytes(&bytes, b"vertex-state-block-reply"));
     assert!(contains_bytes(&bytes, b"store-hello-text-request"));
     assert!(contains_bytes(&bytes, b"model-reader-store-reply"));
-    assert!(contains_bytes(&bytes, b"state-counter-request"));
-    assert!(contains_bytes(&bytes, b"state-reader-state-reply"));
     assert!(contains_bytes(&bytes, b"readiness"));
+    assert!(contains_bytes(&bytes, b"cap:vfs.echo-state-a"));
+    assert!(contains_bytes(&bytes, b"cap:vfs.echo-state-writer"));
+    assert!(contains_bytes(&bytes, b"cap:vfs.counter-state"));
+    assert!(contains_bytes(&bytes, b"cap:vfs.state-reader-state"));
+    assert!(contains_bytes(&bytes, b"cap:vfs.state-reader-control"));
+    assert!(contains_bytes(&bytes, b"cap:vfs.block-dev-blk0"));
     assert!(contains_bytes(&bytes, b"cap:io.com1"));
     assert!(contains_bytes(&bytes, b"cap:io.pci-config"));
     assert!(contains_bytes(&bytes, b"cap:io.virtio-blk0"));
@@ -374,7 +379,7 @@ fn compile_boot_manifest_emits_krustboot_plan() {
 }
 
 #[test]
-fn release_profile_validates_m65_krustboot_identity() {
+fn release_profile_validates_m75_krustboot_identity() {
     let dir = temp_dir("release-profile");
     let krustboot_path = dir.join("hello-generation.krustboot");
     let old_krustboot_path = dir.join("old-generation.krustboot");
@@ -396,7 +401,7 @@ fn release_profile_validates_m65_krustboot_identity() {
         &kernel_path.to_string_lossy(),
         &vertexdisk_path.to_string_lossy(),
     ]));
-    assert!(profile.contains("krustboot=Manifest v1 compact KRUSTBOOTM65 version 8"));
+    assert!(profile.contains("krustboot=Manifest v1 compact KRUSTBOOTM75 version 11"));
 
     assert_success(run(&[
         "corrupt-boot-manifest",
@@ -413,7 +418,7 @@ fn release_profile_validates_m65_krustboot_identity() {
         &vertexdisk_path.to_string_lossy(),
     ]));
     assert!(stderr.contains("unsupported KrustBoot compact magic"));
-    assert!(stderr.contains("expected KRUSTBOOTM65"));
+    assert!(stderr.contains("expected KRUSTBOOTM75"));
 }
 
 #[test]
@@ -480,7 +485,7 @@ fn compile_boot_manifest_does_not_inject_implicit_logd_config() {
         &output_path.to_string_lossy(),
     ]));
 
-    assert!(stdout.contains("grants: 60"));
+    assert!(stdout.contains("grants: 63"));
     assert!(stdout.contains("store_objects: 13"));
     let bytes = fs::read(&output_path).expect("read krustboot output");
     assert!(!contains_bytes(&bytes, b"config:logd"));
@@ -522,7 +527,53 @@ fn create_vertex_disk_rejects_missing_executable_artifact() {
 }
 
 #[test]
-fn compile_boot_manifest_rejects_legacy_state_backend_capability() {
+fn create_vertex_disk_rejects_state_volumes_above_krust_limit() {
+    let dir = temp_dir("vertexdisk-state-limit");
+    let input_path = dir.join("too-many-state-volumes.vertex.json");
+    let output_path = dir.join("too-many-state-volumes.img");
+    let mut manifest: Value = serde_json::from_str(
+        &fs::read_to_string(repo_root().join("examples/hello-generation.vertex.json"))
+            .expect("read hello manifest"),
+    )
+    .expect("hello manifest should be json");
+
+    let state_volumes = manifest["stateVolumes"]
+        .as_array_mut()
+        .expect("stateVolumes should be an array");
+    for index in 0..3 {
+        state_volumes.push(serde_json::json!({
+            "id": format!("state:extra-{index}"),
+            "name": format!("extra-{index}"),
+            "kind": "vertexdisk-v0",
+            "owner": "svc:echo-server",
+            "mountIntent": "read-write",
+            "snapshotPolicy": {
+                "mode": "explicit"
+            },
+            "backupPolicy": {
+                "mode": "none"
+            }
+        }));
+    }
+
+    fs::write(
+        &input_path,
+        serde_json::to_string_pretty(&manifest).expect("serialize too-many-state manifest"),
+    )
+    .expect("write too-many-state manifest");
+
+    let stderr = assert_failure(run(&[
+        "create-vertex-disk",
+        &output_path.to_string_lossy(),
+        &input_path.to_string_lossy(),
+    ]));
+
+    assert!(stderr.contains("Krust native runtime supports at most 4 state volumes"));
+    assert!(!output_path.exists());
+}
+
+#[test]
+fn compile_boot_manifest_rejects_direct_state_volume_capability() {
     let dir = temp_dir("krustboot-legacy-state");
     let input_path = dir.join("legacy-state.vertex.json");
     let output_path = dir.join("legacy-state.krustboot");
@@ -553,8 +604,8 @@ fn compile_boot_manifest_rejects_legacy_state_backend_capability() {
         &output_path.to_string_lossy(),
     ]));
 
-    assert!(stderr.contains("legacy state backend capability"));
-    assert!(stderr.contains("is not supported"));
+    assert!(stderr.contains("does not grant direct state-volume capability"));
+    assert!(stderr.contains("use a VFS-root capability for mounted state"));
     assert!(!output_path.exists());
 }
 

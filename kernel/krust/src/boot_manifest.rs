@@ -4,8 +4,8 @@ pub const MODULE_STRING: &[u8] = b"krustboot-manifest";
 pub const FALLBACK_MODULE_STRING: &[u8] = b"krustboot-fallback-manifest";
 pub const BAD_GENERATION_MODULE_STRING: &[u8] = b"krustboot-bad-generation-manifest";
 
-const COMPACT_MAGIC: &[u8; 16] = b"KRUSTBOOTM65\0\0\0\0";
-const COMPACT_VERSION: u16 = 8;
+const COMPACT_MAGIC: &[u8; 16] = b"KRUSTBOOTM75\0\0\0\0";
+const COMPACT_VERSION: u16 = 11;
 const V1_MAGIC: &[u8; 16] = b"KRUSTBOOTV1\0\0\0\0\0";
 const V1_VERSION: u16 = 1;
 const V1_HEADER_SIZE: usize = 164;
@@ -28,6 +28,7 @@ const MAX_DMA_REGIONS: usize = 4;
 const MAX_PCI_DEVICES: usize = 4;
 const MAX_VIRTIO_DEVICES: usize = 4;
 const MAX_NAMESPACES: usize = 4;
+const MAX_VFS_ROOTS: usize = 8;
 const MAX_RUNTIME_OBJECTS: usize = 64;
 const FIXED_RUNTIME_OBJECTS: usize = 4;
 const SERIAL_LOG_ENDPOINT_NAME: &str = "serial-log";
@@ -49,6 +50,10 @@ pub const RIGHT_BIND: u16 = 1 << 7;
 pub const RIGHT_LISTEN: u16 = 1 << 8;
 pub const RIGHT_MAP: u16 = 1 << 9;
 pub const RIGHT_RESOLVE: u16 = 1 << 10;
+pub const RIGHT_CREATE: u16 = 1 << 11;
+pub const RIGHT_UNLINK: u16 = 1 << 12;
+pub const RIGHT_RENAME: u16 = 1 << 13;
+pub const RIGHT_MOUNT: u16 = 1 << 14;
 
 pub const OBJECT_ENDPOINT: u16 = 1;
 pub const OBJECT_STORE: u16 = 2;
@@ -62,6 +67,7 @@ pub const OBJECT_DMA_REGION: u16 = 9;
 pub const OBJECT_PCI_DEVICE: u16 = 10;
 pub const OBJECT_VIRTIO_DEVICE: u16 = 11;
 pub const OBJECT_NAMESPACE: u16 = 12;
+pub const OBJECT_VFS_ROOT: u16 = 13;
 
 #[derive(Clone, Copy)]
 pub struct BootModule<'a> {
@@ -77,6 +83,7 @@ pub struct Process<'a> {
     pub restart_policy: u16,
     pub service_id: &'a str,
     pub health_kind: &'a str,
+    pub mount_root: &'a str,
     pub start_after: [u16; MAX_PROCESS_REFS],
     pub start_after_count: usize,
     pub requires_endpoint: [u16; MAX_PROCESS_REFS],
@@ -172,6 +179,12 @@ pub struct Namespace<'a> {
     pub entry_count: usize,
 }
 
+#[derive(Clone, Copy)]
+pub struct VfsRoot<'a> {
+    pub id: &'a str,
+    pub root_path: &'a str,
+}
+
 pub struct Manifest<'a> {
     generation_id: &'a str,
     parent_generation_id: &'a str,
@@ -207,6 +220,8 @@ pub struct Manifest<'a> {
     virtio_device_count: usize,
     namespaces: [Option<Namespace<'a>>; MAX_NAMESPACES],
     namespace_count: usize,
+    vfs_roots: [Option<VfsRoot<'a>>; MAX_VFS_ROOTS],
+    vfs_root_count: usize,
 }
 
 struct Global<T>(UnsafeCell<T>);
@@ -238,6 +253,7 @@ pub enum ParseError {
     TooManyVirtioDevices,
     TooManyNamespaces,
     TooManyNamespaceEntries,
+    TooManyVfsRoots,
     TooManyRuntimeObjects,
     InvalidString,
     InvalidReference,
@@ -287,6 +303,8 @@ impl<'a> Manifest<'a> {
             virtio_device_count: 0,
             namespaces: [None; MAX_NAMESPACES],
             namespace_count: 0,
+            vfs_roots: [None; MAX_VFS_ROOTS],
+            vfs_root_count: 0,
         }
     }
 
@@ -368,6 +386,10 @@ impl<'a> Manifest<'a> {
 
     pub fn namespace_count(&self) -> usize {
         self.namespace_count
+    }
+
+    pub fn vfs_root_count(&self) -> usize {
+        self.vfs_root_count
     }
 
     pub fn boot_module(&self, index: usize) -> Option<BootModule<'a>> {
@@ -477,6 +499,14 @@ impl<'a> Manifest<'a> {
     pub fn namespace(&self, index: usize) -> Option<Namespace<'a>> {
         if index < self.namespace_count {
             self.namespaces[index]
+        } else {
+            None
+        }
+    }
+
+    pub fn vfs_root(&self, index: usize) -> Option<VfsRoot<'a>> {
+        if index < self.vfs_root_count {
+            self.vfs_roots[index]
         } else {
             None
         }
@@ -604,9 +634,6 @@ fn parse_compact_into(
         reader.read_count(MAX_STORE_OBJECTS, ParseError::TooManyStoreObjects)?;
     let state_volume_count =
         reader.read_count(MAX_STATE_VOLUMES, ParseError::TooManyStateVolumes)?;
-    if state_volume_count != 0 {
-        return Err(ParseError::UnsupportedStateVolumes);
-    }
     let network_port_count =
         reader.read_count(MAX_NETWORK_PORTS, ParseError::TooManyNetworkPorts)?;
     let io_port_count = reader.read_count(MAX_IO_PORT_RANGES, ParseError::TooManyIoPortRanges)?;
@@ -618,9 +645,11 @@ fn parse_compact_into(
     let virtio_device_count =
         reader.read_count(MAX_VIRTIO_DEVICES, ParseError::TooManyVirtioDevices)?;
     let namespace_count = reader.read_count(MAX_NAMESPACES, ParseError::TooManyNamespaces)?;
+    let vfs_root_count = reader.read_count(MAX_VFS_ROOTS, ParseError::TooManyVfsRoots)?;
     validate_runtime_object_budget(
         endpoint_count,
         store_object_count,
+        state_volume_count,
         network_port_count,
         io_port_count,
         mmio_region_count,
@@ -629,6 +658,7 @@ fn parse_compact_into(
         pci_device_count,
         virtio_device_count,
         namespace_count,
+        vfs_root_count,
     )?;
     let generation_id = reader.read_fixed_str()?;
     let parent_generation_id = reader.read_fixed_str_allow_empty()?;
@@ -652,6 +682,7 @@ fn parse_compact_into(
     manifest.pci_device_count = pci_device_count;
     manifest.virtio_device_count = virtio_device_count;
     manifest.namespace_count = namespace_count;
+    manifest.vfs_root_count = vfs_root_count;
 
     let mut index = 0;
     while index < boot_module_count {
@@ -670,6 +701,7 @@ fn parse_compact_into(
         let restart_policy = reader.read_u16()?;
         let service_id = reader.read_fixed_str()?;
         let health_kind = reader.read_fixed_str_allow_empty()?;
+        let mount_root = reader.read_fixed_str()?;
         let (start_after, start_after_count) = reader.read_ref_list()?;
         let (requires_endpoint, requires_endpoint_rights, requires_endpoint_count) =
             reader.read_endpoint_requirement_list()?;
@@ -681,6 +713,7 @@ fn parse_compact_into(
             restart_policy,
             service_id,
             health_kind,
+            mount_root,
             start_after,
             start_after_count,
             requires_endpoint,
@@ -830,6 +863,15 @@ fn parse_compact_into(
         index += 1;
     }
 
+    index = 0;
+    while index < vfs_root_count {
+        manifest.vfs_roots[index] = Some(VfsRoot {
+            id: reader.read_fixed_str()?,
+            root_path: reader.read_fixed_str()?,
+        });
+        index += 1;
+    }
+
     validate_manifest(manifest)?;
 
     if !reader.finished() {
@@ -842,6 +884,7 @@ fn parse_compact_into(
 fn validate_runtime_object_budget(
     endpoint_count: usize,
     store_object_count: usize,
+    state_volume_count: usize,
     network_port_count: usize,
     io_port_count: usize,
     mmio_region_count: usize,
@@ -850,11 +893,13 @@ fn validate_runtime_object_budget(
     pci_device_count: usize,
     virtio_device_count: usize,
     namespace_count: usize,
+    vfs_root_count: usize,
 ) -> Result<(), ParseError> {
     let mut count = FIXED_RUNTIME_OBJECTS;
     count = count
         .checked_add(endpoint_count)
         .and_then(|count| count.checked_add(store_object_count))
+        .and_then(|count| count.checked_add(state_volume_count))
         .and_then(|count| count.checked_add(network_port_count))
         .and_then(|count| count.checked_add(io_port_count))
         .and_then(|count| count.checked_add(mmio_region_count))
@@ -863,6 +908,7 @@ fn validate_runtime_object_budget(
         .and_then(|count| count.checked_add(pci_device_count))
         .and_then(|count| count.checked_add(virtio_device_count))
         .and_then(|count| count.checked_add(namespace_count))
+        .and_then(|count| count.checked_add(vfs_root_count))
         .ok_or(ParseError::TooManyRuntimeObjects)?;
     if count > MAX_RUNTIME_OBJECTS {
         return Err(ParseError::TooManyRuntimeObjects);
@@ -873,7 +919,9 @@ fn validate_runtime_object_budget(
 fn validate_hardware_authority(manifest: &Manifest<'_>) -> Result<(), ParseError> {
     let mut index = 0;
     while index < manifest.io_port_count {
-        let range = manifest.io_port(index).ok_or(ParseError::InvalidReference)?;
+        let range = manifest
+            .io_port(index)
+            .ok_or(ParseError::InvalidReference)?;
         validate_io_range(range.base, range.length)?;
         let mut previous = 0;
         while previous < index {
@@ -930,7 +978,9 @@ fn validate_hardware_authority(manifest: &Manifest<'_>) -> Result<(), ParseError
 
     index = 0;
     while index < manifest.dma_region_count {
-        let region = manifest.dma_region(index).ok_or(ParseError::InvalidReference)?;
+        let region = manifest
+            .dma_region(index)
+            .ok_or(ParseError::InvalidReference)?;
         if region.length == 0
             || region.length > MAX_DEVICE_MAPPING_LENGTH
             || region.length % PAGE_SIZE != 0
@@ -996,7 +1046,9 @@ fn ranges_overlap(
     if length == 0 || other_length == 0 {
         return Ok(false);
     }
-    let end = base.checked_add(length).ok_or(ParseError::InvalidReference)?;
+    let end = base
+        .checked_add(length)
+        .ok_or(ParseError::InvalidReference)?;
     let other_end = other_base
         .checked_add(other_length)
         .ok_or(ParseError::InvalidReference)?;
@@ -1035,6 +1087,7 @@ fn validate_manifest(manifest: &Manifest<'_>) -> Result<(), ParseError> {
         if !has_store_object_module(manifest, process.module_string) {
             return Err(ParseError::InvalidReference);
         }
+        validate_vfs_root_path(process.mount_root)?;
         validate_process_refs(
             process.start_after,
             process.start_after_count,
@@ -1062,6 +1115,26 @@ fn validate_manifest(manifest: &Manifest<'_>) -> Result<(), ParseError> {
     }
 
     index = 0;
+    while index < manifest.state_volume_count {
+        let state = manifest
+            .state_volume(index)
+            .ok_or(ParseError::InvalidReference)?;
+        validate_state_volume_id(state.id)?;
+        let mount_name = state_volume_mount_component(state.id)?;
+        let mut previous = 0;
+        while previous < index {
+            let prior = manifest
+                .state_volume(previous)
+                .ok_or(ParseError::InvalidReference)?;
+            if prior.id == state.id || state_volume_mount_component(prior.id)? == mount_name {
+                return Err(ParseError::InvalidReference);
+            }
+            previous += 1;
+        }
+        index += 1;
+    }
+
+    index = 0;
     while index < manifest.grant_count {
         let grant = manifest.grant(index).ok_or(ParseError::InvalidReference)?;
         if grant.process_index >= manifest.process_count {
@@ -1080,6 +1153,7 @@ fn validate_manifest(manifest: &Manifest<'_>) -> Result<(), ParseError> {
             OBJECT_PCI_DEVICE if grant.object_index < manifest.pci_device_count => {}
             OBJECT_VIRTIO_DEVICE if grant.object_index < manifest.virtio_device_count => {}
             OBJECT_NAMESPACE if grant.object_index < manifest.namespace_count => {}
+            OBJECT_VFS_ROOT if grant.object_index < manifest.vfs_root_count => {}
             OBJECT_ENDPOINT | OBJECT_STORE | OBJECT_TIMER | OBJECT_NETWORK_PORT => {
                 return Err(ParseError::InvalidReference);
             }
@@ -1089,7 +1163,8 @@ fn validate_manifest(manifest: &Manifest<'_>) -> Result<(), ParseError> {
             | OBJECT_DMA_REGION
             | OBJECT_PCI_DEVICE
             | OBJECT_VIRTIO_DEVICE
-            | OBJECT_NAMESPACE => {
+            | OBJECT_NAMESPACE
+            | OBJECT_VFS_ROOT => {
                 return Err(ParseError::InvalidReference);
             }
             _ => return Err(ParseError::InvalidObjectKind),
@@ -1108,7 +1183,11 @@ fn validate_manifest(manifest: &Manifest<'_>) -> Result<(), ParseError> {
                     | RIGHT_BIND
                     | RIGHT_LISTEN
                     | RIGHT_MAP
-                    | RIGHT_RESOLVE)
+                    | RIGHT_RESOLVE
+                    | RIGHT_CREATE
+                    | RIGHT_UNLINK
+                    | RIGHT_RENAME
+                    | RIGHT_MOUNT)
                 != 0
         {
             return Err(ParseError::InvalidRights);
@@ -1139,7 +1218,11 @@ fn validate_manifest(manifest: &Manifest<'_>) -> Result<(), ParseError> {
                     | RIGHT_BIND
                     | RIGHT_LISTEN
                     | RIGHT_MAP
-                    | RIGHT_RESOLVE)
+                    | RIGHT_RESOLVE
+                    | RIGHT_CREATE
+                    | RIGHT_UNLINK
+                    | RIGHT_RENAME
+                    | RIGHT_MOUNT)
                 != 0
             {
                 return Err(ParseError::InvalidRights);
@@ -1149,7 +1232,53 @@ fn validate_manifest(manifest: &Manifest<'_>) -> Result<(), ParseError> {
         index += 1;
     }
 
+    index = 0;
+    while index < manifest.vfs_root_count {
+        let root = manifest
+            .vfs_root(index)
+            .ok_or(ParseError::InvalidReference)?;
+        validate_vfs_root_path(root.root_path)?;
+        index += 1;
+    }
+
     Ok(())
+}
+
+fn validate_vfs_root_path(path: &str) -> Result<(), ParseError> {
+    let bytes = path.as_bytes();
+    if bytes.is_empty() || bytes[0] != b'/' || (bytes.len() > 1 && bytes[bytes.len() - 1] == b'/') {
+        return Err(ParseError::InvalidReference);
+    }
+    let mut index = 1;
+    while index < bytes.len() {
+        if bytes[index] == 0 || (bytes[index] == b'/' && bytes[index - 1] == b'/') {
+            return Err(ParseError::InvalidReference);
+        }
+        index += 1;
+    }
+    Ok(())
+}
+
+fn validate_state_volume_id(id: &str) -> Result<(), ParseError> {
+    state_volume_mount_component(id).map(|_| ())
+}
+
+fn state_volume_mount_component(id: &str) -> Result<&str, ParseError> {
+    let Some(component) = id.strip_prefix("state:") else {
+        return Err(ParseError::InvalidReference);
+    };
+    let bytes = component.as_bytes();
+    if bytes.is_empty() || bytes.len() > STRING_LEN {
+        return Err(ParseError::InvalidReference);
+    }
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'/' || bytes[index] == 0 {
+            return Err(ParseError::InvalidReference);
+        }
+        index += 1;
+    }
+    Ok(component)
 }
 
 fn namespace_entry_object_kind_allowed(object_kind: u16) -> bool {
@@ -1177,6 +1306,7 @@ fn validate_object_ref(
         OBJECT_PCI_DEVICE if object_index < manifest.pci_device_count => Ok(()),
         OBJECT_VIRTIO_DEVICE if object_index < manifest.virtio_device_count => Ok(()),
         OBJECT_NAMESPACE if object_index < manifest.namespace_count => Ok(()),
+        OBJECT_VFS_ROOT if object_index < manifest.vfs_root_count => Ok(()),
         OBJECT_ENDPOINT | OBJECT_STORE | OBJECT_TIMER | OBJECT_NETWORK_PORT => {
             Err(ParseError::InvalidReference)
         }
@@ -1186,7 +1316,8 @@ fn validate_object_ref(
         | OBJECT_DMA_REGION
         | OBJECT_PCI_DEVICE
         | OBJECT_VIRTIO_DEVICE
-        | OBJECT_NAMESPACE => Err(ParseError::InvalidReference),
+        | OBJECT_NAMESPACE
+        | OBJECT_VFS_ROOT => Err(ParseError::InvalidReference),
         _ => Err(ParseError::InvalidObjectKind),
     }
 }

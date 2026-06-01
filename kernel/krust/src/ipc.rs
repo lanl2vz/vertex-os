@@ -15,12 +15,31 @@ pub const BOOT_ENDPOINT_ID: u64 = 1;
 const MAX_MESSAGE_BYTES: usize = 512;
 const ENDPOINT_QUEUE_CAPACITY: usize = 4;
 const MAX_BOOT_READ_BYTES: usize = 16 * 1024;
-const MAX_OBJECTS: usize = 64;
+const MAX_OBJECTS: usize = 128;
 const MAX_PROCESSES: usize = 16;
 const MAX_CAPS: usize = 32;
+const MAX_FILE_HANDLES: usize = 16;
+const FILE_HANDLE_SLOT_BITS: u64 = 8;
+const FILE_HANDLE_SLOT_MASK: u64 = (1 << FILE_HANDLE_SLOT_BITS) - 1;
+const MAX_OPEN_FILE_DESCRIPTIONS: usize = MAX_PROCESSES * MAX_FILE_HANDLES;
+const MAX_VFS_NODES: usize = 64;
+const MAX_VFS_MEM_FILES: usize = 8;
+const MAX_VFS_MEM_FILE_BYTES: usize = 512;
+const MAX_VFS_PATH_BYTES: usize = 128;
+const MAX_VFS_NAME_BYTES: usize = 64;
+const VFS_STAT_BYTES: usize = 32;
+const VFS_DIRENT_BYTES: usize = 96;
+const VFS_RENAME_REQUEST_HEADER_BYTES: usize = 16;
+const VFS_RENAME_REQUEST_MAX_BYTES: usize =
+    VFS_RENAME_REQUEST_HEADER_BYTES + (MAX_VFS_PATH_BYTES * 2);
+const MAX_VFS_LOCKS: usize = MAX_OPEN_FILE_DESCRIPTIONS;
 const MAX_BOOT_GRANTS: usize = 128;
 const MAX_BOOT_NAMESPACES: usize = 4;
 const MAX_NAMESPACE_ENTRIES: usize = 4;
+const MAX_BOOT_VFS_ROOTS: usize = 8;
+const MAX_BOOT_STATE_VOLUMES: usize = 4;
+const MAX_VFS_MOUNTS: usize = 16;
+const BUILTIN_VFS_MOUNTS: usize = 5;
 const MAX_CAP_LINEAGE: usize = 1024;
 const MAX_REVOKED_CAPS: usize = MAX_CAP_LINEAGE;
 const MAX_GENERATION_CONFIGS: usize = 4;
@@ -31,7 +50,43 @@ const PROTOCOL_HEALTH_V0: u16 = 2;
 const MESSAGE_READY: u16 = 1;
 const READY_ENVELOPE_LEN: usize = 16;
 const INIT_TIMER_CAP_SLOT: u64 = 30;
+const VFS_OPEN_READ: u64 = 1;
+const VFS_OPEN_WRITE: u64 = 1 << 1;
+const VFS_OPEN_CREATE: u64 = 1 << 2;
+const VFS_OPEN_TRUNC: u64 = 1 << 3;
+const VFS_OPEN_APPEND: u64 = 1 << 4;
+const VFS_OPEN_KNOWN_FLAGS: u64 =
+    VFS_OPEN_READ | VFS_OPEN_WRITE | VFS_OPEN_CREATE | VFS_OPEN_TRUNC | VFS_OPEN_APPEND;
+const VFS_DUP_SHARE_OFFSET: u64 = 1;
+const VFS_LOCK_SHARED: u64 = 1;
+const VFS_LOCK_EXCLUSIVE: u64 = 2;
+const VFS_MOUNT_VOLATILE: u64 = 1;
+const VFS_SEEK_SET: u64 = 0;
+const VFS_SEEK_CURRENT: u64 = 1;
+const VFS_SEEK_END: u64 = 2;
+const VFS_NODE_KIND_REGULAR: u64 = 1;
+const VFS_NODE_KIND_DIRECTORY: u64 = 2;
+const VFS_NODE_KIND_DEVICE: u64 = 3;
+const VFS_NODE_KIND_PIPE: u64 = 4;
+const VFS_NODE_KIND_SYNTHETIC: u64 = 5;
+const VFS_SYNTHETIC_INSPECT_BYTES: &[u8] = b"krust synthetic inspect node\n";
 const LOG_ENDPOINT_NAME: &str = "serial-log";
+const STATE_VFS_REQUEST_ENDPOINT_NAME: &str = "state-vfs-request";
+const STATE_VFS_REPLY_ENDPOINT_NAME: &str = "state-vfs-reply";
+const STATE_VOLUME_VALUE_FILE_NAME: &str = "value";
+const STATE_VOLUME_CONTROL_FILE_NAME: &str = "control";
+const VERTEX_STATE_PROCESS_NAME: &str = "vertex-state";
+const VERTEX_STATE_VFS_REPLY_CAP_SLOT: u64 = 6;
+const VERTEX_STATE_VFS_REQUEST_CAP_SLOT: u64 = 7;
+const VFS_STATE_TRANSACTION_ID_BYTES: usize = 8;
+const VFS_STATE_REQUEST_HEADER_BYTES: usize = 8;
+const VFS_STATE_REQUEST_MAGIC: &[u8; 2] = b"VS";
+const VFS_STATE_REQUEST_VERSION: u8 = 1;
+const VFS_STATE_OP_READ_VALUE: u8 = b'R';
+const VFS_STATE_OP_WRITE_VALUE: u8 = b'W';
+const VFS_STATE_OP_STAT_VALUE: u8 = b'S';
+const VFS_STATE_OP_CONTROL: u8 = b'C';
+const MAX_STATE_VOLUME_VALUE_BYTES: usize = 16;
 const USER_MMIO_MAPPING_BASE: u64 = 0x0000_5000_0000_0000;
 const USER_DMA_MAPPING_BASE: u64 = 0x0000_6000_0000_0000;
 const USER_DEVICE_MAPPING_STRIDE: u64 = 1 << 30;
@@ -86,6 +141,8 @@ const INITIAL_USER_RFLAGS: u64 = 0x202;
 const STATUS_BAD_BUFFER: u64 = u64::MAX - 2;
 const STATUS_OK: u64 = 0;
 const STATUS_TIMEOUT: u64 = u64::MAX - 9;
+const STATUS_VFS_BAD_HANDLE: u64 = u64::MAX - 38;
+const STATUS_VFS_UNSUPPORTED: u64 = u64::MAX - 39;
 pub const STATUS_PROCESS_FAULT: u64 = u64::MAX - 10;
 const FALLBACK_TSC_TICKS_PER_MS: u64 = 1_000_000;
 pub const BOOT_OBJECT_ENDPOINT: u16 = 1;
@@ -100,6 +157,7 @@ pub const BOOT_OBJECT_DMA_REGION: u16 = 9;
 pub const BOOT_OBJECT_PCI_DEVICE: u16 = 10;
 pub const BOOT_OBJECT_VIRTIO_DEVICE: u16 = 11;
 pub const BOOT_OBJECT_NAMESPACE: u16 = 12;
+pub const BOOT_OBJECT_VFS_ROOT: u16 = 13;
 
 pub const FRAME_R15: usize = 0;
 pub const FRAME_R14: usize = 8;
@@ -225,6 +283,7 @@ pub struct BootProcessConfig {
     pub image_base: u64,
     pub image_length: u64,
     pub initial: bool,
+    pub mount_root: &'static str,
 }
 
 #[derive(Clone, Copy)]
@@ -260,6 +319,11 @@ pub struct BootStoreObjectConfig {
     pub base: u64,
     pub length: u64,
     pub hash: &'static str,
+}
+
+#[derive(Clone, Copy)]
+pub struct BootStateVolumeConfig {
+    pub id: &'static str,
 }
 
 #[derive(Clone, Copy)]
@@ -322,6 +386,12 @@ pub struct BootNamespaceConfig {
 }
 
 #[derive(Clone, Copy)]
+pub struct BootVfsRootConfig {
+    pub id: &'static str,
+    pub root_path: &'static str,
+}
+
+#[derive(Clone, Copy)]
 pub struct BootGrantConfig {
     pub process_index: usize,
     pub cap_slot: u64,
@@ -341,6 +411,8 @@ pub struct BootRuntimeConfig {
     manifest_module: Option<BootModuleConfig>,
     store_objects: [Option<BootStoreObjectConfig>; MAX_OBJECTS],
     store_object_count: usize,
+    state_volumes: [Option<BootStateVolumeConfig>; MAX_BOOT_STATE_VOLUMES],
+    state_volume_count: usize,
     network_ports: [Option<BootNetworkPortConfig>; MAX_OBJECTS],
     network_port_count: usize,
     io_ports: [Option<BootIoPortRangeConfig>; MAX_OBJECTS],
@@ -357,6 +429,8 @@ pub struct BootRuntimeConfig {
     virtio_device_count: usize,
     namespaces: [Option<BootNamespaceConfig>; MAX_BOOT_NAMESPACES],
     namespace_count: usize,
+    vfs_roots: [Option<BootVfsRootConfig>; MAX_BOOT_VFS_ROOTS],
+    vfs_root_count: usize,
     grants: [Option<BootGrantConfig>; MAX_BOOT_GRANTS],
     grant_count: usize,
 }
@@ -377,6 +451,29 @@ enum ProcessState {
         interrupt: KernelObjectId,
         timeout_tsc: Option<u64>,
     },
+    BlockedOnVfsRead {
+        node: VfsNodeId,
+        description: FileDescriptionId,
+        destination: u64,
+        max_len: usize,
+    },
+    BlockedOnVfsState {
+        reply_endpoint: KernelObjectId,
+        node: VfsNodeId,
+        description: FileDescriptionId,
+        operation: VfsStateOperation,
+        transaction_id: u64,
+        offset: u64,
+        destination: u64,
+        max_len: usize,
+        write_len: usize,
+        update_offset: bool,
+    },
+    BlockedOnNetworkPort {
+        port: KernelObjectId,
+        destination: u64,
+        max_len: usize,
+    },
     Sleeping {
         wake_tsc: u64,
     },
@@ -392,10 +489,21 @@ impl ProcessState {
             Self::Running => "running",
             Self::BlockedOnEndpoint { .. } => "blocked",
             Self::BlockedOnInterrupt { .. } => "blocked-irq",
+            Self::BlockedOnVfsRead { .. } => "blocked-vfs",
+            Self::BlockedOnVfsState { .. } => "blocked-vfs-state",
+            Self::BlockedOnNetworkPort { .. } => "blocked-net",
             Self::Sleeping { .. } => "sleeping",
             Self::Exited => "exited",
         }
     }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum VfsStateOperation {
+    Read,
+    Stat,
+    Write,
+    Control,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -450,6 +558,16 @@ pub enum IpcError {
     InvalidUserBuffer,
     MessageTooLarge,
     Empty,
+    VfsPermission,
+    VfsBadPath,
+    VfsNotFound,
+    VfsNotDirectory,
+    VfsNotFile,
+    VfsBusy,
+    VfsBadHandle,
+    VfsUnsupported,
+    VfsNoSpace,
+    VfsExists,
 }
 
 #[derive(Clone, Copy)]
@@ -487,7 +605,9 @@ struct Process {
     start_count: u64,
     quota: ProcessQuota,
     initial_quota: ProcessQuota,
+    mount_root: VfsPath,
     dma_mappings: [Option<DmaUserMapping>; MAX_OBJECTS],
+    file_handles: [FileHandleSlot; MAX_FILE_HANDLES],
 }
 
 #[derive(Clone, Copy)]
@@ -531,6 +651,117 @@ struct StoreObject {
     base: u64,
     length: u64,
     hash: &'static str,
+}
+
+#[derive(Clone, Copy)]
+struct StateVolumeObject {
+    id: KernelObjectId,
+    name: &'static str,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct VfsNodeId(u64);
+
+impl VfsNodeId {
+    fn raw(self) -> u64 {
+        self.0
+    }
+}
+
+#[derive(Clone, Copy)]
+enum VfsNodeKind {
+    RegularFile,
+    Directory,
+    DeviceNode,
+    Pipe,
+    SyntheticNode,
+}
+
+#[derive(Clone, Copy)]
+enum VfsBacking {
+    None,
+    StoreObject(KernelObjectId),
+    StateVolume(KernelObjectId),
+    StateVolumeValue(KernelObjectId),
+    StateVolumeControl(KernelObjectId),
+    MemoryFile(usize),
+    Device(KernelObjectId),
+    Synthetic(&'static [u8]),
+    Pipe,
+}
+
+#[derive(Clone, Copy)]
+struct VfsName {
+    bytes: [u8; MAX_VFS_NAME_BYTES],
+    len: usize,
+}
+
+#[derive(Clone, Copy)]
+struct VfsPath {
+    bytes: [u8; MAX_VFS_PATH_BYTES],
+    len: usize,
+}
+
+#[derive(Clone, Copy)]
+struct VfsNode {
+    id: VfsNodeId,
+    name: VfsName,
+    parent: Option<VfsNodeId>,
+    kind: VfsNodeKind,
+    backing: VfsBacking,
+    mount_source: &'static str,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct FileDescriptionId(u64);
+
+impl FileDescriptionId {
+    fn raw(self) -> u64 {
+        self.0
+    }
+}
+
+#[derive(Clone, Copy)]
+struct OpenFileDescription {
+    id: FileDescriptionId,
+    node: VfsNodeId,
+    rights: u64,
+    flags: u64,
+    offset: u64,
+    ref_count: u64,
+    owner: ProcessId,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum VfsLockMode {
+    Shared,
+    Exclusive,
+}
+
+#[derive(Clone, Copy)]
+struct VfsLock {
+    node: VfsNodeId,
+    owner: ProcessId,
+    description: FileDescriptionId,
+    mode: VfsLockMode,
+}
+
+#[derive(Clone, Copy)]
+struct FileHandle {
+    description: FileDescriptionId,
+}
+
+#[derive(Clone, Copy)]
+struct FileHandleSlot {
+    generation: u64,
+    handle: Option<FileHandle>,
+}
+
+#[derive(Clone, Copy)]
+struct VfsMemoryFile {
+    name: &'static str,
+    bytes: [u8; MAX_VFS_MEM_FILE_BYTES],
+    len: usize,
 }
 
 #[derive(Clone, Copy)]
@@ -728,6 +959,25 @@ struct NamespaceObject {
 }
 
 #[derive(Clone, Copy)]
+struct VfsRootObject {
+    id: KernelObjectId,
+    name: &'static str,
+    root_path: VfsPath,
+    derived: bool,
+}
+
+#[derive(Clone, Copy)]
+struct VfsMountObject {
+    id: KernelObjectId,
+    name: &'static str,
+    root_node: VfsNodeId,
+    root_path: VfsPath,
+    source: &'static str,
+    flags: u64,
+    dynamic: bool,
+}
+
+#[derive(Clone, Copy)]
 struct ProcessControlObject {
     id: KernelObjectId,
     name: &'static str,
@@ -751,6 +1001,7 @@ enum KernelObject {
     IpcEndpoint(IpcEndpoint),
     BootModule(BootModuleObject),
     StoreObject(StoreObject),
+    StateVolume(StateVolumeObject),
     Timer(TimerObject),
     NetworkPort(NetworkPortObject),
     IoPortRange(IoPortRangeObject),
@@ -760,6 +1011,8 @@ enum KernelObject {
     PciDevice(PciDeviceObject),
     VirtioDevice(VirtioDeviceObject),
     Namespace(NamespaceObject),
+    VfsRoot(VfsRootObject),
+    VfsMount(VfsMountObject),
     ProcessControl(ProcessControlObject),
     Secret(SecretObject),
 }
@@ -770,6 +1023,7 @@ impl KernelObject {
             Self::IpcEndpoint(object) => object.id,
             Self::BootModule(object) => object.id,
             Self::StoreObject(object) => object.id,
+            Self::StateVolume(object) => object.id,
             Self::Timer(object) => object.id,
             Self::NetworkPort(object) => object.id,
             Self::IoPortRange(object) => object.id,
@@ -779,6 +1033,8 @@ impl KernelObject {
             Self::PciDevice(object) => object.id,
             Self::VirtioDevice(object) => object.id,
             Self::Namespace(object) => object.id,
+            Self::VfsRoot(object) => object.id,
+            Self::VfsMount(object) => object.id,
             Self::ProcessControl(object) => object.id,
             Self::Secret(object) => object.id,
         }
@@ -814,8 +1070,17 @@ struct RuntimeState {
     revoked_cap_count: usize,
     cap_lineage: [Option<CapabilityLineage>; MAX_CAP_LINEAGE],
     cap_lineage_count: usize,
+    vfs_nodes: [Option<VfsNode>; MAX_VFS_NODES],
+    vfs_node_count: usize,
+    next_vfs_node_id: u64,
+    vfs_mem_files: [VfsMemoryFile; MAX_VFS_MEM_FILES],
+    vfs_mem_file_count: usize,
+    open_file_descriptions: [Option<OpenFileDescription>; MAX_OPEN_FILE_DESCRIPTIONS],
+    next_file_description_id: u64,
+    vfs_locks: [Option<VfsLock>; MAX_VFS_LOCKS],
     endpoint_ids: [Option<KernelObjectId>; MAX_OBJECTS],
     store_object_ids: [Option<KernelObjectId>; MAX_OBJECTS],
+    state_volume_ids: [Option<KernelObjectId>; MAX_BOOT_STATE_VOLUMES],
     network_port_ids: [Option<KernelObjectId>; MAX_OBJECTS],
     io_port_ids: [Option<KernelObjectId>; MAX_OBJECTS],
     mmio_region_ids: [Option<KernelObjectId>; MAX_OBJECTS],
@@ -824,9 +1089,15 @@ struct RuntimeState {
     pci_device_ids: [Option<KernelObjectId>; MAX_OBJECTS],
     virtio_device_ids: [Option<KernelObjectId>; MAX_OBJECTS],
     namespace_ids: [Option<KernelObjectId>; MAX_BOOT_NAMESPACES],
+    vfs_root_ids: [Option<KernelObjectId>; MAX_BOOT_VFS_ROOTS],
+    vfs_mount_ids: [Option<KernelObjectId>; MAX_VFS_MOUNTS],
+    vfs_mount_count: usize,
     timer_id: Option<KernelObjectId>,
     process_control_id: Option<KernelObjectId>,
     secret_id: Option<KernelObjectId>,
+    state_vfs_request_endpoint: Option<KernelObjectId>,
+    state_vfs_reply_endpoint: Option<KernelObjectId>,
+    next_vfs_state_transaction_id: u64,
     process_template_pids: [Option<ProcessId>; MAX_PROCESSES],
     service_lifecycle_events: [Option<ServiceLifecycleEvent>; MAX_SERVICE_LIFECYCLE_EVENTS],
     service_lifecycle_event_count: usize,
@@ -890,17 +1161,6 @@ impl CapabilitySpace {
     fn lookup(&self, slot: u64) -> Option<Capability> {
         let slot = usize::try_from(slot).ok()?;
         self.caps.get(slot).copied().flatten()
-    }
-
-    fn drop(&mut self, slot: u64) -> Result<(), IpcError> {
-        let Ok(slot) = usize::try_from(slot) else {
-            return Err(IpcError::BadCapability);
-        };
-        if slot >= self.caps.len() || self.caps[slot].is_none() {
-            return Err(IpcError::BadCapability);
-        }
-        self.caps[slot] = None;
-        Ok(())
     }
 
     fn clear(&mut self, slot: u64) -> Result<Capability, IpcError> {
@@ -985,7 +1245,9 @@ impl Process {
             start_count: 0,
             quota: ProcessQuota::service(),
             initial_quota: ProcessQuota::service(),
+            mount_root: VfsPath::empty(),
             dma_mappings: [None; MAX_OBJECTS],
+            file_handles: [FileHandleSlot::empty(); MAX_FILE_HANDLES],
         }
     }
 
@@ -997,6 +1259,7 @@ impl Process {
         image_length: u64,
         state: ProcessState,
         caps: CapabilitySpace,
+        mount_root: VfsPath,
     ) -> Self {
         let initial = state == ProcessState::Running;
         let start_count = if initial { 1 } else { 0 };
@@ -1022,7 +1285,9 @@ impl Process {
             start_count,
             quota,
             initial_quota: quota,
+            mount_root,
             dma_mappings: [None; MAX_OBJECTS],
+            file_handles: [FileHandleSlot::empty(); MAX_FILE_HANDLES],
         }
     }
 
@@ -1051,7 +1316,7 @@ impl Process {
             }
             index += 1;
         }
-        Err(IpcError::BadCapability)
+        Err(IpcError::VfsNoSpace)
     }
 
     fn clear_dma_mappings(&mut self) {
@@ -1061,6 +1326,126 @@ impl Process {
             index += 1;
         }
     }
+
+    fn take_dma_mapping(&mut self, index: usize) -> Option<DmaUserMapping> {
+        if index >= self.dma_mappings.len() {
+            return None;
+        }
+        let mapping = self.dma_mappings[index];
+        self.dma_mappings[index] = None;
+        mapping
+    }
+
+    fn open_file_handle(&mut self, handle: FileHandle) -> Result<u64, IpcError> {
+        let mut index = 0;
+        while index < self.file_handles.len() {
+            if self.file_handles[index].handle.is_none() {
+                let mut generation = self.file_handles[index].generation.saturating_add(1);
+                if generation == 0 {
+                    generation = 1;
+                }
+                self.file_handles[index] = FileHandleSlot {
+                    generation,
+                    handle: Some(handle),
+                };
+                return Ok((generation << FILE_HANDLE_SLOT_BITS) | ((index as u64) + 1));
+            }
+            index += 1;
+        }
+        Err(IpcError::VfsNoSpace)
+    }
+
+    fn file_handle(&self, raw: u64) -> Result<(usize, FileHandle), IpcError> {
+        let (index, generation) = decode_file_handle(raw)?;
+        if index >= self.file_handles.len() {
+            return Err(IpcError::VfsBadHandle);
+        }
+        let slot = self.file_handles[index];
+        if slot.generation != generation {
+            return Err(IpcError::VfsBadHandle);
+        }
+        let Some(handle) = slot.handle else {
+            return Err(IpcError::VfsBadHandle);
+        };
+        Ok((index, handle))
+    }
+
+    fn close_file_handle(&mut self, raw: u64) -> Result<FileHandle, IpcError> {
+        let (index, handle) = self.file_handle(raw)?;
+        self.file_handles[index].handle = None;
+        Ok(handle)
+    }
+
+    fn clear_file_handles(&mut self) {
+        let mut index = 0;
+        while index < self.file_handles.len() {
+            self.file_handles[index].handle = None;
+            index += 1;
+        }
+    }
+}
+
+impl FileHandleSlot {
+    const fn empty() -> Self {
+        Self {
+            generation: 0,
+            handle: None,
+        }
+    }
+}
+
+impl OpenFileDescription {
+    const fn new(
+        id: FileDescriptionId,
+        node: VfsNodeId,
+        rights: u64,
+        flags: u64,
+        owner: ProcessId,
+    ) -> Self {
+        Self {
+            id,
+            node,
+            rights,
+            flags,
+            offset: 0,
+            ref_count: 1,
+            owner,
+        }
+    }
+}
+
+impl VfsMemoryFile {
+    const fn empty() -> Self {
+        Self {
+            name: "",
+            bytes: [0; MAX_VFS_MEM_FILE_BYTES],
+            len: 0,
+        }
+    }
+
+    fn new(name: &'static str, initial: &[u8]) -> Result<Self, InitError> {
+        if initial.len() > MAX_VFS_MEM_FILE_BYTES {
+            return Err(InitError::InvalidBootManifest);
+        }
+        let mut file = Self::empty();
+        file.name = name;
+        let mut index = 0;
+        while index < initial.len() {
+            file.bytes[index] = initial[index];
+            index += 1;
+        }
+        file.len = initial.len();
+        Ok(file)
+    }
+}
+
+fn decode_file_handle(raw: u64) -> Result<(usize, u64), IpcError> {
+    let slot = raw & FILE_HANDLE_SLOT_MASK;
+    let generation = raw >> FILE_HANDLE_SLOT_BITS;
+    if raw == 0 || slot == 0 || generation == 0 {
+        return Err(IpcError::VfsBadHandle);
+    }
+    Ok(((slot - 1) as usize, generation))
 }
 
 impl IpcEndpoint {
@@ -1120,6 +1505,81 @@ impl IpcEndpoint {
             index += 1;
         }
         None
+    }
+
+    fn has_vfs_state_reply_for(&self, receiver: ProcessId, transaction_id: u64) -> bool {
+        let mut index = 0;
+        while index < self.queue_len {
+            if self.queue[index].sender != receiver
+                && ipc_message_transaction_id(self.queue[index]) == Some(transaction_id)
+            {
+                return true;
+            }
+            index += 1;
+        }
+        false
+    }
+
+    fn dequeue_vfs_state_reply_for(
+        &mut self,
+        receiver: ProcessId,
+        transaction_id: u64,
+    ) -> Option<IpcMessage> {
+        let mut index = 0;
+        while index < self.queue_len {
+            if self.queue[index].sender != receiver
+                && ipc_message_transaction_id(self.queue[index]) == Some(transaction_id)
+            {
+                let message = self.queue[index];
+                while index + 1 < self.queue_len {
+                    self.queue[index] = self.queue[index + 1];
+                    index += 1;
+                }
+                self.queue_len -= 1;
+                self.queue[self.queue_len] = IpcMessage::empty();
+                return Some(message);
+            }
+            index += 1;
+        }
+
+        None
+    }
+
+    fn remove_first_from_sender(&mut self, sender: ProcessId) -> bool {
+        let mut index = 0;
+        while index < self.queue_len {
+            if self.queue[index].sender == sender {
+                while index + 1 < self.queue_len {
+                    self.queue[index] = self.queue[index + 1];
+                    index += 1;
+                }
+                self.queue_len -= 1;
+                self.queue[self.queue_len] = IpcMessage::empty();
+                return true;
+            }
+            index += 1;
+        }
+        false
+    }
+
+    fn remove_all_from_sender(&mut self, sender: ProcessId) -> usize {
+        let mut removed = 0;
+        let mut index = 0;
+        while index < self.queue_len {
+            if self.queue[index].sender == sender {
+                let mut shift = index;
+                while shift + 1 < self.queue_len {
+                    self.queue[shift] = self.queue[shift + 1];
+                    shift += 1;
+                }
+                self.queue_len -= 1;
+                self.queue[self.queue_len] = IpcMessage::empty();
+                removed += 1;
+            } else {
+                index += 1;
+            }
+        }
+        removed
     }
 }
 
@@ -1281,6 +1741,168 @@ impl StoreObject {
     }
 }
 
+impl StateVolumeObject {
+    const fn new(id: KernelObjectId, name: &'static str) -> Self {
+        Self { id, name }
+    }
+}
+
+impl VfsName {
+    const fn empty() -> Self {
+        Self {
+            bytes: [0; MAX_VFS_NAME_BYTES],
+            len: 0,
+        }
+    }
+
+    fn from_static(value: &'static str) -> Result<Self, InitError> {
+        Self::from_bytes(value.as_bytes()).map_err(|_| InitError::InvalidBootManifest)
+    }
+
+    fn from_user_component(value: &[u8]) -> Result<Self, IpcError> {
+        Self::from_bytes(value).map_err(|_| IpcError::BadCapability)
+    }
+
+    fn from_bytes(value: &[u8]) -> Result<Self, ()> {
+        if value.is_empty() || value.len() > MAX_VFS_NAME_BYTES {
+            return Err(());
+        }
+        let mut name = Self::empty();
+        if value == b"/" {
+            name.bytes[0] = b'/';
+            name.len = 1;
+            return Ok(name);
+        }
+        let mut index = 0;
+        while index < value.len() {
+            let byte = value[index];
+            if byte == b'/' || byte == 0 {
+                return Err(());
+            }
+            name.bytes[index] = byte;
+            index += 1;
+        }
+        name.len = value.len();
+        Ok(name)
+    }
+
+    fn as_bytes(&self) -> &[u8] {
+        &self.bytes[..self.len]
+    }
+}
+
+impl VfsPath {
+    const fn empty() -> Self {
+        Self {
+            bytes: [0; MAX_VFS_PATH_BYTES],
+            len: 0,
+        }
+    }
+
+    fn from_root_path(path: &[u8]) -> Result<Self, IpcError> {
+        if path.len() > MAX_VFS_PATH_BYTES || !valid_vfs_root_path(path) {
+            return Err(IpcError::VfsBadPath);
+        }
+        let mut value = Self {
+            bytes: [0; MAX_VFS_PATH_BYTES],
+            len: path.len(),
+        };
+        let mut index = 0;
+        while index < path.len() {
+            value.bytes[index] = path[index];
+            index += 1;
+        }
+        Ok(value)
+    }
+
+    fn from_boot_root_path(path: &'static str) -> Result<Self, InitError> {
+        if path.len() > MAX_VFS_PATH_BYTES || !valid_vfs_root_path(path.as_bytes()) {
+            return Err(InitError::InvalidBootManifest);
+        }
+        let mut value = Self {
+            bytes: [0; MAX_VFS_PATH_BYTES],
+            len: path.len(),
+        };
+        let mut index = 0;
+        while index < path.len() {
+            value.bytes[index] = path.as_bytes()[index];
+            index += 1;
+        }
+        Ok(value)
+    }
+
+    fn as_bytes(&self) -> &[u8] {
+        &self.bytes[..self.len]
+    }
+}
+
+fn state_volume_mount_component(id: &'static str) -> Result<&'static str, InitError> {
+    let Some(component) = id.strip_prefix("state:") else {
+        return Err(InitError::InvalidBootManifest);
+    };
+    if component.is_empty() || component.len() > MAX_VFS_NAME_BYTES {
+        return Err(InitError::InvalidBootManifest);
+    }
+    let mut index = 0;
+    while index < component.len() {
+        let byte = component.as_bytes()[index];
+        if byte == b'/' || byte == 0 {
+            return Err(InitError::InvalidBootManifest);
+        }
+        index += 1;
+    }
+    Ok(component)
+}
+
+fn state_volume_vfs_name(id: &'static str) -> Result<VfsName, InitError> {
+    VfsName::from_static(state_volume_mount_component(id)?)
+}
+
+fn state_volume_vfs_path(id: &'static str) -> Result<VfsPath, InitError> {
+    let component = state_volume_mount_component(id)?.as_bytes();
+    const PREFIX: &[u8] = b"/state/";
+    let len = PREFIX
+        .len()
+        .checked_add(component.len())
+        .ok_or(InitError::InvalidBootManifest)?;
+    if len > MAX_VFS_PATH_BYTES {
+        return Err(InitError::InvalidBootManifest);
+    }
+    let mut bytes = [0u8; MAX_VFS_PATH_BYTES];
+    let mut index = 0;
+    while index < PREFIX.len() {
+        bytes[index] = PREFIX[index];
+        index += 1;
+    }
+    let mut component_index = 0;
+    while component_index < component.len() {
+        bytes[index] = component[component_index];
+        index += 1;
+        component_index += 1;
+    }
+    VfsPath::from_root_path(&bytes[..len]).map_err(|_| InitError::InvalidBootManifest)
+}
+
+impl VfsNode {
+    fn with_name(
+        id: VfsNodeId,
+        name: VfsName,
+        parent: Option<VfsNodeId>,
+        kind: VfsNodeKind,
+        backing: VfsBacking,
+        mount_source: &'static str,
+    ) -> Self {
+        Self {
+            id,
+            name,
+            parent,
+            kind,
+            backing,
+            mount_source,
+        }
+    }
+}
+
 impl TimerObject {
     const fn new(id: KernelObjectId, name: &'static str) -> Self {
         Self { id, name }
@@ -1436,6 +2058,54 @@ impl NamespaceObject {
     }
 }
 
+impl VfsRootObject {
+    const fn new(
+        id: KernelObjectId,
+        name: &'static str,
+        root_path: VfsPath,
+        derived: bool,
+    ) -> Self {
+        Self {
+            id,
+            name,
+            root_path,
+            derived,
+        }
+    }
+}
+
+impl VfsMountObject {
+    const fn new(
+        id: KernelObjectId,
+        name: &'static str,
+        root_node: VfsNodeId,
+        root_path: VfsPath,
+        source: &'static str,
+        flags: u64,
+        dynamic: bool,
+    ) -> Self {
+        Self {
+            id,
+            name,
+            root_node,
+            root_path,
+            source,
+            flags,
+            dynamic,
+        }
+    }
+}
+
+fn vfs_authority_path_covers(authority: &[u8], path: &[u8]) -> bool {
+    if authority == b"/" {
+        return !path.is_empty() && path[0] == b'/';
+    }
+    if authority == path {
+        return true;
+    }
+    path.len() > authority.len() && path.starts_with(authority) && path[authority.len()] == b'/'
+}
+
 impl ProcessControlObject {
     const fn new(id: KernelObjectId, name: &'static str) -> Self {
         Self { id, name }
@@ -1514,11 +2184,6 @@ impl ObjectTable {
     fn reset(&mut self) {
         self.count = 0;
         self.next_id = BOOT_ENDPOINT_ID;
-        let mut index = 0;
-        while index < self.objects.len() {
-            self.objects[index] = None;
-            index += 1;
-        }
     }
 
     fn add_endpoint(&mut self, name: &'static str) -> Result<KernelObjectId, InitError> {
@@ -1542,10 +2207,6 @@ impl ObjectTable {
         base: u64,
         length: u64,
     ) -> Result<KernelObjectId, InitError> {
-        if self.count == self.objects.len() {
-            return Err(InitError::ObjectTableFull);
-        }
-
         let id = KernelObjectId(self.next_id);
         self.next_id += 1;
         self.objects[self.count] = Some(KernelObject::BootModule(BootModuleObject::new(
@@ -1571,6 +2232,19 @@ impl ObjectTable {
         self.objects[self.count] = Some(KernelObject::StoreObject(StoreObject::new(
             id, name, base, length, hash,
         )));
+        self.count += 1;
+        Ok(id)
+    }
+
+    fn add_state_volume(&mut self, name: &'static str) -> Result<KernelObjectId, InitError> {
+        if self.count == self.objects.len() {
+            return Err(InitError::ObjectTableFull);
+        }
+
+        let id = KernelObjectId(self.next_id);
+        self.next_id += 1;
+        self.objects[self.count] =
+            Some(KernelObject::StateVolume(StateVolumeObject::new(id, name)));
         self.count += 1;
         Ok(id)
     }
@@ -1733,6 +2407,63 @@ impl ObjectTable {
         Ok(id)
     }
 
+    fn add_vfs_root(
+        &mut self,
+        name: &'static str,
+        root_path: &'static str,
+    ) -> Result<KernelObjectId, InitError> {
+        if self.count == self.objects.len() {
+            return Err(InitError::ObjectTableFull);
+        }
+        let root_path = VfsPath::from_boot_root_path(root_path)?;
+
+        let id = KernelObjectId(self.next_id);
+        self.next_id += 1;
+        self.objects[self.count] = Some(KernelObject::VfsRoot(VfsRootObject::new(
+            id, name, root_path, false,
+        )));
+        self.count += 1;
+        Ok(id)
+    }
+
+    fn add_derived_vfs_root(&mut self, root_path: VfsPath) -> Result<KernelObjectId, IpcError> {
+        if self.count == self.objects.len() {
+            return Err(IpcError::BadCapability);
+        }
+
+        let id = KernelObjectId(self.next_id);
+        self.next_id += 1;
+        self.objects[self.count] = Some(KernelObject::VfsRoot(VfsRootObject::new(
+            id,
+            "vfs-root:derived",
+            root_path,
+            true,
+        )));
+        self.count += 1;
+        Ok(id)
+    }
+
+    fn add_vfs_mount(
+        &mut self,
+        name: &'static str,
+        root_node: VfsNodeId,
+        root_path: VfsPath,
+        source: &'static str,
+        flags: u64,
+        dynamic: bool,
+    ) -> Result<KernelObjectId, InitError> {
+        if self.count == self.objects.len() {
+            return Err(InitError::ObjectTableFull);
+        }
+
+        let id = KernelObjectId(self.next_id);
+        self.next_id += 1;
+        self.insert_object(KernelObject::VfsMount(VfsMountObject::new(
+            id, name, root_node, root_path, source, flags, dynamic,
+        )))?;
+        Ok(id)
+    }
+
     fn add_process_control(&mut self, name: &'static str) -> Result<KernelObjectId, InitError> {
         if self.count == self.objects.len() {
             return Err(InitError::ObjectTableFull);
@@ -1789,6 +2520,38 @@ impl ObjectTable {
         }
         self.trim_empty_tail();
         removed
+    }
+
+    fn remove_derived_vfs_root(&mut self, id: KernelObjectId) -> bool {
+        let mut index = 0;
+        while index < self.count {
+            if let Some(KernelObject::VfsRoot(root)) = self.objects[index]
+                && root.id == id
+                && root.derived
+            {
+                self.objects[index] = None;
+                self.trim_empty_tail();
+                return true;
+            }
+            index += 1;
+        }
+        false
+    }
+
+    fn remove_dynamic_vfs_mount(&mut self, root_node: VfsNodeId) -> Option<KernelObjectId> {
+        let mut index = 0;
+        while index < self.count {
+            if let Some(KernelObject::VfsMount(mount)) = self.objects[index]
+                && mount.root_node == root_node
+                && mount.dynamic
+            {
+                self.objects[index] = None;
+                self.trim_empty_tail();
+                return Some(mount.id);
+            }
+            index += 1;
+        }
+        None
     }
 
     fn live_count(&self) -> usize {
@@ -1878,6 +2641,20 @@ impl ObjectTable {
         let mut index = 0;
         while index < self.count {
             if let Some(KernelObject::StoreObject(object)) = self.objects[index]
+                && object.id == id
+            {
+                return Some(object);
+            }
+            index += 1;
+        }
+
+        None
+    }
+
+    fn get_state_volume(&self, id: KernelObjectId) -> Option<StateVolumeObject> {
+        let mut index = 0;
+        while index < self.count {
+            if let Some(KernelObject::StateVolume(object)) = self.objects[index]
                 && object.id == id
             {
                 return Some(object);
@@ -2096,6 +2873,34 @@ impl ObjectTable {
         None
     }
 
+    fn get_vfs_root(&self, id: KernelObjectId) -> Option<VfsRootObject> {
+        let mut index = 0;
+        while index < self.count {
+            if let Some(KernelObject::VfsRoot(root)) = self.objects[index]
+                && root.id == id
+            {
+                return Some(root);
+            }
+            index += 1;
+        }
+
+        None
+    }
+
+    fn get_vfs_mount_by_root_node(&self, root_node: VfsNodeId) -> Option<VfsMountObject> {
+        let mut index = 0;
+        while index < self.count {
+            if let Some(KernelObject::VfsMount(mount)) = self.objects[index]
+                && mount.root_node == root_node
+            {
+                return Some(mount);
+            }
+            index += 1;
+        }
+
+        None
+    }
+
     fn get_process_control(&self, id: KernelObjectId) -> Option<ProcessControlObject> {
         let mut index = 0;
         while index < self.count {
@@ -2125,6 +2930,13 @@ impl ObjectTable {
     }
 }
 
+fn ipc_message_transaction_id(message: IpcMessage) -> Option<u64> {
+    if message.len < VFS_STATE_TRANSACTION_ID_BYTES {
+        return None;
+    }
+    Some(read_u64_le(&message.bytes, 0))
+}
+
 impl ProcessTable {
     const fn new() -> Self {
         Self {
@@ -2139,11 +2951,6 @@ impl ProcessTable {
         self.count = 0;
         self.current = None;
         self.next_id = 1;
-        let mut index = 0;
-        while index < self.processes.len() {
-            self.processes[index] = Some(Process::empty());
-            index += 1;
-        }
     }
 
     fn add_process(
@@ -2154,6 +2961,7 @@ impl ProcessTable {
         image_length: u64,
         state: ProcessState,
         caps: CapabilitySpace,
+        mount_root: VfsPath,
     ) -> Result<ProcessId, InitError> {
         if self.count == self.processes.len() {
             return Err(InitError::ProcessTableFull);
@@ -2169,6 +2977,7 @@ impl ProcessTable {
             image_length,
             state,
             caps,
+            mount_root,
         ));
         self.count += 1;
         Ok(pid)
@@ -2339,8 +3148,17 @@ impl RuntimeState {
             revoked_cap_count: 0,
             cap_lineage: [None; MAX_CAP_LINEAGE],
             cap_lineage_count: 0,
+            vfs_nodes: [None; MAX_VFS_NODES],
+            vfs_node_count: 0,
+            next_vfs_node_id: 1,
+            vfs_mem_files: [VfsMemoryFile::empty(); MAX_VFS_MEM_FILES],
+            vfs_mem_file_count: 0,
+            open_file_descriptions: [None; MAX_OPEN_FILE_DESCRIPTIONS],
+            next_file_description_id: 1,
+            vfs_locks: [None; MAX_VFS_LOCKS],
             endpoint_ids: [None; MAX_OBJECTS],
             store_object_ids: [None; MAX_OBJECTS],
+            state_volume_ids: [None; MAX_BOOT_STATE_VOLUMES],
             network_port_ids: [None; MAX_OBJECTS],
             io_port_ids: [None; MAX_OBJECTS],
             mmio_region_ids: [None; MAX_OBJECTS],
@@ -2349,9 +3167,15 @@ impl RuntimeState {
             pci_device_ids: [None; MAX_OBJECTS],
             virtio_device_ids: [None; MAX_OBJECTS],
             namespace_ids: [None; MAX_BOOT_NAMESPACES],
+            vfs_root_ids: [None; MAX_BOOT_VFS_ROOTS],
+            vfs_mount_ids: [None; MAX_VFS_MOUNTS],
+            vfs_mount_count: 0,
             timer_id: None,
             process_control_id: None,
             secret_id: None,
+            state_vfs_request_endpoint: None,
+            state_vfs_reply_endpoint: None,
+            next_vfs_state_transaction_id: 1,
             process_template_pids: [None; MAX_PROCESSES],
             service_lifecycle_events: [None; MAX_SERVICE_LIFECYCLE_EVENTS],
             service_lifecycle_event_count: 0,
@@ -2364,21 +3188,17 @@ impl RuntimeState {
         self.next_cap_id = 1;
         self.revoked_cap_count = 0;
         self.cap_lineage_count = 0;
-        self.endpoint_ids = [None; MAX_OBJECTS];
-        self.store_object_ids = [None; MAX_OBJECTS];
-        self.network_port_ids = [None; MAX_OBJECTS];
-        self.io_port_ids = [None; MAX_OBJECTS];
-        self.mmio_region_ids = [None; MAX_OBJECTS];
-        self.interrupt_line_ids = [None; MAX_OBJECTS];
-        self.dma_region_ids = [None; MAX_OBJECTS];
-        self.pci_device_ids = [None; MAX_OBJECTS];
-        self.virtio_device_ids = [None; MAX_OBJECTS];
-        self.namespace_ids = [None; MAX_BOOT_NAMESPACES];
+        self.vfs_node_count = 0;
+        self.next_vfs_node_id = 1;
+        self.vfs_mem_file_count = 0;
+        self.next_file_description_id = 1;
         self.timer_id = None;
         self.process_control_id = None;
         self.secret_id = None;
-        self.process_template_pids = [None; MAX_PROCESSES];
-        self.service_lifecycle_events = [None; MAX_SERVICE_LIFECYCLE_EVENTS];
+        self.state_vfs_request_endpoint = None;
+        self.state_vfs_reply_endpoint = None;
+        self.next_vfs_state_transaction_id = 1;
+        self.vfs_mount_count = 0;
         self.service_lifecycle_event_count = 0;
         let mut index = 0;
         while index < self.revoked_caps.len() {
@@ -2388,6 +3208,69 @@ impl RuntimeState {
         index = 0;
         while index < self.cap_lineage.len() {
             self.cap_lineage[index] = None;
+            index += 1;
+        }
+        index = 0;
+        while index < self.vfs_nodes.len() {
+            self.vfs_nodes[index] = None;
+            index += 1;
+        }
+        index = 0;
+        while index < self.vfs_mem_files.len() {
+            self.vfs_mem_files[index] = VfsMemoryFile::empty();
+            index += 1;
+        }
+        index = 0;
+        while index < self.open_file_descriptions.len() {
+            self.open_file_descriptions[index] = None;
+            index += 1;
+        }
+        index = 0;
+        while index < self.vfs_locks.len() {
+            self.vfs_locks[index] = None;
+            index += 1;
+        }
+        index = 0;
+        while index < self.endpoint_ids.len() {
+            self.endpoint_ids[index] = None;
+            self.store_object_ids[index] = None;
+            self.network_port_ids[index] = None;
+            self.io_port_ids[index] = None;
+            self.mmio_region_ids[index] = None;
+            self.interrupt_line_ids[index] = None;
+            self.dma_region_ids[index] = None;
+            self.pci_device_ids[index] = None;
+            self.virtio_device_ids[index] = None;
+            index += 1;
+        }
+        index = 0;
+        while index < self.state_volume_ids.len() {
+            self.state_volume_ids[index] = None;
+            index += 1;
+        }
+        index = 0;
+        while index < self.namespace_ids.len() {
+            self.namespace_ids[index] = None;
+            index += 1;
+        }
+        index = 0;
+        while index < self.vfs_root_ids.len() {
+            self.vfs_root_ids[index] = None;
+            index += 1;
+        }
+        index = 0;
+        while index < self.vfs_mount_ids.len() {
+            self.vfs_mount_ids[index] = None;
+            index += 1;
+        }
+        index = 0;
+        while index < self.process_template_pids.len() {
+            self.process_template_pids[index] = None;
+            index += 1;
+        }
+        index = 0;
+        while index < self.service_lifecycle_events.len() {
+            self.service_lifecycle_events[index] = None;
             index += 1;
         }
     }
@@ -2416,6 +3299,464 @@ impl RuntimeState {
             index += 1;
         }
         self.service_lifecycle_events[MAX_SERVICE_LIFECYCLE_EVENTS - 1] = event;
+    }
+
+    fn add_vfs_node(
+        &mut self,
+        name: &'static str,
+        parent: Option<VfsNodeId>,
+        kind: VfsNodeKind,
+        backing: VfsBacking,
+        mount_source: &'static str,
+    ) -> Result<VfsNodeId, InitError> {
+        let name = VfsName::from_static(name)?;
+        self.add_vfs_node_with_name(name, parent, kind, backing, mount_source)
+    }
+
+    fn add_vfs_node_with_name(
+        &mut self,
+        name: VfsName,
+        parent: Option<VfsNodeId>,
+        kind: VfsNodeKind,
+        backing: VfsBacking,
+        mount_source: &'static str,
+    ) -> Result<VfsNodeId, InitError> {
+        let mut slot = 0;
+        while slot < self.vfs_nodes.len() && self.vfs_nodes[slot].is_some() {
+            slot += 1;
+        }
+        if slot == self.vfs_nodes.len() {
+            return Err(InitError::ObjectTableFull);
+        }
+        let id = VfsNodeId(self.next_vfs_node_id);
+        self.next_vfs_node_id = self.next_vfs_node_id.saturating_add(1);
+        self.vfs_nodes[slot] = Some(VfsNode::with_name(
+            id,
+            name,
+            parent,
+            kind,
+            backing,
+            mount_source,
+        ));
+        if slot >= self.vfs_node_count {
+            self.vfs_node_count = slot + 1;
+        }
+        Ok(id)
+    }
+
+    fn add_vfs_memory_file(
+        &mut self,
+        name: &'static str,
+        initial: &[u8],
+    ) -> Result<usize, InitError> {
+        if self.vfs_mem_file_count == self.vfs_mem_files.len() {
+            return Err(InitError::ObjectTableFull);
+        }
+        let index = self.vfs_mem_file_count;
+        self.vfs_mem_files[index] = VfsMemoryFile::new(name, initial)?;
+        self.vfs_mem_file_count += 1;
+        Ok(index)
+    }
+
+    fn add_vfs_empty_memory_file(&mut self) -> Result<usize, InitError> {
+        let mut index = 0;
+        while index < self.vfs_mem_files.len() {
+            if !self.vfs_memory_file_in_use(index) {
+                self.vfs_mem_files[index] = VfsMemoryFile::empty();
+                if index >= self.vfs_mem_file_count {
+                    self.vfs_mem_file_count = index + 1;
+                }
+                return Ok(index);
+            }
+            index += 1;
+        }
+        Err(InitError::ObjectTableFull)
+    }
+
+    fn vfs_memory_file_in_use(&self, file_index: usize) -> bool {
+        let mut index = 0;
+        while index < self.vfs_node_count {
+            if let Some(node) = self.vfs_nodes[index]
+                && let VfsBacking::MemoryFile(backing_index) = node.backing
+                && backing_index == file_index
+            {
+                return true;
+            }
+            index += 1;
+        }
+        false
+    }
+
+    fn release_vfs_memory_file(&mut self, file_index: usize) -> Result<(), IpcError> {
+        if file_index >= self.vfs_mem_files.len() || self.vfs_memory_file_in_use(file_index) {
+            return Err(IpcError::BadCapability);
+        }
+        self.vfs_mem_files[file_index] = VfsMemoryFile::empty();
+        while self.vfs_mem_file_count > 0
+            && !self.vfs_memory_file_in_use(self.vfs_mem_file_count - 1)
+        {
+            self.vfs_mem_file_count -= 1;
+        }
+        Ok(())
+    }
+
+    fn add_vfs_mount(
+        &mut self,
+        name: &'static str,
+        root_node: VfsNodeId,
+        root_path: VfsPath,
+        source: &'static str,
+        flags: u64,
+        dynamic: bool,
+    ) -> Result<KernelObjectId, InitError> {
+        let mut free_slot = None;
+        let mut index = 0;
+        while index < self.vfs_mount_ids.len() {
+            if self.vfs_mount_ids[index].is_none() {
+                free_slot = Some(index);
+                break;
+            }
+            index += 1;
+        }
+        let Some(free_slot) = free_slot else {
+            return Err(InitError::ObjectTableFull);
+        };
+        let id = self
+            .objects
+            .add_vfs_mount(name, root_node, root_path, source, flags, dynamic)?;
+        self.vfs_mount_ids[free_slot] = Some(id);
+        if free_slot >= self.vfs_mount_count {
+            self.vfs_mount_count = free_slot + 1;
+        }
+        Ok(id)
+    }
+
+    fn remove_vfs_mount_id(&mut self, id: KernelObjectId) {
+        let mut index = 0;
+        while index < self.vfs_mount_count {
+            if self.vfs_mount_ids[index] == Some(id) {
+                self.vfs_mount_ids[index] = None;
+            }
+            index += 1;
+        }
+        while self.vfs_mount_count > 0 && self.vfs_mount_ids[self.vfs_mount_count - 1].is_none() {
+            self.vfs_mount_count -= 1;
+        }
+    }
+
+    fn vfs_node(&self, id: VfsNodeId) -> Option<VfsNode> {
+        let mut index = 0;
+        while index < self.vfs_node_count {
+            if let Some(node) = self.vfs_nodes[index]
+                && node.id == id
+            {
+                return Some(node);
+            }
+            index += 1;
+        }
+        None
+    }
+
+    fn vfs_node_by_parent_name(&self, parent: VfsNodeId, name: &[u8]) -> Option<VfsNode> {
+        let mut index = 0;
+        while index < self.vfs_node_count {
+            if let Some(node) = self.vfs_nodes[index]
+                && node.parent == Some(parent)
+                && node.name.as_bytes() == name
+            {
+                return Some(node);
+            }
+            index += 1;
+        }
+        None
+    }
+
+    fn vfs_node_by_path(&self, path: &[u8]) -> Option<VfsNode> {
+        if path == b"/" {
+            return self.vfs_nodes[0];
+        }
+        if path.is_empty() || path[0] != b'/' {
+            return None;
+        }
+
+        let mut node = self.vfs_nodes[0]?;
+        let mut start = 1;
+        while start <= path.len() {
+            let mut end = start;
+            while end < path.len() && path[end] != b'/' {
+                end += 1;
+            }
+            if end == start {
+                return None;
+            }
+            node = self.vfs_node_by_parent_name(node.id, &path[start..end])?;
+            if end == path.len() {
+                return Some(node);
+            }
+            start = end + 1;
+        }
+        None
+    }
+
+    fn vfs_node_index(&self, id: VfsNodeId) -> Option<usize> {
+        let mut index = 0;
+        while index < self.vfs_node_count {
+            if let Some(node) = self.vfs_nodes[index]
+                && node.id == id
+            {
+                return Some(index);
+            }
+            index += 1;
+        }
+        None
+    }
+
+    fn vfs_node_has_children(&self, id: VfsNodeId) -> bool {
+        let mut index = 0;
+        while index < self.vfs_node_count {
+            if let Some(node) = self.vfs_nodes[index]
+                && node.parent == Some(id)
+            {
+                return true;
+            }
+            index += 1;
+        }
+        false
+    }
+
+    fn vfs_child_by_entry_index(&self, parent: VfsNodeId, entry_index: usize) -> Option<VfsNode> {
+        let mut seen = 0;
+        let mut index = 0;
+        while index < self.vfs_node_count {
+            if let Some(node) = self.vfs_nodes[index]
+                && node.parent == Some(parent)
+            {
+                if seen == entry_index {
+                    return Some(node);
+                }
+                seen += 1;
+            }
+            index += 1;
+        }
+        None
+    }
+
+    fn vfs_node_has_open_description(&self, id: VfsNodeId) -> bool {
+        let mut index = 0;
+        while index < self.open_file_descriptions.len() {
+            if let Some(description) = self.open_file_descriptions[index]
+                && description.node == id
+            {
+                return true;
+            }
+            index += 1;
+        }
+        false
+    }
+
+    fn remove_vfs_node(&mut self, id: VfsNodeId) -> Result<(), IpcError> {
+        let index = self.vfs_node_index(id).ok_or(IpcError::BadCapability)?;
+        self.vfs_nodes[index] = None;
+        while self.vfs_node_count > 0 && self.vfs_nodes[self.vfs_node_count - 1].is_none() {
+            self.vfs_node_count -= 1;
+        }
+        Ok(())
+    }
+
+    fn rename_vfs_node(
+        &mut self,
+        id: VfsNodeId,
+        new_parent: VfsNodeId,
+        new_name: VfsName,
+    ) -> Result<VfsNode, IpcError> {
+        let index = self.vfs_node_index(id).ok_or(IpcError::VfsBadHandle)?;
+        let Some(node) = self.vfs_nodes[index].as_mut() else {
+            return Err(IpcError::VfsBadHandle);
+        };
+        node.parent = Some(new_parent);
+        node.name = new_name;
+        Ok(*node)
+    }
+
+    fn vfs_node_for_store_object(&self, object: KernelObjectId) -> Option<VfsNode> {
+        let mut index = 0;
+        while index < self.vfs_node_count {
+            if let Some(node) = self.vfs_nodes[index]
+                && let VfsBacking::StoreObject(store_object) = node.backing
+                && store_object == object
+            {
+                return Some(node);
+            }
+            index += 1;
+        }
+        None
+    }
+
+    fn open_file_description(
+        &mut self,
+        node: VfsNodeId,
+        rights: u64,
+        flags: u64,
+        owner: ProcessId,
+    ) -> Result<FileDescriptionId, IpcError> {
+        let mut index = 0;
+        while index < self.open_file_descriptions.len() {
+            if self.open_file_descriptions[index].is_none() {
+                if self.next_file_description_id == 0 {
+                    self.next_file_description_id = 1;
+                }
+                let id = FileDescriptionId(self.next_file_description_id);
+                self.next_file_description_id = self.next_file_description_id.saturating_add(1);
+                self.open_file_descriptions[index] =
+                    Some(OpenFileDescription::new(id, node, rights, flags, owner));
+                return Ok(id);
+            }
+            index += 1;
+        }
+        Err(IpcError::BadCapability)
+    }
+
+    fn file_description(&self, id: FileDescriptionId) -> Option<OpenFileDescription> {
+        let mut index = 0;
+        while index < self.open_file_descriptions.len() {
+            if let Some(description) = self.open_file_descriptions[index]
+                && description.id == id
+            {
+                return Some(description);
+            }
+            index += 1;
+        }
+        None
+    }
+
+    fn file_description_mut(&mut self, id: FileDescriptionId) -> Option<&mut OpenFileDescription> {
+        let mut index = 0;
+        while index < self.open_file_descriptions.len() {
+            if let Some(description) = self.open_file_descriptions[index]
+                && description.id == id
+            {
+                break;
+            }
+            index += 1;
+        }
+        if index == self.open_file_descriptions.len() {
+            return None;
+        }
+        self.open_file_descriptions[index].as_mut()
+    }
+
+    fn retain_file_description(&mut self, id: FileDescriptionId) -> Result<(), IpcError> {
+        let description = self
+            .file_description_mut(id)
+            .ok_or(IpcError::VfsBadHandle)?;
+        description.ref_count = description
+            .ref_count
+            .checked_add(1)
+            .ok_or(IpcError::VfsNoSpace)?;
+        Ok(())
+    }
+
+    fn release_file_description(&mut self, id: FileDescriptionId) -> Result<(), IpcError> {
+        let mut index = 0;
+        while index < self.open_file_descriptions.len() {
+            if let Some(mut description) = self.open_file_descriptions[index]
+                && description.id == id
+            {
+                if description.ref_count <= 1 {
+                    self.release_vfs_locks_for_description(id);
+                    self.open_file_descriptions[index] = None;
+                } else {
+                    description.ref_count -= 1;
+                    self.open_file_descriptions[index] = Some(description);
+                }
+                return Ok(());
+            }
+            index += 1;
+        }
+        Err(IpcError::VfsBadHandle)
+    }
+
+    fn release_process_file_descriptions(&mut self, pid: ProcessId) {
+        self.release_vfs_locks_for_process(pid);
+        let mut index = 0;
+        while index < self.open_file_descriptions.len() {
+            if let Some(description) = self.open_file_descriptions[index]
+                && description.owner == pid
+            {
+                self.open_file_descriptions[index] = None;
+            }
+            index += 1;
+        }
+    }
+
+    fn acquire_vfs_lock(
+        &mut self,
+        description: OpenFileDescription,
+        mode: VfsLockMode,
+    ) -> Result<(), IpcError> {
+        let mut own_lock = None;
+        let mut free_lock = None;
+        let mut index = 0;
+        while index < self.vfs_locks.len() {
+            match self.vfs_locks[index] {
+                Some(lock) if lock.description == description.id => own_lock = Some(index),
+                Some(lock) if lock.node == description.node => {
+                    if mode == VfsLockMode::Exclusive || lock.mode == VfsLockMode::Exclusive {
+                        return Err(IpcError::VfsBusy);
+                    }
+                }
+                None if free_lock.is_none() => free_lock = Some(index),
+                _ => {}
+            }
+            index += 1;
+        }
+
+        let lock = VfsLock {
+            node: description.node,
+            owner: description.owner,
+            description: description.id,
+            mode,
+        };
+        if let Some(index) = own_lock {
+            self.vfs_locks[index] = Some(lock);
+            return Ok(());
+        }
+        let Some(index) = free_lock else {
+            return Err(IpcError::VfsNoSpace);
+        };
+        self.vfs_locks[index] = Some(lock);
+        Ok(())
+    }
+
+    fn release_vfs_lock(&mut self, description: FileDescriptionId) -> bool {
+        let mut released = false;
+        let mut index = 0;
+        while index < self.vfs_locks.len() {
+            if let Some(lock) = self.vfs_locks[index]
+                && lock.description == description
+            {
+                self.vfs_locks[index] = None;
+                released = true;
+            }
+            index += 1;
+        }
+        released
+    }
+
+    fn release_vfs_locks_for_description(&mut self, description: FileDescriptionId) {
+        let _ = self.release_vfs_lock(description);
+    }
+
+    fn release_vfs_locks_for_process(&mut self, pid: ProcessId) {
+        let mut index = 0;
+        while index < self.vfs_locks.len() {
+            if let Some(lock) = self.vfs_locks[index]
+                && lock.owner == pid
+            {
+                self.vfs_locks[index] = None;
+            }
+            index += 1;
+        }
     }
 
     fn generation_cap_count(&self, generation_id: &'static str) -> u64 {
@@ -2563,6 +3904,8 @@ impl BootRuntimeConfig {
             manifest_module: None,
             store_objects: [None; MAX_OBJECTS],
             store_object_count: 0,
+            state_volumes: [None; MAX_BOOT_STATE_VOLUMES],
+            state_volume_count: 0,
             network_ports: [None; MAX_OBJECTS],
             network_port_count: 0,
             io_ports: [None; MAX_OBJECTS],
@@ -2579,9 +3922,31 @@ impl BootRuntimeConfig {
             virtio_device_count: 0,
             namespaces: [None; MAX_BOOT_NAMESPACES],
             namespace_count: 0,
+            vfs_roots: [None; MAX_BOOT_VFS_ROOTS],
+            vfs_root_count: 0,
             grants: [None; MAX_BOOT_GRANTS],
             grant_count: 0,
         }
+    }
+
+    pub fn reset(&mut self) {
+        self.generation_id = "";
+        self.manifest_hash = [0; 64];
+        self.process_count = 0;
+        self.endpoint_count = 0;
+        self.manifest_module = None;
+        self.store_object_count = 0;
+        self.state_volume_count = 0;
+        self.network_port_count = 0;
+        self.io_port_count = 0;
+        self.mmio_region_count = 0;
+        self.interrupt_line_count = 0;
+        self.dma_region_count = 0;
+        self.pci_device_count = 0;
+        self.virtio_device_count = 0;
+        self.namespace_count = 0;
+        self.vfs_root_count = 0;
+        self.grant_count = 0;
     }
 
     pub fn set_generation_id(&mut self, generation_id: &'static str) {
@@ -2595,6 +3960,9 @@ impl BootRuntimeConfig {
     pub fn add_process(&mut self, process: BootProcessConfig) -> Result<(), InitError> {
         if self.process_count == self.processes.len() {
             return Err(InitError::ProcessTableFull);
+        }
+        if !valid_vfs_root_path(process.mount_root.as_bytes()) {
+            return Err(InitError::InvalidBootManifest);
         }
         self.processes[self.process_count] = Some(process);
         self.process_count += 1;
@@ -2620,6 +3988,17 @@ impl BootRuntimeConfig {
         }
         self.store_objects[self.store_object_count] = Some(object);
         self.store_object_count += 1;
+        Ok(())
+    }
+
+    pub fn add_state_volume(&mut self, state: BootStateVolumeConfig) -> Result<(), InitError> {
+        if self.state_volume_count == self.state_volumes.len()
+            || state_volume_mount_component(state.id).is_err()
+        {
+            return Err(InitError::InvalidBootManifest);
+        }
+        self.state_volumes[self.state_volume_count] = Some(state);
+        self.state_volume_count += 1;
         Ok(())
     }
 
@@ -2698,6 +4077,18 @@ impl BootRuntimeConfig {
         Ok(())
     }
 
+    pub fn add_vfs_root(&mut self, root: BootVfsRootConfig) -> Result<(), InitError> {
+        if self.vfs_root_count == self.vfs_roots.len() {
+            return Err(InitError::ObjectTableFull);
+        }
+        if !valid_vfs_root_path(root.root_path.as_bytes()) {
+            return Err(InitError::InvalidBootManifest);
+        }
+        self.vfs_roots[self.vfs_root_count] = Some(root);
+        self.vfs_root_count += 1;
+        Ok(())
+    }
+
     pub fn add_grant(&mut self, grant: BootGrantConfig) -> Result<(), InitError> {
         if self.grant_count == self.grants.len() {
             return Err(InitError::CapabilityTableFull);
@@ -2727,6 +4118,7 @@ impl BootRuntimeConfig {
             BOOT_OBJECT_PCI_DEVICE if grant.object_index < self.pci_device_count => {}
             BOOT_OBJECT_VIRTIO_DEVICE if grant.object_index < self.virtio_device_count => {}
             BOOT_OBJECT_NAMESPACE if grant.object_index < self.namespace_count => {}
+            BOOT_OBJECT_VFS_ROOT if grant.object_index < self.vfs_root_count => {}
             BOOT_OBJECT_ENDPOINT
             | BOOT_OBJECT_STORE
             | BOOT_OBJECT_STATE
@@ -2738,7 +4130,8 @@ impl BootRuntimeConfig {
             | BOOT_OBJECT_DMA_REGION
             | BOOT_OBJECT_PCI_DEVICE
             | BOOT_OBJECT_VIRTIO_DEVICE
-            | BOOT_OBJECT_NAMESPACE => return Err(InitError::InvalidBootManifest),
+            | BOOT_OBJECT_NAMESPACE
+            | BOOT_OBJECT_VFS_ROOT => return Err(InitError::InvalidBootManifest),
             _ => return Err(InitError::InvalidBootManifest),
         }
         self.grants[self.grant_count] = Some(grant);
@@ -2858,6 +4251,9 @@ impl BootManagerState {
         serial::write_str("Native boot manager fallback selected_generation=");
         serial::write_str(fallback);
         serial::write_str("\n");
+        serial::write_str("Native boot manager previous_generation=");
+        serial::write_str(failed);
+        serial::write_str("\n");
         serial::write_str("Native boot manager journal: failed generation=");
         serial::write_str(failed);
         serial::write_str(" fallback=");
@@ -2926,6 +4322,18 @@ fn install_boot_config(
         runtime.endpoint_ids[endpoint_index] = Some(runtime.objects.add_endpoint(endpoint.name)?);
         endpoint_index += 1;
     }
+    if config.state_volume_count > 0 {
+        runtime.state_vfs_request_endpoint = Some(
+            runtime
+                .objects
+                .add_endpoint(STATE_VFS_REQUEST_ENDPOINT_NAME)?,
+        );
+        runtime.state_vfs_reply_endpoint = Some(
+            runtime
+                .objects
+                .add_endpoint(STATE_VFS_REPLY_ENDPOINT_NAME)?,
+        );
+    }
 
     let mut store_index = 0;
     while store_index < config.store_object_count {
@@ -2938,7 +4346,12 @@ fn install_boot_config(
         )?);
         store_index += 1;
     }
-
+    let mut state_index = 0;
+    while state_index < config.state_volume_count {
+        let state = config.state_volumes[state_index].ok_or(InitError::InvalidBootManifest)?;
+        runtime.state_volume_ids[state_index] = Some(runtime.objects.add_state_volume(state.id)?);
+        state_index += 1;
+    }
     let mut network_index = 0;
     while network_index < config.network_port_count {
         let port = config.network_ports[network_index].ok_or(InitError::InvalidBootManifest)?;
@@ -3013,6 +4426,8 @@ fn install_boot_config(
     }
 
     runtime.timer_id = Some(runtime.objects.add_timer("monotonic-timer")?);
+    install_vfs_nodes(runtime)?;
+    validate_process_mount_roots(runtime, config)?;
 
     let mut namespace_index = 0;
     while namespace_index < config.namespace_count {
@@ -3037,6 +4452,14 @@ fn install_boot_config(
         namespace_index += 1;
     }
 
+    let mut vfs_root_index = 0;
+    while vfs_root_index < config.vfs_root_count {
+        let root = config.vfs_roots[vfs_root_index].ok_or(InitError::InvalidBootManifest)?;
+        runtime.vfs_root_ids[vfs_root_index] =
+            Some(runtime.objects.add_vfs_root(root.id, root.root_path)?);
+        vfs_root_index += 1;
+    }
+
     runtime.secret_id = Some(
         runtime
             .objects
@@ -3044,6 +4467,7 @@ fn install_boot_config(
     );
     serial::write_str("Native secret object registered: secret:logd-token storage=in-memory\n");
 
+    let initial_mount_root = VfsPath::from_boot_root_path(initial_process.mount_root)?;
     let initial_pid = runtime.processes.add_process(
         initial_process.name,
         initial_context,
@@ -3051,6 +4475,7 @@ fn install_boot_config(
         initial_process.image_length,
         ProcessState::Running,
         CapabilitySpace::new(),
+        initial_mount_root,
     )?;
     runtime.process_template_pids[initial_index] = Some(initial_pid);
     runtime.processes.set_current(initial_pid);
@@ -3115,6 +4540,7 @@ fn validate_boot_config_installable(config: &BootRuntimeConfig) -> Result<(), In
     validate_counted_config_entries(&config.processes, config.process_count)?;
     validate_counted_config_entries(&config.endpoints, config.endpoint_count)?;
     validate_counted_config_entries(&config.store_objects, config.store_object_count)?;
+    validate_counted_config_entries(&config.state_volumes, config.state_volume_count)?;
     validate_counted_config_entries(&config.network_ports, config.network_port_count)?;
     validate_counted_config_entries(&config.io_ports, config.io_port_count)?;
     validate_counted_config_entries(&config.mmio_regions, config.mmio_region_count)?;
@@ -3123,6 +4549,7 @@ fn validate_boot_config_installable(config: &BootRuntimeConfig) -> Result<(), In
     validate_counted_config_entries(&config.pci_devices, config.pci_device_count)?;
     validate_counted_config_entries(&config.virtio_devices, config.virtio_device_count)?;
     validate_counted_config_entries(&config.namespaces, config.namespace_count)?;
+    validate_counted_config_entries(&config.vfs_roots, config.vfs_root_count)?;
     validate_counted_config_entries(&config.grants, config.grant_count)?;
 
     if config.endpoint_count == 0 {
@@ -3141,6 +4568,7 @@ fn validate_boot_config_installable(config: &BootRuntimeConfig) -> Result<(), In
         endpoint_index += 1;
     }
     initial_process_index(config)?;
+    validate_boot_config_state_volumes(config)?;
 
     let object_count = boot_config_object_count(config).ok_or(InitError::ObjectTableFull)?;
     if object_count > MAX_OBJECTS {
@@ -3171,6 +4599,15 @@ fn validate_boot_config_installable(config: &BootRuntimeConfig) -> Result<(), In
             entry_index += 1;
         }
         namespace_index += 1;
+    }
+
+    let mut vfs_root_index = 0;
+    while vfs_root_index < config.vfs_root_count {
+        let root = config.vfs_roots[vfs_root_index].ok_or(InitError::InvalidBootManifest)?;
+        if !valid_vfs_root_path(root.root_path.as_bytes()) {
+            return Err(InitError::InvalidBootManifest);
+        }
+        vfs_root_index += 1;
     }
 
     let mut grant_index = 0;
@@ -3221,10 +4658,38 @@ fn validate_counted_config_entries<T: Copy, const N: usize>(
     Ok(())
 }
 
+fn validate_boot_config_state_volumes(config: &BootRuntimeConfig) -> Result<(), InitError> {
+    if BUILTIN_VFS_MOUNTS
+        .checked_add(config.state_volume_count)
+        .is_none_or(|count| count > MAX_VFS_MOUNTS)
+    {
+        return Err(InitError::ObjectTableFull);
+    }
+    let mut index = 0;
+    while index < config.state_volume_count {
+        let state = config.state_volumes[index].ok_or(InitError::InvalidBootManifest)?;
+        let component = state_volume_mount_component(state.id)?;
+        let mut previous = 0;
+        while previous < index {
+            let prior = config.state_volumes[previous].ok_or(InitError::InvalidBootManifest)?;
+            if prior.id == state.id || state_volume_mount_component(prior.id)? == component {
+                return Err(InitError::InvalidBootManifest);
+            }
+            previous += 1;
+        }
+        index += 1;
+    }
+    Ok(())
+}
+
 fn boot_config_object_count(config: &BootRuntimeConfig) -> Option<usize> {
     let mut count = 0usize;
     count = count.checked_add(config.endpoint_count)?;
+    if config.state_volume_count > 0 {
+        count = count.checked_add(2)?; // kernel-owned state VFS request/reply endpoints
+    }
     count = count.checked_add(config.store_object_count)?;
+    count = count.checked_add(config.state_volume_count)?;
     count = count.checked_add(config.network_port_count)?;
     count = count.checked_add(config.io_port_count)?;
     count = count.checked_add(config.mmio_region_count)?;
@@ -3233,6 +4698,9 @@ fn boot_config_object_count(config: &BootRuntimeConfig) -> Option<usize> {
     count = count.checked_add(config.pci_device_count)?;
     count = count.checked_add(config.virtio_device_count)?;
     count = count.checked_add(config.namespace_count)?;
+    count = count.checked_add(config.vfs_root_count)?;
+    count = count.checked_add(BUILTIN_VFS_MOUNTS)?;
+    count = count.checked_add(config.state_volume_count)?;
     count = count.checked_add(1)?; // monotonic timer
     count = count.checked_add(1)?; // logd secret
     count = count.checked_add(1)?; // process-control
@@ -3260,6 +4728,7 @@ fn boot_object_config_ref_valid(
         BOOT_OBJECT_PCI_DEVICE => object_index < config.pci_device_count,
         BOOT_OBJECT_VIRTIO_DEVICE => object_index < config.virtio_device_count,
         BOOT_OBJECT_NAMESPACE => object_index < config.namespace_count,
+        BOOT_OBJECT_VFS_ROOT => object_index < config.vfs_root_count,
         _ => false,
     }
 }
@@ -3486,8 +4955,22 @@ fn validate_config_caps_for_process(
 
     if process.name == "logd" {
         runtime.secret_id.ok_or(InitError::InvalidBootManifest)?;
-        let secret_slot = 5usize;
+        let secret_slot = 6usize;
         if secret_slot >= MAX_CAPS || occupied_slots[secret_slot] {
+            return Err(InitError::InvalidBootManifest);
+        }
+    }
+    if process.name == VERTEX_STATE_PROCESS_NAME && runtime.state_vfs_reply_endpoint.is_some() {
+        let Ok(request_slot) = usize::try_from(VERTEX_STATE_VFS_REQUEST_CAP_SLOT) else {
+            return Err(InitError::CapabilityTableFull);
+        };
+        let Ok(reply_slot) = usize::try_from(VERTEX_STATE_VFS_REPLY_CAP_SLOT) else {
+            return Err(InitError::CapabilityTableFull);
+        };
+        if request_slot >= MAX_CAPS || occupied_slots[request_slot] {
+            return Err(InitError::InvalidBootManifest);
+        }
+        if reply_slot >= MAX_CAPS || occupied_slots[reply_slot] {
             return Err(InitError::InvalidBootManifest);
         }
     }
@@ -3530,12 +5013,274 @@ fn grant_config_caps_to_process(
                 ProcessId::empty(),
             )
             .map_err(|_| InitError::CapabilityTableFull)?;
-        grant_process_cap_by_pid(runtime, owner, 5, cap, true)?;
+        grant_process_cap_by_pid(runtime, owner, 6, cap, true)?;
         serial::write_str(
             "Native secret grant: process=logd secret=secret:logd-token rights=read|inspect-metadata\n",
         );
     }
+    if process.name == VERTEX_STATE_PROCESS_NAME
+        && let Some(request_endpoint) = runtime.state_vfs_request_endpoint
+    {
+        let cap = runtime
+            .new_capability(
+                request_endpoint,
+                capability::RIGHT_RECEIVE,
+                owner,
+                0,
+                ProcessId::empty(),
+            )
+            .map_err(|_| InitError::CapabilityTableFull)?;
+        grant_process_cap_by_pid(runtime, owner, VERTEX_STATE_VFS_REQUEST_CAP_SLOT, cap, true)?;
+        serial::write_str(
+            "Native VFS state request grant: process=vertex-state endpoint=state-vfs-request rights=receive\n",
+        );
+    }
+    if process.name == VERTEX_STATE_PROCESS_NAME
+        && let Some(reply_endpoint) = runtime.state_vfs_reply_endpoint
+    {
+        let cap = runtime
+            .new_capability(
+                reply_endpoint,
+                capability::RIGHT_SEND,
+                owner,
+                0,
+                ProcessId::empty(),
+            )
+            .map_err(|_| InitError::CapabilityTableFull)?;
+        grant_process_cap_by_pid(runtime, owner, VERTEX_STATE_VFS_REPLY_CAP_SLOT, cap, true)?;
+        serial::write_str(
+            "Native VFS state reply grant: process=vertex-state endpoint=state-vfs-reply rights=send\n",
+        );
+    }
 
+    Ok(())
+}
+
+fn install_vfs_nodes(runtime: &mut RuntimeState) -> Result<(), InitError> {
+    let root = runtime.add_vfs_node(
+        "/",
+        None,
+        VfsNodeKind::Directory,
+        VfsBacking::None,
+        "rootfs",
+    )?;
+    runtime.add_vfs_mount(
+        "mount:rootfs",
+        root,
+        VfsPath::from_boot_root_path("/")?,
+        "rootfs",
+        0,
+        false,
+    )?;
+    let store_root = runtime.add_vfs_node(
+        "store",
+        Some(root),
+        VfsNodeKind::Directory,
+        VfsBacking::None,
+        "storefs",
+    )?;
+    runtime.add_vfs_mount(
+        "mount:storefs",
+        store_root,
+        VfsPath::from_boot_root_path("/store")?,
+        "storefs",
+        0,
+        false,
+    )?;
+    let state_root = runtime.add_vfs_node(
+        "state",
+        Some(root),
+        VfsNodeKind::Directory,
+        VfsBacking::None,
+        "state:volatile",
+    )?;
+    runtime.add_vfs_mount(
+        "mount:state-volatile",
+        state_root,
+        VfsPath::from_boot_root_path("/state")?,
+        "state:volatile",
+        VFS_MOUNT_VOLATILE,
+        false,
+    )?;
+    let dev_root = runtime.add_vfs_node(
+        "dev",
+        Some(root),
+        VfsNodeKind::Directory,
+        VfsBacking::None,
+        "devfs",
+    )?;
+    runtime.add_vfs_mount(
+        "mount:devfs",
+        dev_root,
+        VfsPath::from_boot_root_path("/dev")?,
+        "devfs",
+        0,
+        false,
+    )?;
+    let proc_root = runtime.add_vfs_node(
+        "proc",
+        Some(root),
+        VfsNodeKind::Directory,
+        VfsBacking::None,
+        "procfs",
+    )?;
+    runtime.add_vfs_mount(
+        "mount:procfs",
+        proc_root,
+        VfsPath::from_boot_root_path("/proc")?,
+        "procfs",
+        0,
+        false,
+    )?;
+    let state_a = runtime.add_vfs_memory_file("a", b"state:a=0\n")?;
+    runtime.add_vfs_node(
+        "a",
+        Some(state_root),
+        VfsNodeKind::RegularFile,
+        VfsBacking::MemoryFile(state_a),
+        "state:volatile",
+    )?;
+    let state_sub = runtime.add_vfs_node(
+        "sub",
+        Some(state_root),
+        VfsNodeKind::Directory,
+        VfsBacking::None,
+        "state:volatile",
+    )?;
+    let state_sub_a = runtime.add_vfs_memory_file("a", b"state:sub:a=0\n")?;
+    runtime.add_vfs_node(
+        "a",
+        Some(state_sub),
+        VfsNodeKind::RegularFile,
+        VfsBacking::MemoryFile(state_sub_a),
+        "state:volatile",
+    )?;
+    let mut state_index = 0;
+    while state_index < runtime.state_volume_ids.len() {
+        if let Some(object_id) = runtime.state_volume_ids[state_index] {
+            let state = runtime
+                .objects
+                .get_state_volume(object_id)
+                .ok_or(InitError::InvalidBootManifest)?;
+            let node_name = state_volume_vfs_name(state.name)?;
+            let root_path = state_volume_vfs_path(state.name)?;
+            if runtime.vfs_node_by_path(root_path.as_bytes()).is_some() {
+                return Err(InitError::InvalidBootManifest);
+            }
+            let root_node = runtime.add_vfs_node_with_name(
+                node_name,
+                Some(state_root),
+                VfsNodeKind::Directory,
+                VfsBacking::StateVolume(object_id),
+                state.name,
+            )?;
+            runtime.add_vfs_node(
+                STATE_VOLUME_VALUE_FILE_NAME,
+                Some(root_node),
+                VfsNodeKind::RegularFile,
+                VfsBacking::StateVolumeValue(object_id),
+                state.name,
+            )?;
+            runtime.add_vfs_node(
+                STATE_VOLUME_CONTROL_FILE_NAME,
+                Some(root_node),
+                VfsNodeKind::RegularFile,
+                VfsBacking::StateVolumeControl(object_id),
+                state.name,
+            )?;
+            runtime.add_vfs_mount(state.name, root_node, root_path, state.name, 0, false)?;
+            serial::write_str("VFS state volume mounted: state=");
+            serial::write_str(state.name);
+            serial::write_str(" path=");
+            serial::write_ascii_bytes(root_path.as_bytes());
+            serial::write_str(" source=vertex-state\n");
+            serial::write_str("VFS state volume value file mounted: state=");
+            serial::write_str(state.name);
+            serial::write_str(" path=");
+            serial::write_ascii_bytes(root_path.as_bytes());
+            serial::write_str("/value source=vertex-state\n");
+            serial::write_str("VFS state volume control file mounted: state=");
+            serial::write_str(state.name);
+            serial::write_str(" path=");
+            serial::write_ascii_bytes(root_path.as_bytes());
+            serial::write_str("/control source=vertex-state\n");
+        }
+        state_index += 1;
+    }
+    runtime.add_vfs_node(
+        "inspect",
+        Some(proc_root),
+        VfsNodeKind::SyntheticNode,
+        VfsBacking::Synthetic(VFS_SYNTHETIC_INSPECT_BYTES),
+        "procfs",
+    )?;
+    runtime.add_vfs_node(
+        "log-stream",
+        Some(proc_root),
+        VfsNodeKind::Pipe,
+        VfsBacking::Pipe,
+        "pipefs",
+    )?;
+
+    let mut index = 0;
+    while index < runtime.store_object_ids.len() {
+        if let Some(object_id) = runtime.store_object_ids[index] {
+            let store = runtime
+                .objects
+                .get_store_object(object_id)
+                .ok_or(InitError::InvalidBootManifest)?;
+            runtime.add_vfs_node(
+                store.name,
+                Some(store_root),
+                VfsNodeKind::RegularFile,
+                VfsBacking::StoreObject(object_id),
+                "storefs",
+            )?;
+            serial::write_str("VFS node registered: file=");
+            serial::write_str(store.name);
+            serial::write_str(" backing=store-object\n");
+        }
+        index += 1;
+    }
+
+    index = 0;
+    while index < runtime.virtio_device_ids.len() {
+        if let Some(object_id) = runtime.virtio_device_ids[index] {
+            let device = runtime
+                .objects
+                .get_virtio_device(object_id)
+                .ok_or(InitError::InvalidBootManifest)?;
+            runtime.add_vfs_node(
+                device.name,
+                Some(dev_root),
+                VfsNodeKind::DeviceNode,
+                VfsBacking::Device(object_id),
+                "devfs",
+            )?;
+            serial::write_str("VFS node registered: device=");
+            serial::write_str(device.name);
+            serial::write_str(" backing=virtio-device\n");
+        }
+        index += 1;
+    }
+    Ok(())
+}
+
+fn validate_process_mount_roots(
+    runtime: &RuntimeState,
+    config: &BootRuntimeConfig,
+) -> Result<(), InitError> {
+    let mut index = 0;
+    while index < config.process_count {
+        let process = config.processes[index].ok_or(InitError::InvalidBootManifest)?;
+        let node = runtime
+            .vfs_node_by_path(process.mount_root.as_bytes())
+            .ok_or(InitError::InvalidBootManifest)?;
+        if !matches!(node.kind, VfsNodeKind::Directory) {
+            return Err(InitError::InvalidBootManifest);
+        }
+        index += 1;
+    }
     Ok(())
 }
 
@@ -3577,6 +5322,9 @@ fn grant_object_id(
         }
         BOOT_OBJECT_NAMESPACE => {
             runtime.namespace_ids[grant.object_index].ok_or(InitError::InvalidBootManifest)
+        }
+        BOOT_OBJECT_VFS_ROOT => {
+            runtime.vfs_root_ids[grant.object_index].ok_or(InitError::InvalidBootManifest)
         }
         _ => Err(InitError::InvalidBootManifest),
     }
@@ -3686,11 +5434,12 @@ pub fn exit_current_process(status: u64, frame: &mut SyscallFrame) -> ScheduleRe
             .unwrap_or(true)
     };
 
-    let (lifecycle_event, exiting_pid) = {
+    let (lifecycle_event, exiting_pid, exiting_name) = {
         let runtime = runtime();
 
         if let Some(process) = runtime.processes.current_process_mut() {
             let pid = process.pid;
+            let name = process.name;
             let event = if process.pid.raw() == 1 {
                 None
             } else {
@@ -3705,13 +5454,18 @@ pub fn exit_current_process(status: u64, frame: &mut SyscallFrame) -> ScheduleRe
             process.has_saved_frame = false;
             process.exit_status = status;
             process.has_exited = true;
-            (event, Some(pid))
+            process.clear_file_handles();
+            runtime.release_process_file_descriptions(pid);
+            (event, Some(pid), Some(name))
         } else {
-            (None, None)
+            (None, None, None)
         }
     };
     if let Some((service, lifecycle_state)) = lifecycle_event {
         runtime().record_service_lifecycle(service, lifecycle_state, Some(status));
+    }
+    if exiting_name == Some(VERTEX_STATE_PROCESS_NAME) {
+        abort_vfs_state_transactions(STATUS_VFS_UNSUPPORTED);
     }
 
     if initial_exited && status != 0 {
@@ -3823,6 +5577,8 @@ pub fn fault_current_process(
         process.has_saved_frame = false;
         process.exit_status = STATUS_PROCESS_FAULT;
         process.has_exited = true;
+        process.clear_file_handles();
+        runtime.release_process_file_descriptions(pid);
         (name, initial, pid)
     };
     if !initial_faulted {
@@ -3894,6 +5650,7 @@ pub fn send(cap_slot: u64, source: *const u8, len: usize) -> Result<(), IpcError
     serial::write_str("\n");
 
     wake_blocked_receiver(endpoint_id);
+    wake_blocked_vfs_state_reply(endpoint_id);
 
     Ok(())
 }
@@ -4077,6 +5834,7 @@ pub fn log_write(cap_slot: u64, source: *const u8, len: usize) -> Result<(), Ipc
 
     serial::write_ascii_bytes(&message[..len]);
     serial::write_str("\n");
+    wake_blocked_vfs_pipe_read(&message[..len]);
     Ok(())
 }
 
@@ -4465,6 +6223,8 @@ pub fn create_process(cap_slot: u64, config_process_index: u64) -> Result<u64, I
             reclaim_detached_address_space(process.name, context.cr3);
             return Err(IpcError::BadCapability);
         }
+        let mount_root = VfsPath::from_boot_root_path(process.mount_root)
+            .map_err(|_| IpcError::BadCapability)?;
         let pid = runtime
             .processes
             .add_process(
@@ -4474,6 +6234,7 @@ pub fn create_process(cap_slot: u64, config_process_index: u64) -> Result<u64, I
                 process.image_length,
                 ProcessState::Declared,
                 CapabilitySpace::new(),
+                mount_root,
             )
             .map_err(|_| {
                 reclaim_detached_address_space(process.name, context.cr3);
@@ -4539,7 +6300,7 @@ pub fn start_process(cap_slot: u64, pid: u64) -> Result<(), IpcError> {
         None
     };
 
-    let (target, lifecycle_state) = {
+    let (target, lifecycle_state, release_files) = {
         let runtime = runtime();
         let Some(process) = runtime.processes.process_mut(pid) else {
             return Err(IpcError::BadCapability);
@@ -4551,6 +6312,7 @@ pub fn start_process(cap_slot: u64, pid: u64) -> Result<(), IpcError> {
             process.caps = process.initial_caps;
             process.quota = process.initial_quota;
             process.clear_dma_mappings();
+            process.clear_file_handles();
             serial::write_str("Krust process restart reload: proc=");
             serial::write_str(process.name);
             serial::write_str("\n");
@@ -4567,8 +6329,11 @@ pub fn start_process(cap_slot: u64, pid: u64) -> Result<(), IpcError> {
         process.exit_status = 0;
         process.has_exited = false;
         process.start_count = process.start_count.saturating_add(1);
-        (process.name, lifecycle_state)
+        (process.name, lifecycle_state, reload_context.is_some())
     };
+    if release_files {
+        runtime().release_process_file_descriptions(pid);
+    }
     runtime().record_service_lifecycle(target, lifecycle_state, None);
 
     serial::write_str("Krust process start accepted: proc=");
@@ -4642,8 +6407,10 @@ pub fn kill_process(cap_slot: u64, pid: u64) -> Result<(), IpcError> {
         process.has_saved_frame = false;
         process.exit_status = u64::MAX - 11;
         process.has_exited = true;
+        process.clear_file_handles();
         process.name
     };
+    runtime().release_process_file_descriptions(pid);
 
     serial::write_str("Krust process kill accepted: proc=");
     serial::write_str(caller);
@@ -4705,10 +6472,13 @@ pub fn cap_derive(parent_slot: u64, new_slot: u64, rights_mask: u64) -> Result<(
 pub fn cap_drop(slot: u64) -> Result<(), IpcError> {
     let process_name = current_process_name();
     let runtime = runtime();
-    let Some(process) = runtime.processes.current_process_mut() else {
-        return Err(IpcError::BadCapability);
+    let dropped = {
+        let Some(process) = runtime.processes.current_process_mut() else {
+            return Err(IpcError::BadCapability);
+        };
+        process.caps.clear(slot)?
     };
-    process.caps.drop(slot)?;
+    release_unreferenced_derived_vfs_root(runtime, dropped.object);
 
     serial::write_str("Capability drop accepted: proc=");
     serial::write_str(process_name);
@@ -4731,6 +6501,17 @@ pub fn cap_revoke(slot: u64) -> Result<(), IpcError> {
     serial::write_u64_dec(cap.id);
     serial::write_str("\n");
     Ok(())
+}
+
+fn release_unreferenced_derived_vfs_root(runtime: &mut RuntimeState, object: KernelObjectId) {
+    if object_reachable_by_cap(runtime, object) {
+        return;
+    }
+    if runtime.objects.remove_derived_vfs_root(object) {
+        serial::write_str("Derived VFS root released: object=");
+        serial::write_u64_dec(object.raw());
+        serial::write_str("\n");
+    }
 }
 
 pub fn cap_inspect(slot: u64) -> Result<u64, IpcError> {
@@ -5018,11 +6799,1553 @@ pub fn quota_delegate(
     Ok(())
 }
 
-pub fn object_read(cap_slot: u64, destination: *mut u8, max_len: usize) -> Result<usize, IpcError> {
-    let object = store_object_from_cap(cap_slot, capability::RIGHT_READ)?;
-    let Ok(object_len) = usize::try_from(object.length) else {
-        return Err(IpcError::MessageTooLarge);
+pub fn legacy_object_read(
+    _cap_slot: u64,
+    _destination: *mut u8,
+    _max_len: usize,
+) -> Result<usize, IpcError> {
+    serial::write_str("Legacy object-read syscall rejected: use VFS handles\n");
+    Err(IpcError::BadCapability)
+}
+
+pub fn vfs_open(cap_slot: u64, path: *const u8, packed_len_flags: u64) -> Result<u64, IpcError> {
+    let path_len = usize::try_from(packed_len_flags & 0xffff_ffff).unwrap_or(usize::MAX);
+    let flags = packed_len_flags >> 32;
+    if path_len > MAX_VFS_PATH_BYTES {
+        return Err(IpcError::VfsBadPath);
+    }
+    if flags & !VFS_OPEN_KNOWN_FLAGS != 0 {
+        return Err(IpcError::VfsUnsupported);
+    }
+    if flags & (VFS_OPEN_CREATE | VFS_OPEN_TRUNC | VFS_OPEN_APPEND) != 0
+        && flags & VFS_OPEN_WRITE == 0
+    {
+        return Err(IpcError::VfsPermission);
+    }
+
+    let mut path_bytes = [0u8; MAX_VFS_PATH_BYTES];
+    usercopy::copy_from_user(&mut path_bytes, UserPtr::new(path as u64), path_len)
+        .map_err(|_| IpcError::InvalidUserBuffer)?;
+
+    let cap = lookup_capability(cap_slot, 0).map_err(|_| IpcError::VfsPermission)?;
+    let path = &path_bytes[..path_len];
+    let mut created_node = None;
+    let (node, available_rights) = match resolve_vfs_node_from_cap(cap, path) {
+        Ok(resolved) => resolved,
+        Err(IpcError::VfsNotFound) if flags & VFS_OPEN_CREATE != 0 => {
+            let requested_rights = vfs_regular_file_open_rights(flags)?;
+            let (node, available) = vfs_create_memory_file_node(cap, path, requested_rights)?;
+            created_node = Some(node);
+            (node, available)
+        }
+        Err(error) => return Err(error),
     };
+    let requested_rights = match vfs_open_rights(flags, node) {
+        Ok(rights) => rights,
+        Err(error) => {
+            release_created_vfs_memory_node(runtime(), created_node);
+            return Err(error);
+        }
+    };
+    if requested_rights & !available_rights != 0 {
+        if !matches!(node.backing, VfsBacking::Device(_)) {
+            release_created_vfs_memory_node(runtime(), created_node);
+            return Err(IpcError::VfsPermission);
+        }
+    }
+    if let VfsBacking::Device(device_object) = node.backing {
+        if let Err(error) = validate_vfs_device_open(flags, available_rights, device_object) {
+            release_created_vfs_memory_node(runtime(), created_node);
+            return Err(error);
+        }
+    }
+    if matches!(
+        node.backing,
+        VfsBacking::StateVolumeValue(_) | VfsBacking::StateVolumeControl(_)
+    ) && flags & (VFS_OPEN_CREATE | VFS_OPEN_TRUNC | VFS_OPEN_APPEND) != 0
+    {
+        release_created_vfs_memory_node(runtime(), created_node);
+        return Err(IpcError::VfsUnsupported);
+    }
+    if flags & VFS_OPEN_TRUNC != 0 && !matches!(node.backing, VfsBacking::MemoryFile(_)) {
+        release_created_vfs_memory_node(runtime(), created_node);
+        return Err(IpcError::VfsUnsupported);
+    }
+
+    let owner = current_process_id();
+    let (raw_handle, description) = {
+        let runtime = runtime();
+        let description =
+            match runtime.open_file_description(node.id, requested_rights, flags, owner) {
+                Ok(description) => description,
+                Err(error) => {
+                    release_created_vfs_memory_node(runtime, created_node);
+                    return Err(error);
+                }
+            };
+        let Some(process) = runtime.processes.current_process_mut() else {
+            let _ = runtime.release_file_description(description);
+            release_created_vfs_memory_node(runtime, created_node);
+            return Err(IpcError::VfsPermission);
+        };
+        let handle = FileHandle { description };
+        match process.open_file_handle(handle) {
+            Ok(raw) => (raw, description),
+            Err(error) => {
+                let _ = runtime.release_file_description(description);
+                release_created_vfs_memory_node(runtime, created_node);
+                return Err(error);
+            }
+        }
+    };
+    if flags & VFS_OPEN_TRUNC != 0 {
+        if let Err(error) = vfs_truncate_node(node, 0) {
+            let runtime = runtime();
+            if let Some(process) = runtime.processes.current_process_mut() {
+                let _ = process.close_file_handle(raw_handle);
+            }
+            let _ = runtime.release_file_description(description);
+            release_created_vfs_memory_node(runtime, created_node);
+            return Err(error);
+        }
+    }
+
+    if created_node.is_some() {
+        serial::write_str("VFS open-create accepted: proc=");
+        serial::write_str(current_process_name());
+        serial::write_str(" path=");
+        serial::write_ascii_bytes(path);
+        serial::write_str("\n");
+    }
+    serial::write_str("VFS open accepted: proc=");
+    serial::write_str(current_process_name());
+    serial::write_str(" file=");
+    serial_write_vfs_name(node.name);
+    serial::write_str(" handle=");
+    serial::write_u64_dec(raw_handle);
+    serial::write_str(" description=");
+    serial::write_u64_dec(description.raw());
+    serial::write_str("\n");
+    Ok(raw_handle)
+}
+
+pub fn vfs_read(
+    handle: u64,
+    destination: *mut u8,
+    max_len: usize,
+    frame: &mut SyscallFrame,
+) -> Result<(), IpcError> {
+    let (description, node) = current_open_file(handle)?;
+    if description.rights & capability::RIGHT_READ == 0 {
+        return Err(IpcError::VfsPermission);
+    }
+    if matches!(node.backing, VfsBacking::Pipe) {
+        if max_len == 0 {
+            frame.rax = 0;
+            return Ok(());
+        }
+        usercopy::validate_user_buffer(
+            UserPtr::new(destination as u64),
+            max_len,
+            paging::UserAccess::Write,
+        )
+        .map_err(|_| IpcError::InvalidUserBuffer)?;
+        if block_current_on_vfs_read(node.id, description.id, destination as u64, max_len, frame) {
+            return Ok(());
+        }
+        return Err(IpcError::Empty);
+    }
+    if let VfsBacking::StateVolumeValue(state) = node.backing {
+        return vfs_state_value_read(
+            state,
+            node,
+            description,
+            description.offset,
+            destination,
+            max_len,
+            true,
+            frame,
+        );
+    }
+    let (copy_len, new_offset) = vfs_read_node(node, description.offset, destination, max_len)?;
+    runtime()
+        .file_description_mut(description.id)
+        .ok_or(IpcError::VfsBadHandle)?
+        .offset = new_offset;
+
+    serial::write_str("VFS read accepted: proc=");
+    serial::write_str(current_process_name());
+    serial::write_str(" file=");
+    serial_write_vfs_name(node.name);
+    serial::write_str(" bytes=");
+    serial::write_u64_dec(copy_len as u64);
+    serial::write_str("\n");
+    frame.rax = copy_len as u64;
+    Ok(())
+}
+
+pub fn vfs_pread(
+    handle: u64,
+    destination: *mut u8,
+    packed_len_offset: u64,
+    frame: &mut SyscallFrame,
+) -> Result<(), IpcError> {
+    let max_len = usize::try_from(packed_len_offset & 0xffff_ffff).unwrap_or(usize::MAX);
+    let offset = packed_len_offset >> 32;
+    let (description, node) = current_open_file(handle)?;
+    if description.rights & capability::RIGHT_READ == 0 {
+        return Err(IpcError::VfsPermission);
+    }
+    if let VfsBacking::StateVolumeValue(state) = node.backing {
+        return vfs_state_value_read(
+            state,
+            node,
+            description,
+            offset,
+            destination,
+            max_len,
+            false,
+            frame,
+        );
+    }
+    let (copy_len, _) = vfs_read_node(node, offset, destination, max_len)?;
+    serial::write_str("VFS pread accepted: proc=");
+    serial::write_str(current_process_name());
+    serial::write_str(" file=");
+    serial_write_vfs_name(node.name);
+    serial::write_str(" bytes=");
+    serial::write_u64_dec(copy_len as u64);
+    serial::write_str("\n");
+    frame.rax = copy_len as u64;
+    Ok(())
+}
+
+pub fn vfs_write(
+    handle: u64,
+    source: *const u8,
+    len: usize,
+    frame: &mut SyscallFrame,
+) -> Result<(), IpcError> {
+    let (description, node) = current_open_file(handle)?;
+    if description.rights & capability::RIGHT_WRITE == 0 {
+        return Err(IpcError::VfsPermission);
+    }
+    if let VfsBacking::StateVolumeValue(state) = node.backing {
+        if description.flags & VFS_OPEN_APPEND != 0 {
+            return Err(IpcError::VfsUnsupported);
+        }
+        return vfs_state_value_write(
+            state,
+            node,
+            description,
+            description.offset,
+            source,
+            len,
+            true,
+            frame,
+        );
+    }
+    if let VfsBacking::StateVolumeControl(state) = node.backing {
+        if description.flags & VFS_OPEN_APPEND != 0 {
+            return Err(IpcError::VfsUnsupported);
+        }
+        return vfs_state_control_write(
+            state,
+            node,
+            description,
+            description.offset,
+            source,
+            len,
+            true,
+            frame,
+        );
+    }
+    if len > MAX_VFS_MEM_FILE_BYTES {
+        return Err(IpcError::VfsNoSpace);
+    }
+    let mut bytes = [0u8; MAX_VFS_MEM_FILE_BYTES];
+    usercopy::copy_from_user(&mut bytes, UserPtr::new(source as u64), len)
+        .map_err(|_| IpcError::InvalidUserBuffer)?;
+    let offset = if description.flags & VFS_OPEN_APPEND != 0 {
+        vfs_node_len(node)?
+    } else {
+        description.offset
+    };
+    let (written, new_offset) = vfs_write_node(node, offset, &bytes[..len])?;
+    runtime()
+        .file_description_mut(description.id)
+        .ok_or(IpcError::VfsBadHandle)?
+        .offset = new_offset;
+    serial::write_str("VFS write accepted: proc=");
+    serial::write_str(current_process_name());
+    serial::write_str(" file=");
+    serial_write_vfs_name(node.name);
+    serial::write_str(" bytes=");
+    serial::write_u64_dec(written as u64);
+    serial::write_str("\n");
+    frame.rax = written as u64;
+    Ok(())
+}
+
+pub fn vfs_pwrite(
+    handle: u64,
+    source: *const u8,
+    packed_len_offset: u64,
+    frame: &mut SyscallFrame,
+) -> Result<(), IpcError> {
+    let len = usize::try_from(packed_len_offset & 0xffff_ffff).unwrap_or(usize::MAX);
+    let offset = packed_len_offset >> 32;
+    let (description, node) = current_open_file(handle)?;
+    if description.rights & capability::RIGHT_WRITE == 0 {
+        return Err(IpcError::VfsPermission);
+    }
+    if let VfsBacking::StateVolumeValue(state) = node.backing {
+        return vfs_state_value_write(state, node, description, offset, source, len, false, frame);
+    }
+    if let VfsBacking::StateVolumeControl(state) = node.backing {
+        return vfs_state_control_write(
+            state,
+            node,
+            description,
+            offset,
+            source,
+            len,
+            false,
+            frame,
+        );
+    }
+    if len > MAX_VFS_MEM_FILE_BYTES {
+        return Err(IpcError::VfsNoSpace);
+    }
+    let mut bytes = [0u8; MAX_VFS_MEM_FILE_BYTES];
+    usercopy::copy_from_user(&mut bytes, UserPtr::new(source as u64), len)
+        .map_err(|_| IpcError::InvalidUserBuffer)?;
+    let (written, _) = vfs_write_node(node, offset, &bytes[..len])?;
+    serial::write_str("VFS pwrite accepted: proc=");
+    serial::write_str(current_process_name());
+    serial::write_str(" file=");
+    serial_write_vfs_name(node.name);
+    serial::write_str(" bytes=");
+    serial::write_u64_dec(written as u64);
+    serial::write_str("\n");
+    frame.rax = written as u64;
+    Ok(())
+}
+
+fn vfs_state_value_read(
+    state: KernelObjectId,
+    node: VfsNode,
+    description: OpenFileDescription,
+    offset: u64,
+    destination: *mut u8,
+    max_len: usize,
+    update_offset: bool,
+    frame: &mut SyscallFrame,
+) -> Result<(), IpcError> {
+    if max_len == 0 {
+        frame.rax = 0;
+        return Ok(());
+    }
+    usercopy::validate_user_buffer(
+        UserPtr::new(destination as u64),
+        max_len,
+        paging::UserAccess::Write,
+    )
+    .map_err(|_| IpcError::InvalidUserBuffer)?;
+
+    let request = [0u8; MAX_MESSAGE_BYTES];
+    start_vfs_state_transaction(
+        state,
+        node,
+        description,
+        VfsStateOperation::Read,
+        offset,
+        destination as u64,
+        max_len,
+        0,
+        update_offset,
+        &request,
+        0,
+        frame,
+    )
+}
+
+fn vfs_state_value_write(
+    state: KernelObjectId,
+    node: VfsNode,
+    description: OpenFileDescription,
+    offset: u64,
+    source: *const u8,
+    len: usize,
+    update_offset: bool,
+    frame: &mut SyscallFrame,
+) -> Result<(), IpcError> {
+    if offset != 0 {
+        return Err(IpcError::VfsUnsupported);
+    }
+    if len > MAX_STATE_VOLUME_VALUE_BYTES {
+        return Err(IpcError::VfsNoSpace);
+    }
+
+    let mut request = [0u8; MAX_MESSAGE_BYTES];
+    usercopy::copy_from_user(&mut request, UserPtr::new(source as u64), len)
+        .map_err(|_| IpcError::InvalidUserBuffer)?;
+    start_vfs_state_transaction(
+        state,
+        node,
+        description,
+        VfsStateOperation::Write,
+        offset,
+        0,
+        0,
+        len,
+        update_offset,
+        &request,
+        len,
+        frame,
+    )
+}
+
+fn vfs_state_control_write(
+    state: KernelObjectId,
+    node: VfsNode,
+    description: OpenFileDescription,
+    offset: u64,
+    source: *const u8,
+    len: usize,
+    update_offset: bool,
+    frame: &mut SyscallFrame,
+) -> Result<(), IpcError> {
+    if offset != 0 || len != 1 {
+        return Err(IpcError::VfsUnsupported);
+    }
+
+    let mut request = [0u8; MAX_MESSAGE_BYTES];
+    usercopy::copy_from_user(&mut request[..len], UserPtr::new(source as u64), len)
+        .map_err(|_| IpcError::InvalidUserBuffer)?;
+    if request[0] != b'Q' {
+        return Err(IpcError::VfsUnsupported);
+    }
+    start_vfs_state_transaction(
+        state,
+        node,
+        description,
+        VfsStateOperation::Control,
+        offset,
+        0,
+        0,
+        len,
+        update_offset,
+        &request,
+        1,
+        frame,
+    )
+}
+
+pub fn vfs_close(handle: u64) -> Result<(), IpcError> {
+    let (process_name, file) = {
+        let runtime = runtime();
+        let Some(process) = runtime.processes.current_process_mut() else {
+            return Err(IpcError::VfsPermission);
+        };
+        (process.name, process.close_file_handle(handle)?)
+    };
+    runtime().release_file_description(file.description)?;
+    serial::write_str("VFS close accepted: proc=");
+    serial::write_str(process_name);
+    serial::write_str(" handle=");
+    serial::write_u64_dec(handle);
+    serial::write_str("\n");
+    Ok(())
+}
+
+pub fn vfs_seek(handle: u64, offset: u64, whence: u64) -> Result<u64, IpcError> {
+    let (description, node) = current_open_file(handle)?;
+    let size = vfs_node_len(node)?;
+    let next = match whence {
+        VFS_SEEK_SET => offset,
+        VFS_SEEK_CURRENT => description
+            .offset
+            .checked_add(offset)
+            .ok_or(IpcError::VfsUnsupported)?,
+        VFS_SEEK_END => size.checked_add(offset).ok_or(IpcError::VfsUnsupported)?,
+        _ => return Err(IpcError::VfsUnsupported),
+    };
+    if next > size {
+        return Err(IpcError::VfsUnsupported);
+    }
+    runtime()
+        .file_description_mut(description.id)
+        .ok_or(IpcError::VfsBadHandle)?
+        .offset = next;
+    Ok(next)
+}
+
+pub fn vfs_stat(
+    handle: u64,
+    destination: *mut u8,
+    max_len: usize,
+    frame: &mut SyscallFrame,
+) -> Result<(), IpcError> {
+    if max_len < VFS_STAT_BYTES {
+        return Err(IpcError::InvalidUserBuffer);
+    }
+    let (description, node) = current_open_file(handle)?;
+    if let VfsBacking::StateVolumeValue(state) = node.backing {
+        return vfs_state_value_stat(state, node, description, destination, max_len, frame);
+    }
+    let mut stat = [0u8; VFS_STAT_BYTES];
+    write_u64_le(&mut stat, 0, vfs_node_kind_value(node.kind));
+    write_u64_le(&mut stat, 8, vfs_node_len(node)?);
+    write_u64_le(&mut stat, 16, node.id.raw());
+    write_u64_le(&mut stat, 24, description.rights);
+    usercopy::copy_to_user(UserPtr::new(destination as u64), &stat)
+        .map_err(|_| IpcError::InvalidUserBuffer)?;
+    serial::write_str("VFS stat accepted: proc=");
+    serial::write_str(current_process_name());
+    serial::write_str(" file=");
+    serial_write_vfs_name(node.name);
+    serial::write_str("\n");
+    frame.rax = VFS_STAT_BYTES as u64;
+    Ok(())
+}
+
+fn vfs_state_value_stat(
+    state: KernelObjectId,
+    node: VfsNode,
+    description: OpenFileDescription,
+    destination: *mut u8,
+    max_len: usize,
+    frame: &mut SyscallFrame,
+) -> Result<(), IpcError> {
+    usercopy::validate_user_buffer(
+        UserPtr::new(destination as u64),
+        VFS_STAT_BYTES,
+        paging::UserAccess::Write,
+    )
+    .map_err(|_| IpcError::InvalidUserBuffer)?;
+
+    let request = [0u8; MAX_MESSAGE_BYTES];
+    start_vfs_state_transaction(
+        state,
+        node,
+        description,
+        VfsStateOperation::Stat,
+        0,
+        destination as u64,
+        max_len,
+        0,
+        false,
+        &request,
+        0,
+        frame,
+    )
+}
+
+pub fn vfs_readdir(handle: u64, destination: *mut u8, max_len: usize) -> Result<usize, IpcError> {
+    if max_len < VFS_DIRENT_BYTES {
+        return Err(IpcError::InvalidUserBuffer);
+    }
+    let (description, node) = current_open_file(handle)?;
+    if !matches!(node.kind, VfsNodeKind::Directory) {
+        return Err(IpcError::VfsNotDirectory);
+    }
+    if description.rights & capability::RIGHT_RESOLVE == 0 {
+        return Err(IpcError::VfsPermission);
+    }
+    let entry_index = usize::try_from(description.offset).map_err(|_| IpcError::VfsUnsupported)?;
+    let Some(child) = runtime().vfs_child_by_entry_index(node.id, entry_index) else {
+        return Ok(0);
+    };
+
+    let mut dirent = [0u8; VFS_DIRENT_BYTES];
+    write_u64_le(&mut dirent, 0, vfs_node_kind_value(child.kind));
+    write_u64_le(&mut dirent, 8, child.id.raw());
+    write_u64_le(&mut dirent, 16, child.name.len as u64);
+    let name = child.name.as_bytes();
+    let mut index = 0;
+    while index < name.len() {
+        dirent[24 + index] = name[index];
+        index += 1;
+    }
+    usercopy::copy_to_user(UserPtr::new(destination as u64), &dirent)
+        .map_err(|_| IpcError::InvalidUserBuffer)?;
+    runtime()
+        .file_description_mut(description.id)
+        .ok_or(IpcError::VfsBadHandle)?
+        .offset = description
+        .offset
+        .checked_add(1)
+        .ok_or(IpcError::VfsUnsupported)?;
+
+    serial::write_str("VFS readdir accepted: proc=");
+    serial::write_str(current_process_name());
+    serial::write_str(" dir=");
+    serial_write_vfs_name(node.name);
+    serial::write_str(" entry=");
+    serial_write_vfs_name(child.name);
+    serial::write_str(" vnode=");
+    serial::write_u64_dec(child.id.raw());
+    serial::write_str("\n");
+    Ok(VFS_DIRENT_BYTES)
+}
+
+pub fn vfs_mount(cap_slot: u64, path: *const u8, packed_len_flags: u64) -> Result<(), IpcError> {
+    let path_len = usize::try_from(packed_len_flags & 0xffff_ffff).unwrap_or(usize::MAX);
+    let flags = packed_len_flags >> 32;
+    if path_len > MAX_VFS_PATH_BYTES {
+        return Err(IpcError::VfsBadPath);
+    }
+    if flags != VFS_MOUNT_VOLATILE {
+        return Err(IpcError::VfsUnsupported);
+    }
+    let mut path_bytes = [0u8; MAX_VFS_PATH_BYTES];
+    usercopy::copy_from_user(&mut path_bytes, UserPtr::new(path as u64), path_len)
+        .map_err(|_| IpcError::InvalidUserBuffer)?;
+    let requested_path = &path_bytes[..path_len];
+    let root_path = resolve_process_vfs_path(requested_path)?;
+    let path = root_path.as_bytes();
+    let (parent_path, child_name) = split_vfs_parent_child(path)?;
+    let child_name = VfsName::from_user_component(child_name).map_err(|_| IpcError::VfsBadPath)?;
+    let cap = lookup_capability(cap_slot, capability::RIGHT_RESOLVE)
+        .map_err(|_| IpcError::VfsPermission)?;
+    let available = resolve_vfs_root_authority(cap, parent_path)?;
+    if available & capability::RIGHT_MOUNT == 0 {
+        return Err(IpcError::VfsPermission);
+    }
+    let parent = runtime()
+        .vfs_node_by_path(parent_path)
+        .ok_or(IpcError::VfsNotFound)?;
+    if !matches!(parent.kind, VfsNodeKind::Directory) {
+        return Err(IpcError::VfsNotDirectory);
+    }
+    if runtime().vfs_node_by_path(path).is_some() {
+        return Err(IpcError::VfsExists);
+    }
+
+    let runtime = runtime();
+    let node_id = runtime
+        .add_vfs_node_with_name(
+            child_name,
+            Some(parent.id),
+            VfsNodeKind::Directory,
+            VfsBacking::None,
+            "volatilefs",
+        )
+        .map_err(|_| IpcError::VfsNoSpace)?;
+    if runtime
+        .add_vfs_mount(
+            "mount:volatile",
+            node_id,
+            root_path,
+            "volatilefs",
+            flags,
+            true,
+        )
+        .is_err()
+    {
+        let _ = runtime.remove_vfs_node(node_id);
+        return Err(IpcError::VfsNoSpace);
+    }
+
+    serial::write_str("VFS mount accepted: proc=");
+    serial::write_str(current_process_name());
+    serial::write_str(" path=");
+    serial::write_ascii_bytes(requested_path);
+    serial::write_str(" canonical=");
+    serial::write_ascii_bytes(path);
+    serial::write_str(" source=volatilefs\n");
+    Ok(())
+}
+
+pub fn vfs_unmount(cap_slot: u64, path: *const u8, path_len: usize) -> Result<(), IpcError> {
+    if path_len > MAX_VFS_PATH_BYTES {
+        return Err(IpcError::VfsBadPath);
+    }
+    let mut path_bytes = [0u8; MAX_VFS_PATH_BYTES];
+    usercopy::copy_from_user(&mut path_bytes, UserPtr::new(path as u64), path_len)
+        .map_err(|_| IpcError::InvalidUserBuffer)?;
+    let requested_path = &path_bytes[..path_len];
+    let canonical_path = resolve_process_vfs_path(requested_path)?;
+    let path = canonical_path.as_bytes();
+    let cap = lookup_capability(cap_slot, capability::RIGHT_RESOLVE)
+        .map_err(|_| IpcError::VfsPermission)?;
+    let available = resolve_vfs_root_authority(cap, path)?;
+    if available & capability::RIGHT_MOUNT == 0 {
+        return Err(IpcError::VfsPermission);
+    }
+    let node = runtime()
+        .vfs_node_by_path(path)
+        .ok_or(IpcError::VfsNotFound)?;
+    if !matches!(node.kind, VfsNodeKind::Directory) {
+        return Err(IpcError::VfsNotDirectory);
+    }
+    let mount = runtime()
+        .objects
+        .get_vfs_mount_by_root_node(node.id)
+        .ok_or(IpcError::VfsUnsupported)?;
+    if !mount.dynamic {
+        return Err(IpcError::VfsUnsupported);
+    }
+    if runtime().vfs_node_has_open_description(node.id) || runtime().vfs_node_has_children(node.id)
+    {
+        return Err(IpcError::VfsBusy);
+    }
+
+    let runtime = runtime();
+    runtime.remove_vfs_node(node.id)?;
+    if let Some(mount_id) = runtime.objects.remove_dynamic_vfs_mount(node.id) {
+        runtime.remove_vfs_mount_id(mount_id);
+    }
+
+    serial::write_str("VFS unmount accepted: proc=");
+    serial::write_str(current_process_name());
+    serial::write_str(" path=");
+    serial::write_ascii_bytes(requested_path);
+    serial::write_str(" canonical=");
+    serial::write_ascii_bytes(path);
+    serial::write_str("\n");
+    Ok(())
+}
+
+pub fn vfs_sync(handle: u64) -> Result<(), IpcError> {
+    let (_description, node) = current_open_file(handle)?;
+    match node.backing {
+        VfsBacking::StoreObject(_)
+        | VfsBacking::StateVolumeValue(_)
+        | VfsBacking::MemoryFile(_)
+        | VfsBacking::Synthetic(_) => {}
+        _ => return Err(IpcError::VfsUnsupported),
+    }
+    serial::write_str("VFS sync accepted: proc=");
+    serial::write_str(current_process_name());
+    serial::write_str(" file=");
+    serial_write_vfs_name(node.name);
+    serial::write_str("\n");
+    Ok(())
+}
+
+pub fn vfs_dup(handle: u64, flags: u64) -> Result<u64, IpcError> {
+    if flags & !VFS_DUP_SHARE_OFFSET != 0 {
+        return Err(IpcError::VfsUnsupported);
+    }
+    let file = current_file_handle(handle)?;
+    let description = runtime()
+        .file_description(file.description)
+        .ok_or(IpcError::VfsBadHandle)?;
+    let new_description = if flags & VFS_DUP_SHARE_OFFSET != 0 {
+        runtime().retain_file_description(description.id)?;
+        description.id
+    } else {
+        let runtime = runtime();
+        let new_id = runtime.open_file_description(
+            description.node,
+            description.rights,
+            description.flags,
+            description.owner,
+        )?;
+        runtime
+            .file_description_mut(new_id)
+            .ok_or(IpcError::VfsBadHandle)?
+            .offset = description.offset;
+        new_id
+    };
+
+    let raw = {
+        let runtime = runtime();
+        let Some(process) = runtime.processes.current_process_mut() else {
+            runtime.release_file_description(new_description)?;
+            return Err(IpcError::VfsPermission);
+        };
+        match process.open_file_handle(FileHandle {
+            description: new_description,
+        }) {
+            Ok(raw) => raw,
+            Err(error) => {
+                runtime.release_file_description(new_description)?;
+                return Err(error);
+            }
+        }
+    };
+    serial::write_str("VFS dup accepted: proc=");
+    serial::write_str(current_process_name());
+    serial::write_str(" handle=");
+    serial::write_u64_dec(handle);
+    serial::write_str(" new_handle=");
+    serial::write_u64_dec(raw);
+    serial::write_str(if flags & VFS_DUP_SHARE_OFFSET != 0 {
+        " shared-offset=yes\n"
+    } else {
+        " shared-offset=no\n"
+    });
+    Ok(raw)
+}
+
+pub fn vfs_lock(handle: u64, flags: u64) -> Result<(), IpcError> {
+    let mode = match flags {
+        VFS_LOCK_SHARED => VfsLockMode::Shared,
+        VFS_LOCK_EXCLUSIVE => VfsLockMode::Exclusive,
+        _ => return Err(IpcError::VfsUnsupported),
+    };
+    let (description, node) = current_open_file(handle)?;
+    if !matches!(node.kind, VfsNodeKind::RegularFile) {
+        return Err(IpcError::VfsNotFile);
+    }
+    match mode {
+        VfsLockMode::Shared => {
+            if description.rights & capability::RIGHT_READ == 0 {
+                return Err(IpcError::VfsPermission);
+            }
+        }
+        VfsLockMode::Exclusive => {
+            if description.rights & capability::RIGHT_WRITE == 0 {
+                return Err(IpcError::VfsPermission);
+            }
+        }
+    }
+    runtime().acquire_vfs_lock(description, mode)?;
+    serial::write_str("VFS lock accepted: proc=");
+    serial::write_str(current_process_name());
+    serial::write_str(" file=");
+    serial_write_vfs_name(node.name);
+    serial::write_str(" description=");
+    serial::write_u64_dec(description.id.raw());
+    serial::write_str(match mode {
+        VfsLockMode::Shared => " mode=shared\n",
+        VfsLockMode::Exclusive => " mode=exclusive\n",
+    });
+    Ok(())
+}
+
+pub fn vfs_unlock(handle: u64) -> Result<(), IpcError> {
+    let (description, node) = current_open_file(handle)?;
+    if !runtime().release_vfs_lock(description.id) {
+        return Err(IpcError::VfsBadHandle);
+    }
+    serial::write_str("VFS unlock accepted: proc=");
+    serial::write_str(current_process_name());
+    serial::write_str(" file=");
+    serial_write_vfs_name(node.name);
+    serial::write_str(" description=");
+    serial::write_u64_dec(description.id.raw());
+    serial::write_str("\n");
+    Ok(())
+}
+
+pub fn vfs_create(cap_slot: u64, path: *const u8, packed_len_flags: u64) -> Result<(), IpcError> {
+    let path_len = usize::try_from(packed_len_flags & 0xffff_ffff).unwrap_or(usize::MAX);
+    let flags = packed_len_flags >> 32;
+    if path_len > MAX_VFS_PATH_BYTES || flags != 0 {
+        return Err(IpcError::VfsBadPath);
+    }
+    let mut path_bytes = [0u8; MAX_VFS_PATH_BYTES];
+    usercopy::copy_from_user(&mut path_bytes, UserPtr::new(path as u64), path_len)
+        .map_err(|_| IpcError::InvalidUserBuffer)?;
+    let path = &path_bytes[..path_len];
+    let cap = lookup_capability(cap_slot, capability::RIGHT_RESOLVE)
+        .map_err(|_| IpcError::VfsPermission)?;
+    vfs_create_memory_file_node(cap, path, 0)?;
+
+    serial::write_str("VFS create accepted: proc=");
+    serial::write_str(current_process_name());
+    serial::write_str(" path=");
+    serial::write_ascii_bytes(path);
+    serial::write_str("\n");
+    Ok(())
+}
+
+pub fn vfs_unlink(cap_slot: u64, path: *const u8, path_len: usize) -> Result<(), IpcError> {
+    if path_len > MAX_VFS_PATH_BYTES {
+        return Err(IpcError::VfsBadPath);
+    }
+    let mut path_bytes = [0u8; MAX_VFS_PATH_BYTES];
+    usercopy::copy_from_user(&mut path_bytes, UserPtr::new(path as u64), path_len)
+        .map_err(|_| IpcError::InvalidUserBuffer)?;
+    let requested_path = &path_bytes[..path_len];
+    let canonical_path = resolve_process_vfs_path(requested_path)?;
+    let path = canonical_path.as_bytes();
+    let cap = lookup_capability(cap_slot, capability::RIGHT_RESOLVE)
+        .map_err(|_| IpcError::VfsPermission)?;
+    let available = resolve_vfs_root_authority(cap, path)?;
+    if available & capability::RIGHT_UNLINK == 0 {
+        return Err(IpcError::VfsPermission);
+    }
+
+    let node = runtime()
+        .vfs_node_by_path(path)
+        .ok_or(IpcError::VfsNotFound)?;
+    let VfsBacking::MemoryFile(backing) = node.backing else {
+        return Err(IpcError::VfsUnsupported);
+    };
+    if runtime().vfs_node_has_open_description(node.id) || runtime().vfs_node_has_children(node.id)
+    {
+        return Err(IpcError::VfsBusy);
+    }
+    {
+        let runtime = runtime();
+        runtime.remove_vfs_node(node.id)?;
+        runtime.release_vfs_memory_file(backing)?;
+    }
+
+    serial::write_str("VFS unlink accepted: proc=");
+    serial::write_str(current_process_name());
+    serial::write_str(" path=");
+    serial::write_ascii_bytes(requested_path);
+    serial::write_str(" canonical=");
+    serial::write_ascii_bytes(path);
+    serial::write_str("\n");
+    Ok(())
+}
+
+pub fn vfs_rename(cap_slot: u64, request: *const u8, request_len: usize) -> Result<(), IpcError> {
+    if !(VFS_RENAME_REQUEST_HEADER_BYTES..=VFS_RENAME_REQUEST_MAX_BYTES).contains(&request_len) {
+        return Err(IpcError::VfsBadPath);
+    }
+    let mut request_bytes = [0u8; VFS_RENAME_REQUEST_MAX_BYTES];
+    usercopy::copy_from_user(
+        &mut request_bytes,
+        UserPtr::new(request as u64),
+        request_len,
+    )
+    .map_err(|_| IpcError::InvalidUserBuffer)?;
+    let old_len =
+        usize::try_from(read_u64_le(&request_bytes, 0)).map_err(|_| IpcError::VfsBadPath)?;
+    let new_len =
+        usize::try_from(read_u64_le(&request_bytes, 8)).map_err(|_| IpcError::VfsBadPath)?;
+    if old_len > MAX_VFS_PATH_BYTES || new_len > MAX_VFS_PATH_BYTES {
+        return Err(IpcError::VfsBadPath);
+    }
+    let expected_len = VFS_RENAME_REQUEST_HEADER_BYTES
+        .checked_add(old_len)
+        .and_then(|len| len.checked_add(new_len))
+        .ok_or(IpcError::VfsBadPath)?;
+    if expected_len != request_len {
+        return Err(IpcError::VfsBadPath);
+    }
+
+    let old_requested =
+        &request_bytes[VFS_RENAME_REQUEST_HEADER_BYTES..VFS_RENAME_REQUEST_HEADER_BYTES + old_len];
+    let new_requested = &request_bytes[VFS_RENAME_REQUEST_HEADER_BYTES + old_len..expected_len];
+    let old_canonical = resolve_process_vfs_path(old_requested)?;
+    let new_canonical = resolve_process_vfs_path(new_requested)?;
+    let old_path = old_canonical.as_bytes();
+    let new_path = new_canonical.as_bytes();
+    let (old_parent_path, _) = split_vfs_parent_child(old_path)?;
+    let (new_parent_path, new_child_name) = split_vfs_parent_child(new_path)?;
+    let new_child_name =
+        VfsName::from_user_component(new_child_name).map_err(|_| IpcError::VfsBadPath)?;
+
+    let cap = lookup_capability(cap_slot, capability::RIGHT_RESOLVE)
+        .map_err(|_| IpcError::VfsPermission)?;
+    let old_available = resolve_vfs_root_authority(cap, old_parent_path)?;
+    let new_available = resolve_vfs_root_authority(cap, new_parent_path)?;
+    if old_available & capability::RIGHT_RENAME == 0
+        || new_available & capability::RIGHT_RENAME == 0
+    {
+        return Err(IpcError::VfsPermission);
+    }
+
+    let old_parent = runtime()
+        .vfs_node_by_path(old_parent_path)
+        .ok_or(IpcError::VfsNotFound)?;
+    let new_parent = runtime()
+        .vfs_node_by_path(new_parent_path)
+        .ok_or(IpcError::VfsNotFound)?;
+    if !matches!(old_parent.kind, VfsNodeKind::Directory)
+        || !matches!(new_parent.kind, VfsNodeKind::Directory)
+    {
+        return Err(IpcError::VfsNotDirectory);
+    }
+    let node = runtime()
+        .vfs_node_by_path(old_path)
+        .ok_or(IpcError::VfsNotFound)?;
+    let VfsBacking::MemoryFile(_) = node.backing else {
+        return Err(IpcError::VfsUnsupported);
+    };
+    if runtime().vfs_node_by_path(new_path).is_some() {
+        return Err(IpcError::VfsExists);
+    }
+
+    runtime().rename_vfs_node(node.id, new_parent.id, new_child_name)?;
+
+    serial::write_str("VFS rename accepted: proc=");
+    serial::write_str(current_process_name());
+    serial::write_str(" old=");
+    serial::write_ascii_bytes(old_requested);
+    serial::write_str(" new=");
+    serial::write_ascii_bytes(new_requested);
+    serial::write_str(" canonical_old=");
+    serial::write_ascii_bytes(old_path);
+    serial::write_str(" canonical_new=");
+    serial::write_ascii_bytes(new_path);
+    serial::write_str(" vnode=");
+    serial::write_u64_dec(node.id.raw());
+    serial::write_str("\n");
+    Ok(())
+}
+
+pub fn vfs_derive_root(
+    cap_slot: u64,
+    path: *const u8,
+    packed_len_target: u64,
+) -> Result<(), IpcError> {
+    let path_len = usize::try_from(packed_len_target & 0xffff_ffff).unwrap_or(usize::MAX);
+    let target_slot = packed_len_target >> 32;
+    if path_len > MAX_VFS_PATH_BYTES {
+        return Err(IpcError::VfsBadPath);
+    }
+    let mut path_bytes = [0u8; MAX_VFS_PATH_BYTES];
+    usercopy::copy_from_user(&mut path_bytes, UserPtr::new(path as u64), path_len)
+        .map_err(|_| IpcError::InvalidUserBuffer)?;
+    let requested_path = &path_bytes[..path_len];
+    let root_path = resolve_process_vfs_path(requested_path)?;
+    let source = lookup_capability(cap_slot, capability::RIGHT_RESOLVE)
+        .map_err(|_| IpcError::VfsPermission)?;
+    let source_root = runtime()
+        .objects
+        .get_vfs_root(source.object)
+        .ok_or(IpcError::VfsPermission)?;
+    if !vfs_authority_path_covers(source_root.root_path.as_bytes(), root_path.as_bytes()) {
+        return Err(IpcError::VfsPermission);
+    }
+    let node = runtime()
+        .vfs_node_by_path(root_path.as_bytes())
+        .ok_or(IpcError::VfsNotFound)?;
+    if !matches!(node.kind, VfsNodeKind::Directory) {
+        return Err(IpcError::VfsNotDirectory);
+    }
+
+    let process_name = current_process_name();
+    let runtime = runtime();
+    let owner = runtime
+        .processes
+        .current_process()
+        .map(|process| process.pid)
+        .ok_or(IpcError::VfsPermission)?;
+    {
+        let Some(process) = runtime.processes.current_process() else {
+            return Err(IpcError::VfsPermission);
+        };
+        if !process.caps.can_grant(target_slot) {
+            return Err(IpcError::VfsBadHandle);
+        }
+    }
+    if runtime.next_cap_id == 0
+        || runtime.next_cap_id == u64::MAX
+        || runtime.cap_lineage_count == runtime.cap_lineage.len()
+    {
+        return Err(IpcError::VfsNoSpace);
+    }
+    let object = runtime.objects.add_derived_vfs_root(root_path)?;
+    let cap = runtime.new_capability(
+        object,
+        source.rights & vfs_file_right_mask(),
+        owner,
+        source.id,
+        owner,
+    )?;
+    let Some(process) = runtime.processes.current_process_mut() else {
+        return Err(IpcError::VfsPermission);
+    };
+    process
+        .caps
+        .grant(target_slot, cap)
+        .map_err(|_| IpcError::VfsBadHandle)?;
+
+    serial::write_str("VFS root derive accepted: proc=");
+    serial::write_str(process_name);
+    serial::write_str(" source=");
+    serial::write_u64_dec(cap_slot);
+    serial::write_str(" target=");
+    serial::write_u64_dec(target_slot);
+    serial::write_str(" root=");
+    serial::write_ascii_bytes(root_path.as_bytes());
+    serial::write_str(" rights=");
+    print_rights(cap.rights);
+    serial::write_str("\n");
+    Ok(())
+}
+
+fn current_file_handle(handle: u64) -> Result<FileHandle, IpcError> {
+    let runtime = runtime();
+    let process = runtime
+        .processes
+        .current_process()
+        .ok_or(IpcError::VfsPermission)?;
+    let (_, file) = process.file_handle(handle)?;
+    Ok(file)
+}
+
+fn current_open_file(handle: u64) -> Result<(OpenFileDescription, VfsNode), IpcError> {
+    let file = current_file_handle(handle)?;
+    let description = runtime()
+        .file_description(file.description)
+        .ok_or(IpcError::VfsBadHandle)?;
+    let node = runtime()
+        .vfs_node(description.node)
+        .ok_or(IpcError::VfsBadHandle)?;
+    Ok((description, node))
+}
+
+fn validate_vfs_absolute_path(path: &[u8]) -> Result<(), IpcError> {
+    if path.len() < 2 || path[0] != b'/' || path[path.len() - 1] == b'/' {
+        return Err(IpcError::VfsBadPath);
+    }
+    let mut index = 1;
+    while index < path.len() {
+        if path[index] == 0 || (path[index] == b'/' && path[index - 1] == b'/') {
+            return Err(IpcError::VfsBadPath);
+        }
+        index += 1;
+    }
+    Ok(())
+}
+
+fn valid_vfs_root_path(path: &[u8]) -> bool {
+    if path.is_empty() || path[0] != b'/' || (path.len() > 1 && path[path.len() - 1] == b'/') {
+        return false;
+    }
+    let mut index = 1;
+    while index < path.len() {
+        if path[index] == 0 || (path[index] == b'/' && path[index - 1] == b'/') {
+            return false;
+        }
+        index += 1;
+    }
+    true
+}
+
+fn split_vfs_parent_child(path: &[u8]) -> Result<(&[u8], &[u8]), IpcError> {
+    validate_vfs_absolute_path(path)?;
+    let mut slash = path.len();
+    while slash > 0 {
+        slash -= 1;
+        if path[slash] == b'/' {
+            break;
+        }
+    }
+    if slash == 0 {
+        Ok((&path[..1], &path[1..]))
+    } else {
+        Ok((&path[..slash], &path[slash + 1..]))
+    }
+}
+
+fn current_process_mount_root() -> Result<VfsPath, IpcError> {
+    runtime()
+        .processes
+        .current_process()
+        .map(|process| process.mount_root)
+        .ok_or(IpcError::VfsPermission)
+}
+
+fn resolve_process_vfs_path(path: &[u8]) -> Result<VfsPath, IpcError> {
+    if path == b"/" {
+        let root = current_process_mount_root()?;
+        if root.as_bytes() != b"/" {
+            serial::write_str("VFS namespace root resolved: proc=");
+            serial::write_str(current_process_name());
+            serial::write_str(" root=");
+            serial::write_ascii_bytes(root.as_bytes());
+            serial::write_str("\n");
+        }
+        return Ok(root);
+    }
+    validate_vfs_absolute_path(path)?;
+    let root = current_process_mount_root()?;
+    if root.as_bytes() == b"/" {
+        return VfsPath::from_root_path(path);
+    }
+    let combined_len = root
+        .len
+        .checked_add(path.len())
+        .ok_or(IpcError::VfsBadPath)?;
+    if combined_len > MAX_VFS_PATH_BYTES {
+        return Err(IpcError::VfsBadPath);
+    }
+    let mut resolved = VfsPath::empty();
+    let mut index = 0;
+    while index < root.len {
+        resolved.bytes[index] = root.bytes[index];
+        index += 1;
+    }
+    let mut path_index = 0;
+    while path_index < path.len() {
+        resolved.bytes[index] = path[path_index];
+        index += 1;
+        path_index += 1;
+    }
+    resolved.len = combined_len;
+    Ok(resolved)
+}
+
+fn resolve_vfs_root_authority(cap: Capability, path: &[u8]) -> Result<u64, IpcError> {
+    let root = runtime()
+        .objects
+        .get_vfs_root(cap.object)
+        .ok_or(IpcError::VfsPermission)?;
+    if !vfs_authority_path_covers(root.root_path.as_bytes(), path) {
+        return Err(IpcError::VfsPermission);
+    }
+    let available = cap.rights & vfs_file_right_mask();
+    if available & capability::RIGHT_RESOLVE == 0 {
+        return Err(IpcError::VfsPermission);
+    }
+    Ok(available)
+}
+
+fn vfs_create_memory_file_node(
+    cap: Capability,
+    path: &[u8],
+    required_file_rights: u64,
+) -> Result<(VfsNode, u64), IpcError> {
+    let canonical_path = resolve_process_vfs_path(path)?;
+    let path = canonical_path.as_bytes();
+    let (parent_path, child_name) = split_vfs_parent_child(path)?;
+    let child_name = VfsName::from_user_component(child_name).map_err(|_| IpcError::VfsBadPath)?;
+    let available = resolve_vfs_root_authority(cap, parent_path)?;
+    if available & capability::RIGHT_CREATE == 0 || required_file_rights & !available != 0 {
+        return Err(IpcError::VfsPermission);
+    }
+
+    let parent = runtime()
+        .vfs_node_by_path(parent_path)
+        .ok_or(IpcError::VfsNotFound)?;
+    if !matches!(parent.kind, VfsNodeKind::Directory) {
+        return Err(IpcError::VfsNotDirectory);
+    }
+    if runtime().vfs_node_by_path(path).is_some() {
+        return Err(IpcError::VfsExists);
+    }
+
+    let runtime = runtime();
+    let backing = runtime
+        .add_vfs_empty_memory_file()
+        .map_err(|_| IpcError::VfsNoSpace)?;
+    let node_id = match runtime.add_vfs_node_with_name(
+        child_name,
+        Some(parent.id),
+        VfsNodeKind::RegularFile,
+        VfsBacking::MemoryFile(backing),
+        "state:volatile",
+    ) {
+        Ok(node_id) => node_id,
+        Err(_) => {
+            let _ = runtime.release_vfs_memory_file(backing);
+            return Err(IpcError::VfsNoSpace);
+        }
+    };
+    let node = runtime.vfs_node(node_id).ok_or(IpcError::VfsBadHandle)?;
+    Ok((node, available))
+}
+
+fn release_created_vfs_memory_node(runtime: &mut RuntimeState, created_node: Option<VfsNode>) {
+    let Some(node) = created_node else {
+        return;
+    };
+    let VfsBacking::MemoryFile(backing) = node.backing else {
+        return;
+    };
+    if runtime.vfs_node_has_open_description(node.id) {
+        return;
+    }
+    let _ = runtime.remove_vfs_node(node.id);
+    let _ = runtime.release_vfs_memory_file(backing);
+}
+
+fn resolve_vfs_node_from_cap(cap: Capability, path: &[u8]) -> Result<(VfsNode, u64), IpcError> {
+    if let Some(store_node) = runtime().vfs_node_for_store_object(cap.object) {
+        if !path.is_empty() && path != b"." {
+            return Err(IpcError::VfsBadPath);
+        }
+        return Ok((store_node, cap.rights & vfs_file_right_mask()));
+    }
+    if let Some(root) = runtime().objects.get_vfs_root(cap.object) {
+        let canonical_path = if path.is_empty() {
+            resolve_process_vfs_path(b"/")?
+        } else {
+            resolve_process_vfs_path(path)?
+        };
+        let path = canonical_path.as_bytes();
+        if cap.rights & capability::RIGHT_RESOLVE == 0
+            || !vfs_authority_path_covers(root.root_path.as_bytes(), path)
+        {
+            return Err(IpcError::VfsPermission);
+        }
+        let node = runtime()
+            .vfs_node_by_path(path)
+            .ok_or(IpcError::VfsNotFound)?;
+        let available = cap.rights & vfs_file_right_mask();
+        if available & capability::RIGHT_RESOLVE == 0 {
+            return Err(IpcError::VfsPermission);
+        }
+        return Ok((node, available));
+    }
+    Err(IpcError::VfsPermission)
+}
+
+fn vfs_open_rights(flags: u64, node: VfsNode) -> Result<u64, IpcError> {
+    match node.kind {
+        VfsNodeKind::Directory => {
+            if flags & (VFS_OPEN_WRITE | VFS_OPEN_CREATE | VFS_OPEN_TRUNC | VFS_OPEN_APPEND) != 0 {
+                return Err(IpcError::VfsNotFile);
+            }
+            if flags & VFS_OPEN_READ == 0 {
+                return Err(IpcError::VfsUnsupported);
+            }
+            Ok(capability::RIGHT_RESOLVE)
+        }
+        VfsNodeKind::DeviceNode => {
+            if flags & (VFS_OPEN_CREATE | VFS_OPEN_TRUNC | VFS_OPEN_APPEND) != 0 {
+                return Err(IpcError::VfsUnsupported);
+            }
+            if flags & (VFS_OPEN_READ | VFS_OPEN_WRITE) == 0 {
+                return Err(IpcError::VfsUnsupported);
+            }
+            Ok(capability::RIGHT_CONTROL)
+        }
+        _ => vfs_regular_file_open_rights(flags),
+    }
+}
+
+fn validate_vfs_device_open(
+    flags: u64,
+    available_rights: u64,
+    device_object: KernelObjectId,
+) -> Result<(), IpcError> {
+    let mut path_rights = 0;
+    if flags & VFS_OPEN_READ != 0 {
+        path_rights |= capability::RIGHT_READ;
+    }
+    if flags & VFS_OPEN_WRITE != 0 {
+        path_rights |= capability::RIGHT_WRITE;
+    }
+    if path_rights == 0 {
+        return Err(IpcError::VfsUnsupported);
+    }
+    if path_rights & !available_rights != 0 {
+        return Err(IpcError::VfsPermission);
+    }
+    if !current_process_has_live_cap_for_object(device_object, capability::RIGHT_CONTROL) {
+        return Err(IpcError::VfsPermission);
+    }
+    Ok(())
+}
+
+fn current_process_has_live_cap_for_object(object: KernelObjectId, required_rights: u64) -> bool {
+    let runtime = runtime();
+    let Some(process) = runtime.processes.current_process() else {
+        return false;
+    };
+    let mut slot = 0;
+    while slot < MAX_CAPS {
+        if let Some(cap) = process.caps.caps[slot]
+            && cap.object == object
+            && cap.rights & required_rights == required_rights
+            && !cap.revoked
+            && !runtime.cap_id_revoked(cap.id)
+            && !capability_has_revoked_ancestor(runtime, cap)
+            && cap.generation_id == runtime.generation_id
+        {
+            return true;
+        }
+        slot += 1;
+    }
+    false
+}
+
+fn vfs_regular_file_open_rights(flags: u64) -> Result<u64, IpcError> {
+    let mut rights = 0;
+    if flags & VFS_OPEN_READ != 0 {
+        rights |= capability::RIGHT_READ;
+    }
+    if flags & VFS_OPEN_WRITE != 0 {
+        rights |= capability::RIGHT_WRITE;
+    }
+    if rights == 0 {
+        return Err(IpcError::VfsUnsupported);
+    }
+    Ok(rights)
+}
+
+fn vfs_file_right_mask() -> u64 {
+    capability::RIGHT_READ
+        | capability::RIGHT_WRITE
+        | capability::RIGHT_CREATE
+        | capability::RIGHT_UNLINK
+        | capability::RIGHT_RENAME
+        | capability::RIGHT_MOUNT
+        | capability::RIGHT_RESOLVE
+        | capability::RIGHT_EXECUTE
+        | capability::RIGHT_INSPECT_METADATA
+}
+
+fn vfs_read_node(
+    node: VfsNode,
+    offset: u64,
+    destination: *mut u8,
+    max_len: usize,
+) -> Result<(usize, u64), IpcError> {
+    match node.backing {
+        VfsBacking::StoreObject(object_id) => {
+            let object = runtime()
+                .objects
+                .get_store_object(object_id)
+                .ok_or(IpcError::VfsBadHandle)?;
+            let object_len = store_object_len(object)?;
+            let start = min(usize::try_from(offset).unwrap_or(usize::MAX), object_len);
+            let remaining = object_len - start;
+            let copy_len = min(remaining, max_len);
+            let bytes = store_object_bytes(object)?;
+            usercopy::copy_to_user(
+                UserPtr::new(destination as u64),
+                &bytes[start..start + copy_len],
+            )
+            .map_err(|_| IpcError::InvalidUserBuffer)?;
+            Ok((
+                copy_len,
+                offset
+                    .checked_add(copy_len as u64)
+                    .ok_or(IpcError::VfsUnsupported)?,
+            ))
+        }
+        VfsBacking::MemoryFile(index) => {
+            let runtime = runtime();
+            if index >= runtime.vfs_mem_file_count {
+                return Err(IpcError::VfsBadHandle);
+            }
+            let file = runtime.vfs_mem_files[index];
+            let start = min(usize::try_from(offset).unwrap_or(usize::MAX), file.len);
+            let remaining = file.len - start;
+            let copy_len = min(remaining, max_len);
+            usercopy::copy_to_user(
+                UserPtr::new(destination as u64),
+                &file.bytes[start..start + copy_len],
+            )
+            .map_err(|_| IpcError::InvalidUserBuffer)?;
+            Ok((
+                copy_len,
+                offset
+                    .checked_add(copy_len as u64)
+                    .ok_or(IpcError::VfsUnsupported)?,
+            ))
+        }
+        VfsBacking::Synthetic(bytes) => {
+            let start = min(usize::try_from(offset).unwrap_or(usize::MAX), bytes.len());
+            let remaining = bytes.len() - start;
+            let copy_len = min(remaining, max_len);
+            usercopy::copy_to_user(
+                UserPtr::new(destination as u64),
+                &bytes[start..start + copy_len],
+            )
+            .map_err(|_| IpcError::InvalidUserBuffer)?;
+            Ok((
+                copy_len,
+                offset
+                    .checked_add(copy_len as u64)
+                    .ok_or(IpcError::VfsUnsupported)?,
+            ))
+        }
+        VfsBacking::None
+        | VfsBacking::StateVolume(_)
+        | VfsBacking::StateVolumeValue(_)
+        | VfsBacking::StateVolumeControl(_)
+        | VfsBacking::Device(_)
+        | VfsBacking::Pipe => Err(IpcError::VfsNotFile),
+    }
+}
+
+fn vfs_write_node(node: VfsNode, offset: u64, bytes: &[u8]) -> Result<(usize, u64), IpcError> {
+    match node.backing {
+        VfsBacking::MemoryFile(index) => {
+            if bytes.len() > MAX_VFS_MEM_FILE_BYTES {
+                return Err(IpcError::VfsNoSpace);
+            }
+            let start = usize::try_from(offset).map_err(|_| IpcError::VfsNoSpace)?;
+            let end = start.checked_add(bytes.len()).ok_or(IpcError::VfsNoSpace)?;
+            if end > MAX_VFS_MEM_FILE_BYTES {
+                return Err(IpcError::VfsNoSpace);
+            }
+            let runtime = runtime();
+            if index >= runtime.vfs_mem_file_count {
+                return Err(IpcError::VfsBadHandle);
+            }
+            let file = &mut runtime.vfs_mem_files[index];
+            let mut cursor = 0;
+            while cursor < bytes.len() {
+                file.bytes[start + cursor] = bytes[cursor];
+                cursor += 1;
+            }
+            if end > file.len {
+                file.len = end;
+            }
+            Ok((bytes.len(), end as u64))
+        }
+        _ => Err(IpcError::VfsUnsupported),
+    }
+}
+
+fn vfs_truncate_node(node: VfsNode, len: usize) -> Result<(), IpcError> {
+    match node.backing {
+        VfsBacking::MemoryFile(index) => {
+            if len > MAX_VFS_MEM_FILE_BYTES {
+                return Err(IpcError::VfsNoSpace);
+            }
+            let runtime = runtime();
+            if index >= runtime.vfs_mem_file_count {
+                return Err(IpcError::VfsBadHandle);
+            }
+            runtime.vfs_mem_files[index].len = len;
+            Ok(())
+        }
+        _ => Err(IpcError::VfsUnsupported),
+    }
+}
+
+fn vfs_node_len(node: VfsNode) -> Result<u64, IpcError> {
+    match node.backing {
+        VfsBacking::StoreObject(object_id) => runtime()
+            .objects
+            .get_store_object(object_id)
+            .map(|object| object.length)
+            .ok_or(IpcError::VfsBadHandle),
+        VfsBacking::MemoryFile(index) => {
+            let runtime = runtime();
+            if index >= runtime.vfs_mem_file_count {
+                return Err(IpcError::VfsBadHandle);
+            }
+            Ok(runtime.vfs_mem_files[index].len as u64)
+        }
+        VfsBacking::Synthetic(bytes) => Ok(bytes.len() as u64),
+        VfsBacking::None
+        | VfsBacking::StateVolume(_)
+        | VfsBacking::StateVolumeValue(_)
+        | VfsBacking::StateVolumeControl(_)
+        | VfsBacking::Device(_)
+        | VfsBacking::Pipe => Ok(0),
+    }
+}
+
+fn vfs_node_kind_value(kind: VfsNodeKind) -> u64 {
+    match kind {
+        VfsNodeKind::RegularFile => VFS_NODE_KIND_REGULAR,
+        VfsNodeKind::Directory => VFS_NODE_KIND_DIRECTORY,
+        VfsNodeKind::DeviceNode => VFS_NODE_KIND_DEVICE,
+        VfsNodeKind::Pipe => VFS_NODE_KIND_PIPE,
+        VfsNodeKind::SyntheticNode => VFS_NODE_KIND_SYNTHETIC,
+    }
+}
+
+fn serial_write_vfs_name(name: VfsName) {
+    serial::write_ascii_bytes(name.as_bytes());
+}
+
+fn store_object_len(object: StoreObject) -> Result<usize, IpcError> {
+    usize::try_from(object.length).map_err(|_| IpcError::MessageTooLarge)
+}
+
+fn store_object_bytes(object: StoreObject) -> Result<&'static [u8], IpcError> {
+    let object_len = store_object_len(object)?;
     let bytes = unsafe { core::slice::from_raw_parts(object.base as *const u8, object_len) };
     if !store_hash_matches(bytes, object.hash) {
         if object.name.starts_with("config:") {
@@ -5037,39 +8360,37 @@ pub fn object_read(cap_slot: u64, destination: *mut u8, max_len: usize) -> Resul
         serial::write_str("\n");
         return Err(IpcError::BadCapability);
     }
-    let copy_len = min(object_len, max_len);
-    usercopy::copy_to_user(UserPtr::new(destination as u64), &bytes[..copy_len])
-        .map_err(|_| IpcError::InvalidUserBuffer)?;
-
     if object.name.starts_with("config:") {
         serial::write_str("Krust native config hash verified: config=");
-    } else {
-        serial::write_str("Krust native store verified object: object=");
+        serial::write_str(object.name);
+        serial::write_str("\n");
     }
-    serial::write_str(object.name);
-    if object.name.starts_with("config:") {
-        serial::write_str(" identity=config:blake3:");
-    } else {
-        serial::write_str(" identity=store:blake3:");
+    Ok(bytes)
+}
+
+fn write_u64_le(destination: &mut [u8], offset: usize, value: u64) {
+    let bytes = value.to_le_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        destination[offset + index] = bytes[index];
+        index += 1;
     }
-    serial::write_str(object.hash);
-    serial::write_str("\n");
-    if object.name.starts_with("config:") {
-        serial::write_str("Config object read accepted: proc=");
-    } else {
-        serial::write_str("Object read accepted: proc=");
+}
+
+fn write_u16_le(destination: &mut [u8], offset: usize, value: u16) {
+    let bytes = value.to_le_bytes();
+    destination[offset] = bytes[0];
+    destination[offset + 1] = bytes[1];
+}
+
+fn read_u64_le(source: &[u8], offset: usize) -> u64 {
+    let mut bytes = [0u8; 8];
+    let mut index = 0;
+    while index < bytes.len() {
+        bytes[index] = source[offset + index];
+        index += 1;
     }
-    serial::write_str(current_process_name());
-    if object.name.starts_with("config:") {
-        serial::write_str(" config=");
-    } else {
-        serial::write_str(" object=");
-    }
-    serial::write_str(object.name);
-    serial::write_str(" bytes=");
-    serial::write_u64_dec(copy_len as u64);
-    serial::write_str("\n");
-    Ok(copy_len)
+    u64::from_le_bytes(bytes)
 }
 
 pub fn secret_read(cap_slot: u64, destination: *mut u8, max_len: usize) -> Result<usize, IpcError> {
@@ -5107,11 +8428,7 @@ pub fn virtio_device_probe(cap_slot: u64) -> Result<(), IpcError> {
     Ok(())
 }
 
-pub fn virtio_device_report(
-    cap_slot: u64,
-    source: *const u8,
-    len: usize,
-) -> Result<(), IpcError> {
+pub fn virtio_device_report(cap_slot: u64, source: *const u8, len: usize) -> Result<(), IpcError> {
     if len != VIRTIO_DRIVER_REPORT_BYTES {
         return Err(IpcError::InvalidUserBuffer);
     }
@@ -5327,6 +8644,7 @@ pub fn network_send_udp(cap_slot: u64, source: *const u8, len: usize) -> Result<
     serial::write_u64_dec(len as u64);
     serial::write_str("\n");
     serial::write_str("network-port bind/listen rights enforced by netstack boundary\n");
+    wake_blocked_network_receiver(port.id);
     Ok(())
 }
 
@@ -5334,7 +8652,8 @@ pub fn network_recv_udp(
     cap_slot: u64,
     destination: *mut u8,
     max_len: usize,
-) -> Result<usize, IpcError> {
+    frame: &mut SyscallFrame,
+) -> Result<(), IpcError> {
     let port = network_port_from_cap(cap_slot, capability::RIGHT_CONTROL)?;
     usercopy::validate_user_buffer(
         UserPtr::new(destination as u64),
@@ -5349,8 +8668,14 @@ pub fn network_recv_udp(
             return Err(IpcError::BadCapability);
         };
         port.dequeue_udp()
-    }
-    .ok_or(IpcError::Empty)?;
+    };
+
+    let Some(message) = message else {
+        if block_current_on_network_port(port.id, destination as u64, max_len, frame) {
+            return Ok(());
+        }
+        return Err(IpcError::Empty);
+    };
 
     let copy_len = min(message.len, max_len);
     usercopy::copy_to_user(UserPtr::new(destination as u64), &message.bytes[..copy_len])
@@ -5361,7 +8686,8 @@ pub fn network_recv_udp(
     serial::write_str(" bytes=");
     serial::write_u64_dec(copy_len as u64);
     serial::write_str("\n");
-    Ok(copy_len)
+    frame.rax = copy_len as u64;
+    Ok(())
 }
 
 fn virtio_rng_fill(destination: &mut [u8]) -> Result<usize, IpcError> {
@@ -6062,11 +9388,7 @@ pub fn io_write32(cap_slot: u64, port: u64, value: u64) -> Result<(), IpcError> 
     Ok(())
 }
 
-pub fn irq_wait(
-    cap_slot: u64,
-    timeout_ms: u64,
-    frame: &mut SyscallFrame,
-) -> Result<(), IpcError> {
+pub fn irq_wait(cap_slot: u64, timeout_ms: u64, frame: &mut SyscallFrame) -> Result<(), IpcError> {
     let line = interrupt_line_from_cap(cap_slot, capability::RIGHT_LISTEN)?;
     if consume_pending_interrupt(line.id) {
         serial::write_str("IRQ wait delivered pending: proc=");
@@ -6256,14 +9578,12 @@ fn interrupt_owner_name(runtime: &RuntimeState, interrupt: KernelObjectId) -> &'
                 process.caps,
                 interrupt,
                 capability::RIGHT_LISTEN,
-            )
-                || capability_space_has_live_right(
-                    runtime,
-                    process.initial_caps,
-                    interrupt,
-                    capability::RIGHT_LISTEN,
-                )
-            {
+            ) || capability_space_has_live_right(
+                runtime,
+                process.initial_caps,
+                interrupt,
+                capability::RIGHT_LISTEN,
+            ) {
                 return process.name;
             }
         }
@@ -6474,40 +9794,41 @@ fn release_dma_region_claim(region_id: KernelObjectId, owner: ProcessId) {
 }
 
 fn release_process_dma_mappings(pid: ProcessId) {
-    let (name, mappings) = {
-        let runtime = runtime();
-        let Some(process) = runtime.processes.process_mut(pid) else {
-            return;
+    let mut slot = 0;
+    while slot < MAX_OBJECTS {
+        let release = {
+            let runtime = runtime();
+            let Some(process) = runtime.processes.process_mut(pid) else {
+                return;
+            };
+            let name = process.name;
+            process
+                .take_dma_mapping(slot)
+                .map(|mapping| (name, mapping))
         };
-        let mappings = process.dma_mappings;
-        process.clear_dma_mappings();
-        (process.name, mappings)
-    };
-
-    release_dma_mappings(pid, name, mappings);
+        if let Some((name, mapping)) = release {
+            release_dma_mapping(pid, name, mapping);
+        }
+        slot += 1;
+    }
 }
 
 fn release_all_runtime_dma_mappings() {
-    let mut releases = [(ProcessId::empty(), "", [None; MAX_OBJECTS]); MAX_PROCESSES];
-    let mut release_count = 0;
-    {
-        let runtime = runtime();
-        let mut index = 0;
-        while index < runtime.processes.count && release_count < releases.len() {
-            if let Some(process) = runtime.processes.processes[index].as_mut() {
-                releases[release_count] = (process.pid, process.name, process.dma_mappings);
-                process.clear_dma_mappings();
-                release_count += 1;
+    let mut process_index = 0;
+    loop {
+        let pid = {
+            let runtime = runtime();
+            if process_index >= runtime.processes.count {
+                break;
             }
-            index += 1;
-        }
-    }
-
-    let mut index = 0;
-    while index < release_count {
-        let (pid, name, mappings) = releases[index];
-        release_dma_mappings(pid, name, mappings);
-        index += 1;
+            let Some(process) = runtime.processes.processes[process_index] else {
+                process_index += 1;
+                continue;
+            };
+            process.pid
+        };
+        release_process_dma_mappings(pid);
+        process_index += 1;
     }
 }
 
@@ -6569,26 +9890,16 @@ fn release_process_kernel_virtio_ownership(pid: ProcessId, owner_name: &'static 
     }
 }
 
-fn release_dma_mappings(
-    owner: ProcessId,
-    owner_name: &'static str,
-    mappings: [Option<DmaUserMapping>; MAX_OBJECTS],
-) {
-    let mut index = 0;
-    while index < mappings.len() {
-        if let Some(mapping) = mappings[index] {
-            let _ = zero_dma_physical_range(mapping.physical_base, mapping.length);
-            release_dma_region_claim(mapping.region, owner);
-            serial::write_str("DMA mapping released: proc=");
-            serial::write_str(owner_name);
-            serial::write_str(" phys=");
-            serial::write_u64_hex(mapping.physical_base);
-            serial::write_str(" length=");
-            serial::write_u64_hex(mapping.length);
-            serial::write_str("\n");
-        }
-        index += 1;
-    }
+fn release_dma_mapping(owner: ProcessId, owner_name: &'static str, mapping: DmaUserMapping) {
+    let _ = zero_dma_physical_range(mapping.physical_base, mapping.length);
+    release_dma_region_claim(mapping.region, owner);
+    serial::write_str("DMA mapping released: proc=");
+    serial::write_str(owner_name);
+    serial::write_str(" phys=");
+    serial::write_u64_hex(mapping.physical_base);
+    serial::write_str(" length=");
+    serial::write_u64_hex(mapping.length);
+    serial::write_str("\n");
 }
 
 fn zero_dma_physical_range(physical_base: u64, length: u64) -> bool {
@@ -6969,11 +10280,11 @@ fn next_deadline_tsc() -> Option<u64> {
     next
 }
 
-fn wait_until_deadline(deadline: u64) {
+fn wait_until_deadline(deadline: u64, include_current: bool) {
     while !deadline_reached(read_tsc(), deadline)
         && runtime()
             .processes
-            .next_ready_index_round_robin(true)
+            .next_ready_index_round_robin(include_current)
             .is_none()
         && wake_timed_processes(read_tsc()) == 0
     {
@@ -6987,6 +10298,795 @@ fn deadline_reached(now: u64, deadline: u64) -> bool {
 
 fn deadline_before(left: u64, right: u64) -> bool {
     (left as i64).wrapping_sub(right as i64) < 0
+}
+
+fn start_vfs_state_transaction(
+    state: KernelObjectId,
+    node: VfsNode,
+    description: OpenFileDescription,
+    operation: VfsStateOperation,
+    offset: u64,
+    destination: u64,
+    max_len: usize,
+    write_len: usize,
+    update_offset: bool,
+    payload: &[u8; MAX_MESSAGE_BYTES],
+    payload_len: usize,
+    frame: &mut SyscallFrame,
+) -> Result<(), IpcError> {
+    let (state_name, request_endpoint, reply_endpoint) = {
+        let runtime = runtime();
+        let state_object = runtime
+            .objects
+            .get_state_volume(state)
+            .ok_or(IpcError::VfsBadHandle)?;
+        let request_endpoint = runtime
+            .state_vfs_request_endpoint
+            .ok_or(IpcError::VfsUnsupported)?;
+        let reply_endpoint = runtime
+            .state_vfs_reply_endpoint
+            .ok_or(IpcError::VfsUnsupported)?;
+        (state_object.name, request_endpoint, reply_endpoint)
+    };
+    let state_name_len = state_name.len();
+    let request_len = VFS_STATE_TRANSACTION_ID_BYTES
+        .checked_add(VFS_STATE_REQUEST_HEADER_BYTES)
+        .and_then(|len| len.checked_add(state_name_len))
+        .and_then(|len| len.checked_add(payload_len))
+        .ok_or(IpcError::VfsNoSpace)?;
+    if state_name_len > u16::MAX as usize
+        || payload_len > u16::MAX as usize
+        || request_len > MAX_MESSAGE_BYTES
+    {
+        return Err(IpcError::VfsNoSpace);
+    }
+    let transaction_id = {
+        let runtime = runtime();
+        let id = runtime.next_vfs_state_transaction_id;
+        if id == 0 || id == u64::MAX {
+            return Err(IpcError::VfsNoSpace);
+        }
+        runtime.next_vfs_state_transaction_id = id + 1;
+        id
+    };
+
+    let current = {
+        let runtime = runtime();
+        let Some(process) = runtime.processes.current_process_mut() else {
+            return Err(IpcError::VfsPermission);
+        };
+        process.saved_frame = *frame;
+        process.has_saved_frame = true;
+        process.state = ProcessState::BlockedOnVfsState {
+            reply_endpoint,
+            node: node.id,
+            description: description.id,
+            operation,
+            transaction_id,
+            offset,
+            destination,
+            max_len,
+            write_len,
+            update_offset,
+        };
+        process.name
+    };
+
+    let mut queued_request = [0u8; MAX_MESSAGE_BYTES];
+    write_u64_le(&mut queued_request, 0, transaction_id);
+    let request_offset = VFS_STATE_TRANSACTION_ID_BYTES;
+    queued_request[request_offset] = VFS_STATE_REQUEST_MAGIC[0];
+    queued_request[request_offset + 1] = VFS_STATE_REQUEST_MAGIC[1];
+    queued_request[request_offset + 2] = VFS_STATE_REQUEST_VERSION;
+    queued_request[request_offset + 3] = vfs_state_operation_code(operation);
+    write_u16_le(
+        &mut queued_request,
+        request_offset + 4,
+        state_name_len as u16,
+    );
+    write_u16_le(&mut queued_request, request_offset + 6, payload_len as u16);
+    let state_offset = request_offset + VFS_STATE_REQUEST_HEADER_BYTES;
+    queued_request[state_offset..state_offset + state_name_len]
+        .copy_from_slice(state_name.as_bytes());
+    let payload_offset = state_offset + state_name_len;
+    queued_request[payload_offset..payload_offset + payload_len]
+        .copy_from_slice(&payload[..payload_len]);
+    let queued_request_len = request_len;
+    let enqueue_result = {
+        let runtime = runtime();
+        runtime
+            .objects
+            .get_endpoint_mut(request_endpoint)
+            .ok_or(IpcError::BadCapability)?
+            .enqueue(ProcessId::empty(), &queued_request, queued_request_len)
+    };
+    if let Err(error) = enqueue_result {
+        restore_current_vfs_state_waiter(reply_endpoint);
+        return Err(error);
+    }
+
+    serial::write_str("VFS state transaction request: proc=");
+    serial::write_str(current);
+    serial::write_str(" state=");
+    serial::write_str(state_name);
+    serial::write_str(" op=");
+    serial::write_str(vfs_state_operation_label(operation));
+    serial::write_str(" file=");
+    serial_write_vfs_name(node.name);
+    serial::write_str(" description=");
+    serial::write_u64_dec(description.id.raw());
+    serial::write_str(" tx=");
+    serial::write_u64_dec(transaction_id);
+    serial::write_str("\n");
+
+    wake_blocked_receiver(request_endpoint);
+
+    if schedule_next_ready(frame) {
+        return Ok(());
+    }
+
+    restore_current_vfs_state_waiter(reply_endpoint);
+    if let Some(endpoint) = runtime().objects.get_endpoint_mut(request_endpoint) {
+        let _ = endpoint.remove_first_from_sender(ProcessId::empty());
+    }
+
+    serial::write_str("Scheduler blocked: proc=");
+    serial::write_str(current);
+    serial::write_str(" no ready process for VFS state transaction\n");
+    Err(IpcError::Empty)
+}
+
+fn restore_current_vfs_state_waiter(reply_endpoint: KernelObjectId) {
+    let runtime = runtime();
+    if let Some(process) = runtime.processes.current_process_mut()
+        && let ProcessState::BlockedOnVfsState {
+            reply_endpoint: waiting_endpoint,
+            ..
+        } = process.state
+        && waiting_endpoint == reply_endpoint
+    {
+        process.state = ProcessState::Running;
+    }
+}
+
+fn abort_vfs_state_transactions(status: u64) {
+    let (request_endpoint, reply_endpoint) = {
+        let runtime = runtime();
+        (
+            runtime.state_vfs_request_endpoint,
+            runtime.state_vfs_reply_endpoint,
+        )
+    };
+    if let Some(request_endpoint) = request_endpoint
+        && let Some(endpoint) = runtime().objects.get_endpoint_mut(request_endpoint)
+    {
+        let removed = endpoint.remove_all_from_sender(ProcessId::empty());
+        if removed > 0 {
+            serial::write_str("VFS state transaction requests dropped: count=");
+            serial::write_u64_dec(removed as u64);
+            serial::write_str("\n");
+        }
+    }
+    let Some(reply_endpoint) = reply_endpoint else {
+        return;
+    };
+
+    let mut aborted = 0;
+    let runtime = runtime();
+    let mut index = 0;
+    while index < runtime.processes.count {
+        if let Some(process) = runtime.processes.processes[index].as_mut()
+            && let ProcessState::BlockedOnVfsState {
+                reply_endpoint: waiting_endpoint,
+                operation,
+                ..
+            } = process.state
+            && waiting_endpoint == reply_endpoint
+        {
+            process.saved_frame.rax = status;
+            process.state = ProcessState::Ready;
+            aborted += 1;
+            serial::write_str("VFS state transaction aborted: proc=");
+            serial::write_str(process.name);
+            serial::write_str(" op=");
+            serial::write_str(vfs_state_operation_label(operation));
+            serial::write_str(" status=");
+            serial::write_u64_dec(status);
+            serial::write_str("\n");
+        }
+        index += 1;
+    }
+    if aborted > 0 {
+        serial::write_str("VFS state transaction abort wake count=");
+        serial::write_u64_dec(aborted);
+        serial::write_str("\n");
+    }
+}
+
+fn vfs_state_operation_label(operation: VfsStateOperation) -> &'static str {
+    match operation {
+        VfsStateOperation::Read => "read",
+        VfsStateOperation::Stat => "stat",
+        VfsStateOperation::Write => "write",
+        VfsStateOperation::Control => "control",
+    }
+}
+
+fn vfs_state_operation_code(operation: VfsStateOperation) -> u8 {
+    match operation {
+        VfsStateOperation::Read => VFS_STATE_OP_READ_VALUE,
+        VfsStateOperation::Stat => VFS_STATE_OP_STAT_VALUE,
+        VfsStateOperation::Write => VFS_STATE_OP_WRITE_VALUE,
+        VfsStateOperation::Control => VFS_STATE_OP_CONTROL,
+    }
+}
+
+fn block_current_on_vfs_read(
+    node: VfsNodeId,
+    description: FileDescriptionId,
+    destination: u64,
+    max_len: usize,
+    frame: &mut SyscallFrame,
+) -> bool {
+    let current = {
+        let runtime = runtime();
+        let Some(process) = runtime.processes.current_process_mut() else {
+            return false;
+        };
+
+        process.saved_frame = *frame;
+        process.has_saved_frame = true;
+        process.state = ProcessState::BlockedOnVfsRead {
+            node,
+            description,
+            destination,
+            max_len,
+        };
+        process.name
+    };
+
+    serial::write_str("VFS read blocked: proc=");
+    serial::write_str(current);
+    serial::write_str(" vnode=");
+    serial::write_u64_dec(node.raw());
+    serial::write_str(" description=");
+    serial::write_u64_dec(description.raw());
+    serial::write_str("\n");
+
+    if schedule_next_ready(frame) {
+        true
+    } else {
+        let runtime = runtime();
+        if let Some(process) = runtime.processes.current_process_mut() {
+            process.state = ProcessState::Running;
+        }
+
+        serial::write_str("Scheduler blocked: proc=");
+        serial::write_str(current);
+        serial::write_str(" no ready process\n");
+        false
+    }
+}
+
+fn block_current_on_network_port(
+    port: KernelObjectId,
+    destination: u64,
+    max_len: usize,
+    frame: &mut SyscallFrame,
+) -> bool {
+    let current = {
+        let runtime = runtime();
+        let Some(process) = runtime.processes.current_process_mut() else {
+            return false;
+        };
+
+        process.saved_frame = *frame;
+        process.has_saved_frame = true;
+        process.state = ProcessState::BlockedOnNetworkPort {
+            port,
+            destination,
+            max_len,
+        };
+        process.name
+    };
+
+    serial::write_str("Network-port receive blocked: proc=");
+    serial::write_str(current);
+    serial::write_str(" port=");
+    serial::write_u64_dec(port.raw());
+    serial::write_str("\n");
+
+    if schedule_next_ready(frame) {
+        true
+    } else {
+        let runtime = runtime();
+        if let Some(process) = runtime.processes.current_process_mut() {
+            process.state = ProcessState::Running;
+        }
+
+        serial::write_str("Scheduler blocked: proc=");
+        serial::write_str(current);
+        serial::write_str(" no ready process for network-port receive\n");
+        false
+    }
+}
+
+fn wake_blocked_network_receiver(port: KernelObjectId) {
+    let Some(waiter_index) = blocked_network_receiver_index(port) else {
+        return;
+    };
+
+    let (name, receiver_cr3, destination, max_len, current_cr3) = {
+        let runtime = runtime();
+        let Some(waiter) = runtime.processes.processes[waiter_index] else {
+            return;
+        };
+        let ProcessState::BlockedOnNetworkPort {
+            destination,
+            max_len,
+            ..
+        } = waiter.state
+        else {
+            return;
+        };
+
+        let current_cr3 = runtime
+            .processes
+            .current_process()
+            .map(|process| process.context.cr3)
+            .unwrap_or_else(paging::active_root_table_physical);
+
+        (
+            waiter.name,
+            waiter.context.cr3,
+            destination,
+            max_len,
+            current_cr3,
+        )
+    };
+
+    let (port_name, message) = {
+        let runtime = runtime();
+        let Some(port_object) = runtime.objects.get_network_port_mut(port) else {
+            return;
+        };
+        let Some(message) = port_object.dequeue_udp() else {
+            return;
+        };
+        (port_object.name, message)
+    };
+
+    let copy_len = min(message.len, max_len);
+    let copy_result = unsafe {
+        gdt::switch_address_space(receiver_cr3);
+        let result = usercopy::copy_to_user(UserPtr::new(destination), &message.bytes[..copy_len]);
+        gdt::switch_address_space(current_cr3);
+        result
+    };
+
+    match copy_result {
+        Ok(()) => {
+            let runtime = runtime();
+            if let Some(waiter) = runtime.processes.processes[waiter_index].as_mut() {
+                waiter.saved_frame.rax = copy_len as u64;
+                waiter.state = ProcessState::Ready;
+            }
+            serial::write_str("Network-port UDP request delivered to netstack: network-port=");
+            serial::write_str(port_name);
+            serial::write_str(" bytes=");
+            serial::write_u64_dec(copy_len as u64);
+            serial::write_str("\n");
+            serial::write_str("Network-port receive wake: proc=");
+            serial::write_str(name);
+            serial::write_str("\n");
+        }
+        Err(_) => {
+            let runtime = runtime();
+            if let Some(waiter) = runtime.processes.processes[waiter_index].as_mut() {
+                waiter.saved_frame.rax = STATUS_BAD_BUFFER;
+                waiter.state = ProcessState::Ready;
+            }
+            serial::write_str("Network-port receive wake failed: bad user buffer proc=");
+            serial::write_str(name);
+            serial::write_str("\n");
+        }
+    }
+}
+
+fn wake_blocked_vfs_pipe_read(bytes: &[u8]) {
+    if bytes.is_empty() {
+        return;
+    }
+    let Some(waiter_index) = blocked_vfs_pipe_reader_index() else {
+        return;
+    };
+
+    let (name, reader_cr3, destination, max_len, description, node, current_cr3) = {
+        let runtime = runtime();
+        let Some(waiter) = runtime.processes.processes[waiter_index] else {
+            return;
+        };
+        let ProcessState::BlockedOnVfsRead {
+            node,
+            description,
+            destination,
+            max_len,
+        } = waiter.state
+        else {
+            return;
+        };
+
+        let current_cr3 = runtime
+            .processes
+            .current_process()
+            .map(|process| process.context.cr3)
+            .unwrap_or_else(paging::active_root_table_physical);
+
+        (
+            waiter.name,
+            waiter.context.cr3,
+            destination,
+            max_len,
+            description,
+            node,
+            current_cr3,
+        )
+    };
+
+    let copy_len = min(bytes.len(), max_len);
+    let copy_result = unsafe {
+        gdt::switch_address_space(reader_cr3);
+        let result = usercopy::copy_to_user(UserPtr::new(destination), &bytes[..copy_len]);
+        gdt::switch_address_space(current_cr3);
+        result
+    };
+
+    match copy_result {
+        Ok(()) => {
+            let file_name = {
+                let runtime = runtime();
+                runtime
+                    .vfs_node(node)
+                    .map(|node| node.name)
+                    .unwrap_or_else(VfsName::empty)
+            };
+            {
+                let runtime = runtime();
+                if let Some(waiter) = runtime.processes.processes[waiter_index].as_mut() {
+                    waiter.saved_frame.rax = copy_len as u64;
+                    waiter.state = ProcessState::Ready;
+                }
+            }
+
+            serial::write_str("VFS pipe wake reader: proc=");
+            serial::write_str(name);
+            serial::write_str(" file=");
+            serial_write_vfs_name(file_name);
+            serial::write_str(" description=");
+            serial::write_u64_dec(description.raw());
+            serial::write_str(" bytes=");
+            serial::write_u64_dec(copy_len as u64);
+            serial::write_str("\n");
+        }
+        Err(_) => {
+            {
+                let runtime = runtime();
+                if let Some(waiter) = runtime.processes.processes[waiter_index].as_mut() {
+                    waiter.saved_frame.rax = STATUS_BAD_BUFFER;
+                    waiter.state = ProcessState::Ready;
+                }
+            }
+            serial::write_str("VFS pipe wake reader failed: bad user buffer proc=");
+            serial::write_str(name);
+            serial::write_str("\n");
+        }
+    }
+}
+
+fn wake_blocked_vfs_state_reply(endpoint: KernelObjectId) {
+    let Some(waiter_index) = blocked_vfs_state_waiter_index(endpoint) else {
+        return;
+    };
+
+    let (
+        name,
+        receiver_pid,
+        receiver_cr3,
+        destination,
+        max_len,
+        operation,
+        transaction_id,
+        offset,
+        update_offset,
+        write_len,
+        description,
+        node,
+        current_cr3,
+    ) = {
+        let runtime = runtime();
+        let Some(waiter) = runtime.processes.processes[waiter_index] else {
+            return;
+        };
+        let ProcessState::BlockedOnVfsState {
+            destination,
+            max_len,
+            operation,
+            transaction_id,
+            offset,
+            update_offset,
+            write_len,
+            description,
+            node,
+            ..
+        } = waiter.state
+        else {
+            return;
+        };
+
+        let current_cr3 = runtime
+            .processes
+            .current_process()
+            .map(|process| process.context.cr3)
+            .unwrap_or_else(paging::active_root_table_physical);
+
+        (
+            waiter.name,
+            waiter.pid,
+            waiter.context.cr3,
+            destination,
+            max_len,
+            operation,
+            transaction_id,
+            offset,
+            update_offset,
+            write_len,
+            description,
+            node,
+            current_cr3,
+        )
+    };
+
+    let Some(message) = ({
+        let runtime = runtime();
+        let Some(endpoint_object) = runtime.objects.get_endpoint_mut(endpoint) else {
+            return;
+        };
+        endpoint_object.dequeue_vfs_state_reply_for(receiver_pid, transaction_id)
+    }) else {
+        return;
+    };
+
+    let result = match operation {
+        VfsStateOperation::Read => wake_blocked_vfs_state_read(
+            receiver_cr3,
+            current_cr3,
+            destination,
+            max_len,
+            offset,
+            description,
+            update_offset,
+            message,
+        ),
+        VfsStateOperation::Stat => wake_blocked_vfs_state_stat(
+            receiver_cr3,
+            current_cr3,
+            destination,
+            max_len,
+            description,
+            node,
+            message,
+        ),
+        VfsStateOperation::Write => {
+            wake_blocked_vfs_state_write(offset, description, update_offset, write_len, message)
+        }
+        VfsStateOperation::Control => {
+            wake_blocked_vfs_state_write(offset, description, update_offset, write_len, message)
+        }
+    };
+
+    {
+        let runtime = runtime();
+        if let Some(waiter) = runtime.processes.processes[waiter_index].as_mut() {
+            waiter.saved_frame.rax = result;
+            waiter.state = ProcessState::Ready;
+        }
+    }
+
+    let file_name = {
+        let runtime = runtime();
+        runtime
+            .vfs_node(node)
+            .map(|node| node.name)
+            .unwrap_or_else(VfsName::empty)
+    };
+    serial::write_str("VFS state transaction wake: proc=");
+    serial::write_str(name);
+    serial::write_str(" file=");
+    serial_write_vfs_name(file_name);
+    serial::write_str(" op=");
+    serial::write_str(vfs_state_operation_label(operation));
+    serial::write_str(" result=");
+    serial::write_u64_dec(result);
+    serial::write_str("\n");
+}
+
+fn wake_blocked_vfs_state_read(
+    receiver_cr3: u64,
+    current_cr3: u64,
+    destination: u64,
+    max_len: usize,
+    offset: u64,
+    description: FileDescriptionId,
+    update_offset: bool,
+    message: IpcMessage,
+) -> u64 {
+    if message.len < VFS_STATE_TRANSACTION_ID_BYTES {
+        return STATUS_VFS_UNSUPPORTED;
+    }
+    let payload_len = message.len - VFS_STATE_TRANSACTION_ID_BYTES;
+    let start = min(usize::try_from(offset).unwrap_or(usize::MAX), payload_len);
+    let copy_len = min(payload_len - start, max_len);
+    let payload_start = VFS_STATE_TRANSACTION_ID_BYTES + start;
+    let copy_result = unsafe {
+        gdt::switch_address_space(receiver_cr3);
+        let result = usercopy::copy_to_user(
+            UserPtr::new(destination),
+            &message.bytes[payload_start..payload_start + copy_len],
+        );
+        gdt::switch_address_space(current_cr3);
+        result
+    };
+    if copy_result.is_err() {
+        return STATUS_BAD_BUFFER;
+    }
+    if update_offset {
+        let Some(new_offset) = offset.checked_add(copy_len as u64) else {
+            return STATUS_VFS_UNSUPPORTED;
+        };
+        let Some(file) = runtime().file_description_mut(description) else {
+            return STATUS_VFS_BAD_HANDLE;
+        };
+        file.offset = new_offset;
+    }
+    copy_len as u64
+}
+
+fn wake_blocked_vfs_state_stat(
+    receiver_cr3: u64,
+    current_cr3: u64,
+    destination: u64,
+    max_len: usize,
+    description: FileDescriptionId,
+    node_id: VfsNodeId,
+    message: IpcMessage,
+) -> u64 {
+    if max_len < VFS_STAT_BYTES || message.len != VFS_STATE_TRANSACTION_ID_BYTES + 8 {
+        return STATUS_VFS_UNSUPPORTED;
+    }
+    let node = {
+        let runtime = runtime();
+        let Some(node) = runtime.vfs_node(node_id) else {
+            return STATUS_VFS_BAD_HANDLE;
+        };
+        node
+    };
+    let rights = {
+        let runtime = runtime();
+        let Some(file) = runtime.file_description(description) else {
+            return STATUS_VFS_BAD_HANDLE;
+        };
+        file.rights
+    };
+    let mut stat = [0u8; VFS_STAT_BYTES];
+    write_u64_le(&mut stat, 0, vfs_node_kind_value(node.kind));
+    write_u64_le(
+        &mut stat,
+        8,
+        read_u64_le(&message.bytes, VFS_STATE_TRANSACTION_ID_BYTES),
+    );
+    write_u64_le(&mut stat, 16, node.id.raw());
+    write_u64_le(&mut stat, 24, rights);
+    let copy_result = unsafe {
+        gdt::switch_address_space(receiver_cr3);
+        let result = usercopy::copy_to_user(UserPtr::new(destination), &stat);
+        gdt::switch_address_space(current_cr3);
+        result
+    };
+    if copy_result.is_err() {
+        return STATUS_BAD_BUFFER;
+    }
+    VFS_STAT_BYTES as u64
+}
+
+fn wake_blocked_vfs_state_write(
+    offset: u64,
+    description: FileDescriptionId,
+    update_offset: bool,
+    write_len: usize,
+    message: IpcMessage,
+) -> u64 {
+    if message.len != VFS_STATE_TRANSACTION_ID_BYTES + 2
+        || message.bytes[VFS_STATE_TRANSACTION_ID_BYTES] != b'O'
+        || message.bytes[VFS_STATE_TRANSACTION_ID_BYTES + 1] != b'K'
+    {
+        return STATUS_VFS_UNSUPPORTED;
+    }
+    if update_offset {
+        let Some(new_offset) = offset.checked_add(write_len as u64) else {
+            return STATUS_VFS_UNSUPPORTED;
+        };
+        let Some(file) = runtime().file_description_mut(description) else {
+            return STATUS_VFS_BAD_HANDLE;
+        };
+        file.offset = new_offset;
+    }
+    write_len as u64
+}
+
+fn blocked_vfs_state_waiter_index(endpoint: KernelObjectId) -> Option<usize> {
+    let runtime = runtime();
+    let mut index = 0;
+    while index < runtime.processes.count {
+        if let Some(process) = runtime.processes.processes[index]
+            && let ProcessState::BlockedOnVfsState {
+                reply_endpoint,
+                transaction_id,
+                ..
+            } = process.state
+            && reply_endpoint == endpoint
+            && runtime
+                .objects
+                .get_endpoint(endpoint)
+                .map(|endpoint_object| {
+                    endpoint_object.has_vfs_state_reply_for(process.pid, transaction_id)
+                })
+                .unwrap_or(false)
+        {
+            return Some(index);
+        }
+        index += 1;
+    }
+    None
+}
+
+fn blocked_vfs_pipe_reader_index() -> Option<usize> {
+    let runtime = runtime();
+    let mut index = 0;
+    while index < runtime.processes.count {
+        if let Some(process) = runtime.processes.processes[index]
+            && let ProcessState::BlockedOnVfsRead { node, .. } = process.state
+            && runtime
+                .vfs_node(node)
+                .map(|node| matches!(node.backing, VfsBacking::Pipe))
+                .unwrap_or(false)
+        {
+            return Some(index);
+        }
+        index += 1;
+    }
+    None
+}
+
+fn blocked_network_receiver_index(port: KernelObjectId) -> Option<usize> {
+    let runtime = runtime();
+    let mut index = 0;
+    while index < runtime.processes.count {
+        if let Some(process) = runtime.processes.processes[index]
+            && let ProcessState::BlockedOnNetworkPort {
+                port: waiting_port, ..
+            } = process.state
+            && waiting_port == port
+            && runtime
+                .objects
+                .get_network_port(port)
+                .map(|port_object| port_object.queue_len > 0)
+                .unwrap_or(false)
+        {
+            return Some(index);
+        }
+        index += 1;
+    }
+    None
 }
 
 fn schedule_next_ready(frame: &mut SyscallFrame) -> bool {
@@ -7014,7 +11114,7 @@ fn schedule_next_ready_inner(
             .is_none()
         && let Some(deadline) = next_deadline_tsc()
     {
-        wait_until_deadline(deadline);
+        wait_until_deadline(deadline, include_current);
         wake_timed_processes(read_tsc());
     }
 
@@ -7110,14 +11210,6 @@ fn boot_module_from_cap(cap_slot: u64, required_right: u64) -> Result<BootModule
     runtime()
         .objects
         .get_boot_module(cap.object)
-        .ok_or(IpcError::BadCapability)
-}
-
-fn store_object_from_cap(cap_slot: u64, required_right: u64) -> Result<StoreObject, IpcError> {
-    let cap = lookup_capability(cap_slot, required_right)?;
-    runtime()
-        .objects
-        .get_store_object(cap.object)
         .ok_or(IpcError::BadCapability)
 }
 
@@ -7315,6 +11407,11 @@ fn build_inspect_report(runtime: &RuntimeState, report: &mut InspectReport) {
     report.push_str("objects=");
     report.push_u64_dec(runtime.objects.live_count() as u64);
     report.push_byte(b'\n');
+    report.push_str("vfs_nodes=");
+    report.push_u64_dec(runtime.vfs_node_count as u64);
+    report.push_str(" file_handles=");
+    report.push_u64_dec(runtime_file_handle_count(runtime));
+    report.push_byte(b'\n');
     report.push_str("caps=");
     report.push_u64_dec(runtime_cap_count(runtime));
     report.push_byte(b'\n');
@@ -7322,6 +11419,7 @@ fn build_inspect_report(runtime: &RuntimeState, report: &mut InspectReport) {
     report.push_u64_dec(unreachable_object_count(runtime));
     report.push_byte(b'\n');
     write_unreachable_object_report(runtime, report);
+    write_vfs_report(runtime, report);
     if let Some(stats) = frame_allocator_stats() {
         report.push_str("frames total=");
         report.push_u64_dec(stats.total_frames);
@@ -7363,6 +11461,8 @@ fn build_inspect_report(runtime: &RuntimeState, report: &mut InspectReport) {
             report.push_u64_dec(process.pid.raw());
             report.push_str(" state=");
             report.push_str(process.state.label());
+            report.push_str(" mount_root=");
+            report.push_bytes(process.mount_root.as_bytes());
             report.push_str(" context_reaped=");
             if process.context_reaped {
                 report.push_str("yes");
@@ -7656,6 +11756,179 @@ fn runtime_cap_count(runtime: &RuntimeState) -> u64 {
     count
 }
 
+fn runtime_file_handle_count(runtime: &RuntimeState) -> u64 {
+    let mut count = 0;
+    let mut process_index = 0;
+    while process_index < runtime.processes.count {
+        if let Some(process) = runtime.processes.processes[process_index] {
+            let mut handle_index = 0;
+            while handle_index < process.file_handles.len() {
+                if process.file_handles[handle_index].handle.is_some() {
+                    count += 1;
+                }
+                handle_index += 1;
+            }
+        }
+        process_index += 1;
+    }
+    count
+}
+
+fn write_vfs_report(runtime: &RuntimeState, report: &mut InspectReport) {
+    let mut mount_index = 0;
+    while mount_index < runtime.objects.count {
+        if let Some(KernelObject::VfsMount(mount)) = runtime.objects.objects[mount_index] {
+            report.push_str("vfs-mount[");
+            report.push_u64_dec(mount_index as u64);
+            report.push_str("] id=");
+            report.push_u64_dec(mount.id.raw());
+            report.push_str(" name=");
+            report.push_str(mount.name);
+            report.push_str(" root=");
+            report.push_bytes(mount.root_path.as_bytes());
+            report.push_str(" root_vnode=");
+            report.push_u64_dec(mount.root_node.raw());
+            report.push_str(" source=");
+            report.push_str(mount.source);
+            report.push_str(" flags=");
+            write_vfs_mount_flags(report, mount.flags);
+            report.push_str(" dynamic=");
+            report.push_str(if mount.dynamic { "yes" } else { "no" });
+            report.push_byte(b'\n');
+        }
+        mount_index += 1;
+    }
+
+    let mut index = 0;
+    while index < runtime.vfs_node_count {
+        if let Some(node) = runtime.vfs_nodes[index] {
+            report.push_str("vfs-node[");
+            report.push_u64_dec(index as u64);
+            report.push_str("] id=");
+            report.push_u64_dec(node.id.raw());
+            report.push_str(" kind=");
+            match node.kind {
+                VfsNodeKind::RegularFile => report.push_str("regular"),
+                VfsNodeKind::Directory => report.push_str("directory"),
+                VfsNodeKind::DeviceNode => report.push_str("device"),
+                VfsNodeKind::Pipe => report.push_str("pipe"),
+                VfsNodeKind::SyntheticNode => report.push_str("synthetic"),
+            }
+            report.push_str(" name=");
+            report.push_bytes(node.name.as_bytes());
+            report.push_str(" mount=");
+            report.push_str(node.mount_source);
+            if let Some(parent) = node.parent {
+                report.push_str(" parent=");
+                report.push_u64_dec(parent.raw());
+            }
+            match node.backing {
+                VfsBacking::None => report.push_str(" backing=none"),
+                VfsBacking::StoreObject(object) => {
+                    report.push_str(" backing=store-object object_id=");
+                    report.push_u64_dec(object.raw());
+                }
+                VfsBacking::StateVolume(object) => {
+                    report.push_str(" backing=state-volume object_id=");
+                    report.push_u64_dec(object.raw());
+                }
+                VfsBacking::StateVolumeValue(object) => {
+                    report.push_str(" backing=state-volume-value object_id=");
+                    report.push_u64_dec(object.raw());
+                }
+                VfsBacking::StateVolumeControl(object) => {
+                    report.push_str(" backing=state-volume-control object_id=");
+                    report.push_u64_dec(object.raw());
+                }
+                VfsBacking::MemoryFile(file) => {
+                    report.push_str(" backing=memory-file index=");
+                    report.push_u64_dec(file as u64);
+                }
+                VfsBacking::Device(object) => {
+                    report.push_str(" backing=device object_id=");
+                    report.push_u64_dec(object.raw());
+                }
+                VfsBacking::Synthetic(_) => report.push_str(" backing=synthetic"),
+                VfsBacking::Pipe => report.push_str(" backing=pipe"),
+            }
+            report.push_byte(b'\n');
+        }
+        index += 1;
+    }
+
+    let mut process_index = 0;
+    let mut handle_row = 0;
+    while process_index < runtime.processes.count {
+        if let Some(process) = runtime.processes.processes[process_index] {
+            let mut handle_index = 0;
+            while handle_index < process.file_handles.len() {
+                if let Some(handle) = process.file_handles[handle_index].handle
+                    && let Some(description) = runtime.file_description(handle.description)
+                {
+                    report.push_str("vfs-handle[");
+                    report.push_u64_dec(handle_row);
+                    report.push_str("] owner=");
+                    report.push_str(process.name);
+                    report.push_str(" slot=");
+                    report.push_u64_dec((handle_index + 1) as u64);
+                    report.push_str(" description=");
+                    report.push_u64_dec(description.id.raw());
+                    report.push_str(" vnode=");
+                    report.push_u64_dec(description.node.raw());
+                    report.push_str(" rights=");
+                    write_rights_report(report, description.rights);
+                    report.push_str(" flags=");
+                    report.push_u64_dec(description.flags);
+                    report.push_str(" offset=");
+                    report.push_u64_dec(description.offset);
+                    report.push_str(" refs=");
+                    report.push_u64_dec(description.ref_count);
+                    report.push_byte(b'\n');
+                    handle_row += 1;
+                }
+                handle_index += 1;
+            }
+        }
+        process_index += 1;
+    }
+
+    let mut lock_index = 0;
+    while lock_index < runtime.vfs_locks.len() {
+        if let Some(lock) = runtime.vfs_locks[lock_index] {
+            report.push_str("vfs-lock[");
+            report.push_u64_dec(lock_index as u64);
+            report.push_str("] owner=");
+            if let Some(process) = runtime.processes.process(lock.owner) {
+                report.push_str(process.name);
+            } else {
+                report.push_str("<dead>");
+            }
+            report.push_str(" vnode=");
+            report.push_u64_dec(lock.node.raw());
+            report.push_str(" description=");
+            report.push_u64_dec(lock.description.raw());
+            report.push_str(" mode=");
+            match lock.mode {
+                VfsLockMode::Shared => report.push_str("shared"),
+                VfsLockMode::Exclusive => report.push_str("exclusive"),
+            }
+            report.push_byte(b'\n');
+        }
+        lock_index += 1;
+    }
+}
+
+fn write_vfs_mount_flags(report: &mut InspectReport, flags: u64) {
+    let mut wrote = false;
+    if flags & VFS_MOUNT_VOLATILE != 0 {
+        report.push_str("volatile");
+        wrote = true;
+    }
+    if !wrote {
+        report.push_str("none");
+    }
+}
+
 fn cap_count_in_space(space: CapabilitySpace) -> u64 {
     let mut count = 0;
     let mut slot = 0;
@@ -7701,6 +11974,7 @@ fn object_reachable_by_cap(runtime: &RuntimeState, object_id: KernelObjectId) ->
 fn object_reachable_by_config(runtime: &RuntimeState, object_id: KernelObjectId) -> bool {
     id_list_contains(&runtime.endpoint_ids, object_id)
         || id_list_contains(&runtime.store_object_ids, object_id)
+        || id_list_contains(&runtime.state_volume_ids, object_id)
         || id_list_contains(&runtime.network_port_ids, object_id)
         || id_list_contains(&runtime.io_port_ids, object_id)
         || id_list_contains(&runtime.mmio_region_ids, object_id)
@@ -7709,9 +11983,13 @@ fn object_reachable_by_config(runtime: &RuntimeState, object_id: KernelObjectId)
         || id_list_contains(&runtime.pci_device_ids, object_id)
         || id_list_contains(&runtime.virtio_device_ids, object_id)
         || id_list_contains(&runtime.namespace_ids, object_id)
+        || id_list_contains(&runtime.vfs_root_ids, object_id)
+        || id_list_contains(&runtime.vfs_mount_ids, object_id)
         || runtime.timer_id == Some(object_id)
         || runtime.process_control_id == Some(object_id)
         || runtime.secret_id == Some(object_id)
+        || runtime.state_vfs_request_endpoint == Some(object_id)
+        || runtime.state_vfs_reply_endpoint == Some(object_id)
 }
 
 fn object_reachable_by_owner(runtime: &RuntimeState, object: KernelObject) -> bool {
@@ -7843,6 +12121,11 @@ fn write_capability_object_report(
                     report.push_str(store.name);
                     return;
                 }
+                KernelObject::StateVolume(state) if state.id == object => {
+                    report.push_str("state-volume=");
+                    report.push_str(state.name);
+                    return;
+                }
                 KernelObject::Timer(timer) if timer.id == object => {
                     report.push_str("timer=");
                     report.push_str(timer.name);
@@ -7890,6 +12173,20 @@ fn write_capability_object_report(
                 KernelObject::Namespace(namespace) if namespace.id == object => {
                     report.push_str("namespace=");
                     report.push_str(namespace.name);
+                    return;
+                }
+                KernelObject::VfsRoot(root) if root.id == object => {
+                    report.push_str("vfs-root=");
+                    report.push_str(root.name);
+                    report.push_str(" root=");
+                    report.push_bytes(root.root_path.as_bytes());
+                    return;
+                }
+                KernelObject::VfsMount(mount) if mount.id == object => {
+                    report.push_str("vfs-mount=");
+                    report.push_str(mount.name);
+                    report.push_str(" root=");
+                    report.push_bytes(mount.root_path.as_bytes());
                     return;
                 }
                 KernelObject::ProcessControl(process_control) if process_control.id == object => {
@@ -7948,6 +12245,9 @@ fn write_rights_report(report: &mut InspectReport, rights: u64) {
     wrote = write_right_report(report, rights, capability::RIGHT_REVOKE, "revoke", wrote);
     wrote = write_right_report(report, rights, capability::RIGHT_INSPECT, "inspect", wrote);
     wrote = write_right_report(report, rights, capability::RIGHT_CREATE, "create", wrote);
+    wrote = write_right_report(report, rights, capability::RIGHT_UNLINK, "unlink", wrote);
+    wrote = write_right_report(report, rights, capability::RIGHT_RENAME, "rename", wrote);
+    wrote = write_right_report(report, rights, capability::RIGHT_MOUNT, "mount", wrote);
     wrote = write_right_report(report, rights, capability::RIGHT_START, "start", wrote);
     wrote = write_right_report(report, rights, capability::RIGHT_KILL, "kill", wrote);
     wrote = write_right_report(report, rights, capability::RIGHT_WAIT, "wait", wrote);
@@ -8136,6 +12436,20 @@ fn print_capability_object(object: KernelObjectId) {
                     serial::write_str(namespace.name);
                     return;
                 }
+                KernelObject::VfsRoot(root) if root.id == object => {
+                    serial::write_str("vfs-root=");
+                    serial::write_str(root.name);
+                    serial::write_str(" root=");
+                    serial::write_ascii_bytes(root.root_path.as_bytes());
+                    return;
+                }
+                KernelObject::VfsMount(mount) if mount.id == object => {
+                    serial::write_str("vfs-mount=");
+                    serial::write_str(mount.name);
+                    serial::write_str(" root=");
+                    serial::write_ascii_bytes(mount.root_path.as_bytes());
+                    return;
+                }
                 KernelObject::ProcessControl(process_control) if process_control.id == object => {
                     serial::write_str("process-control=");
                     serial::write_str(process_control.name);
@@ -8176,6 +12490,8 @@ fn print_process_state(index: usize, process: &Process) {
     serial::write_u64_dec(process.quota.max_child_processes);
     serial::write_str(" quota_ipc_bytes=");
     serial::write_u64_dec(process.quota.max_ipc_bytes);
+    serial::write_str(" mount_root=");
+    serial::write_ascii_bytes(process.mount_root.as_bytes());
     serial::write_str("\n");
 }
 
@@ -8196,6 +12512,9 @@ fn print_rights(rights: u64) {
     wrote = print_right(rights, capability::RIGHT_REVOKE, "revoke", wrote);
     wrote = print_right(rights, capability::RIGHT_INSPECT, "inspect", wrote);
     wrote = print_right(rights, capability::RIGHT_CREATE, "create", wrote);
+    wrote = print_right(rights, capability::RIGHT_UNLINK, "unlink", wrote);
+    wrote = print_right(rights, capability::RIGHT_RENAME, "rename", wrote);
+    wrote = print_right(rights, capability::RIGHT_MOUNT, "mount", wrote);
     wrote = print_right(rights, capability::RIGHT_START, "start", wrote);
     wrote = print_right(rights, capability::RIGHT_KILL, "kill", wrote);
     wrote = print_right(rights, capability::RIGHT_WAIT, "wait", wrote);
@@ -8314,6 +12633,11 @@ fn reap_process_context(pid: ProcessId) -> Result<(), IpcError> {
     };
     release_process_virtio_ownership(pid);
     release_process_dma_mappings(pid);
+    let runtime = runtime();
+    if let Some(process) = runtime.processes.process_mut(pid) {
+        process.clear_file_handles();
+    }
+    runtime.release_process_file_descriptions(pid);
     if already_reaped || cr3 == 0 {
         return Ok(());
     }
@@ -8321,7 +12645,7 @@ fn reap_process_context(pid: ProcessId) -> Result<(), IpcError> {
     let hhdm_offset = limine::hhdm_offset().ok_or(IpcError::BadCapability)?;
     let stats = paging::reclaim_user_address_space(hhdm_offset, cr3, frame_allocator()?)
         .map_err(|_| IpcError::BadCapability)?;
-    if let Some(process) = runtime().processes.process_mut(pid) {
+    if let Some(process) = runtime.processes.process_mut(pid) {
         process.context = ProcessContext {
             cr3: 0,
             entry: 0,

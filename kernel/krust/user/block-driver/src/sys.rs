@@ -1,13 +1,14 @@
 use core::arch::asm;
 
 pub const STATUS_OK: u64 = 0;
+pub const STATUS_BAD_CAPABILITY: u64 = u64::MAX - 1;
 pub const STATUS_TIMEOUT: u64 = u64::MAX - 9;
+pub const STATUS_VFS_PERMISSION: u64 = u64::MAX - 32;
 
 const SYS_EXIT: u64 = 2;
 const SYS_IPC_SEND: u64 = 3;
 const SYS_IPC_RECV: u64 = 4;
 const SYS_LOG_WRITE: u64 = 7;
-const SYS_OBJECT_READ: u64 = 13;
 const SYS_IPC_RECV_TIMEOUT: u64 = 19;
 const SYS_PROCESS_ATTEMPT: u64 = 20;
 const SYS_IO_READ: u64 = 27;
@@ -20,6 +21,11 @@ const SYS_IO_READ32: u64 = 35;
 const SYS_IO_WRITE32: u64 = 36;
 const SYS_VIRTIO_DEVICE_PROBE: u64 = 40;
 const SYS_VIRTIO_DEVICE_REPORT: u64 = 47;
+const SYS_VFS_OPEN: u64 = 48;
+const SYS_VFS_READ: u64 = 49;
+const SYS_VFS_CLOSE: u64 = 50;
+
+const VFS_OPEN_READ: u64 = 1;
 
 #[repr(C)]
 pub struct DmaMapping {
@@ -72,13 +78,30 @@ pub fn irq_wait(cap_slot: u64, timeout_ms: u64) -> u64 {
     syscall3(SYS_IRQ_WAIT, cap_slot, timeout_ms, 0)
 }
 
-pub fn object_read(cap_slot: u64, buffer: &mut [u8]) -> u64 {
+pub fn vfs_open_read(cap_slot: u64) -> u64 {
+    syscall3(SYS_VFS_OPEN, cap_slot, 0, VFS_OPEN_READ << 32)
+}
+
+pub fn vfs_open_path_read(cap_slot: u64, path: &[u8]) -> u64 {
     syscall3(
-        SYS_OBJECT_READ,
+        SYS_VFS_OPEN,
         cap_slot,
+        path.as_ptr() as u64,
+        (VFS_OPEN_READ << 32) | path.len() as u64,
+    )
+}
+
+pub fn vfs_read(handle: u64, buffer: &mut [u8]) -> u64 {
+    syscall3(
+        SYS_VFS_READ,
+        handle,
         buffer.as_mut_ptr() as u64,
         buffer.len() as u64,
     )
+}
+
+pub fn vfs_close(handle: u64) -> u64 {
+    syscall3(SYS_VFS_CLOSE, handle, 0, 0)
 }
 
 pub fn io_read(cap_slot: u64, port: u64) -> u64 {

@@ -16,6 +16,7 @@ const SECTION_RECORD_LEN: usize = 16;
 const STORE_ENTRY_OFFSET: usize = 32;
 const STORE_ENTRY_LEN: usize = 144;
 const STATE_ENTRY_OFFSET: usize = 32;
+const STATE_ENTRY_LEN: usize = 84;
 const GENERATION_METADATA_SECTOR: u64 = 1;
 const STORE_INDEX_SECTOR: u64 = 2;
 const STORE_INDEX_SECTORS: u64 = 16;
@@ -24,6 +25,7 @@ const STORE_DATA_SECTORS: u64 = 49_152;
 const STATE_INDEX_SECTOR: u64 = STORE_DATA_SECTOR + STORE_DATA_SECTORS;
 const STATE_DATA_SECTOR: u64 = STATE_INDEX_SECTOR + 1;
 const STATE_DATA_SECTORS: u64 = 8;
+const KRUST_STATE_VOLUME_LIMIT: usize = 4;
 const JOURNAL_SECTOR: u64 = STATE_DATA_SECTOR + STATE_DATA_SECTORS;
 const JOURNAL_SECTORS: u64 = 16;
 const JOURNAL_RECORD_MAGIC: &[u8; 16] = b"VDISKJOURNALV0\0\0";
@@ -37,7 +39,6 @@ const LOGD_OBJECT_ID: &str = "store:logd-demo";
 const LOGD_CONFIG_OBJECT_ID: &str = "config:logd";
 const LOGD_CONFIG_MODULE: &str = "config-logd-v0";
 const LOGD_CONFIG_BYTES: &[u8] = b"{\"level\":\"info\",\"sink\":\"serial\"}\n";
-const STATE_VOLUME_ID: &str = "state:counter";
 
 pub fn create_image(manifests: &[GenerationManifest]) -> Result<Vec<u8>, String> {
     if manifests.is_empty() {
@@ -45,11 +46,12 @@ pub fn create_image(manifests: &[GenerationManifest]) -> Result<Vec<u8>, String>
     }
 
     let mut image = vec![0u8; SECTOR_SIZE * SECTORS];
+    let states = state_entries(manifests)?;
     let mut objects = store_payloads(manifests)?;
     assign_store_sectors(&mut objects)?;
     write_superblock(&mut image);
     write_store_index(&mut image, &objects)?;
-    write_state_index(&mut image, 0, 0);
+    write_state_index(&mut image, &states)?;
     write_store_payloads(&mut image, &objects);
     Ok(image)
 }
@@ -245,36 +247,117 @@ fn write_store_payloads(image: &mut [u8], objects: &[StorePayload]) {
     }
 }
 
-fn write_state_index(image: &mut [u8], value_len: u32, value_checksum: u32) {
+struct StateEntry {
+    id: String,
+    data_sector: u64,
+    value_len: u32,
+    checksum: u32,
+}
+
+fn state_entries(manifests: &[GenerationManifest]) -> Result<Vec<StateEntry>, String> {
+    let mut ids = BTreeSet::new();
+    for manifest in manifests {
+        for state in &manifest.state_volumes {
+            ids.insert(state.id.clone());
+        }
+    }
+
+    let index_capacity = (SECTOR_SIZE - STATE_ENTRY_OFFSET) / STATE_ENTRY_LEN;
+    if ids.len() > index_capacity {
+        return Err(format!(
+            "VertexDisk state index holds at most {index_capacity} volumes"
+        ));
+    }
+    if ids.len() > KRUST_STATE_VOLUME_LIMIT {
+        return Err(format!(
+            "Krust native runtime supports at most {KRUST_STATE_VOLUME_LIMIT} state volumes"
+        ));
+    }
+    if ids.len() as u64 > STATE_DATA_SECTORS {
+        return Err(format!(
+            "VertexDisk state volumes require {} sectors, capacity is {}",
+            ids.len(),
+            STATE_DATA_SECTORS
+        ));
+    }
+
+    let mut entries = Vec::new();
+    for (index, id) in ids.into_iter().enumerate() {
+        if !id.starts_with("state:") {
+            return Err(format!(
+                "VertexDisk state volume {id} must use state: namespace"
+            ));
+        }
+        if id.as_bytes().len() > 64 {
+            return Err(format!("VertexDisk state volume id {id} exceeds 64 bytes"));
+        }
+        entries.push(StateEntry {
+            id,
+            data_sector: STATE_DATA_SECTOR + index as u64,
+            value_len: 0,
+            checksum: 0,
+        });
+    }
+    Ok(entries)
+}
+
+fn write_state_index(image: &mut [u8], entries: &[StateEntry]) -> Result<(), String> {
     let sector = sector_mut(image, STATE_INDEX_SECTOR);
     sector[..STATE_INDEX_MAGIC.len()].copy_from_slice(STATE_INDEX_MAGIC);
     write_u16(sector, 16, VERSION);
-    write_u16(sector, 18, 1);
-    write_fixed_str(sector, STATE_ENTRY_OFFSET, STATE_VOLUME_ID);
-    write_u64(sector, STATE_ENTRY_OFFSET + 64, STATE_DATA_SECTOR);
-    write_u32(sector, STATE_ENTRY_OFFSET + 72, 1);
-    write_u32(sector, STATE_ENTRY_OFFSET + 76, value_len);
-    write_u32(sector, STATE_ENTRY_OFFSET + 80, value_checksum);
+    write_u16(sector, 18, entries.len() as u16);
+    for (index, entry) in entries.iter().enumerate() {
+        let offset = STATE_ENTRY_OFFSET + index * STATE_ENTRY_LEN;
+        if offset + STATE_ENTRY_LEN > sector.len() {
+            return Err(format!(
+                "VertexDisk state index holds at most {} volumes",
+                (sector.len() - STATE_ENTRY_OFFSET) / STATE_ENTRY_LEN
+            ));
+        }
+        write_fixed_str(sector, offset, &entry.id);
+        write_u64(sector, offset + 64, entry.data_sector);
+        write_u32(sector, offset + 72, 1);
+        write_u32(sector, offset + 76, entry.value_len);
+        write_u32(sector, offset + 80, entry.checksum);
+    }
     write_checksum(sector);
+    Ok(())
 }
 
 fn write_state_journal(image: &mut [u8], value: &[u8]) -> Result<(), String> {
     if value.len() > SECTOR_SIZE - JOURNAL_VALUE_OFFSET {
         return Err("VertexDisk state journal value too large".to_owned());
     }
+    let (state_id, data_sector) = first_state_index_entry(image)?;
     let sector = sector_mut(image, JOURNAL_SECTOR);
     sector.fill(0);
     sector[..JOURNAL_RECORD_MAGIC.len()].copy_from_slice(JOURNAL_RECORD_MAGIC);
     write_u16(sector, 16, VERSION);
     write_u16(sector, 18, JOURNAL_RECORD_STATE_WRITE);
     write_u64(sector, 24, STATE_INDEX_SECTOR);
-    write_u64(sector, 32, STATE_DATA_SECTOR);
+    write_u64(sector, 32, data_sector);
     write_u32(sector, 40, value.len() as u32);
     write_u32(sector, 44, checksum32(value));
-    write_fixed_str(sector, JOURNAL_STATE_ID_OFFSET, STATE_VOLUME_ID);
+    write_fixed_str(sector, JOURNAL_STATE_ID_OFFSET, &state_id);
     sector[JOURNAL_VALUE_OFFSET..JOURNAL_VALUE_OFFSET + value.len()].copy_from_slice(value);
     write_checksum(sector);
     Ok(())
+}
+
+fn first_state_index_entry(image: &[u8]) -> Result<(String, u64), String> {
+    let offset = STATE_INDEX_SECTOR as usize * SECTOR_SIZE;
+    let index = image
+        .get(offset..offset + SECTOR_SIZE)
+        .ok_or_else(|| "VertexDisk state index section missing".to_owned())?;
+    if !index.starts_with(STATE_INDEX_MAGIC) {
+        return Err("VertexDisk state index missing".to_owned());
+    }
+    if read_u16(index, 18) == 0 {
+        return Err("VertexDisk state journal requires a state volume".to_owned());
+    }
+    let id = fixed_string_at(index, STATE_ENTRY_OFFSET)?;
+    let data_sector = read_u64(index, STATE_ENTRY_OFFSET + 64);
+    Ok((id, data_sector))
 }
 
 fn write_sector_bytes(image: &mut [u8], sector: u64, bytes: &[u8]) {
@@ -426,6 +509,22 @@ fn fixed_string_eq(buffer: &[u8], offset: usize, value: &str) -> bool {
         return false;
     }
     bytes.len() == 64 || buffer[offset + bytes.len()] == 0
+}
+
+fn fixed_string_at(buffer: &[u8], offset: usize) -> Result<String, String> {
+    if offset + 64 > buffer.len() {
+        return Err("VertexDisk fixed string bounds invalid".to_owned());
+    }
+    let mut len = 0;
+    while len < 64 && buffer[offset + len] != 0 {
+        len += 1;
+    }
+    if len == 0 {
+        return Err("VertexDisk fixed string is empty".to_owned());
+    }
+    core::str::from_utf8(&buffer[offset..offset + len])
+        .map(|value| value.to_owned())
+        .map_err(|_| "VertexDisk fixed string is not UTF-8".to_owned())
 }
 
 fn read_u16(buffer: &[u8], offset: usize) -> u16 {

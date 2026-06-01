@@ -245,7 +245,12 @@ fn verify_store_object(entry: StoreEntry, cap_slot: u64, object_id: &[u8], name:
     }
 
     let buffer = executable_object_buffer();
-    let read = sys::object_read(cap_slot, &mut buffer[..entry.byte_len]);
+    let handle = sys::vfs_open_read(cap_slot);
+    if handle == sys::STATUS_BAD_CAPABILITY {
+        log_prefix(b"vertex-store executable VFS open failed: ", object_id);
+        sys::exit(1);
+    }
+    let read = sys::vfs_read(handle, &mut buffer[..entry.byte_len]);
     if read != entry.byte_len as u64
         || checksum32(&buffer[..entry.byte_len]) != entry.checksum
         || !hash_matches(&buffer[..entry.byte_len], &entry.hash)
@@ -258,6 +263,10 @@ fn verify_store_object(entry: StoreEntry, cap_slot: u64, object_id: &[u8], name:
             b"vertex-inspect security event: store hash mismatch object=",
             object_id,
         );
+        sys::exit(1);
+    }
+    if sys::vfs_close(handle) != sys::STATUS_OK {
+        log_prefix(b"vertex-store executable VFS close failed: ", object_id);
         sys::exit(1);
     }
     log_prefix(b"vertex-store verifies executable store object: ", name);

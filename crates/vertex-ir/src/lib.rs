@@ -97,6 +97,28 @@ mod tests {
     }
 
     #[test]
+    fn service_mount_root_must_be_absolute_vfs_path() {
+        let mut manifest: GenerationManifest = serde_json::from_str(HELLO).unwrap();
+        let echo = manifest
+            .services
+            .iter_mut()
+            .find(|service| service.id == "svc:echo-server")
+            .expect("hello manifest should include echo service");
+        echo.extra.insert(
+            "mountRoot".to_owned(),
+            serde_json::Value::String("state/".to_owned()),
+        );
+
+        let report = validate_manifest(&manifest);
+
+        assert!(report.errors.iter().any(|diagnostic| {
+            diagnostic
+                .message
+                .contains("service svc:echo-server mountRoot state/")
+        }));
+    }
+
+    #[test]
     fn why_explains_echo_log_authority() {
         let manifest: GenerationManifest = serde_json::from_str(HELLO).unwrap();
         let explanation = explain_authority(&manifest, "svc:echo-server", "cap:log.sink");

@@ -19,7 +19,8 @@ const CAP_IRQ: u64 = 7;
 const CAP_DMA: u64 = 8;
 const CAP_VIRTIO_IO: u64 = 9;
 const CAP_FAULT_INJECTION: u64 = 10;
-const CAP_VIRTIO_DEVICE: u64 = 11;
+const CAP_VFS_VIRTIO_BLK0: u64 = 10;
+const CAP_VIRTIO_DEVICE: u64 = 12;
 const FAULT_INJECTION_TOKEN: &[u8] = b"krust-block-driver-fault\n";
 
 const PROTOCOL_HEALTH_V0: u16 = 2;
@@ -130,7 +131,12 @@ fn maybe_trigger_fault_injection() {
 
 fn has_fault_injection_token() -> bool {
     let mut token = [0u8; FAULT_INJECTION_TOKEN.len()];
-    let len = sys::object_read(CAP_FAULT_INJECTION, &mut token);
+    let handle = sys::vfs_open_read(CAP_FAULT_INJECTION);
+    if status_is_error(handle) {
+        return false;
+    }
+    let len = sys::vfs_read(handle, &mut token);
+    let _ = sys::vfs_close(handle);
     len == FAULT_INJECTION_TOKEN.len() as u64 && bytes_eq(&token, FAULT_INJECTION_TOKEN)
 }
 
@@ -156,6 +162,24 @@ impl VirtioBlock {
             log(b"block-driver virtio device authority failed");
             return None;
         }
+        if sys::vfs_open_read(CAP_VIRTIO_DEVICE) != sys::STATUS_VFS_PERMISSION {
+            log(b"direct virtio-device cap VFS open was not rejected");
+            return None;
+        }
+        log(b"direct virtio-device cap is not VFS path authority");
+        let device_handle =
+            sys::vfs_open_path_read(CAP_VFS_VIRTIO_BLK0, b"/dev/device:virtio-blk0");
+        if device_handle == sys::STATUS_BAD_CAPABILITY
+            || device_handle == sys::STATUS_VFS_PERMISSION
+        {
+            log(b"block-driver VFS device node open failed");
+            return None;
+        }
+        if sys::vfs_close(device_handle) != sys::STATUS_OK {
+            log(b"block-driver VFS device node close failed");
+            return None;
+        }
+        log(b"device node open requires VFS authority and underlying device authority");
         if sys::irq_wait(CAP_IRQ, 0) != sys::STATUS_OK {
             log(b"block-driver IRQ authority failed");
             return None;
@@ -547,7 +571,7 @@ fn run_self_test(device: &mut VirtioBlock) -> VertexDiskLayout {
     log(b"readback matches");
     log(b"block-driver enforces sector-range and alignment");
     log(b"immutable store endpoint is read-only");
-    log(b"state endpoint write bounds and owner checks ok");
+    log(b"state VFS write bounds and owner checks ok");
     log(b"block-driver fault during request fails client request without kernel fault");
     layout
 }
@@ -931,6 +955,10 @@ fn bytes_eq(left: &[u8], right: &[u8]) -> bool {
         index += 1;
     }
     true
+}
+
+fn status_is_error(value: u64) -> bool {
+    value >= u64::MAX - 128
 }
 
 fn log(message: &[u8]) {

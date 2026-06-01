@@ -5,8 +5,8 @@ mod sys;
 
 use core::{cell::UnsafeCell, panic::PanicInfo};
 
-const KRUSTBOOT_MAGIC: &[u8; 16] = b"KRUSTBOOTM65\0\0\0\0";
-const KRUSTBOOT_VERSION: u16 = 8;
+const KRUSTBOOT_MAGIC: &[u8; 16] = b"KRUSTBOOTM75\0\0\0\0";
+const KRUSTBOOT_VERSION: u16 = 11;
 const MANIFEST_BUFFER_LEN: usize = 16 * 1024;
 const REPORT_BUFFER_LEN: usize = 64 * 1024;
 const OFFSET_VERSION: usize = 16;
@@ -24,7 +24,8 @@ const OFFSET_DMA_REGIONS: usize = 38;
 const OFFSET_PCI_DEVICES: usize = 40;
 const OFFSET_VIRTIO_DEVICES: usize = 42;
 const OFFSET_NAMESPACES: usize = 44;
-const OFFSET_GENERATION_ID: usize = 46;
+const OFFSET_VFS_ROOTS: usize = 46;
+const OFFSET_GENERATION_ID: usize = 48;
 const STRING_LEN: usize = 64;
 const OFFSET_PARENT_GENERATION_ID: usize = OFFSET_GENERATION_ID + STRING_LEN;
 const BOOT_MODULE_RECORD_LEN: usize = STRING_LEN * 2;
@@ -32,7 +33,7 @@ const PROCESS_REF_COUNT: usize = 4;
 const REF_LIST_LEN: usize = 2 + PROCESS_REF_COUNT * 2;
 const ENDPOINT_REQUIREMENT_LIST_LEN: usize = 2 + PROCESS_REF_COUNT * 4;
 const PROCESS_RECORD_LEN: usize =
-    STRING_LEN * 4 + 4 + REF_LIST_LEN * 2 + ENDPOINT_REQUIREMENT_LIST_LEN;
+    STRING_LEN * 5 + 4 + REF_LIST_LEN * 2 + ENDPOINT_REQUIREMENT_LIST_LEN;
 const PROTOCOL_HEALTH_V0: u16 = 2;
 const MESSAGE_READY: u16 = 1;
 const ENVELOPE_LEN: usize = 16;
@@ -41,7 +42,7 @@ const RESTART_ON_FAILURE: u16 = 1;
 const RESTART_ALWAYS: u16 = 2;
 const MAX_NATIVE_RESTARTS: u16 = 1;
 const STATUS_RUNNING: u64 = u64::MAX - 8;
-const READINESS_TIMEOUT_MS: u64 = 500;
+const READINESS_TIMEOUT_MS: u64 = 2_000;
 const RESTART_BACKOFF_MS: u64 = 10;
 const M69_SOAK_CYCLES: u64 = 100;
 const STATUS_PROCESS_FAULT: u64 = u64::MAX - 10;
@@ -135,6 +136,7 @@ pub extern "C" fn _start() -> ! {
     let pci_devices = read_u16(&manifest, OFFSET_PCI_DEVICES);
     let virtio_devices = read_u16(&manifest, OFFSET_VIRTIO_DEVICES);
     let namespaces = read_u16(&manifest, OFFSET_NAMESPACES);
+    let vfs_roots = read_u16(&manifest, OFFSET_VFS_ROOTS);
 
     log_count(b"vertex-init boot modules: ", boot_modules);
     log_count(b"vertex-init processes: ", processes);
@@ -150,6 +152,7 @@ pub extern "C" fn _start() -> ! {
     log_count(b"vertex-init pci devices: ", pci_devices);
     log_count(b"vertex-init virtio devices: ", virtio_devices);
     log_count(b"vertex-init namespaces: ", namespaces);
+    log_count(b"vertex-init vfs roots: ", vfs_roots);
     run_m61_init_abi_tests(parent_generation);
     run_endpoint_quota_tests(parent_generation);
 
@@ -230,6 +233,7 @@ pub extern "C" fn _start() -> ! {
         order_len,
         &pids,
         parent_generation,
+        interrupt_lines > 0 || dma_regions > 0 || pci_devices > 0 || virtio_devices > 0,
     );
     if bytes_eq(generation, b"gen:hello-0001") {
         run_m69_memory_pressure_gate(
@@ -340,7 +344,7 @@ fn process_has_health(manifest: &[u8], boot_modules: u16, process_index: usize) 
 }
 
 fn start_after_offset(boot_modules: u16, process_index: usize) -> usize {
-    process_offset(boot_modules, process_index) + STRING_LEN * 4 + 4
+    process_offset(boot_modules, process_index) + STRING_LEN * 5 + 4
 }
 
 fn requires_offset(boot_modules: u16, process_index: usize) -> usize {
@@ -712,6 +716,7 @@ fn supervise_services(
     order_len: usize,
     pids: &[u64; MAX_PROCESSES],
     parent_generation: &[u8],
+    device_report_required: bool,
 ) {
     let mut complete = [false; MAX_PROCESSES];
     let mut restart_counts = [0u16; MAX_PROCESSES];
@@ -801,10 +806,10 @@ fn supervise_services(
         log(b"Native restart policy ok");
     }
     log(b"operator-visible activation log records generation id");
-    verify_lifecycle_inspect_states(parent_generation);
+    verify_lifecycle_inspect_states(parent_generation, device_report_required);
 }
 
-fn verify_lifecycle_inspect_states(parent_generation: &[u8]) {
+fn verify_lifecycle_inspect_states(parent_generation: &[u8], device_report_required: bool) {
     let report = report_buffer();
     let report_len = sys::runtime_inspect(report);
     if report_len == sys::STATUS_BAD_CAPABILITY
@@ -824,7 +829,9 @@ fn verify_lifecycle_inspect_states(parent_generation: &[u8]) {
     verify_lifecycle_state(report, b"restarting", parent_generation);
     verify_lifecycle_state(report, b"exited", parent_generation);
     verify_memory_lifecycle_report(report, parent_generation);
-    verify_device_hardening_report(report, parent_generation);
+    if device_report_required {
+        verify_device_hardening_report(report, parent_generation);
+    }
     log(b"inspect reports declared, starting, ready, failed, restarting, and exited states");
 }
 

@@ -57,6 +57,9 @@ struct BootManifests {
 #[unsafe(link_section = ".text._start")]
 #[unsafe(no_mangle)]
 pub extern "C" fn _start() -> ! {
+    unsafe {
+        asm!("cld", options(nomem, nostack));
+    }
     serial::init();
     serial::write_str("Krust Kernel booted\n");
     print_boot_info();
@@ -663,6 +666,7 @@ fn run_typed_arena_demo(heap: KernelHeapMapping) {
 }
 
 fn run_native_boot(allocator: &mut memory::FrameAllocator, boot_manifests: &BootManifests) {
+    serial::write_str("KrustBoot preparing selected native runtime\n");
     let Some(config) = prepare_native_boot_config(
         allocator,
         boot_manifests.selected,
@@ -761,8 +765,14 @@ fn prepare_native_boot_config(
         return None;
     };
 
+    serial::write_str("KrustBoot native runtime config reset: ");
+    serial::write_str(manifest_module_name);
+    serial::write_str("\n");
     let config = unsafe { &mut *config_slot.0.get() };
-    *config = ipc::BootRuntimeConfig::new();
+    unsafe {
+        asm!("cld", options(nomem, nostack));
+    }
+    config.reset();
     config.set_generation_id(boot_manifest.generation_id());
     let Ok(source_len) = usize::try_from(boot_manifest.source_len()) else {
         serial::write_str("KrustBoot runtime plan failed: manifest size overflow\n");
@@ -774,7 +784,13 @@ fn prepare_native_boot_config(
     let mut manifest_hash = [0u8; 64];
     store_hash_hex(blake3::hash(source_bytes).as_bytes(), &mut manifest_hash);
     config.set_manifest_hash(manifest_hash);
+    serial::write_str("KrustBoot native runtime manifest hash ready: ");
+    serial::write_str(manifest_module_name);
+    serial::write_str("\n");
     build_boot_runtime_config(boot_manifest, hhdm_offset, allocator, config)?;
+    serial::write_str("KrustBoot native runtime config built: ");
+    serial::write_str(manifest_module_name);
+    serial::write_str("\n");
     let Some(_manifest_module) = find_module_by_string(manifest_module_string) else {
         serial::write_str("KrustBoot runtime init failed: manifest module missing\n");
         return None;
@@ -889,6 +905,7 @@ fn build_boot_runtime_config(
                 image_base: store_object.bytes.as_ptr() as u64,
                 image_length: store_object.bytes.len() as u64,
                 initial: process.initial,
+                mount_root: process.mount_root,
             })
             .is_err()
         {
@@ -934,6 +951,19 @@ fn build_boot_runtime_config(
             .is_err()
         {
             serial::write_str("KrustBoot runtime plan failed: store object table\n");
+            return None;
+        }
+        index += 1;
+    }
+
+    index = 0;
+    while index < boot_manifest.state_volume_count() {
+        let state = boot_manifest.state_volume(index)?;
+        if config
+            .add_state_volume(ipc::BootStateVolumeConfig { id: state.id })
+            .is_err()
+        {
+            serial::write_str("KrustBoot runtime plan failed: state volume table\n");
             return None;
         }
         index += 1;
@@ -1094,6 +1124,22 @@ fn build_boot_runtime_config(
     }
 
     index = 0;
+    while index < boot_manifest.vfs_root_count() {
+        let root = boot_manifest.vfs_root(index)?;
+        if config
+            .add_vfs_root(ipc::BootVfsRootConfig {
+                id: root.id,
+                root_path: root.root_path,
+            })
+            .is_err()
+        {
+            serial::write_str("KrustBoot runtime plan failed: vfs root table\n");
+            return None;
+        }
+        index += 1;
+    }
+
+    index = 0;
     while index < boot_manifest.grant_count() {
         let grant = boot_manifest.grant(index)?;
         let rights = capability_rights_from_boot(grant.rights);
@@ -1187,6 +1233,18 @@ fn capability_rights_from_boot(rights: u16) -> u64 {
     }
     if rights & boot_manifest::RIGHT_RESOLVE != 0 {
         out |= capability::RIGHT_RESOLVE;
+    }
+    if rights & boot_manifest::RIGHT_CREATE != 0 {
+        out |= capability::RIGHT_CREATE;
+    }
+    if rights & boot_manifest::RIGHT_UNLINK != 0 {
+        out |= capability::RIGHT_UNLINK;
+    }
+    if rights & boot_manifest::RIGHT_RENAME != 0 {
+        out |= capability::RIGHT_RENAME;
+    }
+    if rights & boot_manifest::RIGHT_MOUNT != 0 {
+        out |= capability::RIGHT_MOUNT;
     }
     out
 }
@@ -1675,6 +1733,8 @@ fn print_boot_manifest(manifest: &boot_manifest::Manifest<'static>) {
                 serial::write_str(" health=");
                 serial::write_str(process.health_kind);
             }
+            serial::write_str(" mount_root=");
+            serial::write_str(process.mount_root);
             serial::write_str("\n");
         }
         index += 1;
@@ -1905,6 +1965,23 @@ fn print_boot_manifest(manifest: &boot_manifest::Manifest<'static>) {
         }
         index += 1;
     }
+
+    serial::write_str("KrustBoot vfs roots: ");
+    serial::write_u64_dec(manifest.vfs_root_count() as u64);
+    serial::write_str("\n");
+    index = 0;
+    while index < manifest.vfs_root_count() {
+        if let Some(root) = manifest.vfs_root(index) {
+            serial::write_str("  vfs_root[");
+            serial::write_u64_dec(index as u64);
+            serial::write_str("] id=");
+            serial::write_str(root.id);
+            serial::write_str(" root=");
+            serial::write_str(root.root_path);
+            serial::write_str("\n");
+        }
+        index += 1;
+    }
 }
 
 fn print_boot_grant_object(
@@ -2010,6 +2087,15 @@ fn print_boot_grant_object(
                     .unwrap_or("<bad>"),
             );
         }
+        boot_manifest::OBJECT_VFS_ROOT => {
+            serial::write_str("vfs-root=");
+            serial::write_str(
+                manifest
+                    .vfs_root(object_index)
+                    .map(|root| root.id)
+                    .unwrap_or("<bad>"),
+            );
+        }
         _ => serial::write_str("object=<bad>"),
     }
 }
@@ -2090,6 +2176,34 @@ fn print_boot_grant_rights(rights: u16) {
         serial::write_str("resolve");
         wrote = true;
     }
+    if rights & boot_manifest::RIGHT_CREATE != 0 {
+        if wrote {
+            serial::write_str("|");
+        }
+        serial::write_str("create");
+        wrote = true;
+    }
+    if rights & boot_manifest::RIGHT_UNLINK != 0 {
+        if wrote {
+            serial::write_str("|");
+        }
+        serial::write_str("unlink");
+        wrote = true;
+    }
+    if rights & boot_manifest::RIGHT_RENAME != 0 {
+        if wrote {
+            serial::write_str("|");
+        }
+        serial::write_str("rename");
+        wrote = true;
+    }
+    if rights & boot_manifest::RIGHT_MOUNT != 0 {
+        if wrote {
+            serial::write_str("|");
+        }
+        serial::write_str("mount");
+        wrote = true;
+    }
     if !wrote {
         serial::write_str("none");
     }
@@ -2129,6 +2243,7 @@ fn print_boot_manifest_error(error: boot_manifest::ParseError) {
         boot_manifest::ParseError::TooManyNamespaceEntries => {
             serial::write_str("too many namespace entries")
         }
+        boot_manifest::ParseError::TooManyVfsRoots => serial::write_str("too many vfs roots"),
         boot_manifest::ParseError::TooManyRuntimeObjects => {
             serial::write_str("too many runtime objects")
         }
@@ -2137,7 +2252,7 @@ fn print_boot_manifest_error(error: boot_manifest::ParseError) {
         boot_manifest::ParseError::InvalidRights => serial::write_str("invalid rights"),
         boot_manifest::ParseError::InvalidObjectKind => serial::write_str("invalid object kind"),
         boot_manifest::ParseError::UnsupportedStateVolumes => {
-            serial::write_str("unsupported state volumes")
+            serial::write_str("unsupported direct state-volume grants")
         }
         boot_manifest::ParseError::TrailingBytes => serial::write_str("trailing bytes"),
         boot_manifest::ParseError::BadChecksum => serial::write_str("bad checksum"),

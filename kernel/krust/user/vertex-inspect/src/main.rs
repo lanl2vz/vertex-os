@@ -8,14 +8,14 @@ use core::{cell::UnsafeCell, panic::PanicInfo};
 const CAP_INSPECT: u64 = 0;
 const CAP_SERIAL_LOG: u64 = 1;
 const CAP_MANIFEST: u64 = 3;
-const KRUSTBOOT_MAGIC: &[u8; 16] = b"KRUSTBOOTM65\0\0\0\0";
-const KRUSTBOOT_VERSION: u16 = 8;
+const KRUSTBOOT_MAGIC: &[u8; 16] = b"KRUSTBOOTM75\0\0\0\0";
+const KRUSTBOOT_VERSION: u16 = 11;
 const MANIFEST_BUFFER_LEN: usize = 16 * 1024;
 const REPORT_BUFFER_LEN: usize = 64 * 1024;
 const OFFSET_VERSION: usize = 16;
 const OFFSET_PROCESSES: usize = 20;
 const OFFSET_ENDPOINTS: usize = 22;
-const OFFSET_GENERATION_ID: usize = 46;
+const OFFSET_GENERATION_ID: usize = 48;
 const STRING_LEN: usize = 64;
 
 struct ReportBuffer(UnsafeCell<[u8; REPORT_BUFFER_LEN]>);
@@ -225,7 +225,7 @@ fn explain_cap_provenance(report: &[u8]) {
 
 fn explain_config_authority(report: &[u8]) {
     let needles: [&[u8]; 4] = [
-        b"space=initial proc=logd cap[4] config=config:logd",
+        b"space=initial proc=logd cap[5] config=config:logd",
         b"rights=read",
         b"owner=logd",
         b"revoked=no",
@@ -243,7 +243,7 @@ fn explain_config_authority(report: &[u8]) {
 
 fn explain_secret_authority(report: &[u8]) {
     let needles: [&[u8]; 4] = [
-        b"space=initial proc=logd cap[5] secret=secret:logd-token",
+        b"space=initial proc=logd cap[6] secret=secret:logd-token",
         b"rights=read|inspect-metadata",
         b"owner=logd",
         b"revoked=no",

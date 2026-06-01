@@ -56,12 +56,41 @@ const SYS_NETWORK_SEND_UDP: u64 = 44;
 const SYS_NAMESPACE_RESOLVE: u64 = 45;
 const SYS_NETWORK_RECV_UDP: u64 = 46;
 const SYS_VIRTIO_DEVICE_REPORT: u64 = 47;
+const SYS_VFS_OPEN: u64 = 48;
+const SYS_VFS_READ: u64 = 49;
+const SYS_VFS_CLOSE: u64 = 50;
+const SYS_VFS_STAT: u64 = 51;
+const SYS_VFS_SEEK: u64 = 52;
+const SYS_VFS_PREAD: u64 = 53;
+const SYS_VFS_WRITE: u64 = 54;
+const SYS_VFS_PWRITE: u64 = 55;
+const SYS_VFS_SYNC: u64 = 56;
+const SYS_VFS_DUP: u64 = 57;
+const SYS_VFS_CREATE: u64 = 58;
+const SYS_VFS_UNLINK: u64 = 59;
+const SYS_VFS_DERIVE_ROOT: u64 = 60;
+const SYS_VFS_LOCK: u64 = 61;
+const SYS_VFS_UNLOCK: u64 = 62;
+const SYS_VFS_READDIR: u64 = 63;
+const SYS_VFS_MOUNT: u64 = 64;
+const SYS_VFS_UNMOUNT: u64 = 65;
+const SYS_VFS_RENAME: u64 = 66;
 
 const STATUS_OK: u64 = 0;
 const STATUS_BAD_CAPABILITY: u64 = u64::MAX - 1;
 const STATUS_BAD_BUFFER: u64 = u64::MAX - 2;
 const STATUS_TOO_LARGE: u64 = u64::MAX - 3;
 const STATUS_EMPTY: u64 = u64::MAX - 4;
+const STATUS_VFS_PERMISSION: u64 = u64::MAX - 32;
+const STATUS_VFS_BAD_PATH: u64 = u64::MAX - 33;
+const STATUS_VFS_NOT_FOUND: u64 = u64::MAX - 34;
+const STATUS_VFS_NOT_DIRECTORY: u64 = u64::MAX - 35;
+const STATUS_VFS_NOT_FILE: u64 = u64::MAX - 36;
+const STATUS_VFS_BUSY: u64 = u64::MAX - 37;
+const STATUS_VFS_BAD_HANDLE: u64 = u64::MAX - 38;
+const STATUS_VFS_UNSUPPORTED: u64 = u64::MAX - 39;
+const STATUS_VFS_NO_SPACE: u64 = u64::MAX - 40;
+const STATUS_VFS_EXISTS: u64 = u64::MAX - 41;
 
 #[repr(C, align(16))]
 pub struct SyscallStack([u8; SYSCALL_STACK_SIZE]);
@@ -235,7 +264,7 @@ pub extern "C" fn krust_syscall_dispatch(
             Ok(()) => frame.rax = STATUS_OK,
             Err(error) => frame.rax = ipc_error_status("SYS_CAP_TRANSFER", error),
         },
-        SYS_OBJECT_READ => match ipc::object_read(
+        SYS_OBJECT_READ => match ipc::legacy_object_read(
             arg0,
             arg1 as *mut u8,
             usize::try_from(arg2).unwrap_or(usize::MAX),
@@ -348,6 +377,115 @@ pub extern "C" fn krust_syscall_dispatch(
             Ok(()) => frame.rax = STATUS_OK,
             Err(error) => frame.rax = ipc_error_status("SYS_VIRTIO_DEVICE_REPORT", error),
         },
+        SYS_VFS_OPEN => match ipc::vfs_open(arg0, arg1 as *const u8, arg2) {
+            Ok(handle) => frame.rax = handle,
+            Err(error) => frame.rax = ipc_error_status("SYS_VFS_OPEN", error),
+        },
+        SYS_VFS_READ => match ipc::vfs_read(
+            arg0,
+            arg1 as *mut u8,
+            usize::try_from(arg2).unwrap_or(usize::MAX),
+            frame,
+        ) {
+            Ok(()) => {}
+            Err(error) => frame.rax = ipc_error_status("SYS_VFS_READ", error),
+        },
+        SYS_VFS_CLOSE => match ipc::vfs_close(arg0) {
+            Ok(()) => frame.rax = STATUS_OK,
+            Err(error) => frame.rax = ipc_error_status("SYS_VFS_CLOSE", error),
+        },
+        SYS_VFS_STAT => match ipc::vfs_stat(
+            arg0,
+            arg1 as *mut u8,
+            usize::try_from(arg2).unwrap_or(usize::MAX),
+            frame,
+        ) {
+            Ok(()) => {}
+            Err(error) => frame.rax = ipc_error_status("SYS_VFS_STAT", error),
+        },
+        SYS_VFS_SEEK => match ipc::vfs_seek(arg0, arg1, arg2) {
+            Ok(offset) => frame.rax = offset,
+            Err(error) => frame.rax = ipc_error_status("SYS_VFS_SEEK", error),
+        },
+        SYS_VFS_PREAD => match ipc::vfs_pread(arg0, arg1 as *mut u8, arg2, frame) {
+            Ok(()) => {}
+            Err(error) => frame.rax = ipc_error_status("SYS_VFS_PREAD", error),
+        },
+        SYS_VFS_WRITE => match ipc::vfs_write(
+            arg0,
+            arg1 as *const u8,
+            usize::try_from(arg2).unwrap_or(usize::MAX),
+            frame,
+        ) {
+            Ok(()) => {}
+            Err(error) => frame.rax = ipc_error_status("SYS_VFS_WRITE", error),
+        },
+        SYS_VFS_PWRITE => match ipc::vfs_pwrite(arg0, arg1 as *const u8, arg2, frame) {
+            Ok(()) => {}
+            Err(error) => frame.rax = ipc_error_status("SYS_VFS_PWRITE", error),
+        },
+        SYS_VFS_SYNC => match ipc::vfs_sync(arg0) {
+            Ok(()) => frame.rax = STATUS_OK,
+            Err(error) => frame.rax = ipc_error_status("SYS_VFS_SYNC", error),
+        },
+        SYS_VFS_DUP => match ipc::vfs_dup(arg0, arg1) {
+            Ok(handle) => frame.rax = handle,
+            Err(error) => frame.rax = ipc_error_status("SYS_VFS_DUP", error),
+        },
+        SYS_VFS_CREATE => match ipc::vfs_create(arg0, arg1 as *const u8, arg2) {
+            Ok(()) => frame.rax = STATUS_OK,
+            Err(error) => frame.rax = ipc_error_status("SYS_VFS_CREATE", error),
+        },
+        SYS_VFS_UNLINK => match ipc::vfs_unlink(
+            arg0,
+            arg1 as *const u8,
+            usize::try_from(arg2).unwrap_or(usize::MAX),
+        ) {
+            Ok(()) => frame.rax = STATUS_OK,
+            Err(error) => frame.rax = ipc_error_status("SYS_VFS_UNLINK", error),
+        },
+        SYS_VFS_DERIVE_ROOT => match ipc::vfs_derive_root(arg0, arg1 as *const u8, arg2) {
+            Ok(()) => frame.rax = STATUS_OK,
+            Err(error) => frame.rax = ipc_error_status("SYS_VFS_DERIVE_ROOT", error),
+        },
+        SYS_VFS_LOCK => match ipc::vfs_lock(arg0, arg1) {
+            Ok(()) => frame.rax = STATUS_OK,
+            Err(error) => frame.rax = ipc_error_status("SYS_VFS_LOCK", error),
+        },
+        SYS_VFS_UNLOCK => match ipc::vfs_unlock(arg0) {
+            Ok(()) => frame.rax = STATUS_OK,
+            Err(error) => frame.rax = ipc_error_status("SYS_VFS_UNLOCK", error),
+        },
+        SYS_VFS_READDIR => match ipc::vfs_readdir(
+            arg0,
+            arg1 as *mut u8,
+            usize::try_from(arg2).unwrap_or(usize::MAX),
+        ) {
+            Ok(len) => frame.rax = len as u64,
+            Err(error) => frame.rax = ipc_error_status("SYS_VFS_READDIR", error),
+        },
+        SYS_VFS_MOUNT => match ipc::vfs_mount(arg0, arg1 as *const u8, arg2) {
+            Ok(()) => frame.rax = STATUS_OK,
+            Err(error) => frame.rax = ipc_error_status("SYS_VFS_MOUNT", error),
+        },
+        SYS_VFS_UNMOUNT => match ipc::vfs_unmount(
+            arg0,
+            arg1 as *const u8,
+            usize::try_from(arg2).unwrap_or(usize::MAX),
+        ) {
+            Ok(()) => frame.rax = STATUS_OK,
+            Err(error) => frame.rax = ipc_error_status("SYS_VFS_UNMOUNT", error),
+        },
+        SYS_VFS_RENAME => {
+            match ipc::vfs_rename(
+                arg0,
+                arg1 as *const u8,
+                usize::try_from(arg2).unwrap_or(usize::MAX),
+            ) {
+                Ok(()) => frame.rax = STATUS_OK,
+                Err(error) => frame.rax = ipc_error_status("SYS_VFS_RENAME", error),
+            }
+        }
         SYS_VIRTIO_RNG_READ => match ipc::virtio_rng_read(
             arg0,
             arg1 as *mut u8,
@@ -384,8 +522,9 @@ pub extern "C" fn krust_syscall_dispatch(
             arg0,
             arg1 as *mut u8,
             usize::try_from(arg2).unwrap_or(usize::MAX),
+            frame,
         ) {
-            Ok(len) => frame.rax = len as u64,
+            Ok(()) => {}
             Err(error) => frame.rax = ipc_error_status("SYS_NETWORK_RECV_UDP", error),
         },
         SYS_IRQ_WAIT => match ipc::irq_wait(arg0, arg1, frame) {
@@ -484,7 +623,45 @@ fn ipc_error_status(operation: &str, error: ipc::IpcError) -> u64 {
             serial::write_str("IPC syscall rejected: endpoint empty\n");
             STATUS_EMPTY
         }
+        ipc::IpcError::VfsPermission => {
+            vfs_error_status(operation, "STATUS_VFS_PERMISSION", STATUS_VFS_PERMISSION)
+        }
+        ipc::IpcError::VfsBadPath => {
+            vfs_error_status(operation, "STATUS_VFS_BAD_PATH", STATUS_VFS_BAD_PATH)
+        }
+        ipc::IpcError::VfsNotFound => {
+            vfs_error_status(operation, "STATUS_VFS_NOT_FOUND", STATUS_VFS_NOT_FOUND)
+        }
+        ipc::IpcError::VfsNotDirectory => vfs_error_status(
+            operation,
+            "STATUS_VFS_NOT_DIRECTORY",
+            STATUS_VFS_NOT_DIRECTORY,
+        ),
+        ipc::IpcError::VfsNotFile => {
+            vfs_error_status(operation, "STATUS_VFS_NOT_FILE", STATUS_VFS_NOT_FILE)
+        }
+        ipc::IpcError::VfsBusy => vfs_error_status(operation, "STATUS_VFS_BUSY", STATUS_VFS_BUSY),
+        ipc::IpcError::VfsBadHandle => {
+            vfs_error_status(operation, "STATUS_VFS_BAD_HANDLE", STATUS_VFS_BAD_HANDLE)
+        }
+        ipc::IpcError::VfsUnsupported => {
+            vfs_error_status(operation, "STATUS_VFS_UNSUPPORTED", STATUS_VFS_UNSUPPORTED)
+        }
+        ipc::IpcError::VfsNoSpace => {
+            vfs_error_status(operation, "STATUS_VFS_NO_SPACE", STATUS_VFS_NO_SPACE)
+        }
+        ipc::IpcError::VfsExists => {
+            vfs_error_status(operation, "STATUS_VFS_EXISTS", STATUS_VFS_EXISTS)
+        }
     }
+}
+
+fn vfs_error_status(operation: &str, status_name: &str, status: u64) -> u64 {
+    serial::write_str(operation);
+    serial::write_str(" returned ");
+    serial::write_str(status_name);
+    serial::write_str("\n");
+    status
 }
 
 fn halt_loop() -> ! {

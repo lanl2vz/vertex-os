@@ -94,7 +94,20 @@
   "devices": [],
   "stateVolumes": [],
   "secrets": [],
-  "capabilities": [],
+  "capabilities": [
+    {
+      "id": "cap:vfs.logd-log-stream",
+      "kind": "vfs-root",
+      "provider": "svc:vertex-supervisor",
+      "rights": [
+        "resolve",
+        "read"
+      ],
+      "properties": {
+        "root": "/proc/log-stream"
+      }
+    }
+  ],
   "services": [
     {
       "id": "svc:vertex-supervisor",
@@ -121,6 +134,15 @@
       },
       "configs": [
         "config:logd"
+      ],
+      "requires": [
+        {
+          "capability": "cap:vfs.logd-log-stream",
+          "rights": [
+            "resolve",
+            "read"
+          ]
+        }
       ]
     },
     {

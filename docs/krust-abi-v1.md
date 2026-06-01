@@ -5,7 +5,7 @@ native Krust QEMU/Limine milestone. It is intentionally small and unstable. Its
 current job is to boot native `vertex-init`, create services from verified
 process templates, and enforce explicit process-local capabilities.
 
-Milestone status: ABI v1 now covers the M14-M65 native activation and substrate
+Milestone status: ABI v1 now covers the M14-M75 native activation and substrate
 proof. M25 adds the release gate. M26-M29 add Manifest v1 parsing, capability
 provenance/revocation, typed arena allocation checks, and resource quotas.
 M30-M31 add PIT-backed preemption and user page-fault containment. M32-M36 add
@@ -29,7 +29,9 @@ validation, typed object dispatch, rights-subset checks, namespace target
 limits, virtio device identity checks, and generation provenance the standing
 security regression baseline. M62-M65 add the storage durability checks,
 network boundary assertions, lifecycle reporting, and supported appliance
-profile artifact without adding legacy compatibility paths. The ABI is still
+profile artifact without adding legacy compatibility paths. M74-M75 add the
+native VFS object model, service-local mount roots, open-file handle table,
+descriptor lifecycle, and volatile create/unlink path. The ABI is still
 intentionally small, but this subset is the current native contract.
 
 ## Machine ABI
@@ -83,7 +85,7 @@ process frame, switch CR3, and return into another userspace process through
 | 10 | `SYS_CAP_DERIVE` | `arg0 = parent_cap_slot`, `arg1 = new_cap_slot`, `arg2 = rights_mask` | status |
 | 11 | `SYS_CAP_DROP` | `arg0 = cap_slot` | status |
 | 12 | `SYS_CAP_TRANSFER` | `arg0 = process_control_cap_slot`, `arg1 = target_pid`, `arg2 = packed transfer` | status |
-| 13 | `SYS_OBJECT_READ` | `arg0 = cap_slot`, `arg1 = user_ptr`, `arg2 = max_len` | byte count or error status |
+| 13 | `SYS_OBJECT_READ` | legacy object-read slot; always rejected in VFS mode | error status |
 | 14 | reserved | removed M43 native state syscall slot | `u64::MAX` |
 | 15 | reserved | removed M43 native state syscall slot | `u64::MAX` |
 | 16 | `SYS_SLEEP_MS` | `arg0 = timer_cap_slot`, `arg1 = milliseconds`, `arg2 = 0` | status |
@@ -118,6 +120,25 @@ process frame, switch CR3, and return into another userspace process through
 | 45 | `SYS_NAMESPACE_RESOLVE` | `arg0 = namespace_cap_slot`, `arg1 = path_ptr`, `arg2 = target_slot << 32 \| path_len` | status |
 | 46 | `SYS_NETWORK_RECV_UDP` | `arg0 = network_port_cap_slot`, `arg1 = payload_ptr`, `arg2 = max_len` | byte count, `STATUS_EMPTY`, or error status |
 | 47 | `SYS_VIRTIO_DEVICE_REPORT` | `arg0 = virtio_device_cap_slot`, `arg1 = report_ptr`, `arg2 = 64` | status |
+| 48 | `SYS_VFS_OPEN` | `arg0 = cap_slot`, `arg1 = path_ptr`, `arg2 = open_flags << 32 \| path_len` | file handle or error status |
+| 49 | `SYS_VFS_READ` | `arg0 = file_handle`, `arg1 = user_ptr`, `arg2 = max_len` | byte count or error status |
+| 50 | `SYS_VFS_CLOSE` | `arg0 = file_handle` | status |
+| 51 | `SYS_VFS_STAT` | `arg0 = file_handle`, `arg1 = stat_ptr`, `arg2 = max_len` | byte count or error status |
+| 52 | `SYS_VFS_SEEK` | `arg0 = file_handle`, `arg1 = offset`, `arg2 = whence` | new offset or error status |
+| 53 | `SYS_VFS_PREAD` | `arg0 = file_handle`, `arg1 = user_ptr`, `arg2 = offset << 32 \| max_len` | byte count or error status |
+| 54 | `SYS_VFS_WRITE` | `arg0 = file_handle`, `arg1 = user_ptr`, `arg2 = len` | byte count or error status |
+| 55 | `SYS_VFS_PWRITE` | `arg0 = file_handle`, `arg1 = user_ptr`, `arg2 = offset << 32 \| len` | byte count or error status |
+| 56 | `SYS_VFS_SYNC` | `arg0 = file_handle` | status |
+| 57 | `SYS_VFS_DUP` | `arg0 = file_handle`, `arg1 = dup_flags` | new file handle or error status |
+| 58 | `SYS_VFS_CREATE` | `arg0 = vfs_root_cap_slot`, `arg1 = path_ptr`, `arg2 = create_flags << 32 \| path_len` | status |
+| 59 | `SYS_VFS_UNLINK` | `arg0 = vfs_root_cap_slot`, `arg1 = path_ptr`, `arg2 = path_len` | status |
+| 60 | `SYS_VFS_DERIVE_ROOT` | `arg0 = vfs_root_cap_slot`, `arg1 = path_ptr`, `arg2 = target_slot << 32 \| path_len` | status |
+| 61 | `SYS_VFS_LOCK` | `arg0 = file_handle`, `arg1 = lock_flags` | status |
+| 62 | `SYS_VFS_UNLOCK` | `arg0 = file_handle` | status |
+| 63 | `SYS_VFS_READDIR` | `arg0 = directory_handle`, `arg1 = dirent_ptr`, `arg2 = max_len` | byte count, `0` at end, or error status |
+| 64 | `SYS_VFS_MOUNT` | `arg0 = vfs_root_cap_slot`, `arg1 = path_ptr`, `arg2 = mount_flags << 32 \| path_len` | status |
+| 65 | `SYS_VFS_UNMOUNT` | `arg0 = vfs_root_cap_slot`, `arg1 = path_ptr`, `arg2 = path_len` | status |
+| 66 | `SYS_VFS_RENAME` | `arg0 = vfs_root_cap_slot`, `arg1 = rename_request_ptr`, `arg2 = request_len` | status |
 
 ## Return Status Values
 
@@ -131,6 +152,16 @@ process frame, switch CR3, and return into another userspace process through
 | `STATUS_RUNNING` | `u64::MAX - 8` | `SYS_PROCESS_WAIT` target has not exited. |
 | `STATUS_TIMEOUT` | `u64::MAX - 9` | A timed IPC receive or IRQ wait expired before an event arrived. |
 | `STATUS_PROCESS_FAULT` | `u64::MAX - 10` | The target exited because of a contained userspace fault. |
+| `STATUS_VFS_PERMISSION` | `u64::MAX - 32` | VFS authority or rights did not cover the requested operation. |
+| `STATUS_VFS_BAD_PATH` | `u64::MAX - 33` | VFS path syntax or path length is invalid. |
+| `STATUS_VFS_NOT_FOUND` | `u64::MAX - 34` | No VFS node exists at the requested path. |
+| `STATUS_VFS_NOT_DIRECTORY` | `u64::MAX - 35` | The operation required a directory node. |
+| `STATUS_VFS_NOT_FILE` | `u64::MAX - 36` | The operation required a readable/writable file node. |
+| `STATUS_VFS_BUSY` | `u64::MAX - 37` | The VFS node is pinned by live handles, children, or a conflicting advisory lock. |
+| `STATUS_VFS_BAD_HANDLE` | `u64::MAX - 38` | The file handle is invalid, stale, or already closed. |
+| `STATUS_VFS_UNSUPPORTED` | `u64::MAX - 39` | The VFS node or flag combination is not supported by this ABI generation. |
+| `STATUS_VFS_NO_SPACE` | `u64::MAX - 40` | The VFS handle, object, or memory-file quota is exhausted. |
+| `STATUS_VFS_EXISTS` | `u64::MAX - 41` | A create operation targeted an existing VFS node. |
 | `u64::MAX` | `u64::MAX` | Unknown syscall number. |
 
 For `SYS_IPC_RECV`, any return value less than or equal to the destination
@@ -157,7 +188,7 @@ becoming uncontrolled kernel faults.
 Capabilities are process-local. A capability slot number is meaningful only in
 the current process's capability space.
 
-Current M14-M65 layout:
+Current M14-M75 layout:
 
 ```text
 vertex-init:
@@ -174,8 +205,9 @@ logd:
   cap[1] = endpoint serial-log, rights=send
   cap[2] = endpoint readiness, rights=send
   cap[3] = endpoint serial-console, rights=send after vertex-init derives and transfers it
-  cap[4] = config config:logd, rights=read
-  cap[5] = secret secret:logd-token, rights=read|inspect-metadata
+  cap[4] = vfs-root cap:vfs.logd-log-stream, root=/proc/log-stream, rights=read|resolve
+  cap[5] = config config:logd, rights=read
+  cap[6] = secret secret:logd-token, rights=read|inspect-metadata
 
 serial-driver:
   cap[0] = endpoint serial-console, rights=receive
@@ -202,8 +234,9 @@ block-driver:
   cap[7] = interrupt-line cap:irq.virtio-blk0, rights=listen
   cap[8] = dma-region cap:dma.virtio-blk0, rights=read|write|map
   cap[9] = io-port cap:io.virtio-blk0, rights=read|write
-  cap[10] = pci-device device:virtio-blk0, rights=control
-  cap[11] = virtio-device device:virtio-blk0, rights=control
+  cap[10] = vfs-root cap:vfs.block-dev-blk0, root=/dev/device:virtio-blk0, rights=read|resolve
+  cap[11] = pci-device device:virtio-blk0, rights=control
+  cap[12] = virtio-device device:virtio-blk0, rights=control
 
 vertex-store:
   cap[0] = endpoint store-hello-text-request, rights=receive
@@ -215,12 +248,12 @@ vertex-store:
   cap[6] = dynamic init store reply endpoint, rights=send during M37 generation fetch
 
 vertex-state:
-  cap[0] = endpoint state-counter-request, rights=receive
+  cap[0] = endpoint vertex-state-block-reply, rights=receive
   cap[1] = endpoint serial-log, rights=send
   cap[2] = endpoint readiness, rights=send
-  cap[3] = endpoint vertex-state-block-reply, rights=receive
-  cap[4] = endpoint vertex-state-block-request, rights=send after vertex-init derives and transfers it
-  cap[5] = endpoint state-reader-state-reply, rights=send after vertex-init derives and transfers it
+  cap[3] = endpoint vertex-state-block-request, rights=send after vertex-init derives and transfers it
+  cap[6] = endpoint state-vfs-reply, rights=send, kernel-owned VFS transaction reply endpoint
+  cap[7] = endpoint state-vfs-request, rights=receive, kernel-owned VFS transaction request endpoint
 
 vertex-inspect:
   cap[0] = process-control object, rights=inspect after vertex-init transfers it
@@ -228,9 +261,12 @@ vertex-inspect:
   cap[3] = boot module krustboot-manifest, rights=read after vertex-init transfers it
 
 echo:
+  process mount root = /state
   cap[1] = endpoint serial-log, rights=send
   cap[3] = network-port cap:net.udp.9000, rights=bind|listen
   cap[4] = namespace cap:namespace.echo, rights=resolve
+  cap[5] = vfs-root cap:vfs.echo-state-a, root=/state/a, rights=read|resolve
+  cap[6] = vfs-root cap:vfs.echo-state-writer, root=/state, rights=read|write|resolve|create|unlink|rename|mount
   cap[0] = endpoint log-sink, rights=send after vertex-init derives and transfers it
 
 model-reader:
@@ -239,13 +275,17 @@ model-reader:
   cap[3] = endpoint store-hello-text-request, rights=send after vertex-init derives and transfers it
 
 counter-service:
-  cap[0] = endpoint state-counter-request, rights=send after vertex-init derives and transfers it
+  cap[0] = vfs-root cap:vfs.counter-state, root=/state/counter, rights=read|write|resolve
   cap[1] = endpoint serial-log, rights=send
+  console variant: cap[0] = endpoint cap:counter.request, rights=receive;
+                   cap[3] = endpoint cap:console-shell.counter.reply, rights=send;
+                   cap[4] = vfs-root cap:vfs.counter-state, root=/state/counter, rights=read|write|resolve;
+                   cap[5] = vfs-root cap:vfs.counter-state-control, root=/state/counter/control, rights=write|resolve
 
 reader-service:
-  cap[0] = endpoint state-reader-state-reply, rights=receive
+  cap[0] = vfs-root cap:vfs.state-reader-state, root=/state/counter, rights=read|resolve
   cap[1] = endpoint serial-log, rights=send
-  cap[3] = endpoint state-counter-request, rights=send after vertex-init derives and transfers it
+  cap[3] = vfs-root cap:vfs.state-reader-control, root=/state/counter/control, rights=write|resolve
   cap[4] = namespace cap:namespace.reader, rights=resolve
 
 timer-service:
@@ -285,13 +325,96 @@ SYS_RUNTIME_INSPECT requires inspect rights on process-control.
 SYS_CAP_TRANSFER requires a caller-supplied process-control cap slot and applies the packed rights mask.
 SYS_ENDPOINT_CREATE requires allocate rights on process-control and available endpoint quota.
 SYS_QUOTA_DELEGATE requires delegate rights on process-control and cannot exceed the caller quota.
-SYS_OBJECT_READ requires read rights on a store-object or config cap.
+SYS_OBJECT_READ is a removed direct-object-read slot and is rejected. Immutable
+store objects and config objects are read through VFS file handles.
+SYS_VFS_OPEN resolves either a direct immutable store/config cap with an empty
+path or a vfs-root cap plus an absolute process-local path covered by that root.
+For VFS-root caps, absolute path arguments are first resolved under the current
+process mount root declared by the compact process record. A process with mount
+root `/state` sees `/a` as canonical `/state/a`; opening an empty VFS-root path
+opens that process mount root. Direct store/config caps keep the empty-path
+rule and do not use process mount-root rewriting. Namespace caps and direct
+hardware-device caps are not filesystem authority. Device-node opens through a
+VFS root additionally require that the current process holds the underlying
+virtio-device control cap. The open flags are native Krust bits: read `1`,
+write `2`, create `4`, trunc `8`, append `16`. Create, trunc, and append
+require write. `SYS_VFS_STAT` returns 32 bytes:
+kind, byte length, vnode id, and handle rights as little-endian `u64` values.
+For service-backed state-volume value files, stat validates the destination
+buffer, blocks in `blocked-vfs-state`, asks the state service for the durable
+current length, and then copies the normal 32-byte stat record into userspace.
+Node kinds are regular file `1`, directory `2`, device node `3`, pipe `4`, and
+synthetic node `5`. VFS syscalls return `STATUS_VFS_*` for filesystem
+conditions such as permission denial, not-found paths, busy nodes, stale
+handles, unsupported node/flag combinations, and exhausted VFS quotas; they do
+not collapse those conditions into `STATUS_BAD_CAPABILITY`. `SYS_VFS_DUP` flag
+`1` shares the open-file offset; flag
+`0` creates an independent open-file description with a copied offset.
+`/proc/log-stream` is a live Krust pipe node. `SYS_VFS_READ` on an empty pipe
+validates the destination buffer, saves the current syscall frame, marks the
+process `blocked-vfs`, and returns only after the next kernel log write copies
+bytes into the reader and wakes it. Writes that occur without a blocked reader
+are not retained as compatibility backlog.
+`SYS_VFS_OPEN` with the create flag creates a missing volatile regular memory
+file below an existing covered directory after validating the path, `create`
+authority, and the requested file-handle rights; opening an existing node with
+the create flag does not add directory-create rights to the resulting handle.
+If handle allocation fails after creating the vnode, the kernel removes the
+new vnode and memory-file backing before returning the quota error.
+SYS_VFS_CREATE creates a volatile regular memory file below an existing VFS
+directory covered by a vfs-root authority that has both `resolve` and `create`.
+SYS_VFS_UNLINK removes a volatile memory file covered by `resolve` and
+`unlink`; it rejects directories, non-volatile nodes, non-empty subtrees, and
+nodes with live open-file descriptions. SYS_VFS_DERIVE_ROOT creates a new
+kernel VFS-root object for an existing directory path covered by the source
+VFS-root cap; the derived cap keeps the source file-right mask and is linked to
+the source cap id, so normal cap-copy or cap-transfer attenuation can delegate
+read-only subtree authority without using M59 namespaces as filesystem roots.
+SYS_VFS_LOCK creates a nonblocking whole-file advisory lock on a regular-file
+open description. Lock flag `1` is shared and requires a read handle; flag `2`
+is exclusive and requires a write handle. Shared locks are compatible with
+other shared locks, exclusive locks conflict with all other descriptions on
+the same vnode, and conflicts return `STATUS_VFS_BUSY`. A shared dup uses the
+same open-file description and therefore the same lock ownership; an
+independent dup has independent lock ownership. SYS_VFS_UNLOCK drops the lock
+held by that open-file description. Closing the final handle for an open-file
+description, process exit, process fault, restart reload, kill, and reap all
+release its VFS locks.
+SYS_VFS_READDIR reads one directory entry from a directory handle and advances
+that handle's directory offset by one entry. The user buffer must be at least
+96 bytes. The record is little-endian `u64` fields for node kind, vnode id, and
+name length, followed by 64 bytes of zero-padded name storage and 8 reserved
+zero bytes. End of directory returns `0`. Directory handles require `resolve`
+rights and are obtained by opening a directory with the native read flag.
+SYS_VFS_MOUNT with mount flag `1` creates an empty volatile mounted directory
+at a missing covered path. It requires `resolve` and `mount` authority on the
+parent directory and returns `STATUS_VFS_EXISTS` if a node already occupies the
+mount path. SYS_VFS_UNMOUNT removes a dynamic mount root when the caller has
+`resolve` and `mount` authority over that root; built-in roots are unsupported,
+and roots with live handles or children return `STATUS_VFS_BUSY`.
+SYS_VFS_RENAME takes a native request buffer:
+`old_path_len:u64`, `new_path_len:u64`, old path bytes, then new path bytes. It
+requires `resolve` and `rename` authority over both parent directories, rejects
+replacement if the destination already exists, and currently supports volatile
+memory-file vnodes. The vnode id is preserved across the rename, so live handles
+continue to reference the same open file description.
 SYS_SECRET_READ requires read rights on a secret cap and logs metadata only.
-Native state reads and writes are service IPC to `vertex-state`.
-`vertex-state` persists those operations through the VertexDisk block protocol
-served by `block-driver`. Store and state traffic use separate block request
-endpoints; the driver treats the receiving endpoint as the client identity and
-enforces read-only store access, state-only writes, and section bounds before
+Native state-volume records are installed as explicit VFS mount roots below
+`/state/<state-id suffix>`; direct state-object grants are rejected. Each
+manifest-declared state volume exposes `/state/<suffix>/value` as a regular
+file whose read/write/stat operations are VFS transactions: the kernel validates
+the user buffer, queues a native versioned `VS` request carrying the state id on
+the kernel-owned `state-vfs-request` endpoint, blocks the caller in
+`blocked-vfs-state`, and wakes it from the kernel-owned `state-vfs-reply`
+endpoint when `vertex-state` replies. The old short state commands are not an
+accepted compatibility protocol. `/state/<suffix>/control` accepts the native
+control command `Q` through the same VFS transaction path and is used for
+state-service shutdown. `vertex-state` persists write transactions for every
+indexed VertexDisk state volume through the block protocol served by
+`block-driver`.
+Store and state traffic use separate block request endpoints; the driver treats
+the receiving endpoint as the client identity and enforces read-only store
+access, state-only writes, and section bounds before
 performing sector I/O.
 SYS_SLEEP_MS requires control rights on a timer cap.
 SYS_IO_READ, SYS_IO_READ16, and SYS_IO_READ32 require read rights on an io-port cap and a fully covered port span inside the granted range.
@@ -312,8 +435,9 @@ virtio-device cap whose device ID is the network device and whose transport is
 SYS_NETWORK_SEND_UDP requires bind and listen rights on a network-port cap and
 queues the payload for the network provider.
 SYS_NETWORK_RECV_UDP requires control rights on a network-port cap and returns
-one queued application UDP payload to the provider, or `STATUS_EMPTY` when no
-payload is pending.
+one queued application UDP payload to the provider. When no payload is pending,
+the provider blocks on the network-port queue and wakes when a client sends a
+payload; `STATUS_EMPTY` is reserved for the no-schedulable-process fallback.
 SYS_NAMESPACE_RESOLVE requires resolve rights on a namespace cap and installs only the configured attenuated target capability.
 ```
 
@@ -337,6 +461,17 @@ Namespace objects are capability objects, not ambient paths. A namespace maps
 absolute names to existing non-namespace capability objects with explicit
 attenuated rights. Resolution requires `resolve`, writes the derived capability
 into the caller-selected slot, and fails if the path is absent.
+
+VFS root objects are separate capability objects. They carry an absolute root
+path and authorize covered canonical filesystem paths for VFS syscalls according
+to the capability rights on the grant. Process `mountRoot` values are also
+absolute VFS paths and are validated at boot against existing directory nodes.
+M59 namespaces remain string-to-capability aliasing; they are not accepted as
+VFS root authority.
+VFS mount objects are kernel objects rooted at specific vnodes. The initial
+runtime installs explicit rootfs, storefs, volatile state, devfs, and procfs
+mount objects, and dynamic volatile mounts are visible through runtime inspect
+until unmounted.
 
 Capability records carry kernel-owned metadata:
 
@@ -607,15 +742,19 @@ processes
 endpoints
 grants
 store_objects
-state_volumes (must be zero in the current native ABI; mutable state lives on VertexDisk)
+state_volumes (installed as explicit VFS state-volume mount roots; direct state grants are rejected; native Krust routes manifest-declared state volumes through service-backed VFS transactions)
 network_ports
 io_port_ranges
 mmio_regions
 interrupt_lines
 dma_regions
+pci_devices
+virtio_devices
+namespaces
+vfs_roots
 ```
 
-The compact payload identity is `KRUSTBOOTM65` version 8. Older compact
+The compact payload identity is `KRUSTBOOTM75` version 11. Older compact
 payload identities, including the previous M61 identity, are rejected instead of
 being retained as compatibility formats.
 
@@ -625,6 +764,11 @@ endpoints, grants, store objects, state volumes, timer, generation, and policy. 
 requires the v1 wrapper at the boot-module boundary and rejects an unwrapped
 compact payload. After validating the wrapper, the kernel exposes the compact
 payload to `vertex-init` through cap[0] so native userspace parsing stays small.
+Each compact process record carries `name`, `module`, `service`, restart and
+health policy, and `mount_root`; hosted `vertexctl` derives `mount_root` from
+the service `mountRoot` field and defaults it to `/` when absent. Older compact
+process records without `mount_root` are rejected by the version check rather
+than accepted through a compatibility parser.
 
 Krust also creates fixed boot caps for native `vertex-init`:
 

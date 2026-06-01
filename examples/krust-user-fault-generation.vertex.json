@@ -70,7 +70,21 @@
   "devices": [],
   "stateVolumes": [],
   "secrets": [],
-  "capabilities": [],
+  "capabilities": [
+    {
+      "id": "cap:vfs.fault-state-a",
+      "kind": "vfs-root",
+      "provider": "svc:vertex-supervisor",
+      "rights": [
+        "resolve",
+        "read",
+        "write"
+      ],
+      "properties": {
+        "root": "/state/a"
+      }
+    }
+  ],
   "services": [
     {
       "id": "svc:vertex-supervisor",
@@ -99,7 +113,16 @@
       "executable": "exe:faulty",
       "args": [],
       "env": {},
-      "requires": [],
+      "requires": [
+        {
+          "capability": "cap:vfs.fault-state-a",
+          "rights": [
+            "resolve",
+            "read",
+            "write"
+          ]
+        }
+      ],
       "provides": [],
       "state": [],
       "secrets": [],

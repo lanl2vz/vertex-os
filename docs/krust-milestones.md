@@ -8,7 +8,9 @@ runtime layered over a host kernel.
 ## Status Summary
 
 Current status: M14-M73 are implemented and smoke-tested under
-`qemu-system-x86_64` with Limine. M39 pins the native toolchain, M40 makes
+`qemu-system-x86_64` with Limine. M74-M75 VFS substrate work is now smoke-tested
+and release-gate covered, while the milestones stay open until the durable
+filesystem-service pieces below are finished. M39 pins the native toolchain, M40 makes
 native IPC directed, and M41 adds a native console shell path over explicit
 console authority. M42 adds the first real virtio-blk sector I/O path over
 PCI I/O and DMA capabilities. M43 adds the first VertexDisk v0 block-object
@@ -33,6 +35,17 @@ capability creation, and 100-cycle memory lifecycle soak gates for
 create/start/exit, restart, endpoint churn, and fault/restart paths. M70-M73 add
 blocking interrupt waits, DMA ownership/release accounting, virtio reset and
 driver queue reporting, and the first device-fault isolation gate.
+
+M74-M75 are implemented as the current VFS and open-file substrate. The current
+tree has a kernel VFS node graph,
+service-local mount roots, per-process file handles, first-class `vfs-root`
+manifest authority, volatile memory-file create/write/read/unlink/rename, a
+live blocking `/proc/log-stream` pipe, a first service-backed
+state-volume VFS transaction path, and advisory whole-file lock
+coverage. It is not yet a mature durable filesystem: directory metadata
+transactions, page/writeback caching, general filesystem-service routing,
+mature mount namespaces, broader durable blocking I/O, and crash-recovery
+proofs remain in M76-M81.
 
 ```sh
 make -C kernel/krust doctor
@@ -87,6 +100,7 @@ scripts/krust-test.sh m70
 scripts/krust-test.sh m71
 scripts/krust-test.sh m72
 scripts/krust-test.sh m73
+scripts/krust-test.sh m75
 ```
 
 Next direction: implement a mature VFS/filesystem model without preserving the
@@ -661,7 +675,8 @@ StoreObjectRead
 Candidate syscall:
 
 ```text
-SYS_OBJECT_READ(cap_slot, ptr, len)
+historical: SYS_OBJECT_READ(cap_slot, ptr, len)
+current: VFS open/read handles after M74
 ```
 
 Acceptance evidence:
@@ -670,7 +685,7 @@ Acceptance evidence:
 model-reader has read cap to store:hello-text
 model-reader reads bytes successfully
 echo lacks read cap
-echo read rejected: bad capability
+echo VFS open rejected: permission
 ```
 
 Store objects should be immutable byte blobs at this stage. Filesystems,
@@ -750,17 +765,18 @@ restore
 Initial demo protocol:
 
 ```text
-counter-service -> vertex-state request endpoint
-reader-service -> vertex-state request endpoint
-vertex-state -> private reply endpoints
+counter-service -> /state/counter/value VFS write
+reader-service -> /state/counter/value VFS read
+reader-service -> /state/counter/control VFS shutdown command
+kernel -> vertex-state kernel-owned state-vfs-request/state-vfs-reply endpoints
 ```
 
 Acceptance evidence:
 
 ```text
-counter-service has state API cap
-counter-service sends state write
-reader-service has state API cap
+counter-service has VFS state file
+counter-service writes state through VFS
+reader-service has VFS state file
 reader-service receives state value
 reader-service write rejected
 Native state service client ok
@@ -794,7 +810,7 @@ vertex.log.v1
 vertex.health.v1
 vertex.supervision.v1
 vertex.store.v1
-vertex.state.v1
+vertex.state-vfs.v1
 ```
 
 Keep this deliberately small. The purpose is a simple graph-first component
@@ -1374,17 +1390,17 @@ Service:
 ```text
 vertex-state
   owns block ranges or state objects
-  exposes a directed state service endpoint
+  exposes state through explicit VFS files
   supports read, write, snapshot, and restore semantics
 ```
 
 Acceptance tests:
 
 ```text
-done: counter-service writes state
+done: counter-service writes state through VFS
 done: reader-service reads state
-done: reader-service write denied
-done: snapshot created
+done: reader-service write rejected by read-only VFS authority
+done: state owner shuts down the state service after VFS state clients quiesce
 done: state restored
 done: system generation rollback does not automatically roll back state unless policy says so
 ```
@@ -1497,7 +1513,7 @@ done: locked Cargo dependencies for the top-level host-tool workspace, Krust ker
 done: kernel/krust/rust-toolchain.toml pins Rust 1.95.0, rustfmt, and x86_64-unknown-none
 done: make doctor checks every required tool and reports actionable fixes
 done: legacy hello/ipc userspace crates are removed instead of carried forward
-done: single release-gate script runs the clean-clone M14-M73 proof with the M14-M73 QEMU matrix
+done: single release-gate script runs the clean-clone M14-M75 substrate proof with the M14-M75 QEMU matrix
 ```
 
 Acceptance tests:
@@ -1724,6 +1740,7 @@ done: vertex-state reads state volume from disk
 done: vertex-state writes journal record before state data/index writeback
 done: vertex-state writes state volume to disk
 done: reboot preserves state value
+done: reboot preserves state:scratch value
 done: bad superblock is rejected without panic
 ```
 
@@ -2001,16 +2018,17 @@ services cannot read configs they were not granted
 Acceptance tests:
 
 ```text
-logd reads config object
+logd reads config through VFS handle
 echo cannot read logd config
 config hash mismatch fails activation
 vertex-inspect shows config authority without dumping large content
 ```
 
 Implementation note: `config:logd` is a native immutable object carried in
-KrustBoot/VertexDisk metadata and granted only to logd. Reads verify the
-content identity before returning bytes; the corrupt-config QEMU case rejects a
-hash mismatch during activation.
+KrustBoot/VertexDisk metadata and granted only to logd. M74 moved config reads
+onto VFS file handles; the legacy object-read syscall is rejected. Reads verify
+the content identity before returning bytes; the corrupt-config QEMU case
+rejects a hash mismatch during activation.
 
 done: M49 immutable config objects and hash-mismatch rejection are checked by the gate
 
@@ -2511,8 +2529,9 @@ Implementation notes:
 Implementation notes:
 
 - M61 introduced `KRUSTBOOTM61` version 7 and rejected M60 compact payloads
-  instead of accepting them as a compatibility format. M65 supersedes this with
-  `KRUSTBOOTM65` version 8 and rejects M61 payloads as legacy.
+  instead of accepting them as a compatibility format. M75 supersedes the M65
+  compact identity with `KRUSTBOOTM75` version 11 and rejects older compact
+  payloads as legacy.
 - The kernel rejects current-process capabilities whose generation provenance
   does not match the active runtime generation, rejects `SYS_CAP_MOVE` before
   clearing the source when the target slot is occupied or invalid, checks DMA
@@ -2565,12 +2584,13 @@ Implementation notes:
 - Define the exact VertexDisk durability contract before adding a filesystem.
   A small, auditable store/state layout is more valuable than broad POSIX file
   semantics at this stage.
-- Keep store and state traffic separated by endpoint identity, as in M43-M57.
+- Keep store and state block traffic separated by endpoint identity, as in
+  M43-M57, while client-facing state access moves through VFS.
 - Prefer explicit error surfaces in `vertex-inspect` and the appliance shell over
   silent retry loops.
 - The block-driver self-test no longer overwrites the live journal sector. It
   writes a scratch journal sector, reports virtio completion status, and keeps
-  store and state endpoint ranges separate.
+  store and state block-client ranges separate.
 - `vertex-state` replays an interrupted journal record deterministically and
   reports corrupt journal records before rolling back to indexed state.
 - The update transaction path now reports both pre-final-pointer and
@@ -2691,7 +2711,7 @@ Supported profile:
 ```text
 x86_64 one CPU
 Limine boot
-KrustBoot Manifest v1 / compact payload KRUSTBOOTM65 version 8
+KrustBoot Manifest v1 / compact payload KRUSTBOOTM75 version 11
 QEMU virtio-blk, virtio-rng, virtio-net, and virtio-console
 VertexDisk store/state/update layout
 no legacy transport or payload compatibility
@@ -2718,9 +2738,9 @@ Implementation notes:
 - Do not expand to SMP, USB, GPU, a full filesystem, or Linux/POSIX
   compatibility until the profile can boot, update, recover, and explain its
   authority graph repeatably.
-- The compact native payload identity is now `KRUSTBOOTM65` version 8. M61 and
-  older compact payload identities are rejected rather than retained as
-  compatibility formats.
+- The compact native payload identity is now `KRUSTBOOTM75` version 11. M65,
+  M61, and older compact payload identities are rejected rather than retained
+  as compatibility formats.
 - The release gate records a supported profile artifact containing the exact
   toolchain, manifest hash, KrustBoot hash, kernel hash, VertexDisk hash, and
   store closure.
@@ -3070,7 +3090,7 @@ Krust QEMU gate
 
 ## M74: VFS Object Model And Authority
 
-Status: planned.
+Status: done.
 
 Goal: introduce a real VFS object model that unifies files, directories,
 devices, immutable store objects, and mutable state volumes behind explicit
@@ -3083,8 +3103,8 @@ VFS object kinds: regular file, directory, device node, pipe, synthetic node
 stable vnode/inode identities independent from user path strings
 file rights: lookup, read, write, create, unlink, rename, mount, stat, execute
 filesystem capability objects in the boot manifest
-root directory caps and service-local namespace roots
-typed VFS syscall status values in ABI v2
+root directory caps and service-local VFS roots
+typed VFS syscall status values in the native ABI
 runtime inspect report for live VFS objects and authority
 ```
 
@@ -3101,6 +3121,73 @@ inspect reports vnode id, object kind, rights, owner process, and mount source
 old store/state-only access paths are rejected once VFS mode is selected
 ```
 
+Current implementation state:
+
+```text
+done: kernel VFS nodes cover /, /store, /state, /dev, /proc
+done: node kinds cover regular file, directory, device node, pipe, synthetic node
+done: immutable store/config objects appear as read-only regular files
+done: /state/a exists as a kernel memory-file prototype below /state
+done: virtio devices appear as /dev nodes tied to underlying device caps
+done: boot manifest carries first-class VFS root authority objects
+done: service-local VFS root caps can open configured VFS paths
+done: compact process records carry a validated `mount_root`; service
+      `mountRoot` selects the process-local VFS root without retaining a legacy
+      version-10 process-record parser
+done: VFS-root path syscalls resolve absolute user paths under the current
+      process mount root, so a service rooted at /state opens /a as /state/a
+      while direct store/config empty-path opens remain direct object opens
+done: device-node open through `/dev` requires both VFS root path authority and
+      the underlying virtio-device control cap; direct device caps are rejected
+      as VFS path authority
+done: SYS_VFS_DERIVE_ROOT creates covered directory subtree root caps for
+      explicit path attenuation
+done: VFS roots without `resolve` cannot traverse child paths, even when they
+      retain read rights
+done: directory handles can enumerate child vnode entries with stable vnode ids
+      through native SYS_VFS_READDIR
+done: explicit VFS mount objects exist for rootfs, storefs, volatile state,
+      devfs, and procfs, and runtime inspect reports their root vnode, source,
+      flags, and dynamic status
+done: SYS_VFS_MOUNT and SYS_VFS_UNMOUNT create and remove empty volatile
+      mounted directory roots with explicit mount authority and busy-root
+      rejection
+done: manifest-granted VFS root authority can create, write, read, and unlink
+      a volatile regular memory file below /state
+done: SYS_VFS_RENAME requires explicit rename authority on both source and
+      destination parent directories, moves volatile memory-file vnodes without
+      changing vnode identity, and rejects destination replacement
+done: unlink rejects directories, non-volatile VFS nodes, non-empty subtrees,
+      and nodes with live open-file descriptions
+done: direct legacy SYS_OBJECT_READ is rejected in VFS mode
+done: inspect reports vnode id, kind, parent, backing, mount source, owner process,
+      live handle slot, open-file description, rights, flags, offsets, and refs
+done: VFS syscalls reject M59 namespace caps as filesystem authority
+done: VFS syscalls return typed STATUS_VFS_* values for filesystem errors
+      instead of collapsing them into generic bad-capability status
+done: compact native `state_volumes` records are accepted without direct
+      `OBJECT_STATE` grants and are installed as explicit VFS state-volume
+      mount roots below `/state/<state-id suffix>`
+done: manifest-declared state volumes expose `/state/<suffix>/value` as regular
+      VFS files; read/write/stat operations validate user buffers, block the
+      caller, and transact with `vertex-state` through a native versioned request
+      carrying the state id instead of a hardcoded state name
+done: service-backed state-value stat asks `vertex-state` for the durable
+      current value length and returns a normal 32-byte VFS stat record
+done: `/state/counter/control` is a VFS control file for native shutdown, so
+      clients no longer need a direct state-service endpoint to terminate the
+      demo state service
+done: `vertex-state` serves VFS state read/write/stat requests and persists writes
+      for every indexed VertexDisk state volume through the journal/data/index
+      block protocol
+deferred: /state/a remains a volatile kernel memory-file fixture below an
+          explicit volatile mount, while state-volume value files are durable
+          service-backed files
+deferred: directory metadata transactions, writeback caching, and non-state
+          service-backed metadata transactions are M76-M81 work rather than
+          M74 substrate requirements
+```
+
 Implementation notes:
 
 - Keep the VFS name and object authority in the kernel, but do not put a full
@@ -3114,7 +3201,7 @@ Implementation notes:
 
 ## M75: Open Files, Handles, And Descriptor Lifecycle
 
-Status: planned.
+Status: done.
 
 Goal: make open files first-class kernel-owned handles with explicit lifetime,
 rights, offsets, blocking behavior, and cleanup on process exit or fault.
@@ -3127,6 +3214,7 @@ open file descriptions with offset, rights, flags, and vnode reference
 open, close, read, write, pread, pwrite, seek, stat, sync syscalls
 handle duplication and attenuation rules
 O_APPEND, O_TRUNC, O_CREATE equivalent semantics as native flags
+nonblocking whole-file advisory lock and unlock syscalls
 process-exit and fault cleanup for open handles
 bounded per-process and global handle quotas
 ```
@@ -3141,6 +3229,54 @@ process exit closes all handles and releases vnode references
 faulted process cannot leave a file locked or pinned
 handle quota exhaustion fails without leaking handles or vnodes
 close of invalid or already closed handle returns a controlled error
+```
+
+Current implementation state:
+
+```text
+done: per-process VFS handle table is separate from capability slots
+done: global open-file descriptions hold vnode, rights, flags, offset, owner,
+      and reference count
+done: open, close, read, write, pread, pwrite, seek, stat, sync, dup syscalls
+      are allocated in the ABI
+done: duplicated handles share offsets only with an explicit dup flag; otherwise
+      the offset is copied into an independent open-file description
+done: native open-create creates missing volatile memory files only after
+      validating create authority and requested file-handle rights
+done: open-create handle-quota failure rolls back the newly created vnode and
+      memory-file backing instead of leaking an unreachable file
+done: trunc and append open flags are implemented for volatile memory files
+      and covered by the smoke gate
+done: close, process exit, process fault, restart reload, kill, and reap paths
+      release VFS handles/open-file descriptions
+done: nonblocking whole-file advisory locks reject conflicting open-file
+      descriptions, are shared by shared-duped handles, and are released on
+      final close or process cleanup
+done: the user-fault restart gate proves a faulted process cannot leave a VFS
+      advisory lock behind
+done: per-process handle quota is bounded and rejected without leaking handles
+done: invalid close returns a controlled error
+done: create/unlink are implemented for manifest-granted volatile memory files
+      and covered by the smoke gate, including busy-unlink rejection
+done: `/proc/log-stream` is a live VFS pipe; read on an empty stream blocks the
+      process in `blocked-vfs` state and the next kernel log write copies bytes
+      into the saved user buffer and wakes the reader
+done: service-backed state-volume value-file read, write, and stat use saved
+      syscall frames, transact through kernel-owned
+      `state-vfs-request`/`state-vfs-reply` endpoints, and wake after
+      `vertex-state` completes the state-id-scoped transaction
+done: `/state/counter/control` uses the same blocked VFS transaction machinery
+      for service shutdown
+done: write/pwrite/trunc/append and create/unlink are implemented for the
+      volatile memory-file backing; durable metadata variants are M76-M78 work
+done: rename exists for volatile memory-file vnodes with stable vnode identity;
+      durable filesystem-service rename and cross-filesystem policy are M76
+done: blocking file behavior exists for the live log-stream pipe and the
+      service-backed state-volume value files
+deferred: durable filesystem-service lock integration, non-state
+          filesystem-service transaction routing, and metadata transaction
+          integration are M76-M81 work rather than M75 handle-lifecycle
+          requirements
 ```
 
 Implementation notes:

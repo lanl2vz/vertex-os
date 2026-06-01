@@ -138,6 +138,9 @@ fn validate_capabilities(
         if capability.kind == "ipc-endpoint" {
             validate_ipc_endpoint_rights(&capability.id, &capability.rights, "capability", report);
         }
+        if capability.kind == "vfs-root" {
+            validate_vfs_root_capability(capability, report);
+        }
 
         if !ids.contains(&capability.provider) {
             report.error(format!(
@@ -146,6 +149,53 @@ fn validate_capabilities(
             ));
         }
     }
+}
+
+fn validate_vfs_root_capability(capability: &Capability, report: &mut ValidationReport) {
+    let Some(root) = capability.properties.get("root").and_then(Value::as_str) else {
+        report.error(format!(
+            "vfs-root capability {} missing root",
+            capability.id
+        ));
+        return;
+    };
+    if !is_valid_vfs_absolute_path(root) {
+        report.error(format!(
+            "vfs-root capability {} root {} must be an absolute non-trailing-slash path",
+            capability.id, root
+        ));
+    }
+}
+
+fn validate_service_mount_root(service: &Service, report: &mut ValidationReport) {
+    let Some(value) = service.extra.get("mountRoot") else {
+        return;
+    };
+    let Some(root) = value.as_str() else {
+        report.error(format!("service {} mountRoot must be a string", service.id));
+        return;
+    };
+    if !is_valid_vfs_absolute_path(root) {
+        report.error(format!(
+            "service {} mountRoot {} must be an absolute non-trailing-slash path",
+            service.id, root
+        ));
+    }
+}
+
+fn is_valid_vfs_absolute_path(path: &str) -> bool {
+    let bytes = path.as_bytes();
+    if bytes.is_empty() || bytes[0] != b'/' || (bytes.len() > 1 && bytes[bytes.len() - 1] == b'/') {
+        return false;
+    }
+    let mut index = 1;
+    while index < bytes.len() {
+        if bytes[index] == 0 || (bytes[index] == b'/' && bytes[index - 1] == b'/') {
+            return false;
+        }
+        index += 1;
+    }
+    true
 }
 
 fn validate_services(manifest: &GenerationManifest, report: &mut ValidationReport) {
@@ -275,6 +325,8 @@ fn validate_services(manifest: &GenerationManifest, report: &mut ValidationRepor
                 service.id, service.restart
             ));
         }
+
+        validate_service_mount_root(service, report);
     }
 }
 
@@ -325,6 +377,10 @@ fn is_valid_right(right: &str) -> bool {
             | "delegate"
             | "revoke"
             | "resolve"
+            | "create"
+            | "unlink"
+            | "rename"
+            | "mount"
     )
 }
 
