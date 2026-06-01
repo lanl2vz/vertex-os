@@ -118,6 +118,18 @@ global_asm!(
     pop rax
     .endm
 
+    .macro rust_call target
+    mov r12, rsp
+    and rsp, -16
+    call \target
+    mov rsp, r12
+    .endm
+
+    .macro rust_call_noreturn target
+    and rsp, -16
+    call \target
+    .endm
+
     .global krust_invalid_opcode_entry
 krust_invalid_opcode_entry:
     mov rax, [rsp + 8]
@@ -130,7 +142,7 @@ krust_invalid_opcode_entry:
     mov rdx, r14
     mov rcx, rsp
     cld
-    call krust_user_exception_dispatch
+    rust_call krust_user_exception_dispatch
     pop_user_frame
     iretq
 6:
@@ -138,7 +150,7 @@ krust_invalid_opcode_entry:
     xor rdx, rdx
     mov rdi, 6
     cld
-    call krust_exception_dispatch
+    rust_call_noreturn krust_exception_dispatch
 1:
     hlt
     jmp 1b
@@ -157,7 +169,7 @@ krust_general_protection_entry:
     mov rdx, r15
     mov rcx, rsp
     cld
-    call krust_user_exception_dispatch
+    rust_call krust_user_exception_dispatch
     pop_user_frame
     iretq
 7:
@@ -165,7 +177,7 @@ krust_general_protection_entry:
     xor rdx, rdx
     mov rdi, 13
     cld
-    call krust_exception_dispatch
+    rust_call_noreturn krust_exception_dispatch
 2:
     hlt
     jmp 2b
@@ -183,7 +195,7 @@ krust_page_fault_entry:
     mov rsi, r15
     mov rdx, rsp
     cld
-    call krust_page_fault_user_dispatch
+    rust_call krust_page_fault_user_dispatch
     pop_user_frame
     iretq
 4:
@@ -191,7 +203,7 @@ krust_page_fault_entry:
     mov rsi, r14
     mov rdx, r15
     cld
-    call krust_exception_dispatch
+    rust_call_noreturn krust_exception_dispatch
 3:
     hlt
     jmp 3b
@@ -206,13 +218,13 @@ krust_timer_entry:
     push_user_frame
     mov rdi, rsp
     cld
-    call krust_timer_user_dispatch
+    rust_call krust_timer_user_dispatch
     pop_user_frame
     iretq
 5:
     push_user_frame
     cld
-    call krust_timer_kernel_dispatch
+    rust_call krust_timer_kernel_dispatch
     pop_user_frame
     iretq
 
@@ -228,14 +240,14 @@ krust_timer_entry:
     mov rdi, \line
     mov rsi, rsp
     cld
-    call krust_irq_user_dispatch
+    rust_call krust_irq_user_dispatch
     pop_user_frame
     iretq
 9:
     push_user_frame
     mov rdi, \line
     cld
-    call krust_irq_kernel_dispatch
+    rust_call krust_irq_kernel_dispatch
     pop_user_frame
     iretq
     .endm

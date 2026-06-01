@@ -1127,6 +1127,7 @@ struct Global<T>(UnsafeCell<T>);
 unsafe impl<T> Sync for Global<T> {}
 
 static RUNTIME: Global<RuntimeState> = Global(UnsafeCell::new(RuntimeState::new()));
+static INSTALL_STAGING_RUNTIME: Global<RuntimeState> = Global(UnsafeCell::new(RuntimeState::new()));
 static GENERATION_RUNTIMES: Global<GenerationRuntimeTable> =
     Global(UnsafeCell::new(GenerationRuntimeTable::new()));
 static ROLLBACK_RUNTIME: Global<Option<GenerationRuntime>> = Global(UnsafeCell::new(None));
@@ -2209,6 +2210,10 @@ impl ObjectTable {
         base: u64,
         length: u64,
     ) -> Result<KernelObjectId, InitError> {
+        if self.count == self.objects.len() {
+            return Err(InitError::ObjectTableFull);
+        }
+
         let id = KernelObjectId(self.next_id);
         self.next_id += 1;
         self.objects[self.count] = Some(KernelObject::BootModule(BootModuleObject::new(
@@ -2522,6 +2527,22 @@ impl ObjectTable {
         }
         self.trim_empty_tail();
         removed
+    }
+
+    fn remove_owned_endpoint(&mut self, id: KernelObjectId, owner: ProcessId) -> bool {
+        let mut index = 0;
+        while index < self.count {
+            if let Some(KernelObject::IpcEndpoint(endpoint)) = self.objects[index]
+                && endpoint.id == id
+                && endpoint.owner == owner
+            {
+                self.objects[index] = None;
+                self.trim_empty_tail();
+                return true;
+            }
+            index += 1;
+        }
+        false
     }
 
     fn remove_derived_vfs_root(&mut self, id: KernelObjectId) -> bool {
@@ -3774,6 +3795,12 @@ impl RuntimeState {
         count
     }
 
+    fn can_allocate_capability(&self) -> bool {
+        self.next_cap_id != 0
+            && self.next_cap_id != u64::MAX
+            && self.cap_lineage_count < self.cap_lineage.len()
+    }
+
     fn new_capability(
         &mut self,
         object: KernelObjectId,
@@ -3799,6 +3826,20 @@ impl RuntimeState {
         };
         self.next_cap_id += 1;
         Ok(cap)
+    }
+
+    fn rollback_last_capability(&mut self, cap: Capability) {
+        if self.next_cap_id == cap.id.saturating_add(1) {
+            self.next_cap_id = cap.id;
+        }
+        if self.cap_lineage_count > 0
+            && self.cap_lineage[self.cap_lineage_count - 1]
+                .map(|lineage| lineage.cap_id == cap.id)
+                .unwrap_or(false)
+        {
+            self.cap_lineage_count -= 1;
+            self.cap_lineage[self.cap_lineage_count] = None;
+        }
     }
 
     fn record_cap_lineage(&mut self, cap_id: u64, parent_cap_id: u64) -> Result<(), IpcError> {
@@ -4286,11 +4327,26 @@ pub fn init_from_boot_config(config: &'static BootRuntimeConfig) -> Result<(), I
     let initial_context = load_boot_initial_context(initial_process)?;
     let (old_contexts, old_context_count) = snapshot_runtime_reap_targets();
 
-    let result = install_boot_config(config, initial_index, initial_process, initial_context);
+    let result = {
+        let staging = staging_runtime();
+        build_boot_config_runtime(
+            staging,
+            config,
+            initial_index,
+            initial_process,
+            initial_context,
+        )
+    };
     if result.is_err() {
         reclaim_detached_address_space(initial_process.name, initial_context.cr3);
         return result;
     }
+
+    boot_manager().start_boot(config.generation_id);
+    release_all_runtime_dma_mappings();
+    commit_staging_runtime();
+    install_runtime_interrupt_masks(config);
+    print_boot_tables(runtime());
 
     if old_context_count > 0 {
         unsafe {
@@ -4304,19 +4360,16 @@ pub fn init_from_boot_config(config: &'static BootRuntimeConfig) -> Result<(), I
     Ok(())
 }
 
-fn install_boot_config(
+fn build_boot_config_runtime(
+    runtime: &mut RuntimeState,
     config: &'static BootRuntimeConfig,
     initial_index: usize,
     initial_process: BootProcessConfig,
     initial_context: ProcessContext,
 ) -> Result<(), InitError> {
-    boot_manager().start_boot(config.generation_id);
-    release_all_runtime_dma_mappings();
-    let runtime = runtime();
     runtime.objects.reset();
     runtime.processes.reset();
     runtime.reset_capability_lifecycle(config);
-    timer::reset_legacy_irq_masks();
 
     let mut endpoint_index = 0;
     while endpoint_index < config.endpoint_count {
@@ -4388,12 +4441,6 @@ fn install_boot_config(
         let line = config.interrupt_lines[irq_index].ok_or(InitError::InvalidBootManifest)?;
         runtime.interrupt_line_ids[irq_index] =
             Some(runtime.objects.add_interrupt_line(line.id, line.line)?);
-        timer::enable_legacy_irq(line.line as u8);
-        serial::write_str("Legacy IRQ unmasked: interrupt-line=");
-        serial::write_str(line.id);
-        serial::write_str(" line=");
-        serial::write_u64_dec(line.line);
-        serial::write_str("\n");
         irq_index += 1;
     }
 
@@ -4534,8 +4581,34 @@ fn install_boot_config(
         .map_err(|_| InitError::CapabilityTableFull)?;
     grant_process_cap_by_pid(runtime, initial_pid, INIT_TIMER_CAP_SLOT, cap, true)?;
 
-    print_boot_tables(runtime);
     Ok(())
+}
+
+fn commit_staging_runtime() {
+    unsafe {
+        core::ptr::copy_nonoverlapping(
+            INSTALL_STAGING_RUNTIME.0.get() as *const RuntimeState,
+            RUNTIME.0.get(),
+            1,
+        );
+    }
+}
+
+fn install_runtime_interrupt_masks(config: &BootRuntimeConfig) {
+    timer::reset_legacy_irq_masks();
+    let mut irq_index = 0;
+    while irq_index < config.interrupt_line_count {
+        let Some(line) = config.interrupt_lines[irq_index] else {
+            return;
+        };
+        timer::enable_legacy_irq(line.line as u8);
+        serial::write_str("Legacy IRQ unmasked: interrupt-line=");
+        serial::write_str(line.id);
+        serial::write_str(" line=");
+        serial::write_u64_dec(line.line);
+        serial::write_str("\n");
+        irq_index += 1;
+    }
 }
 
 fn validate_boot_config_installable(config: &BootRuntimeConfig) -> Result<(), InitError> {
@@ -4569,7 +4642,7 @@ fn validate_boot_config_installable(config: &BootRuntimeConfig) -> Result<(), In
         }
         endpoint_index += 1;
     }
-    initial_process_index(config)?;
+    let initial_index = initial_process_index(config)?;
     validate_boot_config_state_volumes(config)?;
 
     let object_count = boot_config_object_count(config).ok_or(InitError::ObjectTableFull)?;
@@ -4626,6 +4699,11 @@ fn validate_boot_config_installable(config: &BootRuntimeConfig) -> Result<(), In
         {
             return Err(InitError::InvalidBootManifest);
         }
+        if grant.process_index == initial_index
+            && initial_process_reserved_cap_slot(config, grant.cap_slot)
+        {
+            return Err(InitError::InvalidBootManifest);
+        }
 
         let mut previous = 0;
         while previous < grant_index {
@@ -4641,6 +4719,10 @@ fn validate_boot_config_installable(config: &BootRuntimeConfig) -> Result<(), In
     }
 
     Ok(())
+}
+
+fn initial_process_reserved_cap_slot(config: &BootRuntimeConfig, slot: u64) -> bool {
+    slot == 2 || slot == INIT_TIMER_CAP_SLOT || (slot == 0 && config.manifest_module.is_some())
 }
 
 fn validate_counted_config_entries<T: Copy, const N: usize>(
@@ -6752,6 +6834,10 @@ pub fn endpoint_create(control_slot: u64, cap_slot: u64) -> Result<(), IpcError>
         serial::write_str(" target cap slot unavailable\n");
         return Err(IpcError::BadCapability);
     }
+    if !runtime.can_allocate_capability() {
+        serial::write_str("Endpoint create rejected: cap lineage full\n");
+        return Err(IpcError::BadCapability);
+    }
 
     let endpoint_id = runtime
         .objects
@@ -6760,21 +6846,37 @@ pub fn endpoint_create(control_slot: u64, cap_slot: u64) -> Result<(), IpcError>
             serial::write_str("Endpoint create rejected: object arena full\n");
             IpcError::BadCapability
         })?;
-    let cap = runtime.new_capability(
+    let cap = match runtime.new_capability(
         endpoint_id,
         capability::RIGHT_SEND | capability::RIGHT_RECEIVE,
         owner,
         0,
         owner,
-    )?;
-    let Some(process) = runtime.processes.current_process_mut() else {
+    ) {
+        Ok(cap) => cap,
+        Err(error) => {
+            let _ = runtime.objects.remove_owned_endpoint(endpoint_id, owner);
+            return Err(error);
+        }
+    };
+    let quota_after = {
+        let Some(process) = runtime.processes.current_process_mut() else {
+            runtime.rollback_last_capability(cap);
+            let _ = runtime.objects.remove_owned_endpoint(endpoint_id, owner);
+            return Err(IpcError::BadCapability);
+        };
+        if process.caps.grant(cap_slot, cap).is_err() {
+            None
+        } else {
+            process.quota.used_endpoints = process.quota.used_endpoints.saturating_add(1);
+            Some((process.quota.used_endpoints, process.quota.max_endpoints))
+        }
+    };
+    let Some((used_endpoints, max_endpoints)) = quota_after else {
+        runtime.rollback_last_capability(cap);
+        let _ = runtime.objects.remove_owned_endpoint(endpoint_id, owner);
         return Err(IpcError::BadCapability);
     };
-    process
-        .caps
-        .grant(cap_slot, cap)
-        .map_err(|_| IpcError::BadCapability)?;
-    process.quota.used_endpoints = process.quota.used_endpoints.saturating_add(1);
 
     serial::write_str("Endpoint create accepted: proc=");
     serial::write_str(process_name);
@@ -6783,9 +6885,9 @@ pub fn endpoint_create(control_slot: u64, cap_slot: u64) -> Result<(), IpcError>
     serial::write_str(" endpoint_id=");
     serial::write_u64_dec(endpoint_id.raw());
     serial::write_str(" quota=");
-    serial::write_u64_dec(process.quota.used_endpoints);
+    serial::write_u64_dec(used_endpoints);
     serial::write_str("/");
-    serial::write_u64_dec(process.quota.max_endpoints);
+    serial::write_u64_dec(max_endpoints);
     serial::write_str("\n");
     Ok(())
 }
@@ -12645,6 +12747,10 @@ fn store_hash_hex(bytes: &[u8; 32], out: &mut [u8; 64]) {
 
 fn runtime() -> &'static mut RuntimeState {
     unsafe { &mut *RUNTIME.0.get() }
+}
+
+fn staging_runtime() -> &'static mut RuntimeState {
+    unsafe { &mut *INSTALL_STAGING_RUNTIME.0.get() }
 }
 
 fn frame_allocator() -> Result<&'static mut memory::FrameAllocator, IpcError> {
