@@ -412,8 +412,8 @@ non-mounted directory covered by `resolve` and `unlink`, returning
 `STATUS_VFS_BUSY` for children or open directory handles. SYS_VFS_LINK uses the
 same packed two-path request shape as rename, requires `resolve` on the source
 parent and `create` on the destination parent, shares volatile memory-file
-backing, updates link-count metadata, and rejects cross-filesystem links with
-`STATUS_VFS_UNSUPPORTED`.
+backing, updates metadata for every vnode sharing that backing, and rejects
+cross-filesystem or cross-mount-instance links with `STATUS_VFS_UNSUPPORTED`.
 SYS_SECRET_READ requires read rights on a secret cap and logs metadata only.
 Native state-volume records are installed as explicit VFS mount roots below
 `/state/<state-id suffix>`; direct state-object grants are rejected. Each

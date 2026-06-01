@@ -427,7 +427,55 @@ pub extern "C" fn _start() -> ! {
         log(b"VFS hard link readback failed");
         sys::exit(1);
     }
+    let link_metadata_before = read_u64_le(&link_stat, 32);
     log(b"VFS hard links share volatile file backing and report link count");
+
+    let link_rewriter = sys::vfs_open_path_readwrite(CAP_VFS_WRITER, b"/link-src");
+    if status_is_error(link_rewriter)
+        || sys::vfs_write(link_rewriter, b"new") != 3
+        || sys::vfs_close(link_rewriter) != sys::STATUS_OK
+    {
+        log(b"VFS hard link rewrite failed");
+        sys::exit(1);
+    }
+    let link_reader = sys::vfs_open_path_read(CAP_VFS_WRITER, b"/link-copy");
+    let mut rewritten_link_bytes = [0u8; 3];
+    let mut link_stat_after_write = [0u8; 64];
+    if status_is_error(link_reader)
+        || sys::vfs_read(link_reader, &mut rewritten_link_bytes)
+            != rewritten_link_bytes.len() as u64
+        || !bytes_eq(&rewritten_link_bytes, b"new")
+        || sys::vfs_stat(link_reader, &mut link_stat_after_write)
+            != link_stat_after_write.len() as u64
+        || read_u64_le(&link_stat_after_write, 8) != rewritten_link_bytes.len() as u64
+        || read_u64_le(&link_stat_after_write, 32) <= link_metadata_before
+        || read_u64_le(&link_stat_after_write, 40) != 2
+        || sys::vfs_close(link_reader) != sys::STATUS_OK
+    {
+        log(b"VFS hard link metadata write propagation failed");
+        sys::exit(1);
+    }
+    let link_metadata_after_write = read_u64_le(&link_stat_after_write, 32);
+    log(b"VFS hard link metadata version follows shared backing writes");
+
+    if sys::vfs_unlink(CAP_VFS_WRITER, b"/link-src") != sys::STATUS_OK {
+        log(b"VFS hard link source unlink failed");
+        sys::exit(1);
+    }
+    let link_reader = sys::vfs_open_path_read(CAP_VFS_WRITER, b"/link-copy");
+    let mut link_stat_after_unlink = [0u8; 64];
+    if status_is_error(link_reader)
+        || sys::vfs_stat(link_reader, &mut link_stat_after_unlink)
+            != link_stat_after_unlink.len() as u64
+        || read_u64_le(&link_stat_after_unlink, 32) <= link_metadata_after_write
+        || read_u64_le(&link_stat_after_unlink, 40) != 1
+        || sys::vfs_close(link_reader) != sys::STATUS_OK
+    {
+        log(b"VFS hard link metadata unlink propagation failed");
+        sys::exit(1);
+    }
+    log(b"VFS hard link metadata version follows link count changes");
+
     if sys::vfs_mount_volatile(CAP_VFS_WRITER, b"/link-mnt") != sys::STATUS_OK {
         log(b"VFS hard link mount fixture failed");
         sys::exit(1);
@@ -439,8 +487,29 @@ pub extern "C" fn _start() -> ! {
         log(b"VFS cross-filesystem hard link denial failed");
         sys::exit(1);
     }
-    if sys::vfs_unmount(CAP_VFS_WRITER, b"/link-mnt") != sys::STATUS_OK
-        || sys::vfs_unlink(CAP_VFS_WRITER, b"/link-src") != sys::STATUS_OK
+    if sys::vfs_unmount(CAP_VFS_WRITER, b"/link-mnt") != sys::STATUS_OK {
+        log(b"VFS hard link mount cleanup failed");
+        sys::exit(1);
+    }
+
+    if sys::vfs_mount_volatile(CAP_VFS_WRITER, b"/link-mnt-a") != sys::STATUS_OK
+        || sys::vfs_mount_volatile(CAP_VFS_WRITER, b"/link-mnt-b") != sys::STATUS_OK
+        || sys::vfs_create(CAP_VFS_WRITER, b"/link-mnt-a/file") != sys::STATUS_OK
+    {
+        log(b"VFS hard link multi-mount fixture failed");
+        sys::exit(1);
+    }
+    if sys::vfs_link(CAP_VFS_WRITER, b"/link-mnt-a/file", b"/link-mnt-b/file")
+        == sys::STATUS_VFS_UNSUPPORTED
+    {
+        log(b"VFS hard links cannot cross volatile mount instances");
+    } else {
+        log(b"VFS cross-volatile-mount hard link denial failed");
+        sys::exit(1);
+    }
+    if sys::vfs_unlink(CAP_VFS_WRITER, b"/link-mnt-a/file") != sys::STATUS_OK
+        || sys::vfs_unmount(CAP_VFS_WRITER, b"/link-mnt-b") != sys::STATUS_OK
+        || sys::vfs_unmount(CAP_VFS_WRITER, b"/link-mnt-a") != sys::STATUS_OK
         || sys::vfs_unlink(CAP_VFS_WRITER, b"/link-copy") != sys::STATUS_OK
     {
         log(b"VFS hard link cleanup failed");

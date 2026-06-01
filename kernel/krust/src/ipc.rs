@@ -2933,6 +2933,23 @@ impl ObjectTable {
         None
     }
 
+    fn get_vfs_mount_by_path(&self, path: &[u8]) -> Option<VfsMountObject> {
+        let mut best = None;
+        let mut best_len = 0;
+        let mut index = 0;
+        while index < self.count {
+            if let Some(KernelObject::VfsMount(mount)) = self.objects[index] {
+                let root_path = mount.root_path.as_bytes();
+                if vfs_authority_path_covers(root_path, path) && root_path.len() >= best_len {
+                    best = Some(mount);
+                    best_len = root_path.len();
+                }
+            }
+            index += 1;
+        }
+        best
+    }
+
     fn get_process_control(&self, id: KernelObjectId) -> Option<ProcessControlObject> {
         let mut index = 0;
         while index < self.count {
@@ -3386,13 +3403,34 @@ impl RuntimeState {
         version
     }
 
-    fn touch_vfs_node(&mut self, id: VfsNodeId) -> Result<u64, IpcError> {
-        let version = self.allocate_vfs_metadata_version();
-        let index = self.vfs_node_index(id).ok_or(IpcError::VfsBadHandle)?;
-        let Some(node) = self.vfs_nodes[index].as_mut() else {
+    fn touch_vfs_memory_file_nodes(&mut self, backing: usize) -> Result<u64, IpcError> {
+        let mut found = false;
+        let mut index = 0;
+        while index < self.vfs_node_count {
+            if let Some(node) = self.vfs_nodes[index]
+                && let VfsBacking::MemoryFile(node_backing) = node.backing
+                && node_backing == backing
+            {
+                found = true;
+                break;
+            }
+            index += 1;
+        }
+        if !found {
             return Err(IpcError::VfsBadHandle);
-        };
-        node.metadata_version = version;
+        }
+
+        let version = self.allocate_vfs_metadata_version();
+        index = 0;
+        while index < self.vfs_node_count {
+            if let Some(node) = self.vfs_nodes[index].as_mut()
+                && let VfsBacking::MemoryFile(node_backing) = node.backing
+                && node_backing == backing
+            {
+                node.metadata_version = version;
+            }
+            index += 1;
+        }
         Ok(version)
     }
 
@@ -7959,9 +7997,14 @@ pub fn vfs_unlink(cap_slot: u64, path: *const u8, path_len: usize) -> Result<(),
         let runtime = runtime();
         if runtime.vfs_node_has_open_description(node.id) {
             runtime.detach_vfs_node(node.id)?;
+            runtime.touch_vfs_memory_file_nodes(backing)?;
         } else {
             runtime.remove_vfs_node(node.id)?;
-            let _ = runtime.release_vfs_memory_file(backing);
+            if runtime.vfs_memory_file_in_use(backing) {
+                runtime.touch_vfs_memory_file_nodes(backing)?;
+            } else {
+                let _ = runtime.release_vfs_memory_file(backing);
+            }
         }
     }
 
@@ -8168,7 +8211,15 @@ pub fn vfs_link(cap_slot: u64, request: *const u8, request_len: usize) -> Result
     if !matches!(new_parent.kind, VfsNodeKind::Directory) {
         return Err(IpcError::VfsNotDirectory);
     }
-    if node.mount_source != new_parent.mount_source {
+    let old_mount = runtime()
+        .objects
+        .get_vfs_mount_by_path(old_path)
+        .ok_or(IpcError::VfsUnsupported)?;
+    let new_mount = runtime()
+        .objects
+        .get_vfs_mount_by_path(new_parent_path)
+        .ok_or(IpcError::VfsUnsupported)?;
+    if old_mount.id != new_mount.id {
         return Err(IpcError::VfsUnsupported);
     }
     if runtime().vfs_node_by_path(new_path).is_some() {
@@ -8185,7 +8236,7 @@ pub fn vfs_link(cap_slot: u64, request: *const u8, request_len: usize) -> Result
             node.mount_source,
         )
         .map_err(|_| IpcError::VfsNoSpace)?;
-    runtime.touch_vfs_node(node.id)?;
+    runtime.touch_vfs_memory_file_nodes(backing)?;
 
     serial::write_str("VFS link accepted: proc=");
     serial::write_str(current_process_name());
@@ -8756,7 +8807,7 @@ fn vfs_write_node(node: VfsNode, offset: u64, bytes: &[u8]) -> Result<(usize, u6
                     file.len = end;
                 }
             }
-            runtime.touch_vfs_node(node.id)?;
+            runtime.touch_vfs_memory_file_nodes(index)?;
             Ok((bytes.len(), end as u64))
         }
         _ => Err(IpcError::VfsUnsupported),
@@ -8774,7 +8825,7 @@ fn vfs_truncate_node(node: VfsNode, len: usize) -> Result<(), IpcError> {
                 return Err(IpcError::VfsBadHandle);
             }
             runtime.vfs_mem_files[index].len = len;
-            runtime.touch_vfs_node(node.id)?;
+            runtime.touch_vfs_memory_file_nodes(index)?;
             Ok(())
         }
         _ => Err(IpcError::VfsUnsupported),

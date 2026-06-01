@@ -3342,9 +3342,13 @@ done: SYS_VFS_MKDIR and SYS_VFS_RMDIR create directories and reject non-empty
 done: unlink of an open volatile file detaches the path, keeps existing handles
       readable, and reaps the vnode/backing on final close
 done: SYS_VFS_LINK creates same-filesystem volatile hard links, shares the
-      memory-file backing, reports link count, and rejects cross-filesystem links
+      memory-file backing, reports link count, rejects cross-filesystem links,
+      and rejects links across independent volatile mount instances
+done: metadata versions for hard-linked volatile files advance for every vnode
+      sharing the backing on write, truncate, link, and unlink
 done: scripts/krust-test.sh m76 covers rename metadata, mkdir/rmdir,
-      open-unlink, hard-link policy, long path rejection, and traversal denial
+      open-unlink, hard-link metadata, mount-instance hard-link policy, long
+      path rejection, and traversal denial
 deferred: persistent metadata journals for a general on-disk filesystem move to
           M78 VertexFS rather than being bolted onto the volatile fixture
 ```

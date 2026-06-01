@@ -425,7 +425,10 @@ VFS rmdir rejects non-empty directory
 VFS mkdir creates directories and rmdir removes empty directories
 VFS unlink of open file keeps existing handle readable until close
 VFS hard links share volatile file backing and report link count
+VFS hard link metadata version follows shared backing writes
+VFS hard link metadata version follows link count changes
 VFS hard links cannot cross filesystem boundaries
+VFS hard links cannot cross volatile mount instances
 long VFS paths and components are rejected before allocation
 path traversal cannot escape service namespace root
 virtio-blk driver ready
