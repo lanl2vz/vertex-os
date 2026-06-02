@@ -3,30 +3,30 @@
   "generation": {
     "id": "gen:hello-0001",
     "createdUtc": "2026-05-22T00:00:00Z",
-    "description": "Minimal Vertex OS hosted demo generation",
+    "description": "Minimal Vertex OS native Krust demo generation",
     "parent": null,
     "manifestHash": null
   },
   "kernel": {
-    "id": "kernel:hosted-linux-placeholder",
-    "kind": "hosted-linux",
-    "storeObject": "store:hosted-kernel-placeholder",
-    "abi": "hosted-linux.v0",
-    "target": "x86_64-linux"
+    "id": "kernel:krust-placeholder",
+    "kind": "krust-native",
+    "storeObject": "store:kernel-placeholder",
+    "abi": "krust.v0",
+    "target": "x86_64-unknown-none"
   },
   "init": {
     "id": "init:vertex-init",
     "executable": "exe:vertex-init",
-    "mode": "hosted-linux"
+    "mode": "krust-native"
   },
   "store": [
     {
-      "id": "store:hosted-kernel-placeholder",
-      "name": "hosted-kernel-placeholder",
+      "id": "store:kernel-placeholder",
+      "name": "kernel-placeholder",
       "kind": "kernel-image",
-      "path": "/vertex/store/demo-hosted-kernel-placeholder",
+      "path": "/vertex/store/kernel-placeholder",
       "hashAlgorithm": "blake3",
-      "hash": "demo-not-a-real-hash-hosted-kernel",
+      "hash": "demo-not-a-real-hash-kernel",
       "sizeBytes": 0,
       "references": []
     },
@@ -186,91 +186,91 @@
       "id": "exe:vertex-init",
       "storeObject": "store:vertex-init-demo",
       "entrypoint": "bin/vertex-init",
-      "abi": "hosted-linux-process.v0",
+      "abi": "krust-native-process.v0",
       "argsDefault": []
     },
     {
       "id": "exe:serial-driver",
       "storeObject": "store:serial-driver-demo",
       "entrypoint": "bin/serial-driver",
-      "abi": "hosted-linux-process.v0",
+      "abi": "krust-native-process.v0",
       "argsDefault": []
     },
     {
       "id": "exe:logd",
       "storeObject": "store:logd-demo",
       "entrypoint": "bin/logd",
-      "abi": "hosted-linux-process.v0",
+      "abi": "krust-native-process.v0",
       "argsDefault": []
     },
     {
       "id": "exe:block-driver",
       "storeObject": "store:block-driver-demo",
       "entrypoint": "bin/block-driver",
-      "abi": "hosted-linux-process.v0",
+      "abi": "krust-native-process.v0",
       "argsDefault": []
     },
     {
       "id": "exe:vertex-store",
       "storeObject": "store:vertex-store-demo",
       "entrypoint": "bin/vertex-store",
-      "abi": "hosted-linux-process.v0",
+      "abi": "krust-native-process.v0",
       "argsDefault": []
     },
     {
       "id": "exe:vertex-state",
       "storeObject": "store:vertex-state-demo",
       "entrypoint": "bin/vertex-state",
-      "abi": "hosted-linux-process.v0",
+      "abi": "krust-native-process.v0",
       "argsDefault": []
     },
     {
       "id": "exe:netstack",
       "storeObject": "store:netstack-demo",
       "entrypoint": "bin/netstack",
-      "abi": "hosted-linux-process.v0",
+      "abi": "krust-native-process.v0",
       "argsDefault": []
     },
     {
       "id": "exe:echo-server",
       "storeObject": "store:echo-server-demo",
       "entrypoint": "bin/echo",
-      "abi": "hosted-linux-process.v0",
+      "abi": "krust-native-process.v0",
       "argsDefault": []
     },
     {
       "id": "exe:model-reader",
       "storeObject": "store:model-reader-demo",
       "entrypoint": "bin/model-reader",
-      "abi": "hosted-linux-process.v0",
+      "abi": "krust-native-process.v0",
       "argsDefault": []
     },
     {
       "id": "exe:counter",
       "storeObject": "store:counter-demo",
       "entrypoint": "bin/counter",
-      "abi": "hosted-linux-process.v0",
+      "abi": "krust-native-process.v0",
       "argsDefault": []
     },
     {
       "id": "exe:state-reader",
       "storeObject": "store:state-reader-demo",
       "entrypoint": "bin/state-reader",
-      "abi": "hosted-linux-process.v0",
+      "abi": "krust-native-process.v0",
       "argsDefault": []
     },
     {
       "id": "exe:timer",
       "storeObject": "store:timer-demo",
       "entrypoint": "bin/timer",
-      "abi": "hosted-linux-process.v0",
+      "abi": "krust-native-process.v0",
       "argsDefault": []
     },
     {
       "id": "exe:flaky",
       "storeObject": "store:flaky-demo",
       "entrypoint": "bin/flaky",
-      "abi": "hosted-linux-process.v0",
+      "abi": "krust-native-process.v0",
       "argsDefault": []
     }
   ],
@@ -367,7 +367,7 @@
     {
       "id": "cap:clock.monotonic",
       "kind": "clock",
-      "provider": "kernel:hosted-linux-placeholder",
+      "provider": "kernel:krust-placeholder",
       "rights": [
         "read"
       ],
@@ -420,8 +420,7 @@
       ],
       "properties": {
         "protocol": "udp",
-        "port": 9000,
-        "hostedSimulation": "supervisor-passes-udp-endpoint"
+        "port": 9000
       }
     },
     {
@@ -470,6 +469,18 @@
       ],
       "properties": {
         "root": "/state"
+      }
+    },
+    {
+      "id": "cap:vfs.echo-state-control",
+      "kind": "vfs-root",
+      "provider": "svc:vertex-supervisor",
+      "rights": [
+        "resolve",
+        "control"
+      ],
+      "properties": {
+        "root": "/state/counter/control"
       }
     },
     {
@@ -653,7 +664,7 @@
     {
       "id": "cap:timer.sleep",
       "kind": "timer",
-      "provider": "kernel:hosted-linux-placeholder",
+      "provider": "kernel:krust-placeholder",
       "rights": [
         "control"
       ],
@@ -696,18 +707,6 @@
       ],
       "properties": {
         "root": "/state/counter"
-      }
-    },
-    {
-      "id": "cap:vfs.state-reader-control",
-      "kind": "vfs-root",
-      "provider": "svc:vertex-supervisor",
-      "rights": [
-        "resolve",
-        "write"
-      ],
-      "properties": {
-        "root": "/state/counter/control"
       }
     }
   ],
@@ -1074,6 +1073,13 @@
             "rename",
             "mount"
           ]
+        },
+        {
+          "capability": "cap:vfs.echo-state-control",
+          "rights": [
+            "resolve",
+            "control"
+          ]
         }
       ],
       "provides": [
@@ -1174,13 +1180,6 @@
           "rights": [
             "resolve",
             "read"
-          ]
-        },
-        {
-          "capability": "cap:vfs.state-reader-control",
-          "rights": [
-            "resolve",
-            "write"
           ]
         },
         {

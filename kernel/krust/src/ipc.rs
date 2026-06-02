@@ -7308,14 +7308,14 @@ pub fn vfs_write(
     frame: &mut SyscallFrame,
 ) -> Result<(), IpcError> {
     let (description, node) = current_open_file(handle)?;
-    if description.rights & capability::RIGHT_WRITE == 0 {
-        return Err(IpcError::VfsPermission);
-    }
-    if let VfsBacking::StateVolumeValue(state) = node.backing {
+    if let VfsBacking::StateVolumeControl(state) = node.backing {
+        if description.rights & capability::RIGHT_CONTROL == 0 {
+            return Err(IpcError::VfsPermission);
+        }
         if description.flags & VFS_OPEN_APPEND != 0 {
             return Err(IpcError::VfsUnsupported);
         }
-        return vfs_state_value_write(
+        return vfs_state_control_write(
             state,
             node,
             description,
@@ -7326,11 +7326,14 @@ pub fn vfs_write(
             frame,
         );
     }
-    if let VfsBacking::StateVolumeControl(state) = node.backing {
+    if description.rights & capability::RIGHT_WRITE == 0 {
+        return Err(IpcError::VfsPermission);
+    }
+    if let VfsBacking::StateVolumeValue(state) = node.backing {
         if description.flags & VFS_OPEN_APPEND != 0 {
             return Err(IpcError::VfsUnsupported);
         }
-        return vfs_state_control_write(
+        return vfs_state_value_write(
             state,
             node,
             description,
@@ -7377,13 +7380,10 @@ pub fn vfs_pwrite(
     let len = usize::try_from(packed_len_offset & 0xffff_ffff).unwrap_or(usize::MAX);
     let offset = packed_len_offset >> 32;
     let (description, node) = current_open_file(handle)?;
-    if description.rights & capability::RIGHT_WRITE == 0 {
-        return Err(IpcError::VfsPermission);
-    }
-    if let VfsBacking::StateVolumeValue(state) = node.backing {
-        return vfs_state_value_write(state, node, description, offset, source, len, false, frame);
-    }
     if let VfsBacking::StateVolumeControl(state) = node.backing {
+        if description.rights & capability::RIGHT_CONTROL == 0 {
+            return Err(IpcError::VfsPermission);
+        }
         return vfs_state_control_write(
             state,
             node,
@@ -7394,6 +7394,12 @@ pub fn vfs_pwrite(
             false,
             frame,
         );
+    }
+    if description.rights & capability::RIGHT_WRITE == 0 {
+        return Err(IpcError::VfsPermission);
+    }
+    if let VfsBacking::StateVolumeValue(state) = node.backing {
+        return vfs_state_value_write(state, node, description, offset, source, len, false, frame);
     }
     if len > MAX_VFS_MEM_FILE_BYTES {
         return Err(IpcError::VfsNoSpace);
@@ -8131,6 +8137,17 @@ pub fn vfs_rename(cap_slot: u64, request: *const u8, request_len: usize) -> Resu
     let VfsBacking::MemoryFile(_) = node.backing else {
         return Err(IpcError::VfsUnsupported);
     };
+    let old_mount = runtime()
+        .objects
+        .get_vfs_mount_by_path(old_path)
+        .ok_or(IpcError::VfsUnsupported)?;
+    let new_mount = runtime()
+        .objects
+        .get_vfs_mount_by_path(new_parent_path)
+        .ok_or(IpcError::VfsUnsupported)?;
+    if old_mount.id != new_mount.id {
+        return Err(IpcError::VfsUnsupported);
+    }
     if runtime().vfs_node_by_path(new_path).is_some() {
         return Err(IpcError::VfsExists);
     }
@@ -8630,6 +8647,12 @@ fn vfs_open_rights(flags: u64, node: VfsNode) -> Result<u64, IpcError> {
             }
             Ok(capability::RIGHT_CONTROL)
         }
+        _ if matches!(node.backing, VfsBacking::StateVolumeControl(_)) => {
+            if flags != VFS_OPEN_WRITE {
+                return Err(IpcError::VfsUnsupported);
+            }
+            Ok(capability::RIGHT_CONTROL)
+        }
         _ => vfs_regular_file_open_rights(flags),
     }
 }
@@ -8697,6 +8720,7 @@ fn vfs_regular_file_open_rights(flags: u64) -> Result<u64, IpcError> {
 fn vfs_file_right_mask() -> u64 {
     capability::RIGHT_READ
         | capability::RIGHT_WRITE
+        | capability::RIGHT_CONTROL
         | capability::RIGHT_CREATE
         | capability::RIGHT_UNLINK
         | capability::RIGHT_RENAME

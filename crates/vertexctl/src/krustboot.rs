@@ -20,6 +20,8 @@ const PROCESS_REF_LIST_LEN: usize = 2 + MAX_PROCESS_REFS * 2;
 const ENDPOINT_REQUIREMENT_LIST_LEN: usize = 2 + MAX_PROCESS_REFS * 4;
 const PROCESS_RECORD_LEN: usize =
     STRING_LEN * 5 + 4 + PROCESS_REF_LIST_LEN * 2 + ENDPOINT_REQUIREMENT_LIST_LEN;
+const PROCESS_PROVIDES_COUNT_OFFSET: usize =
+    STRING_LEN * 5 + 4 + PROCESS_REF_LIST_LEN + ENDPOINT_REQUIREMENT_LIST_LEN;
 const ENDPOINT_RECORD_LEN: usize = STRING_LEN;
 const GRANT_RECORD_LEN: usize = 12;
 const STORE_OBJECT_RECORD_LEN: usize = STRING_LEN * 3 + 8;
@@ -2943,11 +2945,9 @@ fn corrupt_missing_provider(bytes: &mut [u8]) -> Result<(), String> {
     let boot_modules = read_u16_at(bytes, payload + 18)? as usize;
     let processes = read_u16_at(bytes, payload + 20)? as usize;
     let process_base = payload + COMPACT_HEADER_SIZE + boot_modules * BOOT_MODULE_RECORD_LEN;
-    let provides_count_offset =
-        STRING_LEN * 4 + 4 + PROCESS_REF_LIST_LEN + ENDPOINT_REQUIREMENT_LIST_LEN;
     let mut index = 0;
     while index < processes {
-        let offset = process_base + index * PROCESS_RECORD_LEN + provides_count_offset;
+        let offset = process_base + index * PROCESS_RECORD_LEN + PROCESS_PROVIDES_COUNT_OFFSET;
         if offset + 2 > bytes.len() {
             return Err("KrustBoot process record is out of bounds".to_owned());
         }
@@ -3138,6 +3138,34 @@ mod tests {
         assert_eq!(
             first_non_endpoint_service_slot(2, 1),
             READINESS_RESERVED_CAP_SLOT + 3
+        );
+    }
+
+    #[test]
+    fn missing_provider_corruption_zeros_current_provides_list() {
+        let process_base = V1_PAYLOAD_OFFSET + COMPACT_HEADER_SIZE + BOOT_MODULE_RECORD_LEN;
+        let current_offset = process_base + PROCESS_PROVIDES_COUNT_OFFSET;
+        let stale_offset = process_base
+            + STRING_LEN * 4
+            + 4
+            + PROCESS_REF_LIST_LEN
+            + ENDPOINT_REQUIREMENT_LIST_LEN;
+        let mut bytes = vec![0; process_base + PROCESS_RECORD_LEN];
+        let payload = V1_PAYLOAD_OFFSET;
+        bytes[payload + 18..payload + 20].copy_from_slice(&1u16.to_le_bytes());
+        bytes[payload + 20..payload + 22].copy_from_slice(&1u16.to_le_bytes());
+        bytes[current_offset..current_offset + 2].copy_from_slice(&1u16.to_le_bytes());
+        bytes[stale_offset..stale_offset + 2].copy_from_slice(&0xaaaa_u16.to_le_bytes());
+
+        corrupt_missing_provider(&mut bytes).expect("missing-provider corruption should apply");
+
+        assert_eq!(
+            &bytes[current_offset..current_offset + 2],
+            &0u16.to_le_bytes()
+        );
+        assert_eq!(
+            &bytes[stale_offset..stale_offset + 2],
+            &0xaaaa_u16.to_le_bytes()
         );
     }
 }

@@ -12,13 +12,15 @@ const CAP_COUNTER_REPLY: u64 = 3;
 const CAP_CONSOLE_OUTPUT: u64 = 4;
 const CAP_CONSOLE_CONTROL: u64 = 5;
 const CAP_COUNTER_REQUEST: u64 = 6;
-const CAP_INSPECT: u64 = 7;
-const CAP_UPDATE_CONTROL: u64 = 8;
+const CAP_STATE_CONTROL: u64 = 7;
+const CAP_INSPECT: u64 = 8;
+const CAP_UPDATE_CONTROL: u64 = 9;
 const PROTOCOL_HEALTH_V0: u16 = 2;
 const MESSAGE_READY: u16 = 1;
 const ENVELOPE_LEN: usize = 16;
 const REPORT_BUFFER_LEN: usize = 64 * 1024;
 const CONTROL_SHUTDOWN: &[u8] = b"shutdown";
+const STATE_CONTROL_PATH: &[u8] = b"/state/counter/control";
 const SERVICE_NAMES: [&[u8]; 5] = [
     b"vertex-init",
     b"logd",
@@ -137,6 +139,7 @@ pub extern "C" fn _start() -> ! {
             log(b"console-shell command: halt");
             console_write(b"Native console shell ok\n");
             let _ = sys::ipc_send(CAP_COUNTER_REQUEST, b"H");
+            shutdown_state_service();
             if sys::ipc_send(CAP_CONSOLE_CONTROL, CONTROL_SHUTDOWN) != sys::STATUS_OK {
                 log(b"console-shell shutdown send failed");
                 sys::exit(1);
@@ -271,6 +274,18 @@ fn console_write_counter(prefix: &[u8], value: &[u8]) {
     console_write(&payload[..len]);
 }
 
+fn shutdown_state_service() {
+    let control = sys::vfs_open_path_write(CAP_STATE_CONTROL, STATE_CONTROL_PATH);
+    if status_is_error(control)
+        || sys::vfs_write(control, b"Q") != 1
+        || sys::vfs_close(control) != sys::STATUS_OK
+    {
+        log(b"console-shell state shutdown failed");
+        sys::exit(1);
+    }
+    log(b"console-shell requested state shutdown");
+}
+
 fn console_write_rollback(value: &[u8]) {
     let mut payload = [0u8; 128];
     let mut len = 0;
@@ -282,6 +297,10 @@ fn console_write_rollback(value: &[u8]) {
     append(&mut payload, &mut len, value);
     append(&mut payload, &mut len, b"\n> ");
     console_write(&payload[..len]);
+}
+
+fn status_is_error(value: u64) -> bool {
+    value >= u64::MAX - 4096
 }
 
 fn yield_for_console_driver() {
@@ -339,12 +358,12 @@ fn require_echo_log_authority(report: &[u8]) {
 
 fn require_counter_state_authority(report: &[u8]) {
     let needles: [&[u8]; 6] = [
-        b"proc=counter-service",
+        b"space=initial proc=counter-service cap[4]",
         b"vfs-root=cap:vfs.counter-state",
         b"root=/state/counter",
         b"rights=read|write|resolve",
         b"owner=counter-service",
-        b"delegated_by=vertex-init",
+        b"revoked=no",
     ];
     if find_line_contains_all(report, &needles).is_some() {
         log(b"native shell why counter state query ok");

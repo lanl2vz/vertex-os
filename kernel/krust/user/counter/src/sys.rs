@@ -56,15 +56,6 @@ pub fn vfs_open_path_readwrite(cap_slot: u64, path: &[u8]) -> u64 {
     )
 }
 
-pub fn vfs_open_path_write(cap_slot: u64, path: &[u8]) -> u64 {
-    syscall3(
-        SYS_VFS_OPEN,
-        cap_slot,
-        path.as_ptr() as u64,
-        (VFS_OPEN_WRITE << 32) | path.len() as u64,
-    )
-}
-
 pub fn vfs_write(handle: u64, buffer: &[u8]) -> u64 {
     syscall3(
         SYS_VFS_WRITE,

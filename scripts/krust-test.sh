@@ -284,7 +284,7 @@ Native service activation ok
         MANIFEST="$ROOT_DIR/examples/krust-block-driver-fault-generation.vertex.json"
         required_lines='
 Boot generation: gen:block-driver-fault-0001
-KrustBoot grants: 61
+KrustBoot grants: 60
 KrustBoot store objects:
 proc=block-driver cap[10] store-object=store:block-driver-fault-token rights=read
 VFS open accepted: proc=block-driver file=store:block-driver-fault-token
@@ -433,7 +433,8 @@ model-reader asks for store:hello-text
 vertex-store verifies hash
 model-reader reads bytes
 modified object fails hash check
-unauthorized process cannot read object
+unauthorized process cannot open file
+legacy object-read syscall rejected
 '
         ;;
     m36|state-service)
@@ -445,6 +446,7 @@ counter-service writes state through VFS
 reader-service has VFS state file
 reader-service reads state
 reader-service write rejected
+state control requires write-only open
 VFS state transaction request: proc=echo state=state:counter op=control file=control
 VFS state transaction wake: proc=echo file=control op=control result=1
 state restored
@@ -508,7 +510,7 @@ process=model-reader cap[0] endpoint=model-reader-store-reply rights=receive
 process=vertex-state cap[0] endpoint=vertex-state-block-reply rights=receive
 process=counter-service cap[0] vfs-root=cap:vfs.counter-state rights=read|write|resolve
 process=reader-service cap[0] vfs-root=cap:vfs.state-reader-state rights=read|resolve
-process=reader-service cap[3] vfs-root=cap:vfs.state-reader-control rights=write|resolve
+process=echo cap[7] vfs-root=cap:vfs.echo-state-control rights=control|resolve
 vertex-init observed ready: serial-driver
 vertex-init observed ready: block-driver
 vertex-init observed ready: vertex-store
@@ -538,11 +540,12 @@ halt
 Boot generation: gen:console-0001
 KrustBoot boot modules: 14
 KrustBoot processes: 14
-KrustBoot endpoints: 15
+KrustBoot endpoints: 14
 KrustBoot grants: 70
 proc=console-driver cap[0] endpoint=console-output rights=receive
 proc=console-driver cap[3] endpoint=console-driver-control rights=receive
 proc=console-shell cap[0] endpoint=console-shell-request rights=receive
+proc=console-shell cap[7] vfs-root=cap:vfs.console-state-control root=/state/counter/control rights=control|resolve
 proc=console-driver cap[5] io-port=cap:io.com1 rights=read|write
 vertex-init delegates inspect and update authority to console-shell
 console-driver ready
@@ -746,7 +749,8 @@ VFS state volume value file mounted: state=state:scratch path=/state/scratch/val
 proc=echo cap[4] namespace=cap:namespace.echo rights=resolve
 proc=echo cap[5] vfs-root=cap:vfs.echo-state-a root=/state/a rights=read|resolve
 proc=echo cap[6] vfs-root=cap:vfs.echo-state-writer root=/state rights=read|write|create|unlink|rename|mount|resolve
-proc=reader-service cap[4] namespace=cap:namespace.reader rights=resolve
+proc=echo cap[7] vfs-root=cap:vfs.echo-state-control root=/state/counter/control rights=control|resolve
+proc=reader-service cap[3] namespace=cap:namespace.reader rights=resolve
 Namespace resolve accepted: proc=echo namespace=cap:namespace.echo path=/state/a
 service A namespace contains /state/a
 Namespace resolve rejected: proc=echo namespace=cap:namespace.echo path=/state/b
@@ -844,6 +848,7 @@ VFS hard link metadata version follows shared backing writes
 VFS hard link metadata version follows link count changes
 VFS hard links cannot cross filesystem boundaries
 VFS hard links cannot cross volatile mount instances
+VFS rename cannot cross volatile mount instances
 long VFS paths and components are rejected before allocation
 path traversal cannot escape service namespace root
 Native service activation ok

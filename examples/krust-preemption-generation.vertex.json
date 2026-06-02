@@ -8,21 +8,21 @@
     "manifestHash": null
   },
   "kernel": {
-    "id": "kernel:hosted-linux-placeholder",
-    "kind": "hosted-linux",
-    "storeObject": "store:hosted-kernel-placeholder",
-    "abi": "hosted-linux.v0",
-    "target": "x86_64-linux"
+    "id": "kernel:krust-placeholder",
+    "kind": "krust-native",
+    "storeObject": "store:kernel-placeholder",
+    "abi": "krust.v0",
+    "target": "x86_64-unknown-none"
   },
   "init": {
     "id": "init:vertex-init",
     "executable": "exe:vertex-init",
-    "mode": "hosted-linux"
+    "mode": "krust-native"
   },
   "store": [
     {
-      "id": "store:hosted-kernel-placeholder",
-      "name": "hosted-kernel-placeholder",
+      "id": "store:kernel-placeholder",
+      "name": "kernel-placeholder",
       "kind": "kernel-image",
       "path": "/vertex/store/kernel-placeholder",
       "hashAlgorithm": "blake3",
@@ -96,35 +96,35 @@
       "id": "exe:vertex-init",
       "storeObject": "store:vertex-init-demo",
       "entrypoint": "bin/vertex-init",
-      "abi": "hosted-linux-process.v0",
+      "abi": "krust-native-process.v0",
       "argsDefault": []
     },
     {
       "id": "exe:logd",
       "storeObject": "store:logd-demo",
       "entrypoint": "bin/logd",
-      "abi": "hosted-linux-process.v0",
+      "abi": "krust-native-process.v0",
       "argsDefault": []
     },
     {
       "id": "exe:serial-driver",
       "storeObject": "store:serial-driver-demo",
       "entrypoint": "bin/serial-driver",
-      "abi": "hosted-linux-process.v0",
+      "abi": "krust-native-process.v0",
       "argsDefault": []
     },
     {
       "id": "exe:echo",
       "storeObject": "store:echo-demo",
       "entrypoint": "bin/echo",
-      "abi": "hosted-linux-process.v0",
+      "abi": "krust-native-process.v0",
       "argsDefault": []
     },
     {
       "id": "exe:hog",
       "storeObject": "store:hog-demo",
       "entrypoint": "bin/hog",
-      "abi": "hosted-linux-process.v0",
+      "abi": "krust-native-process.v0",
       "argsDefault": []
     }
   ],
@@ -175,8 +175,7 @@
       ],
       "properties": {
         "protocol": "udp",
-        "port": 9000,
-        "hostedSimulation": "supervisor-passes-udp-endpoint"
+        "port": 9000
       }
     },
     {

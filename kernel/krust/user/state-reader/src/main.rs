@@ -7,7 +7,7 @@ use core::panic::PanicInfo;
 
 const CAP_STATE_VFS: u64 = 0;
 const CAP_SERIAL_LOG: u64 = 1;
-const CAP_NAMESPACE: u64 = 4;
+const CAP_NAMESPACE: u64 = 3;
 const STATE_VALUE_PATH: &[u8] = b"/state/counter/value";
 
 #[unsafe(link_section = ".text._start")]

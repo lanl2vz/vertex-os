@@ -119,7 +119,7 @@ process=model-reader cap[0] endpoint=model-reader-store-reply rights=receive
 process=vertex-state cap[0] endpoint=vertex-state-block-reply rights=receive
 process=counter-service cap[0] vfs-root=cap:vfs.counter-state rights=read|write|resolve
 process=reader-service cap[0] vfs-root=cap:vfs.state-reader-state rights=read|resolve
-process=reader-service cap[3] vfs-root=cap:vfs.state-reader-control rights=write|resolve
+process=echo cap[7] vfs-root=cap:vfs.echo-state-control rights=control|resolve
 process=serial-driver cap[3] io-port=cap:io.com1 rights=read|write
 process=block-driver cap[6] io-port=cap:io.pci-config rights=read|write
 process=block-driver cap[7] interrupt-line=cap:irq.virtio-blk0 rights=listen
@@ -134,7 +134,7 @@ process=netstack cap[5] virtio-device=device:virtio-net0 rights=control
 process=netstack cap[6] network-port=cap:net.udp.9000 rights=control
 process=echo cap[3] network-port=cap:net.udp.9000 rights=bind|listen
 process=echo cap[4] namespace=cap:namespace.echo rights=resolve
-process=reader-service cap[4] namespace=cap:namespace.reader rights=resolve
+process=reader-service cap[3] namespace=cap:namespace.reader rights=resolve
 process=timer-service cap[0] timer=monotonic-timer rights=control
 network_port[0] id=cap:net.udp.9000
 io_port[0] id=cap:io.com1 base=0x00000000000003f8 length=0x0000000000000008
@@ -223,8 +223,8 @@ proc=echo cap[3] network-port=cap:net.udp.9000 rights=bind|listen
 proc=echo cap[4] namespace=cap:namespace.echo rights=resolve
 proc=counter-service cap[0] vfs-root=cap:vfs.counter-state root=/state/counter rights=read|write|resolve
 proc=reader-service cap[0] vfs-root=cap:vfs.state-reader-state root=/state/counter rights=read|resolve
-proc=reader-service cap[3] vfs-root=cap:vfs.state-reader-control root=/state/counter/control rights=write|resolve
-proc=reader-service cap[4] namespace=cap:namespace.reader rights=resolve
+proc=echo cap[7] vfs-root=cap:vfs.echo-state-control root=/state/counter/control rights=control|resolve
+proc=reader-service cap[3] namespace=cap:namespace.reader rights=resolve
 proc=vertex-init cap[30] timer=monotonic-timer rights=control
 proc=netstack cap[1] endpoint=serial-log rights=send
 proc=echo cap[1] endpoint=serial-log rights=send
@@ -429,6 +429,7 @@ VFS hard link metadata version follows shared backing writes
 VFS hard link metadata version follows link count changes
 VFS hard links cannot cross filesystem boundaries
 VFS hard links cannot cross volatile mount instances
+VFS rename cannot cross volatile mount instances
 long VFS paths and components are rejected before allocation
 path traversal cannot escape service namespace root
 virtio-blk driver ready
@@ -461,6 +462,7 @@ reader-service has VFS state file
 reader-service reads state
 reader-service receives state value
 reader-service write rejected
+state control requires write-only open
 VFS state transaction request: proc=echo state=state:counter op=control file=control
 VFS state transaction wake: proc=echo file=control op=control result=1
 state restored

@@ -774,7 +774,7 @@ Initial demo protocol:
 ```text
 counter-service -> /state/counter/value VFS write
 reader-service -> /state/counter/value VFS read
-reader-service -> /state/counter/control VFS shutdown command
+explicit lifecycle owner -> /state/counter/control VFS shutdown command
 kernel -> vertex-state kernel-owned state-vfs-request/state-vfs-reply endpoints
 ```
 
@@ -1375,7 +1375,8 @@ done: model-reader asks for store:hello-text
 done: vertex-store verifies hash
 done: model-reader reads bytes
 done: modified object fails hash check
-done: unauthorized process cannot read object
+done: unauthorized process cannot open ungranted VFS file
+done: legacy object-read syscall is rejected
 ```
 
 This turns the current boot-module store proof into a real immutable object
@@ -1622,7 +1623,7 @@ Add:
 done: console-driver owns COM1 I/O authority in the M41 generation
 done: console-driver reads serial input and forwards complete command lines to console-shell
 done: console output, shell input, and driver control use separate directed endpoints
-done: vertex-init delegates inspect-only authority to console-shell
+done: vertex-init delegates inspect and update authority to console-shell
 done: generation, services, and why commands are backed by the runtime inspect report
 done: scripts/krust-test.sh m41 checks the native console transcript
 ```
@@ -1645,7 +1646,7 @@ Rules:
 
 ```text
 console-driver owns COM1 I/O authority
-console-shell receives only shell request, console output, console control, and inspect authority
+console-shell receives only shell request, console output, console control, counter request, state lifecycle control, inspect, and update authority
 ordinary services can write console output but cannot inject shell commands
 serial log remains available for tests
 shell output is a service protocol, not kernel println as an API
@@ -3182,7 +3183,7 @@ done: service-backed state-value stat asks `vertex-state` for the durable
       current value length and returns a normal 64-byte VFS stat record
 done: `/state/counter/control` is a VFS control file for native shutdown, so
       clients no longer need a direct state-service endpoint to terminate the
-      demo state service
+      demo state service, and opening it requires explicit `control` authority
 done: `vertex-state` serves VFS state read/write/stat requests and persists writes
       for every indexed VertexDisk state volume through the journal/data/index
       block protocol
@@ -3320,6 +3321,7 @@ Acceptance tests:
 
 ```text
 rename is atomic: readers see old name or new name, never a missing middle state
+rename cannot cross filesystem or independent volatile mount boundaries
 unlink of open file keeps existing handle readable until final close
 rmdir rejects non-empty directory
 hard links cannot cross filesystem boundaries
@@ -3337,6 +3339,7 @@ done: stat records are 64 bytes and report type, size, vnode id, rights,
       monotonic metadata version, and link count
 done: same-filesystem volatile rename is atomic inside the kernel VFS node graph
       and bumps the vnode metadata version while preserving open handles
+done: cross-mount rename is rejected before changing the VFS node graph
 done: SYS_VFS_MKDIR and SYS_VFS_RMDIR create directories and reject non-empty
       or open directories with controlled VFS errors
 done: unlink of an open volatile file detaches the path, keeps existing handles
@@ -3348,7 +3351,7 @@ done: metadata versions for hard-linked volatile files advance for every vnode
       sharing the backing on write, truncate, link, and unlink
 done: scripts/krust-test.sh m76 covers rename metadata, mkdir/rmdir,
       open-unlink, hard-link metadata, mount-instance hard-link policy, long
-      path rejection, and traversal denial
+      path rejection, traversal denial, and cross-mount rename denial
 deferred: persistent metadata journals for a general on-disk filesystem move to
           M78 VertexFS rather than being bolted onto the volatile fixture
 ```
@@ -3366,31 +3369,29 @@ Implementation notes:
 
 Status: done for the VertexDisk state-volume block path.
 
-Goal: add a bounded cache layer for filesystem data and metadata with explicit
-dirty tracking, writeback ordering, flush, and memory-pressure behavior.
+Goal: add a bounded cache layer for the VertexDisk state-volume block path with
+explicit dirty tracking and ordered synchronous writeback before state VFS
+responses are released.
 
-Scope:
+Implemented scope:
 
 ```text
-block cache keyed by block device and logical block number
-page-sized file cache entries keyed by vnode and offset
-dirty/clean state and writeback queue
-fsync and global sync plumbing
-read-ahead and write coalescing only after correctness gates pass
-cache memory accounting and eviction under pressure
-I/O error propagation to handles and filesystem services
+state-volume block cache keyed by logical VertexDisk sector
+dirty/clean state for state superblock, index, journal, and data sectors
+ordered journal, data, and index writeback through block-driver
+clean-entry replacement inside a fixed eight-entry cache
+dirty-entry non-eviction by failing the state service if no clean slot is available
+writeback error propagation by exiting vertex-state and aborting pending state VFS transactions
+cache inspection transcript with dirty, pinned, and writeback-error counts
 ```
 
-Acceptance tests:
+Release-gate acceptance tests:
 
 ```text
-repeated file reads hit cache without repeated block-driver reads
-dirty data reaches disk after fsync before syscall returns
-writeback error is reported to the writer or next fsync
-memory pressure evicts clean cache pages without leaking frames
-dirty cache pages are not evicted until written or explicitly failed
-process fault during write does not leave a permanently dirty pinned cache page
-block-driver restart does not corrupt cache ownership or completion records
+repeated state-volume reads hit the vertex-state block cache
+state writes dirty journal/data/index entries, write them back, and reply only after clean writeback
+cache inspect reports dirty=0, pinned=0, writeback_errors=0 after the exercised write/read path
+state write and read transactions complete through the VFS state-service path
 ```
 
 Current implementation state:
@@ -3411,6 +3412,9 @@ done: scripts/krust-test.sh m77 asserts cache hit, writeback clean, dirty=0,
       pinned=0, writeback_errors=0, state write, and state read transcripts
 deferred: a general vnode page cache and VertexFS fsync syscall semantics move
           to M78-M81 with the general filesystem format
+deferred: broad page-cache memory-pressure tests, block-driver restart cache
+          ownership tests, and writeback-error fsync semantics belong to the
+          general filesystem fault/soak gates in M78-M81
 ```
 
 Implementation notes:

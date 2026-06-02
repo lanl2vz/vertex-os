@@ -14,6 +14,11 @@ const SYS_LOG_WRITE: u64 = 7;
 const SYS_ACTIVATE_GENERATION: u64 = 8;
 const SYS_ROLLBACK_GENERATION: u64 = 18;
 const SYS_RUNTIME_INSPECT: u64 = 31;
+const SYS_VFS_OPEN: u64 = 48;
+const SYS_VFS_CLOSE: u64 = 50;
+const SYS_VFS_WRITE: u64 = 54;
+
+const VFS_OPEN_WRITE: u64 = 1 << 1;
 
 pub fn ipc_send(cap_slot: u64, message: &[u8]) -> u64 {
     syscall3(
@@ -67,6 +72,28 @@ pub fn rollback_generation(cap_slot: u64, generation: &[u8]) -> u64 {
         generation.as_ptr() as u64,
         generation.len() as u64,
     )
+}
+
+pub fn vfs_open_path_write(cap_slot: u64, path: &[u8]) -> u64 {
+    syscall3(
+        SYS_VFS_OPEN,
+        cap_slot,
+        path.as_ptr() as u64,
+        (VFS_OPEN_WRITE << 32) | path.len() as u64,
+    )
+}
+
+pub fn vfs_write(handle: u64, buffer: &[u8]) -> u64 {
+    syscall3(
+        SYS_VFS_WRITE,
+        handle,
+        buffer.as_ptr() as u64,
+        buffer.len() as u64,
+    )
+}
+
+pub fn vfs_close(handle: u64) -> u64 {
+    syscall3(SYS_VFS_CLOSE, handle, 0, 0)
 }
 
 pub fn yield_now() -> u64 {

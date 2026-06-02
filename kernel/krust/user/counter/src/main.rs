@@ -10,9 +10,7 @@ const CAP_STATE_VFS_ONESHOT: u64 = 0;
 const CAP_SERIAL_LOG: u64 = 1;
 const CAP_CONSOLE_REPLY: u64 = 3;
 const CAP_STATE_VFS_CONSOLE: u64 = 4;
-const CAP_STATE_CONTROL_CONSOLE: u64 = 5;
 const STATE_VALUE_PATH: &[u8] = b"/state/counter/value";
-const STATE_CONTROL_PATH: &[u8] = b"/state/counter/control";
 
 #[unsafe(link_section = ".text._start")]
 #[unsafe(no_mangle)]
@@ -32,9 +30,14 @@ pub extern "C" fn _start() -> ! {
 fn run_counter_endpoint(first_received: u64, first_buffer: &[u8; 8]) -> ! {
     log(b"counter-service has request endpoint");
     let mut value = 41u64;
-    persist_counter(CAP_STATE_VFS_CONSOLE, value);
     if first_received != sys::STATUS_EMPTY {
+        if first_received == 1 && first_buffer[0] == b'H' {
+            handle_counter_request(first_received, first_buffer, &mut value);
+        }
+        persist_counter(CAP_STATE_VFS_CONSOLE, value);
         handle_counter_request(first_received, first_buffer, &mut value);
+    } else {
+        persist_counter(CAP_STATE_VFS_CONSOLE, value);
     }
     loop {
         let mut request = [0u8; 8];
@@ -59,7 +62,6 @@ fn handle_counter_request(received: u64, request: &[u8; 8], value: &mut u64) {
         return;
     }
     if received == 1 && request[0] == b'H' {
-        shutdown_state_service();
         log(b"counter-service shutdown requested");
         sys::exit(0);
     }
@@ -81,19 +83,6 @@ fn persist_counter(cap_slot: u64, value: u64) {
     }
     let _ = sys::vfs_close(handle);
     log(b"counter-service persists state value");
-}
-
-fn shutdown_state_service() {
-    let handle = sys::vfs_open_path_write(CAP_STATE_CONTROL_CONSOLE, STATE_CONTROL_PATH);
-    if handle == sys::STATUS_BAD_CAPABILITY {
-        log(b"counter-service state control open failed");
-        sys::exit(1);
-    }
-    if sys::vfs_write(handle, b"Q") != 1 {
-        log(b"counter-service state control failed");
-        sys::exit(1);
-    }
-    let _ = sys::vfs_close(handle);
 }
 
 fn reply_counter(value: u64) {

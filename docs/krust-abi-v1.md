@@ -272,6 +272,7 @@ echo:
   cap[4] = namespace cap:namespace.echo, rights=resolve
   cap[5] = vfs-root cap:vfs.echo-state-a, root=/state/a, rights=read|resolve
   cap[6] = vfs-root cap:vfs.echo-state-writer, root=/state, rights=read|write|resolve|create|unlink|rename|mount
+  cap[7] = vfs-root cap:vfs.echo-state-control, root=/state/counter/control, rights=control|resolve
   cap[0] = endpoint log-sink, rights=send after vertex-init derives and transfers it
 
 model-reader:
@@ -284,14 +285,12 @@ counter-service:
   cap[1] = endpoint serial-log, rights=send
   console variant: cap[0] = endpoint cap:counter.request, rights=receive;
                    cap[3] = endpoint cap:console-shell.counter.reply, rights=send;
-                   cap[4] = vfs-root cap:vfs.counter-state, root=/state/counter, rights=read|write|resolve;
-                   cap[5] = vfs-root cap:vfs.counter-state-control, root=/state/counter/control, rights=write|resolve
+                   cap[4] = vfs-root cap:vfs.counter-state, root=/state/counter, rights=read|write|resolve
 
 reader-service:
   cap[0] = vfs-root cap:vfs.state-reader-state, root=/state/counter, rights=read|resolve
   cap[1] = endpoint serial-log, rights=send
-  cap[3] = vfs-root cap:vfs.state-reader-control, root=/state/counter/control, rights=write|resolve
-  cap[4] = namespace cap:namespace.reader, rights=resolve
+  cap[3] = namespace cap:namespace.reader, rights=resolve
 
 timer-service:
   cap[0] = timer monotonic-timer, rights=control
@@ -423,11 +422,11 @@ the user buffer, queues a native versioned `VS` request carrying the state id on
 the kernel-owned `state-vfs-request` endpoint, blocks the caller in
 `blocked-vfs-state`, and wakes it from the kernel-owned `state-vfs-reply`
 endpoint when `vertex-state` replies. The old short state commands are not an
-accepted compatibility protocol. `/state/<suffix>/control` accepts the native
-control command `Q` through the same VFS transaction path and is used for
-state-service shutdown. `vertex-state` persists write transactions for every
-indexed VertexDisk state volume through the block protocol served by
-`block-driver`.
+accepted compatibility protocol. `/state/<suffix>/control` requires a
+write-only open plus `control` authority and accepts the native control command
+`Q` through the same VFS transaction path for state-service shutdown.
+`vertex-state` persists write transactions for every indexed VertexDisk state
+volume through the block protocol served by `block-driver`.
 Store and state traffic use separate block request endpoints; the driver treats
 the receiving endpoint as the client identity and enforces read-only store
 access, state-only writes, and section bounds before

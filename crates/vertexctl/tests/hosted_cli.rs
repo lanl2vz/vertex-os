@@ -364,9 +364,9 @@ fn compile_boot_manifest_emits_krustboot_plan() {
     assert!(contains_bytes(&bytes, b"readiness"));
     assert!(contains_bytes(&bytes, b"cap:vfs.echo-state-a"));
     assert!(contains_bytes(&bytes, b"cap:vfs.echo-state-writer"));
+    assert!(contains_bytes(&bytes, b"cap:vfs.echo-state-control"));
     assert!(contains_bytes(&bytes, b"cap:vfs.counter-state"));
     assert!(contains_bytes(&bytes, b"cap:vfs.state-reader-state"));
-    assert!(contains_bytes(&bytes, b"cap:vfs.state-reader-control"));
     assert!(contains_bytes(&bytes, b"cap:vfs.block-dev-blk0"));
     assert!(contains_bytes(&bytes, b"cap:io.com1"));
     assert!(contains_bytes(&bytes, b"cap:io.pci-config"));

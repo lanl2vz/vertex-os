@@ -11,6 +11,7 @@ const CAP_NETWORK_PORT: u64 = 3;
 const CAP_NAMESPACE: u64 = 4;
 const CAP_VFS_READ: u64 = 5;
 const CAP_VFS_WRITER: u64 = 6;
+const CAP_STATE_CONTROL: u64 = 7;
 const CAP_VFS_DERIVED: u64 = 25;
 const CAP_LINEAGE_ROOT: u64 = 20;
 const CAP_LINEAGE_PARENT: u64 = 21;
@@ -92,7 +93,11 @@ pub extern "C" fn _start() -> ! {
         sys::exit(1);
     }
     let state_handle = sys::vfs_open_path_read(CAP_VFS_READ, b"/a");
-    if state_handle == sys::STATUS_BAD_CAPABILITY {
+    if state_handle == sys::STATUS_VFS_PERMISSION || state_handle == sys::STATUS_BAD_CAPABILITY {
+        log(b"echo has no VFS root authority in this generation");
+        sys::exit(0);
+    }
+    if status_is_error(state_handle) {
         log(b"VFS namespace root open /state/a failed");
         sys::exit(1);
     }
@@ -392,7 +397,8 @@ pub extern "C" fn _start() -> ! {
     if status_is_error(open_unlink_reader)
         || sys::vfs_unlink(CAP_VFS_WRITER, b"/open-unlink") != sys::STATUS_OK
         || sys::vfs_open_path_read(CAP_VFS_WRITER, b"/open-unlink") != sys::STATUS_VFS_NOT_FOUND
-        || sys::vfs_read(open_unlink_reader, &mut open_unlink_bytes) != open_unlink_bytes.len() as u64
+        || sys::vfs_read(open_unlink_reader, &mut open_unlink_bytes)
+            != open_unlink_bytes.len() as u64
         || !bytes_eq(&open_unlink_bytes, b"live")
         || sys::vfs_close(open_unlink_reader) != sys::STATUS_OK
     {
@@ -480,7 +486,8 @@ pub extern "C" fn _start() -> ! {
         log(b"VFS hard link mount fixture failed");
         sys::exit(1);
     }
-    if sys::vfs_link(CAP_VFS_WRITER, b"/link-copy", b"/link-mnt/cross") == sys::STATUS_VFS_UNSUPPORTED
+    if sys::vfs_link(CAP_VFS_WRITER, b"/link-copy", b"/link-mnt/cross")
+        == sys::STATUS_VFS_UNSUPPORTED
     {
         log(b"VFS hard links cannot cross filesystem boundaries");
     } else {
@@ -505,6 +512,14 @@ pub extern "C" fn _start() -> ! {
         log(b"VFS hard links cannot cross volatile mount instances");
     } else {
         log(b"VFS cross-volatile-mount hard link denial failed");
+        sys::exit(1);
+    }
+    if sys::vfs_rename(CAP_VFS_WRITER, b"/link-mnt-a/file", b"/link-mnt-b/file")
+        == sys::STATUS_VFS_UNSUPPORTED
+    {
+        log(b"VFS rename cannot cross volatile mount instances");
+    } else {
+        log(b"VFS cross-volatile-mount rename denial failed");
         sys::exit(1);
     }
     if sys::vfs_unlink(CAP_VFS_WRITER, b"/link-mnt-a/file") != sys::STATUS_OK
@@ -841,7 +856,23 @@ fn prove_optional_scratch_state_volume() {
 }
 
 fn shutdown_state_service() {
-    let control = sys::vfs_open_path_readwrite(CAP_VFS_WRITER, COUNTER_CONTROL_PATH);
+    let inspect = sys::cap_inspect(CAP_STATE_CONTROL);
+    if inspect == sys::STATUS_BAD_CAPABILITY {
+        log(b"echo state lifecycle authority not granted");
+        return;
+    }
+    if inspect != sys::STATUS_OK {
+        log(b"state service shutdown authority inspect failed");
+        sys::exit(1);
+    }
+    if sys::vfs_open_path_readwrite(CAP_STATE_CONTROL, COUNTER_CONTROL_PATH)
+        != sys::STATUS_VFS_UNSUPPORTED
+    {
+        log(b"state control readwrite open was accepted");
+        sys::exit(1);
+    }
+    log(b"state control requires write-only open");
+    let control = sys::vfs_open_path_write(CAP_STATE_CONTROL, COUNTER_CONTROL_PATH);
     if status_is_error(control)
         || sys::vfs_write(control, b"Q") != 1
         || sys::vfs_close(control) != sys::STATUS_OK

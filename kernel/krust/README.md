@@ -225,6 +225,7 @@ KrustBoot vfs roots: 7
   grant[...] process=echo cap[4] namespace=cap:namespace.echo rights=resolve
   grant[...] process=echo cap[5] vfs-root=cap:vfs.echo-state-a rights=read|resolve
   grant[...] process=echo cap[6] vfs-root=cap:vfs.echo-state-writer rights=read|write|resolve|create|unlink|rename|mount
+  grant[...] process=echo cap[7] vfs-root=cap:vfs.echo-state-control rights=control|resolve
   grant[42] process=timer-service cap[0] timer=monotonic-timer rights=control
 io_port[1] id=cap:io.pci-config base=0x0000000000000cf8 length=0x0000000000000008
 io_port[2] id=cap:io.virtio-blk0 base=0x000000000000c000 length=0x0000000000001000
@@ -267,7 +268,7 @@ proc=logd cap[0] endpoint=log-sink rights=receive
 proc=model-reader cap[0] endpoint=store-hello-text-request rights=send
 proc=counter-service cap[0] vfs-root=cap:vfs.counter-state root=/state/counter rights=read|write|resolve
 proc=reader-service cap[0] vfs-root=cap:vfs.state-reader-state root=/state/counter rights=read|resolve
-proc=reader-service cap[3] vfs-root=cap:vfs.state-reader-control root=/state/counter/control rights=write|resolve
+proc=echo cap[7] vfs-root=cap:vfs.echo-state-control root=/state/counter/control rights=control|resolve
 proc=timer-service cap[0] timer=monotonic-timer rights=control
 GDT initialized
 IDT initialized: #UD #GP #PF IRQ0
@@ -499,6 +500,7 @@ grant[...] process=netstack cap[6] network-port=cap:net.udp.9000 rights=control
 grant[...] process=echo cap[4] namespace=cap:namespace.echo rights=resolve
 grant[...] process=echo cap[5] vfs-root=cap:vfs.echo-state-a rights=read|resolve
 grant[...] process=echo cap[6] vfs-root=cap:vfs.echo-state-writer rights=read|write|resolve|create|unlink|rename|mount
+grant[...] process=echo cap[7] vfs-root=cap:vfs.echo-state-control rights=control|resolve
 network_port[0] id=cap:net.udp.9000
 io_port[1] id=cap:io.pci-config base=0x0000000000000cf8 length=0x0000000000000008
 io_port[2] id=cap:io.virtio-blk0 base=0x000000000000c000 length=0x0000000000001000
@@ -548,7 +550,7 @@ proc=vertex-init cap[30] timer=monotonic-timer rights=control
 proc=model-reader cap[0] endpoint=store-hello-text-request rights=send
 proc=counter-service cap[0] vfs-root=cap:vfs.counter-state root=/state/counter rights=read|write|resolve
 proc=reader-service cap[0] vfs-root=cap:vfs.state-reader-state root=/state/counter rights=read|resolve
-proc=reader-service cap[3] vfs-root=cap:vfs.state-reader-control root=/state/counter/control rights=write|resolve
+proc=echo cap[7] vfs-root=cap:vfs.echo-state-control root=/state/counter/control rights=control|resolve
 proc=timer-service cap[0] timer=monotonic-timer rights=control
 vertex-init started
 Boot module read accepted: proc=vertex-init module=krustboot-manifest bytes=
