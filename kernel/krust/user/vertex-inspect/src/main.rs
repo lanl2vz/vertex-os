@@ -8,9 +8,9 @@ use core::{cell::UnsafeCell, panic::PanicInfo};
 const CAP_INSPECT: u64 = 0;
 const CAP_SERIAL_LOG: u64 = 1;
 const CAP_MANIFEST: u64 = 3;
-const KRUSTBOOT_MAGIC: &[u8; 16] = b"KRUSTBOOTM75\0\0\0\0";
-const KRUSTBOOT_VERSION: u16 = 11;
-const MANIFEST_BUFFER_LEN: usize = 16 * 1024;
+const KRUSTBOOT_MAGIC: &[u8; 16] = b"KRUSTBOOTM79\0\0\0\0";
+const KRUSTBOOT_VERSION: u16 = 12;
+const MANIFEST_BUFFER_LEN: usize = 32 * 1024;
 const REPORT_BUFFER_LEN: usize = 64 * 1024;
 const OFFSET_VERSION: usize = 16;
 const OFFSET_PROCESSES: usize = 20;
@@ -23,6 +23,12 @@ struct ReportBuffer(UnsafeCell<[u8; REPORT_BUFFER_LEN]>);
 unsafe impl Sync for ReportBuffer {}
 
 static REPORT_BUFFER: ReportBuffer = ReportBuffer(UnsafeCell::new([0; REPORT_BUFFER_LEN]));
+
+struct ManifestBuffer(UnsafeCell<[u8; MANIFEST_BUFFER_LEN]>);
+
+unsafe impl Sync for ManifestBuffer {}
+
+static MANIFEST_BUFFER: ManifestBuffer = ManifestBuffer(UnsafeCell::new([0; MANIFEST_BUFFER_LEN]));
 
 struct GenerationGraph {
     id: [u8; STRING_LEN],
@@ -79,10 +85,14 @@ fn report_buffer() -> &'static mut [u8; REPORT_BUFFER_LEN] {
     unsafe { &mut *REPORT_BUFFER.0.get() }
 }
 
+fn manifest_buffer() -> &'static mut [u8; MANIFEST_BUFFER_LEN] {
+    unsafe { &mut *MANIFEST_BUFFER.0.get() }
+}
+
 #[inline(never)]
 fn read_generation_graph() -> GenerationGraph {
-    let mut manifest = [0u8; MANIFEST_BUFFER_LEN];
-    let manifest_len = sys::read_manifest(CAP_MANIFEST, &mut manifest);
+    let manifest = manifest_buffer();
+    let manifest_len = sys::read_manifest(CAP_MANIFEST, manifest);
     if manifest_len == sys::STATUS_BAD_CAPABILITY
         || manifest_len == sys::STATUS_BAD_BUFFER
         || manifest_len == sys::STATUS_TOO_LARGE
@@ -93,7 +103,7 @@ fn read_generation_graph() -> GenerationGraph {
     let manifest_len = manifest_len as usize;
     if manifest_len < OFFSET_GENERATION_ID + STRING_LEN
         || !valid_magic(&manifest[..manifest_len])
-        || read_u16(&manifest, OFFSET_VERSION) != KRUSTBOOT_VERSION
+        || read_u16(manifest, OFFSET_VERSION) != KRUSTBOOT_VERSION
     {
         log(b"vertex-inspect manifest invalid");
         sys::exit(1);
@@ -111,8 +121,8 @@ fn read_generation_graph() -> GenerationGraph {
     GenerationGraph {
         id,
         id_len: generation.len(),
-        processes: read_u16(&manifest, OFFSET_PROCESSES),
-        endpoints: read_u16(&manifest, OFFSET_ENDPOINTS),
+        processes: read_u16(manifest, OFFSET_PROCESSES),
+        endpoints: read_u16(manifest, OFFSET_ENDPOINTS),
     }
 }
 

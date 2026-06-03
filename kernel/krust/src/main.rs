@@ -22,9 +22,9 @@ use core::{arch::asm, cell::UnsafeCell};
 
 const DMA_KERNEL_ALLOCATED_BASE: u64 = u64::MAX;
 const VERTEXDISK_MODULE_STRING: &[u8] = b"vertexdisk-store";
-const VERTEX_DISK_MAGIC: &[u8; 16] = b"VERTEXDISKV0\0\0\0\0";
+const VERTEX_DISK_MAGIC: &[u8; 16] = b"VERTEXDISKV1\0\0\0\0";
 const STORE_INDEX_MAGIC: &[u8; 16] = b"VDISKSTOREV0\0\0\0\0";
-const VERTEX_DISK_VERSION: u16 = 1;
+const VERTEX_DISK_VERSION: u16 = 2;
 const VERTEX_DISK_SECTOR_SIZE: usize = 512;
 const VERTEX_DISK_CHECKSUM_OFFSET: usize = 20;
 const VERTEX_DISK_TOTAL_SECTORS_OFFSET: usize = 24;
@@ -32,6 +32,7 @@ const VERTEX_DISK_SECTION_TABLE_OFFSET: usize = 32;
 const VERTEX_DISK_SECTION_RECORD_LEN: usize = 16;
 const VERTEX_DISK_STORE_INDEX_SECTION: usize = 1;
 const VERTEX_DISK_STORE_DATA_SECTION: usize = 2;
+const VERTEX_DISK_VERTEXFS_SECTION: usize = 6;
 const STORE_ENTRY_OFFSET: usize = 32;
 const STORE_ENTRY_LEN: usize = 144;
 
@@ -899,6 +900,17 @@ fn build_boot_runtime_config(
     while index < boot_manifest.process_count() {
         let process = boot_manifest.process(index)?;
         let store_object = verified_process_store_object(boot_manifest, process)?;
+        let mut mounts = [None; boot_manifest::MAX_PROCESS_MOUNTS];
+        let mut mount_index = 0;
+        while mount_index < process.mount_count {
+            let mount = process.mounts[mount_index]?;
+            mounts[mount_index] = Some(ipc::BootProcessMountConfig {
+                path: mount.path,
+                source: mount.source,
+                flags: mount.flags,
+            });
+            mount_index += 1;
+        }
         if config
             .add_process(ipc::BootProcessConfig {
                 name: process.name,
@@ -906,6 +918,8 @@ fn build_boot_runtime_config(
                 image_length: store_object.bytes.len() as u64,
                 initial: process.initial,
                 mount_root: process.mount_root,
+                mounts,
+                mount_count: process.mount_count,
             })
             .is_err()
         {
@@ -1439,7 +1453,7 @@ fn valid_vertexdisk_superblock(sector: &[u8]) -> bool {
 
     let total_sectors = read_u32(sector, VERTEX_DISK_TOTAL_SECTORS_OFFSET) as u64;
     let mut section = 0;
-    while section <= VERTEX_DISK_STORE_DATA_SECTION {
+    while section <= VERTEX_DISK_VERTEXFS_SECTION {
         let Some((start, count)) = vertexdisk_section(sector, section) else {
             return false;
         };
@@ -1736,6 +1750,21 @@ fn print_boot_manifest(manifest: &boot_manifest::Manifest<'static>) {
             serial::write_str(" mount_root=");
             serial::write_str(process.mount_root);
             serial::write_str("\n");
+            let mut mount_index = 0;
+            while mount_index < process.mount_count {
+                if let Some(mount) = process.mounts[mount_index] {
+                    serial::write_str("    mount[");
+                    serial::write_u64_dec(mount_index as u64);
+                    serial::write_str("] path=");
+                    serial::write_str(mount.path);
+                    serial::write_str(" source=");
+                    serial::write_str(mount.source);
+                    serial::write_str(" flags=");
+                    print_boot_process_mount_flags(mount.flags);
+                    serial::write_str("\n");
+                }
+                mount_index += 1;
+            }
         }
         index += 1;
     }
@@ -2097,6 +2126,24 @@ fn print_boot_grant_object(
             );
         }
         _ => serial::write_str("object=<bad>"),
+    }
+}
+
+fn print_boot_process_mount_flags(flags: u16) {
+    let mut wrote = false;
+    if flags & boot_manifest::PROCESS_MOUNT_FLAG_BIND != 0 {
+        serial::write_str("bind");
+        wrote = true;
+    }
+    if flags & boot_manifest::PROCESS_MOUNT_FLAG_READ_ONLY != 0 {
+        if wrote {
+            serial::write_str("|");
+        }
+        serial::write_str("read-only");
+        wrote = true;
+    }
+    if !wrote {
+        serial::write_str("none");
     }
 }
 

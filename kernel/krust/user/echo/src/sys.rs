@@ -66,6 +66,8 @@ const VFS_OPEN_APPEND: u64 = 1 << 4;
 const VFS_LOCK_SHARED: u64 = 1;
 const VFS_LOCK_EXCLUSIVE: u64 = 2;
 const VFS_MOUNT_VOLATILE: u64 = 1;
+const VFS_MOUNT_BIND: u64 = 1 << 1;
+const VFS_MOUNT_READ_ONLY: u64 = 1 << 2;
 const MAX_VFS_PATH_BYTES: usize = 128;
 const VFS_RENAME_REQUEST_HEADER_BYTES: usize = 16;
 const VFS_RENAME_REQUEST_MAX_BYTES: usize =
@@ -387,6 +389,24 @@ pub fn vfs_mount_volatile(cap_slot: u64, path: &[u8]) -> u64 {
         cap_slot,
         path.as_ptr() as u64,
         (VFS_MOUNT_VOLATILE << 32) | path.len() as u64,
+    )
+}
+
+pub fn vfs_mount_bind_readonly(cap_slot: u64, path: &[u8]) -> u64 {
+    syscall3(
+        SYS_VFS_MOUNT,
+        cap_slot,
+        path.as_ptr() as u64,
+        ((VFS_MOUNT_BIND | VFS_MOUNT_READ_ONLY) << 32) | path.len() as u64,
+    )
+}
+
+pub fn vfs_mount_bind(cap_slot: u64, path: &[u8]) -> u64 {
+    syscall3(
+        SYS_VFS_MOUNT,
+        cap_slot,
+        path.as_ptr() as u64,
+        (VFS_MOUNT_BIND << 32) | path.len() as u64,
     )
 }
 

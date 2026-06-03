@@ -10,6 +10,7 @@ BUILD_DIR := build
 ISO_ROOT := $(BUILD_DIR)/iso-root
 ISO_IMAGE := $(BUILD_DIR)/krust.iso
 BLOCK_IMAGE := $(BUILD_DIR)/krust-block.img
+VERTEXFS_IMAGE := $(BUILD_DIR)/krust.vertexfs
 BOOT_MANIFEST := $(BUILD_DIR)/hello-generation.krustboot
 FALLBACK_BOOT_MANIFEST := $(BUILD_DIR)/fallback-generation.krustboot
 BAD_GENERATION_BOOT_MANIFEST := $(BUILD_DIR)/bad-generation.krustboot
@@ -55,6 +56,8 @@ FALLBACK_MANIFEST ?=
 BAD_GENERATION_MANIFEST ?=
 KRUSTBOOT_CORRUPT ?=
 VERTEX_DISK_CORRUPT ?=
+VERTEXFS_CORRUPT ?=
+VERTEXFS_UPDATE_APP_A_PAYLOAD ?=
 
 QEMU ?= qemu-system-x86_64
 QEMU_EXTRA ?= -object rng-random,filename=/dev/urandom,id=vertexrng -device virtio-rng-pci,rng=vertexrng,disable-modern=on -netdev user,id=vertexnet -device virtio-net-pci,netdev=vertexnet,mac=52:54:00:12:34:56,disable-modern=on
@@ -68,7 +71,7 @@ RUSTFMT ?= rustfmt
 VERTEXCTL ?= $(CARGO) run --locked --quiet --manifest-path ../../crates/vertexctl/Cargo.toml --target $(HOST_TARGET) --
 LIMINE_DIR ?= $(firstword $(wildcard /opt/homebrew/share/limine /usr/local/share/limine /usr/share/limine))
 
-.PHONY: build kernel user boot-manifest block-image iso run smoke doctor release-gate clean check-tools check-tool-versions check-cargo-locks check-rust-target check-limine-dir
+.PHONY: build kernel user boot-manifest block-image vertexfs-image iso run smoke doctor release-gate clean check-tools check-tool-versions check-cargo-locks check-rust-target check-limine-dir
 
 build: kernel user
 
@@ -119,7 +122,17 @@ block-image: user
 		$(VERTEXCTL) corrupt-vertex-disk $(VERTEX_DISK_CORRUPT) $(BLOCK_IMAGE) $(BLOCK_IMAGE); \
 	fi
 
-iso: build boot-manifest block-image check-tools check-limine-dir
+vertexfs-image: user
+	mkdir -p $(BUILD_DIR)
+	$(VERTEXCTL) create-vertexfs $(VERTEXFS_IMAGE) $(VERTEX_MANIFEST)
+	@if [ -n "$(VERTEXFS_UPDATE_APP_A_PAYLOAD)" ]; then \
+		$(VERTEXCTL) update-vertexfs-file $(VERTEXFS_IMAGE) $(VERTEXFS_IMAGE) /app/a $(VERTEXFS_UPDATE_APP_A_PAYLOAD); \
+	fi
+	@if [ -n "$(VERTEXFS_CORRUPT)" ]; then \
+		$(VERTEXCTL) corrupt-vertexfs $(VERTEXFS_CORRUPT) $(VERTEXFS_IMAGE) $(VERTEXFS_IMAGE); \
+	fi
+
+iso: build boot-manifest block-image vertexfs-image check-tools check-limine-dir
 	rm -rf $(ISO_ROOT) $(ISO_IMAGE)
 	mkdir -p $(ISO_ROOT)/boot $(ISO_ROOT)/EFI/BOOT
 	cp $(KERNEL_ELF) $(ISO_ROOT)/boot/krust.elf
@@ -127,6 +140,7 @@ iso: build boot-manifest block-image check-tools check-limine-dir
 	cp $(FALLBACK_BOOT_MANIFEST) $(ISO_ROOT)/boot/fallback-generation.krustboot
 	cp $(BAD_GENERATION_BOOT_MANIFEST) $(ISO_ROOT)/boot/bad-generation.krustboot
 	cp $(BLOCK_IMAGE) $(ISO_ROOT)/boot/krust-block.img
+	cp $(VERTEXFS_IMAGE) $(ISO_ROOT)/boot/krust.vertexfs
 	cp limine.conf $(ISO_ROOT)/boot/limine.conf
 	cp $(LIMINE_DIR)/limine-bios.sys $(ISO_ROOT)/boot/limine-bios.sys
 	cp $(LIMINE_DIR)/limine-bios-cd.bin $(ISO_ROOT)/boot/limine-bios-cd.bin
@@ -171,7 +185,7 @@ doctor: check-tools check-tool-versions check-cargo-locks check-rust-target chec
 	@echo "limine: $$(command -v $(LIMINE)) ($$($(LIMINE) --version | sed -n '1p'))"
 	@echo "xorriso: $$(command -v $(XORRISO)) ($$($(XORRISO) --version 2>/dev/null | sed -n '1p'))"
 	@echo "LIMINE_DIR: $(LIMINE_DIR)"
-	@echo "Krust M14-M77 toolchain is ready."
+	@echo "Krust M14-M79 toolchain is ready."
 
 release-gate:
 	../../scripts/krust-release-gate.sh

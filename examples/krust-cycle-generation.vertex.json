@@ -129,7 +129,8 @@
       "lifecycle": {
         "startAfter": [],
         "stopBefore": []
-      }
+      },
+      "mountRoot": "/"
     },
     {
       "id": "svc:logd",
@@ -160,7 +161,8 @@
             "read"
           ]
         }
-      ]
+      ],
+      "mountRoot": "/"
     },
     {
       "id": "svc:echo-server",
@@ -181,7 +183,8 @@
           "svc:logd"
         ],
         "stopBefore": []
-      }
+      },
+      "mountRoot": "/"
     }
   ],
   "activation": {

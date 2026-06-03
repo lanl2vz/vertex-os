@@ -427,8 +427,8 @@ pub extern "C" fn krust_syscall_dispatch(
             Ok(()) => {}
             Err(error) => frame.rax = ipc_error_status("SYS_VFS_PWRITE", error),
         },
-        SYS_VFS_SYNC => match ipc::vfs_sync(arg0) {
-            Ok(()) => frame.rax = STATUS_OK,
+        SYS_VFS_SYNC => match ipc::vfs_sync(arg0, frame) {
+            Ok(()) => {}
             Err(error) => frame.rax = ipc_error_status("SYS_VFS_SYNC", error),
         },
         SYS_VFS_DUP => match ipc::vfs_dup(arg0, arg1) {

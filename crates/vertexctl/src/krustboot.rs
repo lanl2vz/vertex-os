@@ -4,8 +4,8 @@ use std::fs;
 use std::path::PathBuf;
 use vertex_ir::{GenerationManifest, Service};
 
-const COMPACT_MAGIC: &[u8; 16] = b"KRUSTBOOTM75\0\0\0\0";
-const COMPACT_VERSION: u16 = 11;
+const COMPACT_MAGIC: &[u8; 16] = b"KRUSTBOOTM79\0\0\0\0";
+const COMPACT_VERSION: u16 = 12;
 const V1_MAGIC: &[u8; 16] = b"KRUSTBOOTV1\0\0\0\0\0";
 const V1_VERSION: u16 = 1;
 const V1_HEADER_SIZE: usize = 164;
@@ -18,10 +18,18 @@ const STRING_LEN: usize = 64;
 const BOOT_MODULE_RECORD_LEN: usize = STRING_LEN * 2;
 const PROCESS_REF_LIST_LEN: usize = 2 + MAX_PROCESS_REFS * 2;
 const ENDPOINT_REQUIREMENT_LIST_LEN: usize = 2 + MAX_PROCESS_REFS * 4;
-const PROCESS_RECORD_LEN: usize =
-    STRING_LEN * 5 + 4 + PROCESS_REF_LIST_LEN * 2 + ENDPOINT_REQUIREMENT_LIST_LEN;
-const PROCESS_PROVIDES_COUNT_OFFSET: usize =
-    STRING_LEN * 5 + 4 + PROCESS_REF_LIST_LEN + ENDPOINT_REQUIREMENT_LIST_LEN;
+const PROCESS_MOUNT_RECORD_LEN: usize = STRING_LEN * 2 + 4;
+const PROCESS_MOUNT_LIST_LEN: usize = 2 + MAX_PROCESS_MOUNTS * PROCESS_MOUNT_RECORD_LEN;
+const PROCESS_RECORD_LEN: usize = STRING_LEN * 5
+    + 4
+    + PROCESS_MOUNT_LIST_LEN
+    + PROCESS_REF_LIST_LEN * 2
+    + ENDPOINT_REQUIREMENT_LIST_LEN;
+const PROCESS_PROVIDES_COUNT_OFFSET: usize = STRING_LEN * 5
+    + 4
+    + PROCESS_MOUNT_LIST_LEN
+    + PROCESS_REF_LIST_LEN
+    + ENDPOINT_REQUIREMENT_LIST_LEN;
 const ENDPOINT_RECORD_LEN: usize = STRING_LEN;
 const GRANT_RECORD_LEN: usize = 12;
 const STORE_OBJECT_RECORD_LEN: usize = STRING_LEN * 3 + 8;
@@ -52,6 +60,7 @@ const MAX_NAMESPACES: usize = 4;
 const MAX_VFS_ROOTS: usize = 8;
 const MAX_NAMESPACE_ENTRIES: usize = 4;
 const MAX_PROCESS_REFS: usize = 4;
+const MAX_PROCESS_MOUNTS: usize = 4;
 const PAGE_SIZE: u64 = 4096;
 const MAX_DEVICE_MAPPING_LENGTH: u64 = 1 << 30;
 const MAX_LEGACY_IRQ_LINE: u64 = 15;
@@ -71,6 +80,8 @@ const RIGHT_CREATE: u16 = 1 << 11;
 const RIGHT_UNLINK: u16 = 1 << 12;
 const RIGHT_RENAME: u16 = 1 << 13;
 const RIGHT_MOUNT: u16 = 1 << 14;
+const PROCESS_MOUNT_FLAG_BIND: u16 = 1;
+const PROCESS_MOUNT_FLAG_READ_ONLY: u16 = 1 << 1;
 const OBJECT_ENDPOINT: u16 = 1;
 const OBJECT_STORE: u16 = 2;
 const OBJECT_STATE: u16 = 3;
@@ -106,6 +117,7 @@ const SERIAL_RESERVED_CAP_SLOT: u16 = 1;
 const READINESS_RESERVED_CAP_SLOT: u16 = 2;
 const VERTEX_STORE_LOGD_OBJECT_CAP_SLOT: u16 = 7;
 const VERTEX_STORE_ECHO_OBJECT_CAP_SLOT: u16 = 8;
+const BLOCK_DRIVER_VERTEXFS_FSYNC_FAULT_CAP_SLOT: u16 = 15;
 const LOGD_CONFIG_MODULE: &str = "config-logd-v0";
 const LOGD_CONFIG_BYTES: &[u8] = b"{\"level\":\"info\",\"sink\":\"serial\"}\n";
 
@@ -116,7 +128,7 @@ pub struct KrustBootIdentity {
 impl KrustBootIdentity {
     pub fn release_profile_label(&self) -> String {
         format!(
-            "Manifest v1 compact KRUSTBOOTM75 version {}",
+            "Manifest v1 compact KRUSTBOOTM79 version {}",
             self.compact_version
         )
     }
@@ -163,6 +175,7 @@ pub fn compile(manifest: &GenerationManifest) -> Result<Vec<u8>, String> {
         push_fixed_str(&mut body, &process.service_id)?;
         push_fixed_str(&mut body, &process.health_kind)?;
         push_fixed_str(&mut body, &process.mount_root)?;
+        push_process_mount_list(&mut body, &process.mounts)?;
         push_process_ref_list(&mut body, &process.start_after, &plan)?;
         push_endpoint_requirement_list(&mut body, &process.requires_endpoints, &plan)?;
         push_endpoint_ref_list(&mut body, &process.provides_endpoints, &plan)?;
@@ -333,7 +346,7 @@ pub fn corrupt(bytes: &[u8], mode: &str) -> Result<Vec<u8>, String> {
                 return Err("KrustBoot manifest is too short to rewrite compact magic".to_owned());
             }
             out[V1_PAYLOAD_OFFSET..V1_PAYLOAD_OFFSET + COMPACT_MAGIC.len()]
-                .copy_from_slice(b"KRUSTBOOTM61\0\0\0\0");
+                .copy_from_slice(b"KRUSTBOOTM75\0\0\0\0");
             rewrite_v1_checksum(&mut out)?;
         }
         "missing-provider" => {
@@ -419,7 +432,7 @@ pub fn validate_release_artifact(bytes: &[u8]) -> Result<KrustBootIdentity, Stri
 
     let payload = V1_PAYLOAD_OFFSET;
     if &bytes[payload..payload + COMPACT_MAGIC.len()] != COMPACT_MAGIC {
-        return Err("unsupported KrustBoot compact magic; expected KRUSTBOOTM75".to_owned());
+        return Err("unsupported KrustBoot compact magic; expected KRUSTBOOTM79".to_owned());
     }
     let compact_version = read_u16_at(bytes, payload + COMPACT_MAGIC.len())?;
     if compact_version != COMPACT_VERSION {
@@ -523,7 +536,15 @@ struct NativeProcess {
     provides_endpoints: Vec<String>,
     health_kind: String,
     mount_root: String,
+    mounts: Vec<ProcessMount>,
     restart: u16,
+}
+
+#[derive(Debug, Clone)]
+struct ProcessMount {
+    path: String,
+    source: String,
+    flags: u16,
 }
 
 #[derive(Debug, Clone)]
@@ -662,6 +683,7 @@ fn derive_plan(manifest: &GenerationManifest) -> Result<BootPlan, String> {
         provides_endpoints: Vec::new(),
         health_kind: String::new(),
         mount_root: service_mount_root(root_service)?,
+        mounts: service_mounts(root_service)?,
         restart: RESTART_NEVER,
     });
 
@@ -701,6 +723,7 @@ fn derive_plan(manifest: &GenerationManifest) -> Result<BootPlan, String> {
                 .map(|health| health.kind.clone())
                 .unwrap_or_default(),
             mount_root: service_mount_root(service)?,
+            mounts: service_mounts(service)?,
             restart: restart_policy(&service.restart)?,
         });
     }
@@ -902,11 +925,18 @@ fn derive_plan(manifest: &GenerationManifest) -> Result<BootPlan, String> {
                         )
                     })?;
                     push_unique_store_object(&mut store_objects, store)?;
+                    let cap_slot = if process_name == "block-driver"
+                        && capability.id == "cap:block-driver.vertexfs-fsync-fault-token"
+                    {
+                        BLOCK_DRIVER_VERTEXFS_FSYNC_FAULT_CAP_SLOT
+                    } else {
+                        next_object_cap_slot(&mut next_object_slots, &process_name)?
+                    };
                     grants.push(Grant {
                         process: process_name.clone(),
                         object_kind: OBJECT_STORE,
                         object_name: store.id.clone(),
-                        cap_slot: next_object_cap_slot(&mut next_object_slots, &process_name)?,
+                        cap_slot,
                         rights: rights_mask(
                             &requirement.rights,
                             &capability.rights,
@@ -1296,6 +1326,13 @@ fn native_store_candidate_paths(module_string: &str) -> Vec<PathBuf> {
         paths.push(PathBuf::from("assets/block-driver-fault-token.txt"));
         paths.push(PathBuf::from(
             "kernel/krust/assets/block-driver-fault-token.txt",
+        ));
+        return paths;
+    }
+    if module_string == "store-vertexfs-fsync-fault-token" {
+        paths.push(PathBuf::from("assets/vertexfs-fsync-fault-token.txt"));
+        paths.push(PathBuf::from(
+            "kernel/krust/assets/vertexfs-fsync-fault-token.txt",
         ));
         return paths;
     }
@@ -1976,6 +2013,37 @@ fn validate_plan(plan: &BootPlan) -> Result<(), String> {
             ));
         }
         validate_manifest_vfs_path(&process.name, &process.mount_root)?;
+        if process.mounts.len() > MAX_PROCESS_MOUNTS {
+            return Err(format!(
+                "process {} has too many declared mounts; max {MAX_PROCESS_MOUNTS}",
+                process.name
+            ));
+        }
+        let mut mount_paths = BTreeSet::new();
+        for mount in &process.mounts {
+            validate_manifest_vfs_path(&process.name, &mount.path)?;
+            validate_manifest_vfs_path(&process.name, &mount.source)?;
+            if mount.path == "/" {
+                return Err(format!(
+                    "process {} declared mount path cannot replace namespace root",
+                    process.name
+                ));
+            }
+            if mount.flags & !known_process_mount_flags() != 0
+                || mount.flags & PROCESS_MOUNT_FLAG_BIND == 0
+            {
+                return Err(format!(
+                    "process {} declared mount has unsupported flags",
+                    process.name
+                ));
+            }
+            if !mount_paths.insert(mount.path.as_str()) {
+                return Err(format!(
+                    "process {} declares duplicate mount path {}",
+                    process.name, mount.path
+                ));
+            }
+        }
         if process.start_after.len() > MAX_PROCESS_REFS
             || process.requires_endpoints.len() > MAX_PROCESS_REFS
             || process.provides_endpoints.len() > MAX_PROCESS_REFS
@@ -2383,13 +2451,77 @@ fn rights_mask(required: &[String], capability: &[String], context: &str) -> Res
 
 fn service_mount_root(service: &Service) -> Result<String, String> {
     let Some(value) = service.extra.get("mountRoot") else {
-        return Ok("/".to_owned());
+        return Err(format!("service {} must declare mountRoot", service.id));
     };
     let Some(root) = value.as_str() else {
         return Err(format!("service {} mountRoot must be a string", service.id));
     };
     validate_manifest_vfs_path(&service.id, root)?;
     Ok(root.to_owned())
+}
+
+fn service_mounts(service: &Service) -> Result<Vec<ProcessMount>, String> {
+    let Some(value) = service.extra.get("mounts") else {
+        return Ok(Vec::new());
+    };
+    let Some(mounts) = value.as_array() else {
+        return Err(format!("service {} mounts must be an array", service.id));
+    };
+    if mounts.len() > MAX_PROCESS_MOUNTS {
+        return Err(format!(
+            "service {} declares too many mounts; max {MAX_PROCESS_MOUNTS}",
+            service.id
+        ));
+    }
+
+    let mut result = Vec::new();
+    for (index, mount) in mounts.iter().enumerate() {
+        let context = format!("service {} mounts[{index}]", service.id);
+        let Some(object) = mount.as_object() else {
+            return Err(format!("{context} must be an object"));
+        };
+        let path = required_mount_path(object.get("path"), &context, "path")?;
+        let source = required_mount_path(object.get("source"), &context, "source")?;
+        if path == "/" {
+            return Err(format!("{context} path cannot replace namespace root"));
+        }
+        let Some(read_only) = object.get("readOnly") else {
+            return Err(format!("{context} must declare readOnly"));
+        };
+        let Some(read_only) = read_only.as_bool() else {
+            return Err(format!("{context} readOnly must be a boolean"));
+        };
+        let mut flags = PROCESS_MOUNT_FLAG_BIND;
+        if read_only {
+            flags |= PROCESS_MOUNT_FLAG_READ_ONLY;
+        }
+        result.push(ProcessMount {
+            path,
+            source,
+            flags,
+        });
+    }
+
+    Ok(result)
+}
+
+fn required_mount_path(
+    value: Option<&Value>,
+    context: &str,
+    field: &str,
+) -> Result<String, String> {
+    let Some(value) = value else {
+        return Err(format!("{context} must declare {field}"));
+    };
+    let Some(path) = value.as_str() else {
+        return Err(format!("{context} {field} must be a string"));
+    };
+    validate_manifest_vfs_path(context, path)?;
+    Ok(path.to_owned())
+}
+
+fn known_process_mount_flags() -> u16 {
+    PROCESS_MOUNT_FLAG_BIND | PROCESS_MOUNT_FLAG_READ_ONLY
 }
 
 fn service_label(service: &Service) -> String {
@@ -2680,6 +2812,29 @@ fn push_endpoint_requirement_list(
     }
     while written < MAX_PROCESS_REFS {
         push_u16(bytes, u16::MAX);
+        push_u16(bytes, 0);
+        written += 1;
+    }
+    Ok(())
+}
+
+fn push_process_mount_list(bytes: &mut Vec<u8>, values: &[ProcessMount]) -> Result<(), String> {
+    if values.len() > MAX_PROCESS_MOUNTS {
+        return Err("too many process mounts".to_owned());
+    }
+    push_u16(bytes, values.len() as u16);
+    let mut written = 0;
+    for value in values {
+        push_fixed_str(bytes, &value.path)?;
+        push_fixed_str(bytes, &value.source)?;
+        push_u16(bytes, value.flags);
+        push_u16(bytes, 0);
+        written += 1;
+    }
+    while written < MAX_PROCESS_MOUNTS {
+        push_fixed_str(bytes, "")?;
+        push_fixed_str(bytes, "")?;
+        push_u16(bytes, 0);
         push_u16(bytes, 0);
         written += 1;
     }
@@ -3028,6 +3183,7 @@ mod tests {
                 provides_endpoints: Vec::new(),
                 health_kind: String::new(),
                 mount_root: "/".to_owned(),
+                mounts: Vec::new(),
                 restart: RESTART_NEVER,
             }],
             endpoints: vec![Endpoint {
@@ -3146,7 +3302,7 @@ mod tests {
         let process_base = V1_PAYLOAD_OFFSET + COMPACT_HEADER_SIZE + BOOT_MODULE_RECORD_LEN;
         let current_offset = process_base + PROCESS_PROVIDES_COUNT_OFFSET;
         let stale_offset = process_base
-            + STRING_LEN * 4
+            + STRING_LEN * 5
             + 4
             + PROCESS_REF_LIST_LEN
             + ENDPOINT_REQUIREMENT_LIST_LEN;

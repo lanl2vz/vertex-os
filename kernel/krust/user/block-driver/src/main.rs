@@ -21,7 +21,11 @@ const CAP_VIRTIO_IO: u64 = 9;
 const CAP_FAULT_INJECTION: u64 = 10;
 const CAP_VFS_VIRTIO_BLK0: u64 = 10;
 const CAP_VIRTIO_DEVICE: u64 = 12;
+const CAP_VERTEXFS_BLOCK_REQUEST: u64 = 13;
+const CAP_VERTEXFS_BLOCK_REPLY: u64 = 14;
+const CAP_VERTEXFS_FSYNC_FAULT: u64 = 15;
 const FAULT_INJECTION_TOKEN: &[u8] = b"krust-block-driver-fault\n";
+const VERTEXFS_FSYNC_FAULT_TOKEN: &[u8] = b"krust-vertexfs-fsync-fault\n";
 
 const PROTOCOL_HEALTH_V0: u16 = 2;
 const MESSAGE_READY: u16 = 1;
@@ -36,13 +40,15 @@ const BLOCK_POLL_TIMEOUT_MS: u64 = 1;
 const BLOCK_IDLE_ROUNDS: u64 = 500;
 const SECTOR_SIZE: usize = 512;
 const WRITEBACK_PATTERN: &[u8] = b"M43 VertexDisk journal writeback\n";
-const VERTEX_DISK_MAGIC: &[u8; 16] = b"VERTEXDISKV0\0\0\0\0";
-const VERTEX_DISK_VERSION: u16 = 1;
+const VERTEX_DISK_MAGIC: &[u8; 16] = b"VERTEXDISKV1\0\0\0\0";
+const VERTEX_DISK_VERSION: u16 = 2;
 const VERTEX_DISK_CHECKSUM_OFFSET: usize = 20;
 const VERTEX_DISK_TOTAL_SECTORS_OFFSET: usize = 24;
 const VERTEX_DISK_SECTION_TABLE_OFFSET: usize = 32;
 const VERTEX_DISK_SECTION_RECORD_LEN: usize = 16;
 const VERTEX_DISK_JOURNAL_SECTION: usize = 5;
+const VERTEX_DISK_VERTEXFS_SECTION: usize = 6;
+const VERTEXFS_SUPERBLOCK_MAGIC: &[u8; 16] = b"VERTEXFSV1\0\0\0\0\0\0";
 
 const PCI_CONFIG_ADDRESS: u16 = 0x0cf8;
 const PCI_CONFIG_DATA: u16 = 0x0cfc;
@@ -140,6 +146,17 @@ fn has_fault_injection_token() -> bool {
     len == FAULT_INJECTION_TOKEN.len() as u64 && bytes_eq(&token, FAULT_INJECTION_TOKEN)
 }
 
+fn has_vertexfs_fsync_fault_token() -> bool {
+    let mut token = [0u8; VERTEXFS_FSYNC_FAULT_TOKEN.len()];
+    let handle = sys::vfs_open_read(CAP_VERTEXFS_FSYNC_FAULT);
+    if status_is_error(handle) {
+        return false;
+    }
+    let len = sys::vfs_read(handle, &mut token);
+    let _ = sys::vfs_close(handle);
+    len == VERTEXFS_FSYNC_FAULT_TOKEN.len() as u64 && bytes_eq(&token, VERTEXFS_FSYNC_FAULT_TOKEN)
+}
+
 struct VirtioBlock {
     io_base: u16,
     dma_virtual: u64,
@@ -153,6 +170,8 @@ struct VirtioBlock {
     last_error: u64,
     store_read_logged: bool,
     state_read_logged: bool,
+    vertexfs_write_logged: bool,
+    fault_vertexfs_fsync: bool,
 }
 
 impl VirtioBlock {
@@ -209,6 +228,8 @@ impl VirtioBlock {
             last_error: VIRTIO_ERROR_NONE,
             store_read_logged: false,
             state_read_logged: false,
+            vertexfs_write_logged: false,
+            fault_vertexfs_fsync: has_vertexfs_fsync_fault_token(),
         };
         if device.setup_queue().is_none() {
             device.last_error = VIRTIO_ERROR_INIT_FAILED;
@@ -526,6 +547,7 @@ struct VertexDiskLayout {
     state_index: Section,
     state_data: Section,
     journal: Section,
+    vertexfs: Section,
 }
 
 #[derive(Clone, Copy)]
@@ -569,11 +591,41 @@ fn run_self_test(device: &mut VirtioBlock) -> VertexDiskLayout {
         sys::exit(1);
     }
     log(b"readback matches");
+    validate_vertexfs_device_section(device, layout);
     log(b"block-driver enforces sector-range and alignment");
     log(b"immutable store endpoint is read-only");
     log(b"state VFS write bounds and owner checks ok");
     log(b"block-driver fault during request fails client request without kernel fault");
     layout
+}
+
+fn validate_vertexfs_device_section(device: &mut VirtioBlock, layout: VertexDiskLayout) {
+    if layout.vertexfs.count != 64 {
+        log(b"VertexDisk VertexFS section rejected");
+        sys::exit(1);
+    }
+
+    let mut sector = [0u8; SECTOR_SIZE];
+    if !device.read_sector(layout.vertexfs.start, &mut sector) {
+        log(b"block-driver VertexFS section read failed");
+        sys::exit(1);
+    }
+    if !starts_with(&sector, VERTEXFS_SUPERBLOCK_MAGIC) {
+        log(b"block-driver VertexFS section magic rejected");
+        sys::exit(1);
+    }
+    log(b"block-driver reads VertexFS device image section");
+
+    if !device.write_sector(layout.vertexfs.start, &sector) {
+        log(b"block-driver VertexFS section write failed");
+        sys::exit(1);
+    }
+    let mut readback = [0u8; SECTOR_SIZE];
+    if !device.read_sector(layout.vertexfs.start, &mut readback) || !bytes_eq(&readback, &sector) {
+        log(b"block-driver VertexFS section writeback failed");
+        sys::exit(1);
+    }
+    log(b"block-driver writes VertexFS device image section");
 }
 
 fn serve_block_request(device: &mut VirtioBlock, layout: &VertexDiskLayout) -> bool {
@@ -585,11 +637,19 @@ fn serve_block_request(device: &mut VirtioBlock, layout: &VertexDiskLayout) -> b
     ) {
         return true;
     }
-    serve_client_request(
+    if serve_client_request(
         device,
         layout,
         BlockClient::State,
         CAP_VERTEX_STATE_BLOCK_REQUEST,
+    ) {
+        return true;
+    }
+    serve_client_request(
+        device,
+        layout,
+        BlockClient::VertexFs,
+        CAP_VERTEXFS_BLOCK_REQUEST,
     )
 }
 
@@ -635,6 +695,7 @@ fn serve_client_request(
 enum BlockClient {
     Store,
     State,
+    VertexFs,
 }
 
 #[derive(Clone, Copy)]
@@ -653,6 +714,7 @@ fn serve_read_request(device: &mut VirtioBlock, client: BlockClient, request: Bl
             device.state_read_logged = true;
             true
         }
+        BlockClient::VertexFs => false,
         _ => false,
     };
     if log_request {
@@ -683,6 +745,18 @@ fn serve_write_request(
     request_cap: u64,
 ) {
     log(b"block-driver received block-write request");
+    if let BlockClient::VertexFs = client
+        && !device.vertexfs_write_logged
+    {
+        device.vertexfs_write_logged = true;
+        log(b"block-driver writes VertexFS fsync sector");
+    }
+    if let BlockClient::VertexFs = client
+        && device.fault_vertexfs_fsync
+    {
+        log(b"block-driver fault injection exits during VertexFS fsync");
+        sys::exit(1);
+    }
 
     let mut sector_bytes = [0u8; SECTOR_SIZE];
     let received = sys::ipc_recv(request_cap, &mut sector_bytes);
@@ -726,6 +800,7 @@ fn reply_cap_for_client(client: BlockClient) -> u64 {
     match client {
         BlockClient::Store => CAP_VERTEX_STORE_BLOCK_REPLY,
         BlockClient::State => CAP_VERTEX_STATE_BLOCK_REPLY,
+        BlockClient::VertexFs => CAP_VERTEXFS_BLOCK_REPLY,
     }
 }
 
@@ -761,6 +836,12 @@ fn request_authorized(
                 layout.state_index.contains(request.sector)
                     || layout.state_data.contains(request.sector)
                     || layout.journal.contains(request.sector)
+            }
+            _ => false,
+        },
+        BlockClient::VertexFs => match request.op {
+            BLOCK_OP_READ_SECTOR | BLOCK_OP_WRITE_SECTOR => {
+                layout.vertexfs.contains(request.sector)
             }
             _ => false,
         },
@@ -802,7 +883,7 @@ fn vertexdisk_layout(sector: &[u8; SECTOR_SIZE]) -> Option<VertexDiskLayout> {
     }
 
     let mut section = 0;
-    while section <= VERTEX_DISK_JOURNAL_SECTION {
+    while section <= VERTEX_DISK_VERTEXFS_SECTION {
         checked_section(sector, section, total_sectors)?;
         section += 1;
     }
@@ -813,6 +894,7 @@ fn vertexdisk_layout(sector: &[u8; SECTOR_SIZE]) -> Option<VertexDiskLayout> {
         state_index: checked_section(sector, 3, total_sectors)?,
         state_data: checked_section(sector, 4, total_sectors)?,
         journal: checked_section(sector, VERTEX_DISK_JOURNAL_SECTION, total_sectors)?,
+        vertexfs: checked_section(sector, VERTEX_DISK_VERTEXFS_SECTION, total_sectors)?,
     })
 }
 

@@ -57,7 +57,7 @@ KrustBoot Manifest v1 records: 9
 KrustBoot boot modules: 13
 KrustBoot processes: 13
 KrustBoot endpoints: 10
-KrustBoot grants: 64
+KrustBoot grants: 65
 KrustBoot store objects: 14
 KrustBoot state volumes: 2
 state_volume[0] id=state:counter
@@ -70,7 +70,7 @@ KrustBoot dma regions: 1
 KrustBoot pci devices: 4
 KrustBoot virtio devices: 4
 KrustBoot namespaces: 2
-KrustBoot vfs roots: 7
+KrustBoot vfs roots: 8
 boot_module[0] name=vertex-init string=vertex-init
 boot_module[1] name=serial-driver string=serial-driver
 boot_module[2] name=logd string=logd
@@ -119,6 +119,7 @@ process=model-reader cap[0] endpoint=model-reader-store-reply rights=receive
 process=vertex-state cap[0] endpoint=vertex-state-block-reply rights=receive
 process=counter-service cap[0] vfs-root=cap:vfs.counter-state rights=read|write|resolve
 process=reader-service cap[0] vfs-root=cap:vfs.state-reader-state rights=read|resolve
+process=model-reader cap[4] vfs-root=cap:vfs.model-reader-vertexfs rights=read|write|resolve|create
 process=echo cap[7] vfs-root=cap:vfs.echo-state-control rights=control|resolve
 process=serial-driver cap[3] io-port=cap:io.com1 rights=read|write
 process=block-driver cap[6] io-port=cap:io.pci-config rights=read|write
@@ -159,7 +160,7 @@ IPC FIFO regression ok
 IDT initialized: #UD #GP #PF
 Native secret object registered: secret:logd-token storage=in-memory
 Process table entries: 1
-Endpoint table entries: 12
+Endpoint table entries: 14
 endpoint[0] id=1 name=serial-log
 endpoint[1] id=2 name=readiness
 endpoint[2] id=3 name=serial-console
@@ -172,6 +173,8 @@ endpoint[8] id=9 name=store-hello-text-request
 endpoint[9] id=10 name=model-reader-store-reply
 endpoint[10] id=11 name=state-vfs-request
 endpoint[11] id=12 name=state-vfs-reply
+endpoint[12] id=13 name=vertexfs-device-request
+endpoint[13] id=14 name=vertexfs-device-reply
 process[0] id=1 name=vertex-init state=running
 process[1] id=2 name=serial-driver state=declared
 process[2] id=3 name=logd state=declared
@@ -208,8 +211,12 @@ proc=block-driver cap[10] vfs-root=cap:vfs.block-dev-blk0 root=/dev/device:virti
 proc=block-driver cap[11] pci-device=device:virtio-blk0 kind=virtio-blk-pci rights=control
 Native VFS state request grant: process=vertex-state endpoint=state-vfs-request rights=receive
 Native VFS state reply grant: process=vertex-state endpoint=state-vfs-reply rights=send
+Native VertexFS device request grant: process=block-driver endpoint=vertexfs-device-request rights=receive
+Native VertexFS device reply grant: process=block-driver endpoint=vertexfs-device-reply rights=send
 proc=vertex-state cap[6] endpoint=state-vfs-reply rights=send
 proc=vertex-state cap[7] endpoint=state-vfs-request rights=receive
+proc=block-driver cap[13] endpoint=vertexfs-device-request rights=receive
+proc=block-driver cap[14] endpoint=vertexfs-device-reply rights=send
 proc=block-driver cap[12] virtio-device=device:virtio-blk0 transport=virtio-pci-io rights=control
 proc=vertex-store cap[0] endpoint=store-hello-text-request rights=receive
 proc=vertex-store cap[3] endpoint=vertex-store-block-reply rights=receive
@@ -241,7 +248,7 @@ vertex-init manifest generation: gen:hello-0001
 vertex-init boot modules: 13
 vertex-init processes: 13
 vertex-init endpoints: 10
-vertex-init grants: 64
+vertex-init grants: 65
 vertex-init network ports: 1
 vertex-init store objects: 14
 Krust process executable store object: process=logd object=store:logd-demo
@@ -258,7 +265,13 @@ vertex-init dma regions: 1
 vertex-init pci devices: 4
 vertex-init virtio devices: 4
 vertex-init namespaces: 2
-vertex-init vfs roots: 7
+vertex-init vfs roots: 8
+VertexFS v1 image module accepted: bytes=32768
+block-driver writes VertexFS fsync sector
+VertexFS v1 superblock accepted: generation=gen:hello-0001 feature_flags=metadata-v1
+VertexFS v1 mounted: path=/fs source=vertexfs
+VertexFS v1 directory record verified: path=/fs/app
+VertexFS v1 declared file mounted: path=/fs/app/a
 M61 malformed boot-read buffer rejected
 M61 rights subset checks reject derived and transferred authority
 M61 capability move rejects occupied target without dropping source
@@ -416,6 +429,14 @@ service-backed state value stat reports durable length
 vertex-state block cache hit
 vertex-state block cache writeback clean
 vertex-state cache inspect dirty=0 pinned=0 writeback_errors=0
+vertex-state block cache clean eviction under pressure
+vertex-state block cache dirty pages are not evicted
+vertex-state block cache writeback error accounting increments
+VFS mount requires explicit mount authority
+VFS mount object creates busy-checks and unmounts volatile root
+VFS bind mount accepted: proc=echo path=/ro canonical=/state/ro source=/state flags=bind|read-only
+VFS bind unmount rejects busy mounted subtree
+read-only bind mount rejects write through alias
 SYS_VFS_RENAME returned STATUS_VFS_PERMISSION
 VFS rename requires explicit rename authority
 VFS rename accepted: proc=echo old=/rename-old new=/rename-new canonical_old=/state/rename-old canonical_new=/state/rename-new vnode=
@@ -428,6 +449,7 @@ VFS hard links share volatile file backing and report link count
 VFS hard link metadata version follows shared backing writes
 VFS hard link metadata version follows link count changes
 VFS hard links cannot cross filesystem boundaries
+VFS rename cannot cross filesystem boundaries
 VFS hard links cannot cross volatile mount instances
 VFS rename cannot cross volatile mount instances
 long VFS paths and components are rejected before allocation
@@ -452,6 +474,15 @@ vertex-store verifies hash
 modified object fails hash check
 model-reader reads bytes
 model-reader reads bytes successfully
+VFS namespace root resolved: proc=model-reader root=/fs/app
+mount namespace root exposes declared VertexFS app tree
+model-reader VertexFS namespace root maps /a to /fs/app/a
+VertexFS v1 declared file read through VFS
+VertexFS v1 fsync device transaction committed: proc=model-reader inode=4 sectors=
+VertexFS v1 declared file fsync journal readback ok
+VFS open-create accepted: proc=model-reader path=/created
+VertexFS v1 fsync device transaction committed: proc=model-reader inode=5 sectors=
+VertexFS v1 dynamic create write fsync readback ok
 Native immutable store client ok
 counter-service has VFS state file
 counter-service writes state through VFS
@@ -488,6 +519,7 @@ restart policy = always
 vertex-init restarts echo once
 Krust process restart reload: proc=echo
 echo restart retained delegated log cap
+echo restart restored declared mount namespace root /state
 flaky-service exits with status 1
 flaky-service creates quota-backed endpoint
 vertex-init observes failure
@@ -567,7 +599,7 @@ while [ "$attempt" -le "$QEMU_ATTEMPTS" ]; do
     if check_transcript; then
         cleanup
         pid=
-        echo "smoke ok: Krust completed manifest v1, directed IPC, typed arenas, cap lifecycle, quotas, service-local store/state/timer access, restart, verified store execution, update checks, dynamic process creation, config/secret authority, VFS roots, VFS rename, directory metadata, block-cache writeback, blocking VFS pipe reads, service-backed state-volume VFS transactions, and native service activation"
+        echo "smoke ok: Krust completed manifest v1, directed IPC, typed arenas, cap lifecycle, quotas, service-local store/state/timer access, restart, verified store execution, update checks, dynamic process creation, config/secret authority, VFS roots, VFS rename, directory metadata, block-cache writeback, VertexFS v1 image mount, mount namespaces, blocking VFS pipe reads, service-backed state-volume VFS transactions, and native service activation"
         exit 0
     fi
 

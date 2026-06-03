@@ -5,7 +5,7 @@ native Krust QEMU/Limine milestone. It is intentionally small and unstable. Its
 current job is to boot native `vertex-init`, create services from verified
 process templates, and enforce explicit process-local capabilities.
 
-Milestone status: ABI v1 now covers the M14-M77 native activation and substrate
+Milestone status: ABI v1 now covers the M14-M79 native activation and substrate
 proof. M25 adds the release gate. M26-M29 add Manifest v1 parsing, capability
 provenance/revocation, typed arena allocation checks, and resource quotas.
 M30-M31 add PIT-backed preemption and user page-fault containment. M32-M36 add
@@ -16,7 +16,7 @@ M38 adds native runtime introspection through an inspect-only process-control
 right. M39 pins the reproducible native build environment and release gate.
 M40 freezes ABI v1 with directed request/reply IPC. M41 adds the console shell
 path, M42 adds minimal virtio-blk sector I/O over PCI I/O and DMA
-capabilities, and M43 adds VertexDisk v0 block-object persistence for store,
+capabilities, and M43 adds VertexDisk v1 block-object persistence for store,
 state, and journal data. M44-M47 add native boot-manager state, verified store
 object identities, native update transactions, and process executable loading
 through verified store objects. M48-M55 replace fixed runtime process slots
@@ -33,7 +33,11 @@ profile artifact without adding legacy compatibility paths. M74-M75 add the
 native VFS object model, service-local mount roots, open-file handle table,
 descriptor lifecycle, and volatile create/unlink path. M76-M77 add directory
 metadata syscalls, 64-byte stat metadata, open-unlink lifetime, hard-link
-policy, and bounded state-volume block-cache writeback. The ABI is still
+policy, and bounded state-volume block-cache writeback. M78-M79 add the strict
+VertexFS v1 boot image, the `KRUSTBOOTM79` compact process-record layout,
+mandatory service mount roots, declared bind-mount snapshots, and kernel-owned
+VertexFS fsync writeback through block-driver device endpoints, plus the
+current read-only `servicefs` request/reply file route. The ABI is still
 intentionally small, but this subset is the current native contract.
 
 ## Machine ABI
@@ -152,7 +156,7 @@ process frame, switch CR3, and return into another userspace process through
 | `STATUS_OK` | `0` | Operation accepted. |
 | `STATUS_BAD_CAPABILITY` | `u64::MAX - 1` | The process does not hold a suitable capability in the requested slot. |
 | `STATUS_BAD_BUFFER` | `u64::MAX - 2` | The user pointer/range failed validation before copying. |
-| `STATUS_TOO_LARGE` | `u64::MAX - 3` | IPC message length exceeded the kernel's fixed message buffer. |
+| `STATUS_TOO_LARGE` | `u64::MAX - 3` | IPC or boot-module read length exceeded the kernel's fixed buffer budget. |
 | `STATUS_EMPTY` | `u64::MAX - 4` | Endpoint had no message and no process could be scheduled after blocking. |
 | `STATUS_RUNNING` | `u64::MAX - 8` | `SYS_PROCESS_WAIT` target has not exited. |
 | `STATUS_TIMEOUT` | `u64::MAX - 9` | A timed IPC receive or IRQ wait expired before an event arrived. |
@@ -193,7 +197,7 @@ becoming uncontrolled kernel faults.
 Capabilities are process-local. A capability slot number is meaningful only in
 the current process's capability space.
 
-Current M14-M77 layout:
+Current M14-M79 layout:
 
 ```text
 vertex-init:
@@ -396,16 +400,35 @@ rights and are obtained by opening a directory with the native read flag.
 SYS_VFS_MOUNT with mount flag `1` creates an empty volatile mounted directory
 at a missing covered path. It requires `resolve` and `mount` authority on the
 parent directory and returns `STATUS_VFS_EXISTS` if a node already occupies the
-mount path. SYS_VFS_UNMOUNT removes a dynamic mount root when the caller has
-`resolve` and `mount` authority over that root; built-in roots are unsupported,
-and roots with live handles or children return `STATUS_VFS_BUSY`.
+mount path. Mount flag `2` creates a bind mount from the caller's VFS root to
+the target; flag `4` marks that bind read-only. Unsupported flag combinations
+are rejected instead of silently falling back. SYS_VFS_UNMOUNT removes a dynamic
+mount root when the caller has `resolve` and `mount` authority over that root;
+built-in roots are unsupported, volatile roots with live handles or children
+return `STATUS_VFS_BUSY`, and read-only bind paths reject write-capable opens
+and metadata mutation.
+SYS_VFS_SYNC on a dirty VertexFS v1 file prepares a strict journaled image
+transaction, queues the ordered journal, data, metadata, and clean-journal
+sectors through the kernel-owned `vertexfs-device-request` endpoint, waits for
+matching block-driver replies on `vertexfs-device-reply`, and clears the dirty
+bit only after every sector write is acknowledged. The block-driver authorizes
+that client only inside the declared VertexDisk VertexFS section and does not
+accept older VertexDisk identities or short compatibility block commands. If the
+block-driver exits while a VertexFS fsync is blocked on device replies, the
+kernel aborts the transaction with `STATUS_VFS_UNSUPPORTED`, drops the pending
+device writes, and leaves the dirty runtime file readable. On mount, a pending
+VertexFS v1 journal record can recover only the exact target inode and payload
+encoded in that record; unrelated file checksum mismatches still reject the
+image before `/fs` is mounted.
 SYS_VFS_RENAME takes a native request buffer:
 `old_path_len:u64`, `new_path_len:u64`, old path bytes, then new path bytes. It
 requires `resolve` and `rename` authority over both parent directories, rejects
 replacement if the destination already exists, and currently supports volatile
 memory-file vnodes. The vnode id is preserved across the rename, so live handles
-continue to reference the same open file description. SYS_VFS_MKDIR creates an
-empty directory below a covered parent when the caller has `resolve` and
+continue to reference the same open file description. Cross-filesystem and
+cross-mount-instance renames return `STATUS_VFS_UNSUPPORTED`; callers must not
+expect implicit copy-and-delete behavior. SYS_VFS_MKDIR creates an empty
+directory below a covered parent when the caller has `resolve` and
 `create`; flags are currently rejected. SYS_VFS_RMDIR removes an empty
 non-mounted directory covered by `resolve` and `unlink`, returning
 `STATUS_VFS_BUSY` for children or open directory handles. SYS_VFS_LINK uses the
@@ -431,6 +454,14 @@ Store and state traffic use separate block request endpoints; the driver treats
 the receiving endpoint as the client identity and enforces read-only store
 access, state-only writes, and section bounds before
 performing sector I/O.
+The current filesystem-service route mounts `/state/service-report` from the
+`servicefs` source as a read-only file. Reads queue a native service request on
+the kernel-owned `state-vfs-request` endpoint: `u64 transaction_id`, magic
+`FS`, version `1`, and op `R`. `vertex-state` replies on `state-vfs-reply` with
+`u64 transaction_id` followed by `servicefs:vertex-state-report\n`. The kernel
+wakes the blocked file reader from that matching reply. Write, create,
+truncate, and append opens on this file return `STATUS_VFS_UNSUPPORTED`; older
+short filesystem-service commands are not accepted.
 SYS_SLEEP_MS requires control rights on a timer cap.
 SYS_IO_READ, SYS_IO_READ16, and SYS_IO_READ32 require read rights on an io-port cap and a fully covered port span inside the granted range.
 SYS_IO_WRITE, SYS_IO_WRITE16, and SYS_IO_WRITE32 require write rights on an io-port cap and a fully covered port span inside the granted range.
@@ -770,9 +801,9 @@ namespaces
 vfs_roots
 ```
 
-The compact payload identity is `KRUSTBOOTM75` version 11. Older compact
-payload identities, including the previous M61 identity, are rejected instead of
-being retained as compatibility formats.
+The compact payload identity is `KRUSTBOOTM79` version 12. Older compact
+payload identities, including M75 and M61, are rejected instead of being
+retained as compatibility formats.
 
 Manifest v1 adds a fixed header, record table, checksum, and record bounds
 validation. The current record kinds are boot modules, process templates,
@@ -781,10 +812,12 @@ requires the v1 wrapper at the boot-module boundary and rejects an unwrapped
 compact payload. After validating the wrapper, the kernel exposes the compact
 payload to `vertex-init` through cap[0] so native userspace parsing stays small.
 Each compact process record carries `name`, `module`, `service`, restart and
-health policy, and `mount_root`; hosted `vertexctl` derives `mount_root` from
-the service `mountRoot` field and defaults it to `/` when absent. Older compact
-process records without `mount_root` are rejected by the version check rather
-than accepted through a compatibility parser.
+health policy, `mount_root`, and an explicit declared bind-mount snapshot list.
+Hosted `vertexctl` derives `mount_root` from the service `mountRoot` field,
+rejects services that omit it, and rejects malformed declared mount entries.
+Older compact process records without `mount_root` or mount snapshot records are
+rejected by the version check rather than accepted through a compatibility
+parser.
 
 Krust also creates fixed boot caps for native `vertex-init`:
 

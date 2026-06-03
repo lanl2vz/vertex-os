@@ -3,11 +3,23 @@ use core::arch::asm;
 pub const STATUS_OK: u64 = 0;
 pub const STATUS_BAD_CAPABILITY: u64 = u64::MAX - 1;
 pub const STATUS_BAD_BUFFER: u64 = u64::MAX - 2;
+pub const STATUS_VFS_UNSUPPORTED: u64 = u64::MAX - 39;
+pub const STATUS_VFS_NO_SPACE: u64 = u64::MAX - 40;
 
 const SYS_EXIT: u64 = 2;
 const SYS_IPC_SEND: u64 = 3;
 const SYS_IPC_RECV: u64 = 4;
 const SYS_LOG_WRITE: u64 = 7;
+const SYS_VFS_OPEN: u64 = 48;
+const SYS_VFS_READ: u64 = 49;
+const SYS_VFS_CLOSE: u64 = 50;
+const SYS_VFS_WRITE: u64 = 54;
+const SYS_VFS_SYNC: u64 = 56;
+
+const VFS_OPEN_READ: u64 = 1;
+const VFS_OPEN_WRITE: u64 = 1 << 1;
+const VFS_OPEN_CREATE: u64 = 1 << 2;
+const VFS_OPEN_TRUNC: u64 = 1 << 3;
 
 pub fn log(cap_slot: u64, message: &[u8]) -> u64 {
     syscall3(
@@ -34,6 +46,55 @@ pub fn ipc_recv(cap_slot: u64, buffer: &mut [u8]) -> u64 {
         buffer.as_mut_ptr() as u64,
         buffer.len() as u64,
     )
+}
+
+pub fn vfs_open_path_read(cap_slot: u64, path: &[u8]) -> u64 {
+    syscall3(
+        SYS_VFS_OPEN,
+        cap_slot,
+        path.as_ptr() as u64,
+        (VFS_OPEN_READ << 32) | path.len() as u64,
+    )
+}
+
+pub fn vfs_open_read(cap_slot: u64) -> u64 {
+    syscall3(SYS_VFS_OPEN, cap_slot, 0, VFS_OPEN_READ << 32)
+}
+
+pub fn vfs_open_path_create_trunc_readwrite(cap_slot: u64, path: &[u8]) -> u64 {
+    syscall3(
+        SYS_VFS_OPEN,
+        cap_slot,
+        path.as_ptr() as u64,
+        ((VFS_OPEN_READ | VFS_OPEN_WRITE | VFS_OPEN_CREATE | VFS_OPEN_TRUNC) << 32)
+            | path.len() as u64,
+    )
+}
+
+pub fn vfs_read(handle: u64, buffer: &mut [u8]) -> u64 {
+    syscall3(
+        SYS_VFS_READ,
+        handle,
+        buffer.as_mut_ptr() as u64,
+        buffer.len() as u64,
+    )
+}
+
+pub fn vfs_write(handle: u64, buffer: &[u8]) -> u64 {
+    syscall3(
+        SYS_VFS_WRITE,
+        handle,
+        buffer.as_ptr() as u64,
+        buffer.len() as u64,
+    )
+}
+
+pub fn vfs_sync(handle: u64) -> u64 {
+    syscall3(SYS_VFS_SYNC, handle, 0, 0)
+}
+
+pub fn vfs_close(handle: u64) -> u64 {
+    syscall3(SYS_VFS_CLOSE, handle, 0, 0)
 }
 
 pub fn exit(status: u64) -> ! {

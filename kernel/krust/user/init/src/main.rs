@@ -5,9 +5,9 @@ mod sys;
 
 use core::{cell::UnsafeCell, panic::PanicInfo};
 
-const KRUSTBOOT_MAGIC: &[u8; 16] = b"KRUSTBOOTM75\0\0\0\0";
-const KRUSTBOOT_VERSION: u16 = 11;
-const MANIFEST_BUFFER_LEN: usize = 16 * 1024;
+const KRUSTBOOT_MAGIC: &[u8; 16] = b"KRUSTBOOTM79\0\0\0\0";
+const KRUSTBOOT_VERSION: u16 = 12;
+const MANIFEST_BUFFER_LEN: usize = 32 * 1024;
 const REPORT_BUFFER_LEN: usize = 64 * 1024;
 const OFFSET_VERSION: usize = 16;
 const OFFSET_BOOT_MODULES: usize = 18;
@@ -32,8 +32,11 @@ const BOOT_MODULE_RECORD_LEN: usize = STRING_LEN * 2;
 const PROCESS_REF_COUNT: usize = 4;
 const REF_LIST_LEN: usize = 2 + PROCESS_REF_COUNT * 2;
 const ENDPOINT_REQUIREMENT_LIST_LEN: usize = 2 + PROCESS_REF_COUNT * 4;
+const PROCESS_MOUNT_COUNT: usize = 4;
+const PROCESS_MOUNT_RECORD_LEN: usize = STRING_LEN * 2 + 4;
+const PROCESS_MOUNT_LIST_LEN: usize = 2 + PROCESS_MOUNT_COUNT * PROCESS_MOUNT_RECORD_LEN;
 const PROCESS_RECORD_LEN: usize =
-    STRING_LEN * 5 + 4 + REF_LIST_LEN * 2 + ENDPOINT_REQUIREMENT_LIST_LEN;
+    STRING_LEN * 5 + 4 + PROCESS_MOUNT_LIST_LEN + REF_LIST_LEN * 2 + ENDPOINT_REQUIREMENT_LIST_LEN;
 const PROTOCOL_HEALTH_V0: u16 = 2;
 const MESSAGE_READY: u16 = 1;
 const ENVELOPE_LEN: usize = 16;
@@ -72,6 +75,12 @@ unsafe impl Sync for ReportBuffer {}
 
 static REPORT_BUFFER: ReportBuffer = ReportBuffer(UnsafeCell::new([0; REPORT_BUFFER_LEN]));
 
+struct ManifestBuffer(UnsafeCell<[u8; MANIFEST_BUFFER_LEN]>);
+
+unsafe impl Sync for ManifestBuffer {}
+
+static MANIFEST_BUFFER: ManifestBuffer = ManifestBuffer(UnsafeCell::new([0; MANIFEST_BUFFER_LEN]));
+
 #[derive(Clone, Copy)]
 struct InspectSnapshot {
     allocated_frames: u64,
@@ -86,8 +95,8 @@ struct InspectSnapshot {
 pub extern "C" fn _start() -> ! {
     log(b"vertex-init started");
 
-    let mut manifest = [0u8; MANIFEST_BUFFER_LEN];
-    let manifest_len = sys::read_manifest(&mut manifest);
+    let manifest = manifest_buffer();
+    let manifest_len = sys::read_manifest(manifest);
     if manifest_len == sys::STATUS_BAD_CAPABILITY
         || manifest_len == sys::STATUS_BAD_BUFFER
         || manifest_len == sys::STATUS_TOO_LARGE
@@ -103,7 +112,7 @@ pub extern "C" fn _start() -> ! {
 
     if manifest_len < OFFSET_PARENT_GENERATION_ID + STRING_LEN
         || !valid_magic(&manifest[..manifest_len])
-        || read_u16(&manifest, OFFSET_VERSION) != KRUSTBOOT_VERSION
+        || read_u16(manifest, OFFSET_VERSION) != KRUSTBOOT_VERSION
     {
         log(b"vertex-init manifest invalid");
         sys::exit(1);
@@ -122,21 +131,21 @@ pub extern "C" fn _start() -> ! {
     log_prefix(b"Boot generation: ", generation);
     log_prefix(b"vertex-init manifest generation: ", generation);
 
-    let boot_modules = read_u16(&manifest, OFFSET_BOOT_MODULES);
-    let processes = read_u16(&manifest, OFFSET_PROCESSES);
-    let endpoints = read_u16(&manifest, OFFSET_ENDPOINTS);
-    let grants = read_u16(&manifest, OFFSET_GRANTS);
-    let store_objects = read_u16(&manifest, OFFSET_STORE_OBJECTS);
-    let state_volumes = read_u16(&manifest, OFFSET_STATE_VOLUMES);
-    let network_ports = read_u16(&manifest, OFFSET_NETWORK_PORTS);
-    let io_ports = read_u16(&manifest, OFFSET_IO_PORTS);
-    let mmio_regions = read_u16(&manifest, OFFSET_MMIO_REGIONS);
-    let interrupt_lines = read_u16(&manifest, OFFSET_INTERRUPT_LINES);
-    let dma_regions = read_u16(&manifest, OFFSET_DMA_REGIONS);
-    let pci_devices = read_u16(&manifest, OFFSET_PCI_DEVICES);
-    let virtio_devices = read_u16(&manifest, OFFSET_VIRTIO_DEVICES);
-    let namespaces = read_u16(&manifest, OFFSET_NAMESPACES);
-    let vfs_roots = read_u16(&manifest, OFFSET_VFS_ROOTS);
+    let boot_modules = read_u16(manifest, OFFSET_BOOT_MODULES);
+    let processes = read_u16(manifest, OFFSET_PROCESSES);
+    let endpoints = read_u16(manifest, OFFSET_ENDPOINTS);
+    let grants = read_u16(manifest, OFFSET_GRANTS);
+    let store_objects = read_u16(manifest, OFFSET_STORE_OBJECTS);
+    let state_volumes = read_u16(manifest, OFFSET_STATE_VOLUMES);
+    let network_ports = read_u16(manifest, OFFSET_NETWORK_PORTS);
+    let io_ports = read_u16(manifest, OFFSET_IO_PORTS);
+    let mmio_regions = read_u16(manifest, OFFSET_MMIO_REGIONS);
+    let interrupt_lines = read_u16(manifest, OFFSET_INTERRUPT_LINES);
+    let dma_regions = read_u16(manifest, OFFSET_DMA_REGIONS);
+    let pci_devices = read_u16(manifest, OFFSET_PCI_DEVICES);
+    let virtio_devices = read_u16(manifest, OFFSET_VIRTIO_DEVICES);
+    let namespaces = read_u16(manifest, OFFSET_NAMESPACES);
+    let vfs_roots = read_u16(manifest, OFFSET_VFS_ROOTS);
 
     log_count(b"vertex-init boot modules: ", boot_modules);
     log_count(b"vertex-init processes: ", processes);
@@ -272,6 +281,10 @@ fn report_buffer() -> &'static mut [u8; REPORT_BUFFER_LEN] {
     unsafe { &mut *REPORT_BUFFER.0.get() }
 }
 
+fn manifest_buffer() -> &'static mut [u8; MANIFEST_BUFFER_LEN] {
+    unsafe { &mut *MANIFEST_BUFFER.0.get() }
+}
+
 fn read_u16(bytes: &[u8], offset: usize) -> u16 {
     u16::from_le_bytes([bytes[offset], bytes[offset + 1]])
 }
@@ -344,7 +357,7 @@ fn process_has_health(manifest: &[u8], boot_modules: u16, process_index: usize) 
 }
 
 fn start_after_offset(boot_modules: u16, process_index: usize) -> usize {
-    process_offset(boot_modules, process_index) + STRING_LEN * 5 + 4
+    process_offset(boot_modules, process_index) + STRING_LEN * 5 + 4 + PROCESS_MOUNT_LIST_LEN
 }
 
 fn requires_offset(boot_modules: u16, process_index: usize) -> usize {

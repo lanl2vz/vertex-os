@@ -23,6 +23,8 @@ const CAP_MOVED: u64 = 27;
 const SCRATCH_VALUE_PATH: &[u8] = b"/scratch/value";
 const COUNTER_VALUE_PATH: &[u8] = b"/counter/value";
 const COUNTER_CONTROL_PATH: &[u8] = b"/counter/control";
+const SERVICE_REPORT_PATH: &[u8] = b"/service-report";
+const SERVICE_REPORT: &[u8] = b"servicefs:vertex-state-report\n";
 
 #[unsafe(link_section = ".text._start")]
 #[unsafe(no_mangle)]
@@ -107,6 +109,18 @@ pub extern "C" fn _start() -> ! {
     }
     log(b"service-local VFS root opens /state/a");
     log(b"per-process mount namespace maps /a to /state/a");
+    prove_declared_mount_snapshot(attempt);
+    if attempt > 1 {
+        log(b"echo restart restored declared mount namespace root /state");
+        if sys::vfs_open_path_read(CAP_VFS_WRITER, b"/restart-bind/a")
+            == sys::STATUS_VFS_NOT_FOUND
+        {
+            log(b"echo restart did not inherit previous dynamic bind mount");
+        } else {
+            log(b"VFS restart leaked previous dynamic bind mount");
+            sys::exit(1);
+        }
+    }
     if sys::vfs_open_path_read(CAP_VFS_READ, b"/b") == sys::STATUS_VFS_PERMISSION {
         log(b"service-local VFS root rejects /state/b");
     } else {
@@ -120,6 +134,7 @@ pub extern "C" fn _start() -> ! {
     }
     log(b"mounted state volume appears at /state/counter");
     if attempt == 1 {
+        prove_filesystem_service_report();
         prove_optional_scratch_state_volume();
         let state_value_writer = sys::vfs_open_path_readwrite(CAP_VFS_WRITER, COUNTER_VALUE_PATH);
         if status_is_error(state_value_writer)
@@ -242,6 +257,106 @@ pub extern "C" fn _start() -> ! {
         sys::exit(1);
     }
     log(b"VFS mount object creates busy-checks and unmounts volatile root");
+    if sys::vfs_mount_bind_readonly(CAP_VFS_WRITER, b"/ro") != sys::STATUS_OK {
+        log(b"VFS read-only bind mount failed");
+        sys::exit(1);
+    }
+    let ro_reader = sys::vfs_open_path_read(CAP_VFS_WRITER, b"/ro/a");
+    let mut ro_bytes = [0u8; 10];
+    if status_is_error(ro_reader)
+        || sys::vfs_read(ro_reader, &mut ro_bytes) != ro_bytes.len() as u64
+        || (!bytes_eq(&ro_bytes, b"state:a=0\n") && !bytes_eq(&ro_bytes, b"state:a=1\n"))
+    {
+        log(b"VFS read-only bind mount read failed");
+        sys::exit(1);
+    }
+    if sys::vfs_unmount(CAP_VFS_WRITER, b"/ro") == sys::STATUS_VFS_BUSY {
+        log(b"VFS bind unmount rejects busy mounted subtree");
+    } else {
+        log(b"VFS bind busy unmount denial failed");
+        sys::exit(1);
+    }
+    if sys::vfs_close(ro_reader) != sys::STATUS_OK {
+        log(b"VFS read-only bind mount close failed");
+        sys::exit(1);
+    }
+    if sys::vfs_open_path_write(CAP_VFS_WRITER, b"/ro/a") == sys::STATUS_VFS_PERMISSION
+        && sys::vfs_create(CAP_VFS_WRITER, b"/ro/new") == sys::STATUS_VFS_PERMISSION
+        && sys::vfs_unlink(CAP_VFS_WRITER, b"/ro/a") == sys::STATUS_VFS_PERMISSION
+    {
+        log(b"read-only bind mount rejects write through alias");
+    } else {
+        log(b"VFS read-only bind mount write denial failed");
+        sys::exit(1);
+    }
+    if sys::vfs_derive_root(CAP_VFS_WRITER, b"/ro", CAP_VFS_DERIVED) != sys::STATUS_OK
+        || sys::vfs_mount_bind(CAP_VFS_DERIVED, b"/ro/nested") != sys::STATUS_OK
+    {
+        log(b"VFS nested read-only bind mount setup failed");
+        sys::exit(1);
+    }
+    if sys::vfs_open_path_write(CAP_VFS_WRITER, b"/ro/nested/a") == sys::STATUS_VFS_PERMISSION
+        && sys::vfs_create(CAP_VFS_WRITER, b"/ro/nested/new") == sys::STATUS_VFS_PERMISSION
+    {
+        log(b"nested bind mount inherits read-only source flag");
+    } else {
+        log(b"VFS nested read-only bind denial failed");
+        sys::exit(1);
+    }
+    if sys::vfs_unmount(CAP_VFS_DERIVED, b"/ro/nested") != sys::STATUS_OK
+        || sys::cap_drop(CAP_VFS_DERIVED) != sys::STATUS_OK
+    {
+        log(b"VFS nested read-only bind cleanup failed");
+        sys::exit(1);
+    }
+    if sys::vfs_unmount(CAP_VFS_WRITER, b"/ro") != sys::STATUS_OK {
+        log(b"VFS read-only bind mount cleanup failed");
+        sys::exit(1);
+    }
+    if sys::vfs_mount_bind(CAP_VFS_WRITER, b"/rw") != sys::STATUS_OK {
+        log(b"VFS writable bind mount failed");
+        sys::exit(1);
+    }
+    let rw_writer = sys::vfs_open_path_write(CAP_VFS_WRITER, b"/rw/a");
+    if status_is_error(rw_writer)
+        || sys::vfs_write(rw_writer, b"state:a=1\n") != 10
+        || sys::vfs_close(rw_writer) != sys::STATUS_OK
+    {
+        log(b"VFS writable bind mount write failed");
+        sys::exit(1);
+    }
+    let rw_reader = sys::vfs_open_path_read(CAP_VFS_WRITER, b"/a");
+    let mut rw_bytes = [0u8; 10];
+    if status_is_error(rw_reader)
+        || sys::vfs_read(rw_reader, &mut rw_bytes) != rw_bytes.len() as u64
+        || !bytes_eq(&rw_bytes, b"state:a=1\n")
+        || sys::vfs_close(rw_reader) != sys::STATUS_OK
+    {
+        log(b"VFS writable bind mount readback failed");
+        sys::exit(1);
+    }
+    if sys::vfs_create(CAP_VFS_WRITER, b"/rw/alias-new") != sys::STATUS_OK {
+        log(b"VFS writable bind mount metadata alias failed");
+        sys::exit(1);
+    }
+    let alias_reader = sys::vfs_open_path_read(CAP_VFS_WRITER, b"/alias-new");
+    if status_is_error(alias_reader)
+        || sys::vfs_close(alias_reader) != sys::STATUS_OK
+        || sys::vfs_unlink(CAP_VFS_WRITER, b"/rw/alias-new") != sys::STATUS_OK
+        || sys::vfs_open_path_read(CAP_VFS_WRITER, b"/alias-new") != sys::STATUS_VFS_NOT_FOUND
+        || sys::vfs_unmount(CAP_VFS_WRITER, b"/rw") != sys::STATUS_OK
+    {
+        log(b"VFS writable bind mount metadata alias failed");
+        sys::exit(1);
+    }
+    log(b"writable bind mount propagates writes and metadata through alias");
+    if attempt == 1 {
+        if sys::vfs_mount_bind(CAP_VFS_WRITER, b"/restart-bind") != sys::STATUS_OK {
+            log(b"VFS restart bind mount fixture failed");
+            sys::exit(1);
+        }
+        log(b"echo leaves dynamic bind mount for restart cleanup");
+    }
     if sys::vfs_create(CAP_VFS_READ, b"/new") == sys::STATUS_VFS_PERMISSION
         && sys::vfs_unlink(CAP_VFS_READ, b"/a") == sys::STATUS_VFS_PERMISSION
     {
@@ -492,6 +607,14 @@ pub extern "C" fn _start() -> ! {
         log(b"VFS hard links cannot cross filesystem boundaries");
     } else {
         log(b"VFS cross-filesystem hard link denial failed");
+        sys::exit(1);
+    }
+    if sys::vfs_rename(CAP_VFS_WRITER, b"/link-copy", b"/link-mnt/cross-rename")
+        == sys::STATUS_VFS_UNSUPPORTED
+    {
+        log(b"VFS rename cannot cross filesystem boundaries");
+    } else {
+        log(b"VFS cross-filesystem rename denial failed");
         sys::exit(1);
     }
     if sys::vfs_unmount(CAP_VFS_WRITER, b"/link-mnt") != sys::STATUS_OK {
@@ -806,6 +929,49 @@ pub extern "C" fn _start() -> ! {
     }
 
     sys::exit(0)
+}
+
+fn prove_declared_mount_snapshot(attempt: u64) {
+    let declared_reader = sys::vfs_open_path_read(CAP_VFS_WRITER, b"/declared-ro/a");
+    let mut declared_bytes = [0u8; 10];
+    if status_is_error(declared_reader)
+        || sys::vfs_read(declared_reader, &mut declared_bytes) != declared_bytes.len() as u64
+        || (!bytes_eq(&declared_bytes, b"state:a=0\n")
+            && !bytes_eq(&declared_bytes, b"state:a=1\n"))
+        || sys::vfs_close(declared_reader) != sys::STATUS_OK
+    {
+        log(b"declared mount snapshot read-only alias failed");
+        sys::exit(1);
+    }
+    if sys::vfs_open_path_write(CAP_VFS_WRITER, b"/declared-ro/a") != sys::STATUS_VFS_PERMISSION {
+        log(b"declared mount snapshot read-only denial failed");
+        sys::exit(1);
+    }
+    log(b"declared mount snapshot exposes read-only alias");
+    if attempt > 1 {
+        log(b"echo restart restored declared mount table alias /declared-ro");
+    }
+}
+
+fn prove_filesystem_service_report() {
+    let reader = sys::vfs_open_path_read(CAP_VFS_WRITER, SERVICE_REPORT_PATH);
+    let mut report = [0u8; SERVICE_REPORT.len()];
+    if status_is_error(reader)
+        || sys::vfs_read(reader, &mut report) != SERVICE_REPORT.len() as u64
+        || !bytes_eq(&report, SERVICE_REPORT)
+        || sys::vfs_close(reader) != sys::STATUS_OK
+    {
+        log(b"VFS filesystem service report read failed");
+        sys::exit(1);
+    }
+    if sys::vfs_open_path_write(CAP_VFS_WRITER, SERVICE_REPORT_PATH) == sys::STATUS_VFS_UNSUPPORTED
+    {
+        log(b"service-backed filesystem file rejects write opens");
+    } else {
+        log(b"VFS filesystem service write-open denial failed");
+        sys::exit(1);
+    }
+    log(b"service-backed filesystem file read through mount namespace");
 }
 
 fn prove_optional_scratch_state_volume() {

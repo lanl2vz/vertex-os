@@ -1,9 +1,9 @@
 {
   "schema": "vertex.ir.v0",
   "generation": {
-    "id": "gen:switch-a-0001",
+    "id": "gen:vertexfs-fsync-fault-0001",
     "createdUtc": "2026-05-22T00:00:00Z",
-    "description": "Krust native generation switch source test generation",
+    "description": "Krust VertexFS fsync block-driver fault regression generation",
     "parent": null,
     "manifestHash": null
   },
@@ -179,6 +179,16 @@
       "hash": "native-logd-config-v0",
       "sizeBytes": 33,
       "references": []
+    },
+    {
+      "id": "store:vertexfs-fsync-fault-token",
+      "name": "store-vertexfs-fsync-fault-token",
+      "kind": "data",
+      "path": "/vertex/store/demo-vertexfs-fsync-fault-token",
+      "hashAlgorithm": "blake3",
+      "hash": "demo-not-a-real-hash-vertexfs-fsync-fault-token",
+      "sizeBytes": 27,
+      "references": []
     }
   ],
   "executables": [
@@ -288,17 +298,6 @@
       }
     },
     {
-      "id": "device:virtio-console0",
-      "kind": "virtio-console-pci",
-      "selector": {
-        "channel": "shell"
-      },
-      "driver": "svc:serial-driver",
-      "properties": {
-        "transport": "virtio-pci-io"
-      }
-    },
-    {
       "id": "device:virtio-blk0",
       "kind": "virtio-blk-pci",
       "selector": {
@@ -307,6 +306,17 @@
         "irq": 11
       },
       "driver": "svc:block-driver",
+      "properties": {
+        "transport": "virtio-pci-io"
+      }
+    },
+    {
+      "id": "device:virtio-console0",
+      "kind": "virtio-console-pci",
+      "selector": {
+        "channel": "shell"
+      },
+      "driver": "svc:serial-driver",
       "properties": {
         "transport": "virtio-pci-io"
       }
@@ -338,6 +348,19 @@
     {
       "id": "state:counter",
       "name": "counter",
+      "kind": "vertexdisk-v1",
+      "owner": "svc:echo-server",
+      "mountIntent": "read-write",
+      "snapshotPolicy": {
+        "mode": "explicit"
+      },
+      "backupPolicy": {
+        "mode": "none"
+      }
+    },
+    {
+      "id": "state:scratch",
+      "name": "scratch",
       "kind": "vertexdisk-v1",
       "owner": "svc:echo-server",
       "mountIntent": "read-write",
@@ -480,6 +503,39 @@
       ],
       "properties": {
         "root": "/dev/device:virtio-blk0"
+      }
+    },
+    {
+      "id": "cap:vfs.model-reader-vertexfs",
+      "kind": "vfs-root",
+      "provider": "svc:vertex-supervisor",
+      "rights": [
+        "resolve",
+        "read",
+        "write",
+        "create"
+      ],
+      "properties": {
+        "root": "/fs/app"
+      }
+    },
+    {
+      "id": "cap:namespace.reader",
+      "kind": "namespace",
+      "provider": "svc:vertex-supervisor",
+      "rights": [
+        "resolve"
+      ],
+      "properties": {
+        "entries": [
+          {
+            "path": "/state/b",
+            "capability": "cap:store.hello-text.request",
+            "rights": [
+              "send"
+            ]
+          }
+        ]
       }
     },
     {
@@ -678,17 +734,27 @@
       }
     },
     {
-      "id": "cap:vfs.model-reader-vertexfs",
-      "kind": "vfs-root",
-      "provider": "svc:vertex-supervisor",
+      "id": "cap:block-driver.vertexfs-fsync-fault-token",
+      "kind": "store-object",
+      "provider": "store:vertexfs-fsync-fault-token",
       "rights": [
-        "resolve",
-        "read",
-        "write",
-        "create"
+        "read"
       ],
       "properties": {
-        "root": "/fs/app"
+        "object": "store:vertexfs-fsync-fault-token",
+        "purpose": "m78-vertexfs-fsync-block-driver-fault"
+      }
+    },
+    {
+      "id": "cap:model-reader.vertexfs-fsync-fault-mode",
+      "kind": "store-object",
+      "provider": "store:vertexfs-fsync-fault-token",
+      "rights": [
+        "read"
+      ],
+      "properties": {
+        "object": "store:vertexfs-fsync-fault-token",
+        "purpose": "m78-vertexfs-fsync-fault-mode"
       }
     }
   ],
@@ -902,6 +968,12 @@
             "resolve",
             "read"
           ]
+        },
+        {
+          "capability": "cap:block-driver.vertexfs-fsync-fault-token",
+          "rights": [
+            "read"
+          ]
         }
       ],
       "provides": [
@@ -910,7 +982,7 @@
       ],
       "state": [],
       "secrets": [],
-      "restart": "never",
+      "restart": "on-failure",
       "resources": {
         "memoryMaxBytes": 33554432,
         "cpuShares": 25
@@ -988,7 +1060,8 @@
         "cap:vertex-state.block.reply"
       ],
       "state": [
-        "state:counter"
+        "state:counter",
+        "state:scratch"
       ],
       "secrets": [],
       "restart": "never",
@@ -1088,7 +1161,14 @@
         ],
         "stopBefore": []
       },
-      "mountRoot": "/state"
+      "mountRoot": "/state",
+      "mounts": [
+        {
+          "path": "/declared-ro",
+          "source": "/",
+          "readOnly": true
+        }
+      ]
     },
     {
       "id": "svc:model-reader",
@@ -1110,6 +1190,12 @@
             "read",
             "write",
             "create"
+          ]
+        },
+        {
+          "capability": "cap:model-reader.vertexfs-fsync-fault-mode",
+          "rights": [
+            "read"
           ]
         }
       ],
@@ -1179,6 +1265,12 @@
           "rights": [
             "resolve",
             "read"
+          ]
+        },
+        {
+          "capability": "cap:namespace.reader",
+          "rights": [
+            "resolve"
           ]
         }
       ],

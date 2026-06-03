@@ -34,6 +34,8 @@
       "id": "svc:logd",
       "name": "logd",
       "executable": "exe:logd",
+      "mountRoot": "/",
+      "mounts": [],
       "provides": [
         "cap:log.sink"
       ],

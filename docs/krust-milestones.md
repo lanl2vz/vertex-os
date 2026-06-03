@@ -7,13 +7,18 @@ runtime layered over a host kernel.
 
 ## Status Summary
 
-Current status: M14-M77 are implemented and smoke-tested under
-`qemu-system-x86_64` with Limine. M74-M77 VFS, directory-metadata, and
-block-cache writeback work is now smoke-tested and release-gate covered. M39
+Current status: M14-M79 are implemented and smoke-tested under
+`qemu-system-x86_64` with Limine. The current tree has an image-backed VertexFS
+v1 mount, a strict VertexDisk v1 section carrying the current VertexFS image,
+fixed journal replay, kernel-owned device-backed fsync transactions,
+post-sync image remount, fsync fault/restart handling, declared-file journal
+checkpoint recovery, mount-namespace gates, and a read-only `servicefs`
+filesystem-service route. M74-M77 VFS, directory-metadata, and block-cache
+writeback work is now smoke-tested and release-gate covered. M39
 pins the native toolchain, M40 makes
 native IPC directed, and M41 adds a native console shell path over explicit
 console authority. M42 adds the first real virtio-blk sector I/O path over
-PCI I/O and DMA capabilities. M43 adds the first VertexDisk v0 block-object
+PCI I/O and DMA capabilities. M43 adds the current VertexDisk v1 block-object
 layout for immutable store reads, mutable state persistence, journal writeback,
 and bad-superblock rejection. M44 adds native boot-manager fallback state, M45
 verifies store objects by content identity, M46 performs native update
@@ -37,20 +42,27 @@ blocking interrupt waits, DMA ownership/release accounting, virtio reset and
 driver queue reporting, and the first device-fault isolation gate. M76-M77 add
 bounded directory metadata operations, open-unlink lifetime, hard-link policy,
 64-byte stat metadata, and a bounded VertexDisk state block cache with explicit
-dirty/writeback inspection.
+dirty/writeback inspection. M78-M79 add the first separate image-backed
+`vertexfs` mount, per-service mount-root gate, declared bind-mount snapshot
+gate, and current `servicefs` request/reply file route without treating old
+state-volume paths as the new filesystem.
 
-M74-M77 are implemented as the current VFS, open-file, directory, and block-cache
-substrate. The current
-tree has a kernel VFS node graph,
+M74-M79 are implemented as the current VFS, open-file, directory, block-cache,
+and initial VertexFS/mount-namespace substrate. The current tree has a kernel
+VFS node graph,
 service-local mount roots, per-process file handles, first-class `vfs-root`
 manifest authority, volatile memory-file create/write/read/unlink/rename,
 mkdir/rmdir/link, monotonic stat metadata, open-unlink final-close reaping, a
 live blocking `/proc/log-stream` pipe, a service-backed state-volume VFS
-transaction path, advisory whole-file lock coverage, and a bounded write-through
-block cache in `vertex-state`. It is not yet a general durable filesystem:
-VertexFS on-disk metadata, general vnode page cache integration, broader
-filesystem-service routing, mature mount namespaces, and full crash-recovery
-proofs remain in M78-M81.
+transaction path, a read-only `/state/service-report` `servicefs` route,
+advisory whole-file lock coverage, and a bounded write-through block cache in
+`vertex-state`. The new `/fs` mount is a distinct `vertexfs` source loaded from
+the `vertexfs-v1` boot image module with VertexFS-file backing, declared files,
+fixed journal replay, a kernel-owned device-backed fsync transaction for
+declared and dynamic inodes, create/write/read/fsync coverage, and a
+model-reader service rooted at `/fs/app`. It is not yet a general durable
+filesystem: general vnode page cache integration, additional synthetic/device
+filesystem breadth, and full VFS soak/fault proofs remain in M80-M81.
 
 ```sh
 make -C kernel/krust doctor
@@ -108,6 +120,8 @@ scripts/krust-test.sh m73
 scripts/krust-test.sh m75
 scripts/krust-test.sh m76
 scripts/krust-test.sh m77
+scripts/krust-test.sh m78
+scripts/krust-test.sh m79
 ```
 
 Next direction: implement a mature VFS/filesystem model without preserving the
@@ -1521,7 +1535,7 @@ done: locked Cargo dependencies for the top-level host-tool workspace, Krust ker
 done: kernel/krust/rust-toolchain.toml pins Rust 1.95.0, rustfmt, and x86_64-unknown-none
 done: make doctor checks every required tool and reports actionable fixes
 done: legacy hello/ipc userspace crates are removed instead of carried forward
-done: single release-gate script runs the clean-clone M14-M77 substrate proof with the M14-M77 QEMU matrix
+done: single release-gate script runs the clean-clone M14-M79 substrate proof with the current QEMU matrix
 ```
 
 Acceptance tests:
@@ -1708,7 +1722,7 @@ done: echo cannot access block hardware authority
 done: block-driver fault does not crash kernel
 ```
 
-## M43: VertexDisk v0 Layout
+## M43: VertexDisk v1 Layout
 
 Status: done.
 
@@ -1718,7 +1732,7 @@ for generations, immutable store objects, state volumes, and update journals.
 Initial layout:
 
 ```text
-VertexDisk v0
+VertexDisk v1
   superblock
   generation metadata area
   immutable store index
@@ -1726,6 +1740,7 @@ VertexDisk v0
   mutable state index
   mutable state data
   journal area
+  VertexFS image area
 ```
 
 Rules:
@@ -1743,6 +1758,7 @@ Acceptance tests:
 ```text
 done: QEMU boots with VertexDisk image attached
 done: VertexDisk superblock accepted
+done: VertexDisk v1 superblock exposes a bounded VertexFS image section
 done: vertex-store reads object index from disk
 done: vertex-state reads state volume from disk
 done: vertex-state writes journal record before state data/index writeback
@@ -2537,8 +2553,8 @@ Implementation notes:
 Implementation notes:
 
 - M61 introduced `KRUSTBOOTM61` version 7 and rejected M60 compact payloads
-  instead of accepting them as a compatibility format. M75 supersedes the M65
-  compact identity with `KRUSTBOOTM75` version 11 and rejects older compact
+  instead of accepting them as a compatibility format. M79 supersedes the M75
+  compact identity with `KRUSTBOOTM79` version 12 and rejects older compact
   payloads as legacy.
 - The kernel rejects current-process capabilities whose generation provenance
   does not match the active runtime generation, rejects `SYS_CAP_MOVE` before
@@ -2719,7 +2735,7 @@ Supported profile:
 ```text
 x86_64 one CPU
 Limine boot
-KrustBoot Manifest v1 / compact payload KRUSTBOOTM75 version 11
+KrustBoot Manifest v1 / compact payload KRUSTBOOTM79 version 12
 QEMU virtio-blk, virtio-rng, virtio-net, and virtio-console
 VertexDisk store/state/update layout
 no legacy transport or payload compatibility
@@ -2746,9 +2762,9 @@ Implementation notes:
 - Do not expand to SMP, USB, GPU, a full filesystem, or Linux/POSIX
   compatibility until the profile can boot, update, recover, and explain its
   authority graph repeatably.
-- The compact native payload identity is now `KRUSTBOOTM75` version 11. M65,
-  M61, and older compact payload identities are rejected rather than retained
-  as compatibility formats.
+- The compact native payload identity is now `KRUSTBOOTM79` version 12. M75,
+  M65, M61, and older compact payload identities are rejected rather than
+  retained as compatibility formats.
 - The release gate records a supported profile artifact containing the exact
   toolchain, manifest hash, KrustBoot hash, kernel hash, VertexDisk hash, and
   store closure.
@@ -3140,8 +3156,9 @@ done: virtio devices appear as /dev nodes tied to underlying device caps
 done: boot manifest carries first-class VFS root authority objects
 done: service-local VFS root caps can open configured VFS paths
 done: compact process records carry a validated `mount_root`; service
-      `mountRoot` selects the process-local VFS root without retaining a legacy
-      version-10 process-record parser
+      `mountRoot` is mandatory in hosted manifests and selects the
+      process-local VFS root without retaining a legacy version-10
+      process-record parser or implicit `/` default
 done: VFS-root path syscalls resolve absolute user paths under the current
       process mount root, so a service rooted at /state opens /a as /state/a
       while direct store/config empty-path opens remain direct object opens
@@ -3381,7 +3398,7 @@ dirty/clean state for state superblock, index, journal, and data sectors
 ordered journal, data, and index writeback through block-driver
 clean-entry replacement inside a fixed eight-entry cache
 dirty-entry non-eviction by failing the state service if no clean slot is available
-writeback error propagation by exiting vertex-state and aborting pending state VFS transactions
+writeback error accounting on failed cache writeback paths
 cache inspection transcript with dirty, pinned, and writeback-error counts
 ```
 
@@ -3391,6 +3408,9 @@ Release-gate acceptance tests:
 repeated state-volume reads hit the vertex-state block cache
 state writes dirty journal/data/index entries, write them back, and reply only after clean writeback
 cache inspect reports dirty=0, pinned=0, writeback_errors=0 after the exercised write/read path
+cache policy probe proves clean-entry eviction under pressure
+cache policy probe proves dirty pages are not selected for eviction under pressure
+cache policy probe drives the failed cache-writeback branch, leaves the dirty page dirty, and increments error accounting
 state write and read transactions complete through the VFS state-service path
 ```
 
@@ -3406,15 +3426,19 @@ done: state writes dirty the journal/data/index cache entries, synchronously
       transaction response is sent
 done: clean entries can be evicted by bounded replacement; dirty entries are not
       evicted and instead fail the service if no clean slot is available
-done: writeback errors increment cache error accounting, log a controlled error,
-      and exit vertex-state so the kernel aborts pending state VFS transactions
+done: the cache policy probe forces the failed cache-writeback branch without
+      issuing stale fallback I/O, verifies the page stays dirty, and verifies
+      writeback-error accounting increments
 done: scripts/krust-test.sh m77 asserts cache hit, writeback clean, dirty=0,
-      pinned=0, writeback_errors=0, state write, and state read transcripts
+      pinned=0, writeback_errors=0, clean eviction under pressure, dirty-page
+      non-eviction, failed-writeback dirty retention, writeback-error
+      accounting, state write, and state read transcripts
 deferred: a general vnode page cache and VertexFS fsync syscall semantics move
           to M78-M81 with the general filesystem format
-deferred: broad page-cache memory-pressure tests, block-driver restart cache
-          ownership tests, and writeback-error fsync semantics belong to the
-          general filesystem fault/soak gates in M78-M81
+deferred: real block-driver fault injection during dirty writeback, pending VFS
+          transaction cleanup after filesystem-service exit, block-driver restart
+          cache ownership tests, and writeback-error fsync semantics belong to
+          the general filesystem fault/soak gates in M78-M81
 ```
 
 Implementation notes:
@@ -3428,7 +3452,10 @@ Implementation notes:
 
 ## M78: VertexFS v1 Persistent Filesystem
 
-Status: planned.
+Status: done for the current VertexFS v1 substrate; image-backed mount, fixed
+journal-sector replay, device-backed fsync fault/restart handling,
+declared-file journal checkpoint recovery, and initial VFS operations are
+release-gate covered.
 
 Goal: define and implement the first general-purpose native on-disk filesystem
 format for Krust, replacing the special-purpose VertexDisk store/state layout
@@ -3449,13 +3476,101 @@ offline verifier and image builder in vertexctl
 Acceptance tests:
 
 ```text
-fresh VertexFS image mounts and exposes declared root files
-file create/write/fsync/sync/remount preserves data and metadata
+fresh VertexFS namespace mounts and exposes declared root files
+file create/write/fsync/readback preserves data and metadata in the mounted namespace
 corrupt superblock is rejected without mounting
 corrupt directory block is detected and reported
 corrupt free-space metadata cannot allocate overlapping file extents
-journal replay after interrupted write returns either old file or new file
+journal replay after interrupted write and every declared-file fsync checkpoint
+returns the new file
 vertexctl can build, inspect, and verify a VertexFS image reproducibly
+```
+
+Current implementation state:
+
+```text
+done: `/fs` is mounted as a distinct `vertexfs` source rather than an alias for
+      storefs, state-volume, or volatilefs
+done: VertexFS regular files use a separate `VfsBacking::VertexFsFile` table
+      with dirty state and checksums, so creates inside `/fs` do not fall back
+      to volatile memory-file backing
+done: `/fs/readme` and `/fs/app/a` are declared at boot and exposed through
+      ordinary VFS open/read/stat paths
+done: the kernel loads the `vertexfs-v1` Limine module, validates exact image
+      size, superblock magic/version/sector size/feature flags, expanded
+      multi-sector inode and directory section layout, checksums, inode
+      records, 52-byte directory-name records, file extents, free-space
+      allocation bytes, journal sector metadata, and file payload checksums
+      before mounting `/fs`; pending v1 journal records can cover only the
+      exact target file payload they name
+done: model-reader opens `/a` from its declared `/fs/app` mount root, reads the
+      declared VertexFS file, rewrites `/a`, calls `SYS_VFS_SYNC`, reopens it,
+      and verifies the journaled declared-inode readback; it also creates
+      `/created` through `/created11`, writes them, syncs expanded dynamic
+      inodes 5-15, reopens them, and verifies mounted-namespace readback
+done: `SYS_VFS_SYNC` on a VertexFS v1 inode writes a pending journal record into
+      the runtime shadow image, rewrites file extents and metadata checksums,
+      clears the journal sector, queues the ordered journal/data/metadata sector
+      writes through the block driver, and clears the dirty bit only after every
+      device write is acknowledged
+done: bounded dynamic VertexFS create under `/fs/app` allocates expanded v1
+      dynamic slots in order: inodes 5-15, directory entries 4-14, data sectors
+      9-19, and matching free-map bits in the shadow image; `SYS_VFS_SYNC`
+      commits each created file through the same journaled transaction path,
+      and the twelfth create returns no space instead of falling back to
+      volatile storage
+done: `vertexctl create-vertexfs`, `inspect-vertexfs`, and `verify-vertexfs`
+      build reproducible VertexFS v1 images with a strict superblock, inode
+      table, directory block, extent records, free-space map, journal-v1
+      feature flag and sector, generation id, and checksums
+done: `vertexctl create-vertex-disk` writes a strict `VERTEXDISKV1` version-2
+      VertexDisk image with an explicit VertexFS image section; the kernel,
+      block-driver, vertex-store, and vertex-state reject the old
+      `VERTEXDISKV0`/version-1 identity instead of parsing it as a fallback
+done: block-driver validates the VertexDisk VertexFS section, reads its
+      VertexFS v1 superblock from the real virtio-backed image, writes the same
+      sector back, and verifies readback before serving client requests
+done: the kernel owns `vertexfs-device-request` and `vertexfs-device-reply`
+      endpoints, grants them only to `block-driver`, and routes VertexFS fsync
+      writeback sectors through that device path instead of treating the runtime
+      shadow image as durable state
+done: `vertexctl corrupt-vertexfs` produces bad-superblock, bad-directory,
+      overlapping-extent, and free-space-overlap fixtures that the verifier
+      rejects without falling back to VertexDisk or volatile metadata
+done: `vertexctl corrupt-vertexfs interrupted-journal` produces a verifiable
+      pending journal record; the kernel replays it during mount, and
+      model-reader accepts the resulting new `/fs/app/a` file content
+done: `vertexctl corrupt-vertexfs journal-checkpoint-after-journal`,
+      `journal-checkpoint-after-data`, and `journal-checkpoint-after-inode`
+      produce verifiable declared-file fsync checkpoint images for the current
+      v1 sector order without accepting unrelated checksum mismatches
+done: `vertexctl update-vertexfs-file` performs a strict journaled update
+      transaction on a current VertexFS image: it writes a pending journal
+      record, updates the file extent and inode checksum, clears the journal,
+      and verifies the committed image
+done: scripts/krust-test.sh m78 gates the VertexFS mount, declared-file read,
+      VertexDisk-backed VertexFS section read/write proof, declared-inode
+      fsync device transaction, dynamic created-file inodes 5-15
+      fsync/readback, strict expanded dynamic capacity denial, reproducible
+      image build, inspect/verify, and corrupt metadata rejection
+done: scripts/krust-test.sh m78-bad-superblock boots a corrupted VertexFS image
+      and verifies the kernel rejects it during native runtime init without
+      falling back to an in-kernel fixture
+done: scripts/krust-test.sh m78-journal-replay boots an interrupted-journal
+      image and proves replay returns the new declared file contents
+done: scripts/krust-test.sh m78-journal-checkpoint-after-journal,
+      m78-journal-checkpoint-after-data, and
+      m78-journal-checkpoint-after-inode boot every pending-journal checkpoint
+      before the clean-journal sector is written and prove remount reads the
+      replayed new declared-file contents
+done: scripts/krust-test.sh m78-post-sync-remount boots a committed post-sync
+      VertexFS image and proves the kernel remount reads the committed file
+      contents
+done: scripts/krust-test.sh m78-fsync-fault injects a block-driver exit during
+      a VertexFS fsync, proves the kernel aborts the blocked transaction with
+      STATUS_VFS_UNSUPPORTED, keeps the runtime dirty file readable without
+      committing stale device writes, and restarts block-driver under the
+      declared on-failure policy
 ```
 
 Implementation notes:
@@ -3470,7 +3585,9 @@ Implementation notes:
 
 ## M79: Mount Namespaces And Filesystem Services
 
-Status: planned.
+Status: done for the current mount-namespace and initial filesystem-service
+substrate; declared mount roots, declared bind-mount snapshots, dynamic bind
+cleanup, and the read-only `servicefs` route are release-gate covered.
 
 Goal: make mount trees explicit per service or service group, with filesystem
 services, block devices, and synthetic files connected through capability
@@ -3482,22 +3599,82 @@ Scope:
 mount objects with source filesystem, root vnode, target vnode, and flags
 per-process mount namespace root
 bind mounts and read-only mounts
-synthetic proc/inspect filesystem for operator views
-device filesystem for authorized device nodes
+read-only service-backed filesystem file over the current `FS` request envelope
+kernel-owned device request/reply route for VertexFS fsync writeback
 mount and unmount rights with busy checks
 manifest syntax for initial mount namespaces
 ```
 
-Acceptance tests:
+Current release-gate acceptance tests:
 
 ```text
 two services can see different files at the same absolute path
 read-only bind mount rejects write through all aliases
 unmount of busy filesystem is rejected without losing references
 service without mount right cannot attach a filesystem
-synthetic inspect file exposes runtime data without granting process-control rights
-device node cannot be opened unless matching device authority is present
+service-backed filesystem file exposes runtime data without process-control rights
+service-backed filesystem file rejects write-capable opens
 restart restores the service's declared mount namespace exactly
+restart drops process-owned dynamic bind mounts
+```
+
+Current implementation state:
+
+```text
+done: compact process records carry validated `mountRoot` values; hosted
+      `vertexctl` rejects services that omit `mountRoot`, and Krust resolves all
+      VFS syscall paths through the current process mount root before authority
+      checks
+done: compact process records now use `KRUSTBOOTM79` version 12 and carry
+      explicit per-process declared bind-mount snapshot entries; old M75/version
+      11 process records are rejected instead of parsed as compatibility input
+done: hosted `vertexctl` validates service `mounts` entries as explicit
+      `{path, source, readOnly}` records and rejects malformed or implicit mount
+      records before emitting a boot manifest
+done: model-reader is rooted at `/fs/app` and echo remains rooted at `/state`;
+      both can use `/a` as a service-local absolute path without escaping to a
+      global ambient root
+done: mount objects expose source filesystem, root vnode, root path, flags, and
+      dynamic state through inspect output
+done: dynamic volatile mounts still require explicit mount authority and busy
+      unmount checks; `servicefs` and VertexFS device routes remain
+      endpoint/capability-mediated
+done: `SYS_VFS_MOUNT` supports strict bind mounts and read-only bind flags;
+      `echo` proves `/state` bound at `/ro` remains readable while write,
+      create, and unlink through the read-only alias are rejected
+done: read-only bind flags propagate when a read-only alias is rebound; `echo`
+      derives a root at `/ro`, requests a nested writable bind at `/ro/nested`,
+      and proves writes and creates through the nested alias are still denied
+done: writable bind aliases are release-gated; `echo` writes through `/rw/a`,
+      reads the change through `/a`, creates metadata through `/rw`, observes it
+      through the source path, unlinks it through `/rw`, and unmounts cleanly
+done: bind unmount checks live handles in the mounted subtree and rejects
+      unmount while a file opened through the bind alias is still live
+done: echo restart logs that its declared `/state` mount root was restored
+      after process reload
+done: echo declares `/declared-ro` as a read-only bind of its service-local root
+      `/`; kernel process creation restores the owned declared bind mount from
+      the immutable process template, echo proves the alias is readable and
+      write-denied, process reap removes the owned declared bind mount, and the
+      restarted echo process proves `/declared-ro` was restored from the
+      manifest snapshot
+done: process-owned dynamic bind mounts are reaped on process restart; `echo`
+      leaves `/restart-bind` mounted before exit and the restarted process
+      proves the alias is not inherited
+done: kernel-owned VertexFS device endpoints are not ambient filesystem service
+      authority; only `block-driver` receives the request/reply caps used by the
+      current VertexFS fsync writeback route
+done: `/state/service-report` is mounted from the current `servicefs` source as
+      a read-only file; kernel VFS queues the native `FS` version-1 service-read
+      request to `vertex-state`, wakes the blocked reader from the state VFS
+      reply endpoint, rejects write-capable opens, and never treats old short
+      commands as a compatibility protocol
+done: scripts/krust-test.sh m79 gates distinct service-local roots and restart
+      mount-root restoration, explicit mount authority, volatile busy unmount,
+      direct and nested read-only bind denial, writable bind alias propagation,
+      bind busy-unmount behavior, declared bind-mount snapshot restoration, and
+      process-owned dynamic bind cleanup on restart, plus the `servicefs`
+      request/reply file route
 ```
 
 Implementation notes:

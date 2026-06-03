@@ -1,8 +1,8 @@
 # Krust Kernel
 
-Krust now covers the M14-M77 native graph-activation proof path, substrate
+Krust now covers the M14-M79 native graph-activation proof path, substrate
 hardening, reproducible build environment, directed IPC ABI v1, and native
-console shell plus virtio device I/O, VertexDisk v0 persistence, native boot
+console shell plus virtio device I/O, VertexDisk v1 persistence, native boot
 selection, verified store objects, native update transactions, and store-loaded
 service executables, dynamic process creation, native config and secret
 authority, package/link/build import boundaries, the first appliance
@@ -14,7 +14,9 @@ creation, memory lifecycle soak gates, interrupt routing, DMA ownership,
 virtio recovery, device-fault isolation, VFS root authority, service-local
 mount roots, service-backed state-volume VFS transactions, and kernel-owned
 open-file handles, directory metadata operations, and bounded block-cache
-writeback. M44-M77 are tracked in
+writeback, plus image-backed VertexFS journal checkpoint recovery and
+mount-namespace gates, including the current read-only `servicefs`
+request/reply file route. M44-M79 are tracked in
 `../../docs/krust-milestones.md`.
 
 The target is intentionally small:
@@ -194,7 +196,7 @@ KrustBoot Manifest v1 records: 9
 KrustBoot boot modules: 13
 KrustBoot processes: 13
 KrustBoot endpoints: 10
-KrustBoot grants: 64
+KrustBoot grants: 65
 KrustBoot store objects: 14
 KrustBoot state volumes: 1
   state_volume[0] id=state:counter
@@ -206,7 +208,7 @@ KrustBoot dma regions: 1
 KrustBoot pci devices: 4
 KrustBoot virtio devices: 4
 KrustBoot namespaces: 2
-KrustBoot vfs roots: 7
+KrustBoot vfs roots: 8
   grant[0] process=vertex-init cap[1] endpoint=serial-log rights=send
   grant[11] process=logd cap[0] endpoint=log-sink rights=receive
   grant[12] process=vertex-init cap[4] endpoint=log-sink rights=send
@@ -266,6 +268,7 @@ proc=block-driver cap[11] pci-device=device:virtio-blk0 kind=virtio-blk-pci righ
 proc=block-driver cap[12] virtio-device=device:virtio-blk0 transport=virtio-pci-io rights=control
 proc=logd cap[0] endpoint=log-sink rights=receive
 proc=model-reader cap[0] endpoint=store-hello-text-request rights=send
+proc=model-reader cap[4] vfs-root=cap:vfs.model-reader-vertexfs root=/fs/app rights=read|write|create|resolve
 proc=counter-service cap[0] vfs-root=cap:vfs.counter-state root=/state/counter rights=read|write|resolve
 proc=reader-service cap[0] vfs-root=cap:vfs.state-reader-state root=/state/counter rights=read|resolve
 proc=echo cap[7] vfs-root=cap:vfs.echo-state-control root=/state/counter/control rights=control|resolve
@@ -416,7 +419,7 @@ make smoke
 ```
 
 The smoke test boots QEMU headlessly, captures serial output to
-`build/serial.log`, and passes when it sees the M14-M77 directed IPC, console,
+`build/serial.log`, and passes when it sees the M14-M79 directed IPC, console,
 virtio-block, VertexDisk, verified store, update, store-executable, dynamic
 process, config, secret, package-boundary, appliance, virtio device, networking,
 namespace, policy, ABI-hardening, storage durability, network-boundary, and
@@ -427,7 +430,7 @@ device-fault transcripts. The same check is available from the repository root:
 scripts/krust-smoke.sh
 ```
 
-## M26-M77 Substrate Gate
+## M26-M79 Substrate Gate
 
 Run the clean-clone gate from the repository root:
 
@@ -442,12 +445,12 @@ make release-gate
 ```
 
 The gate checks script executability and shell syntax, verifies Makefile recipe
-parsing, checks Rust formatting and Markdown whitespace, confirms the M14-M77
+parsing, checks Rust formatting and Markdown whitespace, confirms the M14-M79
 documentation anchors, checks the pinned M39 toolchain and Cargo lockfiles, runs
 `cargo metadata --locked --offline` and `cargo build --locked --offline`,
 validates `examples/hello-generation.vertex.json`, runs `make doctor`, rebuilds
 from `make clean`, runs `make smoke`, checks package/link/build import commands,
-and then runs the M14-M77 QEMU cases:
+and then runs the M14-M79 QEMU cases:
 `m14`,
 `manifest-cycle`, `bad-cap`, `readiness-timeout`, `rollback`, `store-state-services`,
 `timer`, `preemption`, `user-fault`, `restart`, `manifest-v1`, `cap-lifecycle`,
@@ -456,9 +459,13 @@ and then runs the M14-M77 QEMU cases:
 `m46`, `m47`, `m47-corrupt-executable`, `m48`, `m49`,
 `m49-config-corrupt`, `m50`, `m54`, `m55`, `m56`, `m57`, `m59`, `m60`, `m61`,
 `m62`, `m62-journal-replay`, `m62-corrupt-journal`, `m63`, `m64`, `m66`,
-`m67`, `m68`, `m69`, `m70`, `m71`, `m72`, `m73`, `m75`, `m76`, `m77`, and the
-malformed-manifest cases. If the offline build
-fails, the gate prints the Cargo cache or vendoring prerequisite explicitly.
+`m67`, `m68`, `m69`, `m70`, `m71`, `m72`, `m73`, `m75`, `m76`, `m77`, `m78`,
+`m78-bad-superblock`, `m78-journal-replay`,
+`m78-journal-checkpoint-after-journal`, `m78-journal-checkpoint-after-data`,
+`m78-journal-checkpoint-after-inode`, `m78-post-sync-remount`,
+`m78-fsync-fault`, `m79`, and the malformed-manifest cases. If the offline
+build fails, the gate prints the Cargo cache or vendoring prerequisite
+explicitly.
 
 The expected transcript includes:
 
@@ -470,7 +477,7 @@ KrustBoot Manifest v1 records: 9
 KrustBoot boot modules: 13
 KrustBoot processes: 13
 KrustBoot endpoints: 10
-KrustBoot grants: 64
+KrustBoot grants: 65
 KrustBoot store objects: 14
 KrustBoot network ports: 1
 KrustBoot io port ranges: 3
@@ -480,7 +487,7 @@ KrustBoot dma regions: 1
 KrustBoot pci devices: 4
 KrustBoot virtio devices: 4
 KrustBoot namespaces: 2
-KrustBoot vfs roots: 7
+KrustBoot vfs roots: 8
 grant[0] process=vertex-init cap[1] endpoint=serial-log rights=send
 grant[11] process=logd cap[0] endpoint=log-sink rights=receive
 grant[12] process=vertex-init cap[4] endpoint=log-sink rights=send
@@ -548,6 +555,7 @@ proc=block-driver cap[11] pci-device=device:virtio-blk0 kind=virtio-blk-pci righ
 proc=block-driver cap[12] virtio-device=device:virtio-blk0 transport=virtio-pci-io rights=control
 proc=vertex-init cap[30] timer=monotonic-timer rights=control
 proc=model-reader cap[0] endpoint=store-hello-text-request rights=send
+proc=model-reader cap[4] vfs-root=cap:vfs.model-reader-vertexfs root=/fs/app rights=read|write|create|resolve
 proc=counter-service cap[0] vfs-root=cap:vfs.counter-state root=/state/counter rights=read|write|resolve
 proc=reader-service cap[0] vfs-root=cap:vfs.state-reader-state root=/state/counter rights=read|resolve
 proc=echo cap[7] vfs-root=cap:vfs.echo-state-control root=/state/counter/control rights=control|resolve

@@ -254,7 +254,8 @@
       "lifecycle": {
         "startAfter": [],
         "stopBefore": []
-      }
+      },
+      "mountRoot": "/"
     },
     {
       "id": "svc:logd",
@@ -299,7 +300,8 @@
       },
       "configs": [
         "config:logd"
-      ]
+      ],
+      "mountRoot": "/"
     },
     {
       "id": "svc:serial-driver",
@@ -335,7 +337,8 @@
           "svc:vertex-supervisor"
         ],
         "stopBefore": []
-      }
+      },
+      "mountRoot": "/"
     },
     {
       "id": "svc:cpu-hog",
@@ -358,7 +361,8 @@
           "svc:logd"
         ],
         "stopBefore": []
-      }
+      },
+      "mountRoot": "/"
     },
     {
       "id": "svc:echo-server",
@@ -401,7 +405,8 @@
           "svc:cpu-hog"
         ],
         "stopBefore": []
-      }
+      },
+      "mountRoot": "/"
     }
   ],
   "activation": {

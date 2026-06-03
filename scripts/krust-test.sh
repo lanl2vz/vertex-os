@@ -20,6 +20,8 @@ FALLBACK_MANIFEST=
 BAD_GENERATION_MANIFEST=
 KRUSTBOOT_CORRUPT=
 VERTEX_DISK_CORRUPT=
+VERTEXFS_CORRUPT=
+VERTEXFS_UPDATE_APP_A_PAYLOAD=
 EXPECT_ACTIVATION_SUCCESS=0
 SUCCESS_STABILITY_ATTEMPTS=$QEMU_STABILITY_ATTEMPTS
 USE_SERIAL_PIPE=0
@@ -250,7 +252,7 @@ unauthorized service cannot access PCI I/O, IRQ, or DMA capabilities
         MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
         EXPECT_ACTIVATION_SUCCESS=1
         required_lines='
-KrustBoot grants: 64
+KrustBoot grants: 65
 KrustBoot io port ranges: 3
 KrustBoot mmio regions: 0
 KrustBoot pci devices: 4
@@ -284,7 +286,7 @@ Native service activation ok
         MANIFEST="$ROOT_DIR/examples/krust-block-driver-fault-generation.vertex.json"
         required_lines='
 Boot generation: gen:block-driver-fault-0001
-KrustBoot grants: 60
+KrustBoot grants: 61
 KrustBoot store objects:
 proc=block-driver cap[10] store-object=store:block-driver-fault-token rights=read
 VFS open accepted: proc=block-driver file=store:block-driver-fault-token
@@ -302,7 +304,7 @@ Native service activation failed
         EXPECT_ACTIVATION_SUCCESS=1
         required_lines='
 KrustBoot endpoints: 10
-KrustBoot grants: 64
+KrustBoot grants: 65
 KrustBoot state volumes: 2
 state_volume[0] id=state:counter
 state_volume[1] id=state:scratch
@@ -490,7 +492,7 @@ Native service activation ok
         EXPECT_ACTIVATION_SUCCESS=1
         required_lines='
 KrustBoot endpoints: 10
-KrustBoot grants: 64
+KrustBoot grants: 65
 IPC FIFO regression: queued sends preserve FIFO order
 IPC FIFO regression: queue-full send rejected
 IPC FIFO regression: receiver-specific dequeue preserves eligible ordering
@@ -541,7 +543,7 @@ Boot generation: gen:console-0001
 KrustBoot boot modules: 14
 KrustBoot processes: 14
 KrustBoot endpoints: 14
-KrustBoot grants: 70
+KrustBoot grants: 71
 proc=console-driver cap[0] endpoint=console-output rights=receive
 proc=console-driver cap[3] endpoint=console-driver-control rights=receive
 proc=console-shell cap[0] endpoint=console-shell-request rights=receive
@@ -741,7 +743,7 @@ Native service activation ok
 KrustBoot namespaces: 2
 namespace[0] id=cap:namespace.echo entries=1
 namespace[1] id=cap:namespace.reader entries=1
-KrustBoot vfs roots: 7
+KrustBoot vfs roots: 8
 VFS state volume mounted: state=state:counter path=/state/counter source=vertex-state
 VFS state volume value file mounted: state=state:counter path=/state/counter/value source=vertex-state
 VFS state volume mounted: state=state:scratch path=/state/scratch source=vertex-state
@@ -797,14 +799,20 @@ Native service activation ok
         MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
         EXPECT_ACTIVATION_SUCCESS=1
         required_lines='
-KrustBoot vfs roots: 7
-Endpoint table entries: 12
+KrustBoot vfs roots: 8
+Endpoint table entries: 14
 endpoint[10] id=11 name=state-vfs-request
 endpoint[11] id=12 name=state-vfs-reply
+endpoint[12] id=13 name=vertexfs-device-request
+endpoint[13] id=14 name=vertexfs-device-reply
 Native VFS state request grant: process=vertex-state endpoint=state-vfs-request rights=receive
 Native VFS state reply grant: process=vertex-state endpoint=state-vfs-reply rights=send
+Native VertexFS device request grant: process=block-driver endpoint=vertexfs-device-request rights=receive
+Native VertexFS device reply grant: process=block-driver endpoint=vertexfs-device-reply rights=send
 proc=vertex-state cap[6] endpoint=state-vfs-reply rights=send
 proc=vertex-state cap[7] endpoint=state-vfs-request rights=receive
+proc=block-driver cap[13] endpoint=vertexfs-device-request rights=receive
+proc=block-driver cap[14] endpoint=vertexfs-device-reply rights=send
 proc=logd cap[4] vfs-root=cap:vfs.logd-log-stream root=/proc/log-stream rights=read|resolve
 VFS open accepted: proc=logd file=log-stream
 VFS read blocked: proc=logd
@@ -847,6 +855,7 @@ VFS hard links share volatile file backing and report link count
 VFS hard link metadata version follows shared backing writes
 VFS hard link metadata version follows link count changes
 VFS hard links cannot cross filesystem boundaries
+VFS rename cannot cross filesystem boundaries
 VFS hard links cannot cross volatile mount instances
 VFS rename cannot cross volatile mount instances
 long VFS paths and components are rejected before allocation
@@ -861,9 +870,194 @@ Native service activation ok
 vertex-state block cache hit
 vertex-state block cache writeback clean
 vertex-state cache inspect dirty=0 pinned=0 writeback_errors=0
+vertex-state block cache clean eviction under pressure
+vertex-state block cache dirty pages are not evicted
+vertex-state block cache writeback error leaves dirty page dirty
+vertex-state block cache writeback error accounting increments
 vertex-state writes state volume to disk
 vertex-state serves VFS state write
 vertex-state serves VFS state read
+Native service activation ok
+'
+        ;;
+    m78|vertexfs-v1)
+        MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
+        EXPECT_ACTIVATION_SUCCESS=1
+        required_lines='
+VertexFS v1 image module accepted: bytes=32768
+block-driver reads VertexFS device image section
+block-driver writes VertexFS device image section
+block-driver writes VertexFS fsync sector
+VertexFS v1 superblock accepted: generation=gen:hello-0001 feature_flags=metadata-v1
+VertexFS v1 mounted: path=/fs source=vertexfs
+VertexFS v1 directory record verified: path=/fs/app
+VertexFS v1 declared file mounted: path=/fs/app/a
+proc=model-reader cap[4] vfs-root=cap:vfs.model-reader-vertexfs root=/fs/app rights=read|write|create|resolve
+VFS namespace root resolved: proc=model-reader root=/fs/app
+mount namespace root exposes declared VertexFS app tree
+model-reader VertexFS namespace root maps /a to /fs/app/a
+VertexFS v1 declared file read through VFS
+VertexFS v1 fsync device transaction committed: proc=model-reader inode=4 sectors=
+VertexFS v1 declared file fsync journal readback ok
+VFS open-create accepted: proc=model-reader path=/created
+VertexFS v1 fsync device transaction committed: proc=model-reader inode=5 sectors=
+VertexFS v1 dynamic create write fsync readback ok
+VFS open-create accepted: proc=model-reader path=/created2
+VertexFS v1 fsync device transaction committed: proc=model-reader inode=6 sectors=
+VertexFS v1 second dynamic create write fsync readback ok
+VFS open-create accepted: proc=model-reader path=/created3
+VertexFS v1 fsync device transaction committed: proc=model-reader inode=7 sectors=
+VertexFS v1 third dynamic create write fsync readback ok
+VFS open-create accepted: proc=model-reader path=/created4
+VertexFS v1 fsync device transaction committed: proc=model-reader inode=8 sectors=
+VertexFS v1 expanded metadata create beyond old table capacity ok
+VFS open-create accepted: proc=model-reader path=/created11
+VertexFS v1 fsync device transaction committed: proc=model-reader inode=15 sectors=
+VertexFS v1 expanded metadata fills dynamic inode 15
+VertexFS v1 dynamic create returns no space at expanded metadata capacity
+Native service activation ok
+'
+        ;;
+    m78-bad-superblock|vertexfs-bad-superblock)
+        MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
+        VERTEXFS_CORRUPT=bad-superblock
+        required_lines='
+VertexFS v1 image module accepted: bytes=32768
+Krust VertexFS v1 image rejected: bad superblock
+Native runtime init failed from KrustBoot manifest
+'
+        ;;
+    m78-journal-replay|vertexfs-journal-replay)
+        MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
+        VERTEXFS_CORRUPT=interrupted-journal
+        EXPECT_ACTIVATION_SUCCESS=1
+        required_lines='
+VertexFS v1 image module accepted: bytes=32768
+VertexFS v1 superblock accepted: generation=gen:hello-0001 feature_flags=metadata-v1
+VertexFS v1 mounted: path=/fs source=vertexfs
+VertexFS v1 journal replayed: inode=4 outcome=new
+VertexFS v1 declared file read through VFS
+VertexFS v1 journal replay read returned new file
+Native service activation ok
+'
+        ;;
+    m78-journal-checkpoint-after-journal|vertexfs-journal-checkpoint-after-journal)
+        MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
+        VERTEXFS_CORRUPT=journal-checkpoint-after-journal
+        EXPECT_ACTIVATION_SUCCESS=1
+        required_lines='
+VertexFS v1 image module accepted: bytes=32768
+VertexFS v1 superblock accepted: generation=gen:hello-0001 feature_flags=metadata-v1
+VertexFS v1 mounted: path=/fs source=vertexfs
+VertexFS v1 journal replayed: inode=4 outcome=new
+VertexFS v1 declared file read through VFS
+VertexFS v1 journal replay read returned new file
+Native service activation ok
+'
+        ;;
+    m78-journal-checkpoint-after-data|vertexfs-journal-checkpoint-after-data)
+        MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
+        VERTEXFS_CORRUPT=journal-checkpoint-after-data
+        EXPECT_ACTIVATION_SUCCESS=1
+        required_lines='
+VertexFS v1 image module accepted: bytes=32768
+VertexFS v1 superblock accepted: generation=gen:hello-0001 feature_flags=metadata-v1
+VertexFS v1 mounted: path=/fs source=vertexfs
+VertexFS v1 journal replayed: inode=4 outcome=new
+VertexFS v1 declared file read through VFS
+VertexFS v1 journal replay read returned new file
+Native service activation ok
+'
+        ;;
+    m78-journal-checkpoint-after-inode|vertexfs-journal-checkpoint-after-inode)
+        MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
+        VERTEXFS_CORRUPT=journal-checkpoint-after-inode
+        EXPECT_ACTIVATION_SUCCESS=1
+        required_lines='
+VertexFS v1 image module accepted: bytes=32768
+VertexFS v1 superblock accepted: generation=gen:hello-0001 feature_flags=metadata-v1
+VertexFS v1 mounted: path=/fs source=vertexfs
+VertexFS v1 journal replayed: inode=4 outcome=new
+VertexFS v1 declared file read through VFS
+VertexFS v1 journal replay read returned new file
+Native service activation ok
+'
+        ;;
+    m78-post-sync-remount|vertexfs-post-sync-remount)
+        MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
+        VERTEXFS_UPDATE_APP_A_PAYLOAD="$BUILD_DIR/vertexfs-app-a-post-sync.txt"
+        mkdir -p "$BUILD_DIR"
+        printf 'vertexfs:a=3\n' >"$VERTEXFS_UPDATE_APP_A_PAYLOAD"
+        EXPECT_ACTIVATION_SUCCESS=1
+        required_lines='
+VertexFS v1 image module accepted: bytes=32768
+VertexFS v1 superblock accepted: generation=gen:hello-0001 feature_flags=metadata-v1
+VertexFS v1 mounted: path=/fs source=vertexfs
+VertexFS v1 declared file read through VFS
+VertexFS v1 post-sync image read returned committed file
+Native service activation ok
+'
+        ;;
+    m78-fsync-fault|vertexfs-fsync-fault)
+        MANIFEST="$ROOT_DIR/examples/krust-vertexfs-fsync-fault-generation.vertex.json"
+        EXPECT_ACTIVATION_SUCCESS=1
+        required_lines='
+Boot generation: gen:vertexfs-fsync-fault-0001
+proc=block-driver cap[15] store-object=store:vertexfs-fsync-fault-token rights=read
+proc=model-reader cap[5] store-object=store:vertexfs-fsync-fault-token rights=read
+VFS open accepted: proc=block-driver file=store:vertexfs-fsync-fault-token
+block-driver writes VertexFS fsync sector
+block-driver fault injection exits during VertexFS fsync
+VertexFS v1 fsync device transaction aborted: proc=model-reader
+VertexFS v1 fsync block-driver fault returns unsupported
+VertexFS v1 fsync fault keeps runtime dirty file readable
+restart policy = on-failure
+vertex-init restarts block-driver once
+Krust process restart reload: proc=block-driver
+Native service activation ok
+'
+        case_forbidden_lines='
+VertexFS v1 fsync device transaction committed: proc=model-reader
+'
+        ;;
+    m79|mount-namespaces)
+        MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
+        EXPECT_ACTIVATION_SUCCESS=1
+        required_lines='
+process[8] id=
+name=model-reader state=declared
+mount_root=/fs/app
+mount[0] path=/declared-ro source=/ flags=bind|read-only
+proc=model-reader cap[4] vfs-root=cap:vfs.model-reader-vertexfs root=/fs/app rights=read|write|create|resolve
+proc=echo cap[6] vfs-root=cap:vfs.echo-state-writer root=/state rights=read|write|create|unlink|rename|mount|resolve
+Krust declared mount snapshot restored: proc=echo path=/declared-ro canonical=/state/declared-ro source=/ canonical_source=/state flags=bind|read-only
+VFS namespace root resolved: proc=model-reader root=/fs/app
+model-reader VertexFS namespace root maps /a to /fs/app/a
+per-process mount namespace maps /a to /state/a
+VFS filesystem service file mounted: path=/state/service-report source=servicefs
+VFS open accepted: proc=echo file=service-report
+VFS filesystem service request: proc=echo file=service-report
+vertex-state serves VFS filesystem service report
+VFS filesystem service transaction wake: proc=echo file=service-report op=service-read
+service-backed filesystem file rejects write opens
+service-backed filesystem file read through mount namespace
+declared mount snapshot exposes read-only alias
+VFS mount requires explicit mount authority
+VFS mount object creates busy-checks and unmounts volatile root
+VFS bind mount accepted: proc=echo path=/ro canonical=/state/ro source=/state flags=bind|read-only
+VFS bind unmount rejects busy mounted subtree
+read-only bind mount rejects write through alias
+VFS bind mount accepted: proc=echo path=/ro/nested canonical=/state/ro/nested source=/state/ro flags=bind|read-only
+nested bind mount inherits read-only source flag
+VFS bind mount accepted: proc=echo path=/rw canonical=/state/rw source=/state flags=bind
+writable bind mount propagates writes and metadata through alias
+VFS bind mount accepted: proc=echo path=/restart-bind canonical=/state/restart-bind source=/state flags=bind
+echo leaves dynamic bind mount for restart cleanup
+Krust process dynamic bind mounts reaped: proc=echo mounts=1
+Krust process declared mount snapshot reaped: proc=echo mounts=1
+echo restart restored declared mount namespace root /state
+echo restart restored declared mount table alias /declared-ro
+echo restart did not inherit previous dynamic bind mount
 Native service activation ok
 '
         ;;
@@ -1154,8 +1348,69 @@ activation failed
 '
         ;;
     *)
-        echo "usage: scripts/krust-test.sh <m13|m14|valid-activation|manifest-cycle|bad-cap|readiness|readiness-timeout|rollback|store-state-services|timer|preemption|m30|user-fault|m31|restart|manifest-v1|cap-lifecycle|typed-arenas|quotas|m32|io-substrate|m33|serial-driver|m34|block-driver|m35|store-service|m36|state-service|m37|generation-switch|m38|introspection|m40|directed-ipc|m41|console-shell|m42|virtio-block|m42-driver-fault|block-driver-fault|m43|vertexdisk|m43-bad-superblock|vertexdisk-bad-superblock|m44|boot-manager|m45|store-verification|m46|native-update|m47|store-executables|m47-corrupt-executable|store-executable-corruption|m48|dynamic-process|m49|config-objects|m49-config-corrupt|config-hash-mismatch|m50|secrets|m54|appliance|m55|driver-framework|m56|virtio-device-stack|m57|networking-v0|m59|namespace-service|m60|policy-typed|m61|abi-authority-hardening|m62|storage-durability|m62-journal-replay|storage-journal-replay|m62-corrupt-journal|storage-corrupt-journal|m63|network-boundary|m64|supervisor-lifecycle|m66|memory-lifecycle|m67|address-space-teardown|m68|failure-atomicity|m69|memory-pressure|m70|interrupt-routing|m71|dma-ownership|m72|virtio-recovery|m73|device-fault-gate|m75|vfs-blocking|m76|directory-metadata|m77|cache-writeback|manifest-truncated|manifest-bad-magic|manifest-raw-compact|manifest-old-compact-magic|manifest-unsupported-version|manifest-oob-record|manifest-missing-provider>" >&2
+        echo "usage: scripts/krust-test.sh <m13|m14|valid-activation|manifest-cycle|bad-cap|readiness|readiness-timeout|rollback|store-state-services|timer|preemption|m30|user-fault|m31|restart|manifest-v1|cap-lifecycle|typed-arenas|quotas|m32|io-substrate|m33|serial-driver|m34|block-driver|m35|store-service|m36|state-service|m37|generation-switch|m38|introspection|m40|directed-ipc|m41|console-shell|m42|virtio-block|m42-driver-fault|block-driver-fault|m43|vertexdisk|m43-bad-superblock|vertexdisk-bad-superblock|m44|boot-manager|m45|store-verification|m46|native-update|m47|store-executables|m47-corrupt-executable|store-executable-corruption|m48|dynamic-process|m49|config-objects|m49-config-corrupt|config-hash-mismatch|m50|secrets|m54|appliance|m55|driver-framework|m56|virtio-device-stack|m57|networking-v0|m59|namespace-service|m60|policy-typed|m61|abi-authority-hardening|m62|storage-durability|m62-journal-replay|storage-journal-replay|m62-corrupt-journal|storage-corrupt-journal|m63|network-boundary|m64|supervisor-lifecycle|m66|memory-lifecycle|m67|address-space-teardown|m68|failure-atomicity|m69|memory-pressure|m70|interrupt-routing|m71|dma-ownership|m72|virtio-recovery|m73|device-fault-gate|m75|vfs-blocking|m76|directory-metadata|m77|cache-writeback|m78|vertexfs-v1|m78-bad-superblock|vertexfs-bad-superblock|m78-journal-replay|vertexfs-journal-replay|m78-journal-checkpoint-after-journal|vertexfs-journal-checkpoint-after-journal|m78-journal-checkpoint-after-data|vertexfs-journal-checkpoint-after-data|m78-journal-checkpoint-after-inode|vertexfs-journal-checkpoint-after-inode|m78-post-sync-remount|vertexfs-post-sync-remount|m78-fsync-fault|vertexfs-fsync-fault|m79|mount-namespaces|manifest-truncated|manifest-bad-magic|manifest-raw-compact|manifest-old-compact-magic|manifest-unsupported-version|manifest-oob-record|manifest-missing-provider>" >&2
         exit 2
+        ;;
+esac
+
+if [ "$CASE" = "m78" ] || [ "$CASE" = "vertexfs-v1" ]; then
+    VERTEXFS_IMAGE="$BUILD_DIR/krust.vertexfs"
+    VERTEXFS_IMAGE_REPRO="$BUILD_DIR/krust-repro.vertexfs"
+    VERTEXFS_BAD_SUPERBLOCK="$BUILD_DIR/krust-bad-superblock.vertexfs"
+    VERTEXFS_BAD_DIRECTORY="$BUILD_DIR/krust-bad-directory.vertexfs"
+    VERTEXFS_OVERLAP="$BUILD_DIR/krust-overlap.vertexfs"
+    VERTEXFS_FREE_OVERLAP="$BUILD_DIR/krust-free-overlap.vertexfs"
+    VERTEXFS_INTERRUPTED_JOURNAL="$BUILD_DIR/krust-interrupted-journal.vertexfs"
+    VERTEXFS_CHECKPOINT_AFTER_JOURNAL="$BUILD_DIR/krust-checkpoint-after-journal.vertexfs"
+    VERTEXFS_CHECKPOINT_AFTER_DATA="$BUILD_DIR/krust-checkpoint-after-data.vertexfs"
+    VERTEXFS_CHECKPOINT_AFTER_INODE="$BUILD_DIR/krust-checkpoint-after-inode.vertexfs"
+    VERTEXFS_UPDATED="$BUILD_DIR/krust-updated.vertexfs"
+    VERTEXFS_UPDATE_PAYLOAD="$BUILD_DIR/krust-updated-app-a.txt"
+    cargo run --locked --quiet --manifest-path "$ROOT_DIR/crates/vertexctl/Cargo.toml" -- create-vertexfs "$VERTEXFS_IMAGE" "$MANIFEST"
+    cargo run --locked --quiet --manifest-path "$ROOT_DIR/crates/vertexctl/Cargo.toml" -- inspect-vertexfs "$VERTEXFS_IMAGE"
+    cargo run --locked --quiet --manifest-path "$ROOT_DIR/crates/vertexctl/Cargo.toml" -- verify-vertexfs "$VERTEXFS_IMAGE"
+    cargo run --locked --quiet --manifest-path "$ROOT_DIR/crates/vertexctl/Cargo.toml" -- create-vertexfs "$VERTEXFS_IMAGE_REPRO" "$MANIFEST"
+    cmp "$VERTEXFS_IMAGE" "$VERTEXFS_IMAGE_REPRO"
+    cargo run --locked --quiet --manifest-path "$ROOT_DIR/crates/vertexctl/Cargo.toml" -- corrupt-vertexfs bad-superblock "$VERTEXFS_IMAGE" "$VERTEXFS_BAD_SUPERBLOCK"
+    if cargo run --locked --quiet --manifest-path "$ROOT_DIR/crates/vertexctl/Cargo.toml" -- verify-vertexfs "$VERTEXFS_BAD_SUPERBLOCK"; then
+        echo "VertexFS bad superblock unexpectedly verified" >&2
+        exit 1
+    fi
+    cargo run --locked --quiet --manifest-path "$ROOT_DIR/crates/vertexctl/Cargo.toml" -- corrupt-vertexfs bad-directory "$VERTEXFS_IMAGE" "$VERTEXFS_BAD_DIRECTORY"
+    if cargo run --locked --quiet --manifest-path "$ROOT_DIR/crates/vertexctl/Cargo.toml" -- verify-vertexfs "$VERTEXFS_BAD_DIRECTORY"; then
+        echo "VertexFS bad directory unexpectedly verified" >&2
+        exit 1
+    fi
+    cargo run --locked --quiet --manifest-path "$ROOT_DIR/crates/vertexctl/Cargo.toml" -- corrupt-vertexfs overlapping-extents "$VERTEXFS_IMAGE" "$VERTEXFS_OVERLAP"
+    if cargo run --locked --quiet --manifest-path "$ROOT_DIR/crates/vertexctl/Cargo.toml" -- verify-vertexfs "$VERTEXFS_OVERLAP"; then
+        echo "VertexFS overlapping extents unexpectedly verified" >&2
+        exit 1
+    fi
+    cargo run --locked --quiet --manifest-path "$ROOT_DIR/crates/vertexctl/Cargo.toml" -- corrupt-vertexfs free-space-overlap "$VERTEXFS_IMAGE" "$VERTEXFS_FREE_OVERLAP"
+    if cargo run --locked --quiet --manifest-path "$ROOT_DIR/crates/vertexctl/Cargo.toml" -- verify-vertexfs "$VERTEXFS_FREE_OVERLAP"; then
+        echo "VertexFS corrupt free-space metadata unexpectedly verified" >&2
+        exit 1
+    fi
+    cargo run --locked --quiet --manifest-path "$ROOT_DIR/crates/vertexctl/Cargo.toml" -- corrupt-vertexfs interrupted-journal "$VERTEXFS_IMAGE" "$VERTEXFS_INTERRUPTED_JOURNAL"
+    cargo run --locked --quiet --manifest-path "$ROOT_DIR/crates/vertexctl/Cargo.toml" -- verify-vertexfs "$VERTEXFS_INTERRUPTED_JOURNAL"
+    cargo run --locked --quiet --manifest-path "$ROOT_DIR/crates/vertexctl/Cargo.toml" -- corrupt-vertexfs journal-checkpoint-after-journal "$VERTEXFS_IMAGE" "$VERTEXFS_CHECKPOINT_AFTER_JOURNAL"
+    cargo run --locked --quiet --manifest-path "$ROOT_DIR/crates/vertexctl/Cargo.toml" -- verify-vertexfs "$VERTEXFS_CHECKPOINT_AFTER_JOURNAL"
+    cargo run --locked --quiet --manifest-path "$ROOT_DIR/crates/vertexctl/Cargo.toml" -- corrupt-vertexfs journal-checkpoint-after-data "$VERTEXFS_IMAGE" "$VERTEXFS_CHECKPOINT_AFTER_DATA"
+    cargo run --locked --quiet --manifest-path "$ROOT_DIR/crates/vertexctl/Cargo.toml" -- verify-vertexfs "$VERTEXFS_CHECKPOINT_AFTER_DATA"
+    cargo run --locked --quiet --manifest-path "$ROOT_DIR/crates/vertexctl/Cargo.toml" -- corrupt-vertexfs journal-checkpoint-after-inode "$VERTEXFS_IMAGE" "$VERTEXFS_CHECKPOINT_AFTER_INODE"
+    cargo run --locked --quiet --manifest-path "$ROOT_DIR/crates/vertexctl/Cargo.toml" -- verify-vertexfs "$VERTEXFS_CHECKPOINT_AFTER_INODE"
+    printf 'vertexfs:a=3\n' >"$VERTEXFS_UPDATE_PAYLOAD"
+    cargo run --locked --quiet --manifest-path "$ROOT_DIR/crates/vertexctl/Cargo.toml" -- update-vertexfs-file "$VERTEXFS_IMAGE" "$VERTEXFS_UPDATED" /app/a "$VERTEXFS_UPDATE_PAYLOAD"
+    cargo run --locked --quiet --manifest-path "$ROOT_DIR/crates/vertexctl/Cargo.toml" -- verify-vertexfs "$VERTEXFS_UPDATED"
+fi
+
+case "$VERTEXFS_CORRUPT" in
+    journal-checkpoint-after-journal|journal-checkpoint-after-data|journal-checkpoint-after-inode)
+        VERTEXFS_CHECKPOINT_BASE="$BUILD_DIR/krust-checkpoint-base.vertexfs"
+        VERTEXFS_CHECKPOINT_IMAGE="$BUILD_DIR/krust-$VERTEXFS_CORRUPT.vertexfs"
+        cargo run --locked --quiet --manifest-path "$ROOT_DIR/crates/vertexctl/Cargo.toml" -- create-vertexfs "$VERTEXFS_CHECKPOINT_BASE" "$MANIFEST"
+        cargo run --locked --quiet --manifest-path "$ROOT_DIR/crates/vertexctl/Cargo.toml" -- corrupt-vertexfs "$VERTEXFS_CORRUPT" "$VERTEXFS_CHECKPOINT_BASE" "$VERTEXFS_CHECKPOINT_IMAGE"
+        cargo run --locked --quiet --manifest-path "$ROOT_DIR/crates/vertexctl/Cargo.toml" -- verify-vertexfs "$VERTEXFS_CHECKPOINT_IMAGE"
         ;;
 esac
 
@@ -1173,7 +1428,7 @@ if [ -n "$case_forbidden_lines" ]; then
 $case_forbidden_lines"
 fi
 
-(cd "$KRUST_DIR" && make iso VERTEX_MANIFEST="$MANIFEST" FALLBACK_MANIFEST="$FALLBACK_MANIFEST" BAD_GENERATION_MANIFEST="$BAD_GENERATION_MANIFEST" KRUSTBOOT_CORRUPT="$KRUSTBOOT_CORRUPT" VERTEX_DISK_CORRUPT="$VERTEX_DISK_CORRUPT")
+(cd "$KRUST_DIR" && make iso VERTEX_MANIFEST="$MANIFEST" FALLBACK_MANIFEST="$FALLBACK_MANIFEST" BAD_GENERATION_MANIFEST="$BAD_GENERATION_MANIFEST" KRUSTBOOT_CORRUPT="$KRUSTBOOT_CORRUPT" VERTEX_DISK_CORRUPT="$VERTEX_DISK_CORRUPT" VERTEXFS_CORRUPT="$VERTEXFS_CORRUPT" VERTEXFS_UPDATE_APP_A_PAYLOAD="$VERTEXFS_UPDATE_APP_A_PAYLOAD")
 
 mkdir -p "$(dirname "$SERIAL_LOG")"
 rm -f "$SERIAL_LOG"

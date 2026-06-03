@@ -26,6 +26,8 @@
       "id": "svc:echo-server",
       "name": "echo",
       "executable": "exe:echo-server",
+      "mountRoot": "/",
+      "mounts": [],
       "provides": [
         "cap:echo.api"
       ],

@@ -130,7 +130,8 @@ fn write_missing_executable_manifest(path: &Path) {
                 "lifecycle": {
                     "startAfter": [],
                     "stopBefore": []
-                }
+                },
+                "mountRoot": "/"
             }
         ],
         "activation": {
@@ -323,7 +324,7 @@ fn compile_boot_manifest_emits_krustboot_plan() {
     assert!(stdout.contains("boot_modules: 13"));
     assert!(stdout.contains("processes: 13"));
     assert!(stdout.contains("endpoints: 10"));
-    assert!(stdout.contains("grants: 64"));
+    assert!(stdout.contains("grants: 65"));
     assert!(stdout.contains("store_objects: 14"));
     assert!(stdout.contains("state_volumes: 2"));
     assert!(stdout.contains("network_ports: 1"));
@@ -334,7 +335,7 @@ fn compile_boot_manifest_emits_krustboot_plan() {
     assert!(stdout.contains("pci_devices: 4"));
     assert!(stdout.contains("virtio_devices: 4"));
     assert!(stdout.contains("namespaces: 2"));
-    assert!(stdout.contains("vfs_roots: 7"));
+    assert!(stdout.contains("vfs_roots: 8"));
 
     let bytes = fs::read(&output_path).expect("read krustboot output");
     assert!(bytes.starts_with(b"KRUSTBOOTV1\0\0\0\0\0"));
@@ -368,6 +369,7 @@ fn compile_boot_manifest_emits_krustboot_plan() {
     assert!(contains_bytes(&bytes, b"cap:vfs.counter-state"));
     assert!(contains_bytes(&bytes, b"cap:vfs.state-reader-state"));
     assert!(contains_bytes(&bytes, b"cap:vfs.block-dev-blk0"));
+    assert!(contains_bytes(&bytes, b"cap:vfs.model-reader-vertexfs"));
     assert!(contains_bytes(&bytes, b"cap:io.com1"));
     assert!(contains_bytes(&bytes, b"cap:io.pci-config"));
     assert!(contains_bytes(&bytes, b"cap:io.virtio-blk0"));
@@ -376,10 +378,11 @@ fn compile_boot_manifest_emits_krustboot_plan() {
     assert!(contains_bytes(&bytes, b"device:virtio-blk0"));
     assert!(contains_bytes(&bytes, b"virtio-pci-io"));
     assert!(contains_bytes(&bytes, b"cap:net.udp.9000"));
+    assert!(contains_bytes(&bytes, b"/declared-ro"));
 }
 
 #[test]
-fn release_profile_validates_m75_krustboot_identity() {
+fn release_profile_validates_m79_krustboot_identity() {
     let dir = temp_dir("release-profile");
     let krustboot_path = dir.join("hello-generation.krustboot");
     let old_krustboot_path = dir.join("old-generation.krustboot");
@@ -401,7 +404,7 @@ fn release_profile_validates_m75_krustboot_identity() {
         &kernel_path.to_string_lossy(),
         &vertexdisk_path.to_string_lossy(),
     ]));
-    assert!(profile.contains("krustboot=Manifest v1 compact KRUSTBOOTM75 version 11"));
+    assert!(profile.contains("krustboot=Manifest v1 compact KRUSTBOOTM79 version 12"));
 
     assert_success(run(&[
         "corrupt-boot-manifest",
@@ -418,7 +421,7 @@ fn release_profile_validates_m75_krustboot_identity() {
         &vertexdisk_path.to_string_lossy(),
     ]));
     assert!(stderr.contains("unsupported KrustBoot compact magic"));
-    assert!(stderr.contains("expected KRUSTBOOTM75"));
+    assert!(stderr.contains("expected KRUSTBOOTM79"));
 }
 
 #[test]
@@ -485,11 +488,91 @@ fn compile_boot_manifest_does_not_inject_implicit_logd_config() {
         &output_path.to_string_lossy(),
     ]));
 
-    assert!(stdout.contains("grants: 63"));
+    assert!(stdout.contains("grants: 64"));
     assert!(stdout.contains("store_objects: 13"));
     let bytes = fs::read(&output_path).expect("read krustboot output");
     assert!(!contains_bytes(&bytes, b"config:logd"));
     assert!(!contains_bytes(&bytes, b"config-logd-v0"));
+}
+
+#[test]
+fn compile_boot_manifest_rejects_missing_mount_root() {
+    let dir = temp_dir("krustboot-missing-mount-root");
+    let input_path = dir.join("missing-mount-root.vertex.json");
+    let output_path = dir.join("missing-mount-root.krustboot");
+    let mut manifest: Value = serde_json::from_str(
+        &fs::read_to_string(repo_root().join("examples/hello-generation.vertex.json"))
+            .expect("read hello manifest"),
+    )
+    .expect("hello manifest should be json");
+
+    let services = manifest["services"]
+        .as_array_mut()
+        .expect("services should be an array");
+    let echo = services
+        .iter_mut()
+        .find(|service| service["id"] == "svc:echo-server")
+        .expect("echo service should exist");
+    echo.as_object_mut()
+        .expect("service should be an object")
+        .remove("mountRoot");
+
+    fs::write(
+        &input_path,
+        serde_json::to_string_pretty(&manifest).expect("serialize missing-mount-root manifest"),
+    )
+    .expect("write missing-mount-root manifest");
+
+    let stderr = assert_failure(run(&[
+        "compile-boot-manifest",
+        &input_path.to_string_lossy(),
+        &output_path.to_string_lossy(),
+    ]));
+
+    assert!(stderr.contains("service svc:echo-server must declare mountRoot"));
+    assert!(!output_path.exists());
+}
+
+#[test]
+fn compile_boot_manifest_rejects_invalid_declared_mount() {
+    let dir = temp_dir("krustboot-invalid-mount");
+    let input_path = dir.join("invalid-mount.vertex.json");
+    let output_path = dir.join("invalid-mount.krustboot");
+    let mut manifest: Value = serde_json::from_str(
+        &fs::read_to_string(repo_root().join("examples/hello-generation.vertex.json"))
+            .expect("read hello manifest"),
+    )
+    .expect("hello manifest should be json");
+
+    let services = manifest["services"]
+        .as_array_mut()
+        .expect("services should be an array");
+    let echo = services
+        .iter_mut()
+        .find(|service| service["id"] == "svc:echo-server")
+        .expect("echo service should exist");
+    let mounts = echo["mounts"]
+        .as_array_mut()
+        .expect("echo mounts should be an array");
+    mounts[0]
+        .as_object_mut()
+        .expect("mount should be an object")
+        .remove("readOnly");
+
+    fs::write(
+        &input_path,
+        serde_json::to_string_pretty(&manifest).expect("serialize invalid-mount manifest"),
+    )
+    .expect("write invalid-mount manifest");
+
+    let stderr = assert_failure(run(&[
+        "compile-boot-manifest",
+        &input_path.to_string_lossy(),
+        &output_path.to_string_lossy(),
+    ]));
+
+    assert!(stderr.contains("service svc:echo-server mounts[0] must declare readOnly"));
+    assert!(!output_path.exists());
 }
 
 #[test]
@@ -544,7 +627,7 @@ fn create_vertex_disk_rejects_state_volumes_above_krust_limit() {
         state_volumes.push(serde_json::json!({
             "id": format!("state:extra-{index}"),
             "name": format!("extra-{index}"),
-            "kind": "vertexdisk-v0",
+            "kind": "vertexdisk-v1",
             "owner": "svc:echo-server",
             "mountIntent": "read-write",
             "snapshotPolicy": {
@@ -570,6 +653,162 @@ fn create_vertex_disk_rejects_state_volumes_above_krust_limit() {
 
     assert!(stderr.contains("Krust native runtime supports at most 4 state volumes"));
     assert!(!output_path.exists());
+}
+
+#[test]
+fn create_vertex_disk_embeds_strict_vertexfs_section() {
+    let dir = temp_dir("vertexdisk-vertexfs-section");
+    let manifest_path = repo_root().join("examples/hello-generation.vertex.json");
+    let output_path = dir.join("hello.img");
+    let manifest_arg = manifest_path.to_string_lossy().to_string();
+    let output_arg = output_path.to_string_lossy().to_string();
+
+    let stdout = assert_success(run(&[
+        "create-vertex-disk",
+        output_arg.as_str(),
+        manifest_arg.as_str(),
+    ]));
+
+    assert!(stdout.contains("wrote VertexDisk v1 image"));
+    let bytes = fs::read(&output_path).expect("read VertexDisk image");
+    assert_eq!(&bytes[..16], b"VERTEXDISKV1\0\0\0\0");
+    assert_eq!(u16::from_le_bytes([bytes[16], bytes[17]]), 2);
+
+    let section_offset = 32 + 6 * 16;
+    let vertexfs_start = u64::from_le_bytes(
+        bytes[section_offset..section_offset + 8]
+            .try_into()
+            .expect("VertexFS section start"),
+    ) as usize;
+    let vertexfs_count = u64::from_le_bytes(
+        bytes[section_offset + 8..section_offset + 16]
+            .try_into()
+            .expect("VertexFS section count"),
+    );
+    assert_eq!(vertexfs_count, 64);
+
+    let vertexfs_offset = vertexfs_start * 512;
+    assert_eq!(
+        &bytes[vertexfs_offset..vertexfs_offset + 16],
+        b"VERTEXFSV1\0\0\0\0\0\0"
+    );
+}
+
+#[test]
+fn vertexfs_build_inspect_verify_and_rejects_corruption() {
+    let dir = temp_dir("vertexfs-v1");
+    let manifest_path = repo_root().join("examples/hello-generation.vertex.json");
+    let image_a = dir.join("hello-a.vertexfs");
+    let image_b = dir.join("hello-b.vertexfs");
+    let manifest_arg = manifest_path.to_string_lossy().to_string();
+    let image_a_arg = image_a.to_string_lossy().to_string();
+    let image_b_arg = image_b.to_string_lossy().to_string();
+
+    let created = assert_success(run(&[
+        "create-vertexfs",
+        image_a_arg.as_str(),
+        manifest_arg.as_str(),
+    ]));
+    assert!(created.contains("wrote VertexFS v1 image"));
+    assert_success(run(&[
+        "create-vertexfs",
+        image_b_arg.as_str(),
+        manifest_arg.as_str(),
+    ]));
+    assert_eq!(
+        fs::read(&image_a).expect("read first VertexFS image"),
+        fs::read(&image_b).expect("read second VertexFS image"),
+        "VertexFS image creation should be reproducible"
+    );
+
+    let inspected = assert_success(run(&["inspect-vertexfs", image_a_arg.as_str()]));
+    assert!(inspected.contains("generation=gen:hello-0001"));
+    assert!(
+        inspected.contains(
+            "feature_flags=metadata-v1,directory-checksums,free-space-checksums,journal-v1"
+        )
+    );
+    assert!(inspected.contains("file path=/app/a bytes=13"));
+    assert!(inspected.contains("file path=/readme bytes=17"));
+
+    let verified = assert_success(run(&["verify-vertexfs", image_a_arg.as_str()]));
+    assert!(verified.contains("VertexFS v1 verified: generation=gen:hello-0001"));
+
+    let update_payload = dir.join("app-a-updated.txt");
+    fs::write(&update_payload, b"vertexfs:a=3\n").expect("write VertexFS update payload");
+    let updated = dir.join("hello-updated.vertexfs");
+    let updated_arg = updated.to_string_lossy();
+    let update_payload_arg = update_payload.to_string_lossy();
+    let update_out = assert_success(run(&[
+        "update-vertexfs-file",
+        image_a_arg.as_str(),
+        updated_arg.as_ref(),
+        "/app/a",
+        update_payload_arg.as_ref(),
+    ]));
+    assert!(update_out.contains("updated VertexFS v1 file: path=/app/a bytes=13"));
+    let updated_inspected = assert_success(run(&["inspect-vertexfs", updated_arg.as_ref()]));
+    assert!(updated_inspected.contains("file path=/app/a bytes=13"));
+    let updated_verified = assert_success(run(&["verify-vertexfs", updated_arg.as_ref()]));
+    assert!(updated_verified.contains("VertexFS v1 verified: generation=gen:hello-0001"));
+
+    for (mode, expected) in [
+        ("bad-superblock", "VertexFS superblock rejected"),
+        ("bad-directory", "VertexFS directory block rejected"),
+        (
+            "overlapping-extents",
+            "VertexFS free-space verification rejected overlapping file extents",
+        ),
+        (
+            "free-space-overlap",
+            "VertexFS free-space verification rejected allocated extent marked free",
+        ),
+    ] {
+        let corrupted = dir.join(format!("{mode}.vertexfs"));
+        assert_success(run(&[
+            "corrupt-vertexfs",
+            mode,
+            image_a_arg.as_str(),
+            &corrupted.to_string_lossy(),
+        ]));
+        let stderr = assert_failure(run(&["verify-vertexfs", &corrupted.to_string_lossy()]));
+        assert!(
+            stderr.contains(expected),
+            "expected {mode} failure to contain {expected}, got {stderr}"
+        );
+    }
+
+    let journal = dir.join("journal-replay.vertexfs");
+    let journal_arg = journal.to_string_lossy();
+    assert_success(run(&[
+        "corrupt-vertexfs",
+        "interrupted-journal",
+        image_a_arg.as_str(),
+        journal_arg.as_ref(),
+    ]));
+    let journal_verified = assert_success(run(&["verify-vertexfs", journal_arg.as_ref()]));
+    assert!(journal_verified.contains("VertexFS v1 verified: generation=gen:hello-0001"));
+
+    for mode in [
+        "journal-checkpoint-after-journal",
+        "journal-checkpoint-after-data",
+        "journal-checkpoint-after-inode",
+    ] {
+        let checkpoint = dir.join(format!("{mode}.vertexfs"));
+        let checkpoint_arg = checkpoint.to_string_lossy();
+        assert_success(run(&[
+            "corrupt-vertexfs",
+            mode,
+            image_a_arg.as_str(),
+            checkpoint_arg.as_ref(),
+        ]));
+        let checkpoint_verified =
+            assert_success(run(&["verify-vertexfs", checkpoint_arg.as_ref()]));
+        assert!(checkpoint_verified.contains("VertexFS v1 verified: generation=gen:hello-0001"));
+        let checkpoint_inspected =
+            assert_success(run(&["inspect-vertexfs", checkpoint_arg.as_ref()]));
+        assert!(checkpoint_inspected.contains("file path=/app/a bytes=13"));
+    }
 }
 
 #[test]
@@ -1124,6 +1363,20 @@ fn graph_link_resolves_package_service_closure() {
         .iter()
         .find(|service| service["id"] == "svc:logd")
         .expect("logd service should be linked");
+    for service in services.iter().filter(|service| {
+        matches!(
+            service["id"].as_str(),
+            Some("svc:serial-driver" | "svc:logd" | "svc:echo-server")
+        )
+    }) {
+        assert_eq!(service["mountRoot"], "/");
+        assert!(
+            service["mounts"]
+                .as_array()
+                .expect("linked service mounts should be explicit")
+                .is_empty()
+        );
+    }
     assert_eq!(logd["configs"], serde_json::json!(["config:logd"]));
     let store = linked["store"].as_array().expect("store array");
     assert!(

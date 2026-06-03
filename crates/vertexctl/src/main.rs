@@ -1,6 +1,7 @@
 mod hosted;
 mod krustboot;
 mod vertexdisk;
+mod vertexfs;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
@@ -40,6 +41,11 @@ fn run(args: Vec<String>) -> Result<(), String> {
         "explain-krustboot" => explain_krustboot_cmd(&args[1..]),
         "create-vertex-disk" => create_vertex_disk_cmd(&args[1..]),
         "corrupt-vertex-disk" => corrupt_vertex_disk_cmd(&args[1..]),
+        "create-vertexfs" => create_vertexfs_cmd(&args[1..]),
+        "inspect-vertexfs" => inspect_vertexfs_cmd(&args[1..]),
+        "verify-vertexfs" => verify_vertexfs_cmd(&args[1..]),
+        "corrupt-vertexfs" => corrupt_vertexfs_cmd(&args[1..]),
+        "update-vertexfs-file" => update_vertexfs_file_cmd(&args[1..]),
         "release-profile" => release_profile_cmd(&args[1..]),
         "package" => package_cmd(&args[1..]),
         "graph-link" => graph_link_cmd(&args[1..]),
@@ -497,7 +503,7 @@ fn create_vertex_disk_cmd(args: &[String]) -> Result<(), String> {
     fs::write(output_path, &image)
         .map_err(|source| format!("failed to write {output_path}: {source}"))?;
     println!(
-        "wrote VertexDisk v0 image: {output_path} sectors={} sector_size={}",
+        "wrote VertexDisk v1 image: {output_path} sectors={} sector_size={}",
         vertexdisk::sectors(),
         vertexdisk::sector_size()
     );
@@ -518,6 +524,111 @@ fn corrupt_vertex_disk_cmd(args: &[String]) -> Result<(), String> {
         "wrote corrupted VertexDisk image: mode={mode} input={input_path} output={output_path}"
     );
     Ok(())
+}
+
+fn create_vertexfs_cmd(args: &[String]) -> Result<(), String> {
+    let [output_path, manifest_path] = args else {
+        return Err("usage: vertexctl create-vertexfs <output> <manifest>".to_owned());
+    };
+    let manifest = load_manifest(manifest_path).map_err(|error| error.to_string())?;
+    let report = validate_manifest(&manifest);
+    if !report.is_valid() {
+        print_report(&report);
+        return Err(format!(
+            "manifest {} is invalid; VertexFS image suppressed",
+            manifest.generation.id
+        ));
+    }
+    let image = vertexfs::create_image(&manifest)?;
+    fs::write(output_path, &image)
+        .map_err(|source| format!("failed to write {output_path}: {source}"))?;
+    println!(
+        "wrote VertexFS v1 image: {output_path} sectors={} sector_size={}",
+        vertexfs::sectors(),
+        vertexfs::sector_size()
+    );
+    Ok(())
+}
+
+fn inspect_vertexfs_cmd(args: &[String]) -> Result<(), String> {
+    let [image_path] = args else {
+        return Err("usage: vertexctl inspect-vertexfs <image>".to_owned());
+    };
+    let bytes =
+        fs::read(image_path).map_err(|source| format!("failed to read {image_path}: {source}"))?;
+    let report = vertexfs::inspect(&bytes)?;
+    println!("VertexFS v1 image");
+    println!("generation={}", report.generation);
+    println!(
+        "feature_flags={}",
+        vertexfs_feature_flags(report.feature_flags)
+    );
+    println!("directories={}", report.directories);
+    println!("files={}", report.files.len());
+    for file in report.files {
+        println!(
+            "file path={} bytes={} checksum={} first_sector={} sectors={}",
+            file.path, file.len, file.checksum, file.first_sector, file.sector_count
+        );
+    }
+    Ok(())
+}
+
+fn verify_vertexfs_cmd(args: &[String]) -> Result<(), String> {
+    let [image_path] = args else {
+        return Err("usage: vertexctl verify-vertexfs <image>".to_owned());
+    };
+    let bytes =
+        fs::read(image_path).map_err(|source| format!("failed to read {image_path}: {source}"))?;
+    let report = vertexfs::verify(&bytes)?;
+    println!(
+        "VertexFS v1 verified: generation={} directories={} files={}",
+        report.generation,
+        report.directories,
+        report.files.len()
+    );
+    Ok(())
+}
+
+fn corrupt_vertexfs_cmd(args: &[String]) -> Result<(), String> {
+    let [mode, input_path, output_path] = args else {
+        return Err("usage: vertexctl corrupt-vertexfs <mode> <input> <output>".to_owned());
+    };
+    let bytes =
+        fs::read(input_path).map_err(|source| format!("failed to read {input_path}: {source}"))?;
+    let corrupted = vertexfs::corrupt(&bytes, mode)?;
+    fs::write(output_path, &corrupted)
+        .map_err(|source| format!("failed to write {output_path}: {source}"))?;
+    println!("wrote corrupted VertexFS image: mode={mode} input={input_path} output={output_path}");
+    Ok(())
+}
+
+fn update_vertexfs_file_cmd(args: &[String]) -> Result<(), String> {
+    let [input_path, output_path, path, payload_path] = args else {
+        return Err(
+            "usage: vertexctl update-vertexfs-file <input> <output> <path> <payload-file>"
+                .to_owned(),
+        );
+    };
+    let bytes =
+        fs::read(input_path).map_err(|source| format!("failed to read {input_path}: {source}"))?;
+    let payload = fs::read(payload_path)
+        .map_err(|source| format!("failed to read {payload_path}: {source}"))?;
+    let updated = vertexfs::update_file(&bytes, path, &payload)?;
+    fs::write(output_path, &updated)
+        .map_err(|source| format!("failed to write {output_path}: {source}"))?;
+    println!(
+        "updated VertexFS v1 file: path={path} bytes={} input={input_path} output={output_path}",
+        payload.len()
+    );
+    Ok(())
+}
+
+fn vertexfs_feature_flags(flags: u32) -> String {
+    match flags {
+        15 => "metadata-v1,directory-checksums,free-space-checksums,journal-v1".to_owned(),
+        other => format!("0x{other:08x}"),
+    }
 }
 
 fn package_cmd(args: &[String]) -> Result<(), String> {
@@ -1012,12 +1123,23 @@ fn link_package_generation(
 }
 
 fn enrich_service_template(template: &serde_json::Value) -> Result<serde_json::Value, String> {
+    let service_id = json_required_str(template, "id")?;
+    let mount_root = template
+        .get("mountRoot")
+        .cloned()
+        .ok_or_else(|| format!("package service template {service_id} must declare mountRoot"))?;
+    let mounts = template
+        .get("mounts")
+        .cloned()
+        .ok_or_else(|| format!("package service template {service_id} must declare mounts"))?;
     Ok(serde_json::json!({
-        "id": json_required_str(template, "id")?,
+        "id": service_id,
         "name": json_required_str(template, "name")?,
         "executable": json_required_str(template, "executable")?,
         "args": [],
         "env": {},
+        "mountRoot": mount_root,
+        "mounts": mounts,
         "requires": template.get("requires").cloned().unwrap_or_else(|| serde_json::json!([])),
         "provides": template.get("provides").cloned().unwrap_or_else(|| serde_json::json!([])),
         "state": template.get("state").cloned().unwrap_or_else(|| serde_json::json!([])),
@@ -1602,6 +1724,11 @@ fn print_usage() {
            vertexctl explain-krustboot <manifest>\n\
            vertexctl create-vertex-disk <output> <manifest>...\n\
            vertexctl corrupt-vertex-disk <mode> <input> <output>\n\
+           vertexctl create-vertexfs <output> <manifest>\n\
+           vertexctl inspect-vertexfs <image>\n\
+           vertexctl verify-vertexfs <image>\n\
+           vertexctl corrupt-vertexfs <mode> <input> <output>\n\
+           vertexctl update-vertexfs-file <input> <output> <path> <payload-file>\n\
            vertexctl release-profile <manifest> <krustboot> <kernel-elf> <vertexdisk>\n\
            vertexctl package inspect <package>\n\
            vertexctl package instantiate <package>\n\

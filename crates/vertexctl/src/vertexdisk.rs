@@ -2,14 +2,15 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::PathBuf;
 
+use crate::vertexfs;
 use vertex_ir::GenerationManifest;
 
 const SECTOR_SIZE: usize = 512;
 const SECTORS: usize = 65_536;
-const SUPERBLOCK_MAGIC: &[u8; 16] = b"VERTEXDISKV0\0\0\0\0";
+const SUPERBLOCK_MAGIC: &[u8; 16] = b"VERTEXDISKV1\0\0\0\0";
 const STORE_INDEX_MAGIC: &[u8; 16] = b"VDISKSTOREV0\0\0\0\0";
 const STATE_INDEX_MAGIC: &[u8; 16] = b"VDISKSTATEV0\0\0\0\0";
-const VERSION: u16 = 1;
+const VERSION: u16 = 2;
 const CHECKSUM_OFFSET: usize = 20;
 const SECTION_TABLE_OFFSET: usize = 32;
 const SECTION_RECORD_LEN: usize = 16;
@@ -28,6 +29,8 @@ const STATE_DATA_SECTORS: u64 = 8;
 const KRUST_STATE_VOLUME_LIMIT: usize = 4;
 const JOURNAL_SECTOR: u64 = STATE_DATA_SECTOR + STATE_DATA_SECTORS;
 const JOURNAL_SECTORS: u64 = 16;
+const VERTEXFS_IMAGE_SECTOR: u64 = JOURNAL_SECTOR + JOURNAL_SECTORS;
+const VERTEXFS_IMAGE_SECTORS: u64 = 64;
 const JOURNAL_RECORD_MAGIC: &[u8; 16] = b"VDISKJOURNALV0\0\0";
 const JOURNAL_RECORD_STATE_WRITE: u16 = 1;
 const JOURNAL_STATE_ID_OFFSET: usize = 48;
@@ -35,6 +38,7 @@ const JOURNAL_VALUE_OFFSET: usize = 128;
 const HELLO_OBJECT: &[u8] = b"hello from Krust store\n";
 const HELLO_OBJECT_ID: &str = "store:hello-text";
 const BLOCK_DRIVER_FAULT_OBJECT: &[u8] = b"krust-block-driver-fault\n";
+const VERTEXFS_FSYNC_FAULT_OBJECT: &[u8] = b"krust-vertexfs-fsync-fault\n";
 const LOGD_OBJECT_ID: &str = "store:logd-demo";
 const LOGD_CONFIG_OBJECT_ID: &str = "config:logd";
 const LOGD_CONFIG_MODULE: &str = "config-logd-v0";
@@ -53,6 +57,7 @@ pub fn create_image(manifests: &[GenerationManifest]) -> Result<Vec<u8>, String>
     write_store_index(&mut image, &objects)?;
     write_state_index(&mut image, &states)?;
     write_store_payloads(&mut image, &objects);
+    write_vertexfs_image(&mut image, &manifests[0])?;
     Ok(image)
 }
 
@@ -110,6 +115,7 @@ fn write_superblock(image: &mut [u8]) {
     write_section(sector, 3, STATE_INDEX_SECTOR, 1);
     write_section(sector, 4, STATE_DATA_SECTOR, STATE_DATA_SECTORS);
     write_section(sector, 5, JOURNAL_SECTOR, JOURNAL_SECTORS);
+    write_section(sector, 6, VERTEXFS_IMAGE_SECTOR, VERTEXFS_IMAGE_SECTORS);
     write_checksum(sector);
 }
 
@@ -180,6 +186,7 @@ fn data_store_bytes(name: &str) -> Result<Vec<u8>, String> {
     match name {
         "store-hello-text" => Ok(HELLO_OBJECT.to_vec()),
         "store-block-driver-fault-token" => Ok(BLOCK_DRIVER_FAULT_OBJECT.to_vec()),
+        "store-vertexfs-fsync-fault-token" => Ok(VERTEXFS_FSYNC_FAULT_OBJECT.to_vec()),
         other => native_store_bytes(other),
     }
 }
@@ -245,6 +252,19 @@ fn write_store_payloads(image: &mut [u8], objects: &[StorePayload]) {
     for object in objects {
         write_bytes(image, object.sector, &object.bytes);
     }
+}
+
+fn write_vertexfs_image(image: &mut [u8], manifest: &GenerationManifest) -> Result<(), String> {
+    let vertexfs_image = vertexfs::create_image(manifest)?;
+    let expected_len = VERTEXFS_IMAGE_SECTORS as usize * SECTOR_SIZE;
+    if vertexfs_image.len() != expected_len {
+        return Err(format!(
+            "VertexDisk VertexFS section expected {expected_len} bytes, builder returned {}",
+            vertexfs_image.len()
+        ));
+    }
+    write_bytes(image, VERTEXFS_IMAGE_SECTOR, &vertexfs_image);
+    Ok(())
 }
 
 struct StateEntry {

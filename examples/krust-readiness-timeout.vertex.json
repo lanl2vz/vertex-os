@@ -145,7 +145,8 @@
       "lifecycle": {
         "startAfter": [],
         "stopBefore": []
-      }
+      },
+      "mountRoot": "/"
     },
     {
       "id": "svc:logd",
@@ -190,7 +191,8 @@
       },
       "configs": [
         "config:logd"
-      ]
+      ],
+      "mountRoot": "/"
     }
   ],
   "activation": {

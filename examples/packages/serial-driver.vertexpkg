@@ -27,6 +27,8 @@
       "id": "svc:serial-driver",
       "name": "serial-driver",
       "executable": "exe:serial-driver",
+      "mountRoot": "/",
+      "mounts": [],
       "provides": [
         "cap:serial.console"
       ],

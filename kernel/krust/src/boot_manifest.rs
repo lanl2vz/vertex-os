@@ -4,8 +4,8 @@ pub const MODULE_STRING: &[u8] = b"krustboot-manifest";
 pub const FALLBACK_MODULE_STRING: &[u8] = b"krustboot-fallback-manifest";
 pub const BAD_GENERATION_MODULE_STRING: &[u8] = b"krustboot-bad-generation-manifest";
 
-const COMPACT_MAGIC: &[u8; 16] = b"KRUSTBOOTM75\0\0\0\0";
-const COMPACT_VERSION: u16 = 11;
+const COMPACT_MAGIC: &[u8; 16] = b"KRUSTBOOTM79\0\0\0\0";
+const COMPACT_VERSION: u16 = 12;
 const V1_MAGIC: &[u8; 16] = b"KRUSTBOOTV1\0\0\0\0\0";
 const V1_VERSION: u16 = 1;
 const V1_HEADER_SIZE: usize = 164;
@@ -38,6 +38,7 @@ const MAX_DEVICE_MAPPING_LENGTH: u64 = 1 << 30;
 const MAX_LEGACY_IRQ_LINE: u64 = 15;
 pub const MAX_NAMESPACE_ENTRIES: usize = 4;
 pub const MAX_PROCESS_REFS: usize = 4;
+pub const MAX_PROCESS_MOUNTS: usize = 4;
 
 pub const RIGHT_SEND: u16 = 1 << 0;
 pub const RIGHT_RECEIVE: u16 = 1 << 1;
@@ -68,6 +69,8 @@ pub const OBJECT_PCI_DEVICE: u16 = 10;
 pub const OBJECT_VIRTIO_DEVICE: u16 = 11;
 pub const OBJECT_NAMESPACE: u16 = 12;
 pub const OBJECT_VFS_ROOT: u16 = 13;
+pub const PROCESS_MOUNT_FLAG_BIND: u16 = 1;
+pub const PROCESS_MOUNT_FLAG_READ_ONLY: u16 = 1 << 1;
 
 #[derive(Clone, Copy)]
 pub struct BootModule<'a> {
@@ -84,6 +87,8 @@ pub struct Process<'a> {
     pub service_id: &'a str,
     pub health_kind: &'a str,
     pub mount_root: &'a str,
+    pub mounts: [Option<ProcessMount<'a>>; MAX_PROCESS_MOUNTS],
+    pub mount_count: usize,
     pub start_after: [u16; MAX_PROCESS_REFS],
     pub start_after_count: usize,
     pub requires_endpoint: [u16; MAX_PROCESS_REFS],
@@ -91,6 +96,13 @@ pub struct Process<'a> {
     pub requires_endpoint_count: usize,
     pub provides_endpoint: [u16; MAX_PROCESS_REFS],
     pub provides_endpoint_count: usize,
+}
+
+#[derive(Clone, Copy)]
+pub struct ProcessMount<'a> {
+    pub path: &'a str,
+    pub source: &'a str,
+    pub flags: u16,
 }
 
 #[derive(Clone, Copy)]
@@ -702,6 +714,7 @@ fn parse_compact_into(
         let service_id = reader.read_fixed_str()?;
         let health_kind = reader.read_fixed_str_allow_empty()?;
         let mount_root = reader.read_fixed_str()?;
+        let (mounts, mount_count) = reader.read_process_mount_list()?;
         let (start_after, start_after_count) = reader.read_ref_list()?;
         let (requires_endpoint, requires_endpoint_rights, requires_endpoint_count) =
             reader.read_endpoint_requirement_list()?;
@@ -714,6 +727,8 @@ fn parse_compact_into(
             service_id,
             health_kind,
             mount_root,
+            mounts,
+            mount_count,
             start_after,
             start_after_count,
             requires_endpoint,
@@ -1088,6 +1103,7 @@ fn validate_manifest(manifest: &Manifest<'_>) -> Result<(), ParseError> {
             return Err(ParseError::InvalidReference);
         }
         validate_vfs_root_path(process.mount_root)?;
+        validate_process_mounts(process)?;
         validate_process_refs(
             process.start_after,
             process.start_after_count,
@@ -1241,6 +1257,36 @@ fn validate_manifest(manifest: &Manifest<'_>) -> Result<(), ParseError> {
         index += 1;
     }
 
+    Ok(())
+}
+
+fn validate_process_mounts(process: Process<'_>) -> Result<(), ParseError> {
+    if process.mount_count > MAX_PROCESS_MOUNTS {
+        return Err(ParseError::InvalidReference);
+    }
+    let mut index = 0;
+    while index < process.mount_count {
+        let mount = process.mounts[index].ok_or(ParseError::InvalidReference)?;
+        validate_vfs_root_path(mount.path)?;
+        validate_vfs_root_path(mount.source)?;
+        if mount.path == "/" {
+            return Err(ParseError::InvalidReference);
+        }
+        if mount.flags & !known_process_mount_flags() != 0
+            || mount.flags & PROCESS_MOUNT_FLAG_BIND == 0
+        {
+            return Err(ParseError::InvalidReference);
+        }
+        let mut prior = 0;
+        while prior < index {
+            let existing = process.mounts[prior].ok_or(ParseError::InvalidReference)?;
+            if existing.path == mount.path {
+                return Err(ParseError::InvalidReference);
+            }
+            prior += 1;
+        }
+        index += 1;
+    }
     Ok(())
 }
 
@@ -1455,6 +1501,45 @@ impl<'a> Reader<'a> {
         Ok((refs, rights, count))
     }
 
+    fn read_process_mount_list(
+        &mut self,
+    ) -> Result<([Option<ProcessMount<'a>>; MAX_PROCESS_MOUNTS], usize), ParseError> {
+        let count = self.read_u16()? as usize;
+        if count > MAX_PROCESS_MOUNTS {
+            return Err(ParseError::InvalidReference);
+        }
+
+        let mut mounts = [None; MAX_PROCESS_MOUNTS];
+        let mut index = 0;
+        while index < MAX_PROCESS_MOUNTS {
+            let path = self.read_fixed_str_allow_empty()?;
+            let source = self.read_fixed_str_allow_empty()?;
+            let flags = self.read_u16()?;
+            let reserved = self.read_u16()?;
+            if reserved != 0 {
+                return Err(ParseError::InvalidReference);
+            }
+            if index < count {
+                if path.is_empty()
+                    || source.is_empty()
+                    || flags & !known_process_mount_flags() != 0
+                    || flags & PROCESS_MOUNT_FLAG_BIND == 0
+                {
+                    return Err(ParseError::InvalidReference);
+                }
+                mounts[index] = Some(ProcessMount {
+                    path,
+                    source,
+                    flags,
+                });
+            } else if !path.is_empty() || !source.is_empty() || flags != 0 {
+                return Err(ParseError::InvalidReference);
+            }
+            index += 1;
+        }
+        Ok((mounts, count))
+    }
+
     fn read_exact(&mut self, len: usize) -> Result<&'a [u8], ParseError> {
         let end = self.offset.checked_add(len).ok_or(ParseError::Truncated)?;
         if end > self.bytes.len() {
@@ -1468,6 +1553,10 @@ impl<'a> Reader<'a> {
     fn finished(&self) -> bool {
         self.offset == self.bytes.len()
     }
+}
+
+fn known_process_mount_flags() -> u16 {
+    PROCESS_MOUNT_FLAG_BIND | PROCESS_MOUNT_FLAG_READ_ONLY
 }
 
 struct Record {

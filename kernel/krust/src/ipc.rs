@@ -14,7 +14,7 @@ pub const BOOT_ENDPOINT_ID: u64 = 1;
 
 const MAX_MESSAGE_BYTES: usize = 512;
 const ENDPOINT_QUEUE_CAPACITY: usize = 4;
-const MAX_BOOT_READ_BYTES: usize = 16 * 1024;
+const MAX_BOOT_READ_BYTES: usize = 32 * 1024;
 const MAX_OBJECTS: usize = 128;
 const MAX_PROCESSES: usize = 16;
 const MAX_CAPS: usize = 32;
@@ -25,6 +25,73 @@ const MAX_OPEN_FILE_DESCRIPTIONS: usize = MAX_PROCESSES * MAX_FILE_HANDLES;
 const MAX_VFS_NODES: usize = 96;
 const MAX_VFS_MEM_FILES: usize = 8;
 const MAX_VFS_MEM_FILE_BYTES: usize = 512;
+const MAX_VERTEXFS_FILES: usize = 16;
+const MAX_VERTEXFS_FILE_BYTES: usize = 512;
+const VERTEXFS_MODULE_STRING: &[u8] = b"vertexfs-v1";
+const VERTEXFS_SECTOR_SIZE: usize = 512;
+const VERTEXFS_SECTORS: usize = 64;
+const VERTEXFS_IMAGE_BYTES: usize = VERTEXFS_SECTOR_SIZE * VERTEXFS_SECTORS;
+const VERTEXFS_SUPERBLOCK_MAGIC: &[u8; 16] = b"VERTEXFSV1\0\0\0\0\0\0";
+const VERTEXFS_INODE_TABLE_MAGIC: &[u8; 16] = b"VFSINODEV1\0\0\0\0\0\0";
+const VERTEXFS_DIRECTORY_MAGIC: &[u8; 16] = b"VFSDIRV1\0\0\0\0\0\0\0\0";
+const VERTEXFS_FREE_MAP_MAGIC: &[u8; 16] = b"VFSFREEV1\0\0\0\0\0\0\0";
+const VERTEXFS_JOURNAL_MAGIC: &[u8; 16] = b"VFSJOURNALV1\0\0\0\0";
+const VERTEXFS_VERSION: u16 = 1;
+const VERTEXFS_CHECKSUM_OFFSET: usize = 20;
+const VERTEXFS_FEATURE_METADATA_V1: u32 = 1;
+const VERTEXFS_FEATURE_DIRECTORY_CHECKSUMS: u32 = 1 << 1;
+const VERTEXFS_FEATURE_FREE_SPACE_CHECKSUMS: u32 = 1 << 2;
+const VERTEXFS_FEATURE_JOURNAL_V1: u32 = 1 << 3;
+const VERTEXFS_FEATURE_FLAGS: u32 = VERTEXFS_FEATURE_METADATA_V1
+    | VERTEXFS_FEATURE_DIRECTORY_CHECKSUMS
+    | VERTEXFS_FEATURE_FREE_SPACE_CHECKSUMS
+    | VERTEXFS_FEATURE_JOURNAL_V1;
+const VERTEXFS_GENERATION_OFFSET: usize = 32;
+const VERTEXFS_SECTION_TABLE_OFFSET: usize = 128;
+const VERTEXFS_SECTION_RECORD_LEN: usize = 16;
+const VERTEXFS_INODE_TABLE_SECTOR: u64 = 1;
+const VERTEXFS_INODE_TABLE_SECTORS: u64 = 2;
+const VERTEXFS_DIRECTORY_SECTOR: u64 = VERTEXFS_INODE_TABLE_SECTOR + VERTEXFS_INODE_TABLE_SECTORS;
+const VERTEXFS_DIRECTORY_SECTORS: u64 = 2;
+const VERTEXFS_FREE_MAP_SECTOR: u64 = VERTEXFS_DIRECTORY_SECTOR + VERTEXFS_DIRECTORY_SECTORS;
+const VERTEXFS_JOURNAL_SECTOR: u64 = VERTEXFS_FREE_MAP_SECTOR + 1;
+const VERTEXFS_DATA_SECTOR: u64 = VERTEXFS_JOURNAL_SECTOR + 1;
+const VERTEXFS_DATA_SECTORS: u64 = (VERTEXFS_SECTORS as u64) - VERTEXFS_DATA_SECTOR;
+const VERTEXFS_INODE_ENTRY_OFFSET: usize = 32;
+const VERTEXFS_INODE_ENTRY_LEN: usize = 64;
+const VERTEXFS_INODE_TABLE_BYTES: usize =
+    VERTEXFS_SECTOR_SIZE * VERTEXFS_INODE_TABLE_SECTORS as usize;
+const VERTEXFS_DIRECTORY_ENTRY_OFFSET: usize = 32;
+const VERTEXFS_DIRECTORY_ENTRY_LEN: usize = 64;
+const VERTEXFS_DIRECTORY_NAME_BYTES: usize = VERTEXFS_DIRECTORY_ENTRY_LEN - 12;
+const VERTEXFS_DIRECTORY_BYTES: usize = VERTEXFS_SECTOR_SIZE * VERTEXFS_DIRECTORY_SECTORS as usize;
+const VERTEXFS_INODE_ROOT: u32 = 1;
+const VERTEXFS_INODE_README: u32 = 2;
+const VERTEXFS_INODE_APP_DIR: u32 = 3;
+const VERTEXFS_INODE_APP_A: u32 = 4;
+const VERTEXFS_BASE_INODE_COUNT: usize = 4;
+const VERTEXFS_BASE_DIRECTORY_COUNT: usize = 3;
+const VERTEXFS_INODE_ENTRY_CAPACITY: usize =
+    (VERTEXFS_INODE_TABLE_BYTES - VERTEXFS_INODE_ENTRY_OFFSET) / VERTEXFS_INODE_ENTRY_LEN;
+const VERTEXFS_DIRECTORY_ENTRY_CAPACITY: usize =
+    (VERTEXFS_DIRECTORY_BYTES - VERTEXFS_DIRECTORY_ENTRY_OFFSET) / VERTEXFS_DIRECTORY_ENTRY_LEN;
+const VERTEXFS_DYNAMIC_INODE_FIRST: u32 = 5;
+const VERTEXFS_DYNAMIC_DATA_SECTOR_FIRST: u64 = VERTEXFS_DATA_SECTOR + 2;
+const VERTEXFS_DYNAMIC_FILE_CAPACITY: usize =
+    VERTEXFS_INODE_ENTRY_CAPACITY - VERTEXFS_BASE_INODE_COUNT;
+const VERTEXFS_DIRECTORY_DYNAMIC_FILE_CAPACITY: usize =
+    VERTEXFS_DIRECTORY_ENTRY_CAPACITY - VERTEXFS_BASE_DIRECTORY_COUNT;
+const VERTEXFS_KIND_DIR: u16 = 1;
+const VERTEXFS_KIND_FILE: u16 = 2;
+const VERTEXFS_JOURNAL_STATE_CLEAN: u16 = 0;
+const VERTEXFS_JOURNAL_STATE_PENDING: u16 = 1;
+const VERTEXFS_JOURNAL_PAYLOAD_OFFSET: usize = 64;
+const VERTEXFS_SYNC_MAX_DEVICE_WRITES: usize = 8;
+const VERTEXDISK_VERTEXFS_IMAGE_SECTOR: u64 = 49_209;
+const BLOCK_PROTOCOL_V1: u16 = 1;
+const BLOCK_OP_WRITE_SECTOR: u16 = 2;
+const BLOCK_REQUEST_LEN: usize = 16;
+const BLOCK_WRITE_ACK_LEN: usize = 16;
 const MAX_VFS_PATH_BYTES: usize = 128;
 const MAX_VFS_NAME_BYTES: usize = 64;
 const VFS_STAT_BYTES: usize = 64;
@@ -38,8 +105,9 @@ const MAX_BOOT_NAMESPACES: usize = 4;
 const MAX_NAMESPACE_ENTRIES: usize = 4;
 const MAX_BOOT_VFS_ROOTS: usize = 8;
 const MAX_BOOT_STATE_VOLUMES: usize = 4;
+const MAX_BOOT_PROCESS_MOUNTS: usize = 4;
 const MAX_VFS_MOUNTS: usize = 16;
-const BUILTIN_VFS_MOUNTS: usize = 5;
+const BUILTIN_VFS_MOUNTS: usize = 6;
 const MAX_CAP_LINEAGE: usize = 1024;
 const MAX_REVOKED_CAPS: usize = MAX_CAP_LINEAGE;
 const MAX_GENERATION_CONFIGS: usize = 4;
@@ -61,6 +129,11 @@ const VFS_DUP_SHARE_OFFSET: u64 = 1;
 const VFS_LOCK_SHARED: u64 = 1;
 const VFS_LOCK_EXCLUSIVE: u64 = 2;
 const VFS_MOUNT_VOLATILE: u64 = 1;
+const VFS_MOUNT_BIND: u64 = 1 << 1;
+const VFS_MOUNT_READ_ONLY: u64 = 1 << 2;
+const VFS_MOUNT_KNOWN_FLAGS: u64 = VFS_MOUNT_VOLATILE | VFS_MOUNT_BIND | VFS_MOUNT_READ_ONLY;
+const BOOT_PROCESS_MOUNT_BIND: u16 = 1;
+const BOOT_PROCESS_MOUNT_READ_ONLY: u16 = 1 << 1;
 const VFS_SEEK_SET: u64 = 0;
 const VFS_SEEK_CURRENT: u64 = 1;
 const VFS_SEEK_END: u64 = 2;
@@ -73,11 +146,16 @@ const VFS_SYNTHETIC_INSPECT_BYTES: &[u8] = b"krust synthetic inspect node\n";
 const LOG_ENDPOINT_NAME: &str = "serial-log";
 const STATE_VFS_REQUEST_ENDPOINT_NAME: &str = "state-vfs-request";
 const STATE_VFS_REPLY_ENDPOINT_NAME: &str = "state-vfs-reply";
+const VERTEXFS_DEVICE_REQUEST_ENDPOINT_NAME: &str = "vertexfs-device-request";
+const VERTEXFS_DEVICE_REPLY_ENDPOINT_NAME: &str = "vertexfs-device-reply";
 const STATE_VOLUME_VALUE_FILE_NAME: &str = "value";
 const STATE_VOLUME_CONTROL_FILE_NAME: &str = "control";
+const BLOCK_DRIVER_PROCESS_NAME: &str = "block-driver";
 const VERTEX_STATE_PROCESS_NAME: &str = "vertex-state";
 const VERTEX_STATE_VFS_REPLY_CAP_SLOT: u64 = 6;
 const VERTEX_STATE_VFS_REQUEST_CAP_SLOT: u64 = 7;
+const BLOCK_DRIVER_VERTEXFS_REQUEST_CAP_SLOT: u64 = 13;
+const BLOCK_DRIVER_VERTEXFS_REPLY_CAP_SLOT: u64 = 14;
 const VFS_STATE_TRANSACTION_ID_BYTES: usize = 8;
 const VFS_STATE_REQUEST_HEADER_BYTES: usize = 8;
 const VFS_STATE_REQUEST_MAGIC: &[u8; 2] = b"VS";
@@ -86,6 +164,11 @@ const VFS_STATE_OP_READ_VALUE: u8 = b'R';
 const VFS_STATE_OP_WRITE_VALUE: u8 = b'W';
 const VFS_STATE_OP_STAT_VALUE: u8 = b'S';
 const VFS_STATE_OP_CONTROL: u8 = b'C';
+const VFS_SERVICE_REQUEST_MAGIC: &[u8; 2] = b"FS";
+const VFS_SERVICE_REQUEST_VERSION: u8 = 1;
+const VFS_SERVICE_OP_READ_REPORT: u8 = b'R';
+const VFS_SERVICE_REQUEST_BYTES: usize = 12;
+const VFS_SERVICE_REPORT_BYTES: &[u8] = b"servicefs:vertex-state-report\n";
 const MAX_STATE_VOLUME_VALUE_BYTES: usize = 16;
 const USER_MMIO_MAPPING_BASE: u64 = 0x0000_5000_0000_0000;
 const USER_DMA_MAPPING_BASE: u64 = 0x0000_6000_0000_0000;
@@ -285,6 +368,15 @@ pub struct BootProcessConfig {
     pub image_length: u64,
     pub initial: bool,
     pub mount_root: &'static str,
+    pub mounts: [Option<BootProcessMountConfig>; MAX_BOOT_PROCESS_MOUNTS],
+    pub mount_count: usize,
+}
+
+#[derive(Clone, Copy)]
+pub struct BootProcessMountConfig {
+    pub path: &'static str,
+    pub source: &'static str,
+    pub flags: u16,
 }
 
 #[derive(Clone, Copy)]
@@ -471,6 +563,16 @@ enum ProcessState {
         write_len: usize,
         update_offset: bool,
     },
+    BlockedOnVertexFsSync {
+        request_endpoint: KernelObjectId,
+        reply_endpoint: KernelObjectId,
+        backing: usize,
+        inode_id: u32,
+        checksum: u32,
+        write_count: usize,
+        next_write: usize,
+        expected_sector: u64,
+    },
     BlockedOnNetworkPort {
         port: KernelObjectId,
         destination: u64,
@@ -493,6 +595,7 @@ impl ProcessState {
             Self::BlockedOnInterrupt { .. } => "blocked-irq",
             Self::BlockedOnVfsRead { .. } => "blocked-vfs",
             Self::BlockedOnVfsState { .. } => "blocked-vfs-state",
+            Self::BlockedOnVertexFsSync { .. } => "blocked-vertexfs-sync",
             Self::BlockedOnNetworkPort { .. } => "blocked-net",
             Self::Sleeping { .. } => "sleeping",
             Self::Exited => "exited",
@@ -506,6 +609,7 @@ enum VfsStateOperation {
     Stat,
     Write,
     Control,
+    ServiceRead,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -552,6 +656,44 @@ pub enum InitError {
     ProcessTableFull,
     CapabilityTableFull,
     InvalidBootManifest,
+}
+
+#[derive(Clone, Copy)]
+struct VertexFsBootFiles<'a> {
+    generation: &'a [u8],
+    readme: VertexFsBootFile<'a>,
+    app_a: VertexFsBootFile<'a>,
+    journal_replayed: bool,
+}
+
+#[derive(Clone, Copy)]
+struct VertexFsBootFile<'a> {
+    inode: VertexFsInode,
+    payload: &'a [u8],
+}
+
+#[derive(Clone, Copy)]
+struct VertexFsParsedInodes {
+    readme: VertexFsInode,
+    app_a: VertexFsInode,
+    dynamic: [Option<VertexFsInode>; VERTEXFS_DYNAMIC_FILE_CAPACITY],
+}
+
+#[derive(Clone, Copy)]
+struct VertexFsInode {
+    id: u32,
+    kind: u16,
+    size: u64,
+    first_sector: u64,
+    sector_count: u32,
+    checksum: u32,
+    parent: u32,
+}
+
+#[derive(Clone, Copy)]
+struct VertexFsJournalRecord<'a> {
+    target_inode: u32,
+    payload: &'a [u8],
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -687,8 +829,10 @@ enum VfsBacking {
     StateVolumeValue(KernelObjectId),
     StateVolumeControl(KernelObjectId),
     MemoryFile(usize),
+    VertexFsFile(usize),
     Device(KernelObjectId),
     Synthetic(&'static [u8]),
+    FsServiceReport,
     Pipe,
 }
 
@@ -765,6 +909,47 @@ struct VfsMemoryFile {
     name: &'static str,
     bytes: [u8; MAX_VFS_MEM_FILE_BYTES],
     len: usize,
+}
+
+#[derive(Clone, Copy)]
+struct VfsVertexFsFile {
+    name: &'static str,
+    vfs_name: VfsName,
+    inode_id: u32,
+    parent_inode_id: u32,
+    first_sector: u64,
+    sector_count: u32,
+    bytes: [u8; MAX_VERTEXFS_FILE_BYTES],
+    len: usize,
+    dirty: bool,
+    checksum: u32,
+}
+
+#[derive(Clone, Copy)]
+enum VertexFsSyncResult {
+    Journaled {
+        inode_id: u32,
+        checksum: u32,
+        write_count: usize,
+    },
+    Cached {
+        checksum: u32,
+    },
+}
+
+#[derive(Clone, Copy)]
+struct VertexFsDeviceWrite {
+    sector: u64,
+    bytes: [u8; VERTEXFS_SECTOR_SIZE],
+}
+
+impl VertexFsDeviceWrite {
+    const fn empty() -> Self {
+        Self {
+            sector: 0,
+            bytes: [0; VERTEXFS_SECTOR_SIZE],
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -978,6 +1163,7 @@ struct VfsMountObject {
     source: &'static str,
     flags: u64,
     dynamic: bool,
+    owner: ProcessId,
 }
 
 #[derive(Clone, Copy)]
@@ -1079,6 +1265,10 @@ struct RuntimeState {
     next_vfs_metadata_version: u64,
     vfs_mem_files: [VfsMemoryFile; MAX_VFS_MEM_FILES],
     vfs_mem_file_count: usize,
+    vertexfs_image: [u8; VERTEXFS_IMAGE_BYTES],
+    vertexfs_image_loaded: bool,
+    vertexfs_files: [VfsVertexFsFile; MAX_VERTEXFS_FILES],
+    vertexfs_file_count: usize,
     open_file_descriptions: [Option<OpenFileDescription>; MAX_OPEN_FILE_DESCRIPTIONS],
     next_file_description_id: u64,
     vfs_locks: [Option<VfsLock>; MAX_VFS_LOCKS],
@@ -1101,7 +1291,11 @@ struct RuntimeState {
     secret_id: Option<KernelObjectId>,
     state_vfs_request_endpoint: Option<KernelObjectId>,
     state_vfs_reply_endpoint: Option<KernelObjectId>,
+    vertexfs_device_request_endpoint: Option<KernelObjectId>,
+    vertexfs_device_reply_endpoint: Option<KernelObjectId>,
     next_vfs_state_transaction_id: u64,
+    vertexfs_sync_writes: [VertexFsDeviceWrite; VERTEXFS_SYNC_MAX_DEVICE_WRITES],
+    vertexfs_sync_write_count: usize,
     process_template_pids: [Option<ProcessId>; MAX_PROCESSES],
     service_lifecycle_events: [Option<ServiceLifecycleEvent>; MAX_SERVICE_LIFECYCLE_EVENTS],
     service_lifecycle_event_count: usize,
@@ -1440,6 +1634,50 @@ impl VfsMemoryFile {
             index += 1;
         }
         file.len = initial.len();
+        Ok(file)
+    }
+}
+
+impl VfsVertexFsFile {
+    const fn empty() -> Self {
+        Self {
+            name: "",
+            vfs_name: VfsName::empty(),
+            inode_id: 0,
+            parent_inode_id: 0,
+            first_sector: 0,
+            sector_count: 0,
+            bytes: [0; MAX_VERTEXFS_FILE_BYTES],
+            len: 0,
+            dirty: false,
+            checksum: 0,
+        }
+    }
+
+    fn new(
+        name: &'static str,
+        initial: &[u8],
+        inode: Option<VertexFsInode>,
+    ) -> Result<Self, InitError> {
+        if initial.len() > MAX_VERTEXFS_FILE_BYTES {
+            return Err(InitError::InvalidBootManifest);
+        }
+        let mut file = Self::empty();
+        file.name = name;
+        file.vfs_name = VfsName::from_static(name)?;
+        if let Some(inode) = inode {
+            file.inode_id = inode.id;
+            file.parent_inode_id = inode.parent;
+            file.first_sector = inode.first_sector;
+            file.sector_count = inode.sector_count;
+        }
+        let mut index = 0;
+        while index < initial.len() {
+            file.bytes[index] = initial[index];
+            index += 1;
+        }
+        file.len = initial.len();
+        file.checksum = vertexfs_checksum32(initial);
         Ok(file)
     }
 }
@@ -2095,6 +2333,7 @@ impl VfsMountObject {
         source: &'static str,
         flags: u64,
         dynamic: bool,
+        owner: ProcessId,
     ) -> Self {
         Self {
             id,
@@ -2104,6 +2343,7 @@ impl VfsMountObject {
             source,
             flags,
             dynamic,
+            owner,
         }
     }
 }
@@ -2467,6 +2707,7 @@ impl ObjectTable {
         source: &'static str,
         flags: u64,
         dynamic: bool,
+        owner: ProcessId,
     ) -> Result<KernelObjectId, InitError> {
         if self.count == self.objects.len() {
             return Err(InitError::ObjectTableFull);
@@ -2475,7 +2716,7 @@ impl ObjectTable {
         let id = KernelObjectId(self.next_id);
         self.next_id += 1;
         self.insert_object(KernelObject::VfsMount(VfsMountObject::new(
-            id, name, root_node, root_path, source, flags, dynamic,
+            id, name, root_node, root_path, source, flags, dynamic, owner,
         )))?;
         Ok(id)
     }
@@ -2575,6 +2816,22 @@ impl ObjectTable {
         while index < self.count {
             if let Some(KernelObject::VfsMount(mount)) = self.objects[index]
                 && mount.root_node == root_node
+                && mount.dynamic
+            {
+                self.objects[index] = None;
+                self.trim_empty_tail();
+                return Some(mount.id);
+            }
+            index += 1;
+        }
+        None
+    }
+
+    fn remove_dynamic_vfs_mount_by_path(&mut self, root_path: &[u8]) -> Option<KernelObjectId> {
+        let mut index = 0;
+        while index < self.count {
+            if let Some(KernelObject::VfsMount(mount)) = self.objects[index]
+                && mount.root_path.as_bytes() == root_path
                 && mount.dynamic
             {
                 self.objects[index] = None;
@@ -2950,6 +3207,19 @@ impl ObjectTable {
         best
     }
 
+    fn get_vfs_mount_by_exact_path(&self, path: &[u8]) -> Option<VfsMountObject> {
+        let mut index = 0;
+        while index < self.count {
+            if let Some(KernelObject::VfsMount(mount)) = self.objects[index]
+                && mount.root_path.as_bytes() == path
+            {
+                return Some(mount);
+            }
+            index += 1;
+        }
+        None
+    }
+
     fn get_process_control(&self, id: KernelObjectId) -> Option<ProcessControlObject> {
         let mut index = 0;
         while index < self.count {
@@ -3203,6 +3473,10 @@ impl RuntimeState {
             next_vfs_metadata_version: 1,
             vfs_mem_files: [VfsMemoryFile::empty(); MAX_VFS_MEM_FILES],
             vfs_mem_file_count: 0,
+            vertexfs_image: [0; VERTEXFS_IMAGE_BYTES],
+            vertexfs_image_loaded: false,
+            vertexfs_files: [VfsVertexFsFile::empty(); MAX_VERTEXFS_FILES],
+            vertexfs_file_count: 0,
             open_file_descriptions: [None; MAX_OPEN_FILE_DESCRIPTIONS],
             next_file_description_id: 1,
             vfs_locks: [None; MAX_VFS_LOCKS],
@@ -3225,7 +3499,11 @@ impl RuntimeState {
             secret_id: None,
             state_vfs_request_endpoint: None,
             state_vfs_reply_endpoint: None,
+            vertexfs_device_request_endpoint: None,
+            vertexfs_device_reply_endpoint: None,
             next_vfs_state_transaction_id: 1,
+            vertexfs_sync_writes: [VertexFsDeviceWrite::empty(); VERTEXFS_SYNC_MAX_DEVICE_WRITES],
+            vertexfs_sync_write_count: 0,
             process_template_pids: [None; MAX_PROCESSES],
             service_lifecycle_events: [None; MAX_SERVICE_LIFECYCLE_EVENTS],
             service_lifecycle_event_count: 0,
@@ -3242,13 +3520,17 @@ impl RuntimeState {
         self.next_vfs_node_id = 1;
         self.next_vfs_metadata_version = 1;
         self.vfs_mem_file_count = 0;
+        self.vertexfs_file_count = 0;
         self.next_file_description_id = 1;
         self.timer_id = None;
         self.process_control_id = None;
         self.secret_id = None;
         self.state_vfs_request_endpoint = None;
         self.state_vfs_reply_endpoint = None;
+        self.vertexfs_device_request_endpoint = None;
+        self.vertexfs_device_reply_endpoint = None;
         self.next_vfs_state_transaction_id = 1;
+        self.vertexfs_sync_write_count = 0;
         self.vfs_mount_count = 0;
         self.service_lifecycle_event_count = 0;
         let mut index = 0;
@@ -3269,6 +3551,22 @@ impl RuntimeState {
         index = 0;
         while index < self.vfs_mem_files.len() {
             self.vfs_mem_files[index] = VfsMemoryFile::empty();
+            index += 1;
+        }
+        index = 0;
+        while index < self.vertexfs_image.len() {
+            self.vertexfs_image[index] = 0;
+            index += 1;
+        }
+        self.vertexfs_image_loaded = false;
+        index = 0;
+        while index < self.vertexfs_files.len() {
+            self.vertexfs_files[index] = VfsVertexFsFile::empty();
+            index += 1;
+        }
+        index = 0;
+        while index < self.vertexfs_sync_writes.len() {
+            self.vertexfs_sync_writes[index] = VertexFsDeviceWrite::empty();
             index += 1;
         }
         index = 0;
@@ -3506,6 +3804,489 @@ impl RuntimeState {
         count
     }
 
+    fn touch_vertexfs_file_nodes(&mut self, backing: usize) -> Result<u64, IpcError> {
+        let mut found = false;
+        let mut index = 0;
+        while index < self.vfs_node_count {
+            if let Some(node) = self.vfs_nodes[index]
+                && let VfsBacking::VertexFsFile(node_backing) = node.backing
+                && node_backing == backing
+            {
+                found = true;
+                break;
+            }
+            index += 1;
+        }
+        if !found {
+            return Err(IpcError::VfsBadHandle);
+        }
+
+        let version = self.allocate_vfs_metadata_version();
+        index = 0;
+        while index < self.vfs_node_count {
+            if let Some(node) = self.vfs_nodes[index].as_mut()
+                && let VfsBacking::VertexFsFile(node_backing) = node.backing
+                && node_backing == backing
+            {
+                node.metadata_version = version;
+            }
+            index += 1;
+        }
+        Ok(version)
+    }
+
+    fn add_vertexfs_file(
+        &mut self,
+        name: &'static str,
+        initial: &[u8],
+        inode: Option<VertexFsInode>,
+    ) -> Result<usize, InitError> {
+        if self.vertexfs_file_count == self.vertexfs_files.len() {
+            return Err(InitError::ObjectTableFull);
+        }
+        let index = self.vertexfs_file_count;
+        self.vertexfs_files[index] = VfsVertexFsFile::new(name, initial, inode)?;
+        self.vertexfs_file_count += 1;
+        Ok(index)
+    }
+
+    fn add_empty_vertexfs_file(
+        &mut self,
+        name: VfsName,
+        parent_inode_id: u32,
+    ) -> Result<usize, IpcError> {
+        if name.len > 28 || parent_inode_id != VERTEXFS_INODE_APP_DIR {
+            return Err(IpcError::VfsUnsupported);
+        }
+        if !self.vertexfs_image_loaded {
+            return Err(IpcError::VfsUnsupported);
+        }
+        let mut dynamic_index = 0;
+        let mut inode_id = 0;
+        let mut first_sector = 0;
+        while dynamic_index < VERTEXFS_DYNAMIC_FILE_CAPACITY {
+            let candidate_inode = vertexfs_dynamic_inode_at(dynamic_index)?;
+            if !self.vertexfs_dynamic_inode_in_use(candidate_inode)
+                && !self.vertexfs_image_has_inode(candidate_inode)?
+            {
+                inode_id = candidate_inode;
+                first_sector = vertexfs_dynamic_data_sector_at(dynamic_index)?;
+                break;
+            }
+            dynamic_index += 1;
+        }
+        if dynamic_index == VERTEXFS_DYNAMIC_FILE_CAPACITY {
+            return Err(IpcError::VfsNoSpace);
+        }
+
+        let mut index = 0;
+        while index < self.vertexfs_files.len() {
+            if !self.vertexfs_file_in_use(index) {
+                self.vertexfs_files[index] = VfsVertexFsFile::empty();
+                self.vertexfs_files[index].vfs_name = name;
+                self.vertexfs_files[index].inode_id = inode_id;
+                self.vertexfs_files[index].parent_inode_id = parent_inode_id;
+                self.vertexfs_files[index].first_sector = first_sector;
+                self.vertexfs_files[index].sector_count = 1;
+                if index >= self.vertexfs_file_count {
+                    self.vertexfs_file_count = index + 1;
+                }
+                return Ok(index);
+            }
+            index += 1;
+        }
+        Err(IpcError::VfsNoSpace)
+    }
+
+    fn vertexfs_dynamic_inode_in_use(&self, inode_id: u32) -> bool {
+        let mut index = 0;
+        while index < self.vertexfs_file_count {
+            if self.vertexfs_files[index].inode_id == inode_id {
+                return true;
+            }
+            index += 1;
+        }
+        false
+    }
+
+    fn vertexfs_file_in_use(&self, file_index: usize) -> bool {
+        let mut index = 0;
+        while index < self.vfs_node_count {
+            if let Some(node) = self.vfs_nodes[index]
+                && let VfsBacking::VertexFsFile(backing_index) = node.backing
+                && backing_index == file_index
+            {
+                return true;
+            }
+            index += 1;
+        }
+        false
+    }
+
+    fn release_vertexfs_file(&mut self, file_index: usize) -> Result<(), IpcError> {
+        if file_index >= self.vertexfs_files.len() || self.vertexfs_file_in_use(file_index) {
+            return Err(IpcError::BadCapability);
+        }
+        self.vertexfs_files[file_index] = VfsVertexFsFile::empty();
+        while self.vertexfs_file_count > 0
+            && !self.vertexfs_file_in_use(self.vertexfs_file_count - 1)
+        {
+            self.vertexfs_file_count -= 1;
+        }
+        Ok(())
+    }
+
+    fn load_vertexfs_image(&mut self, image: &[u8]) -> Result<(), InitError> {
+        if image.len() != self.vertexfs_image.len() {
+            return Err(InitError::InvalidBootManifest);
+        }
+        let mut index = 0;
+        while index < image.len() {
+            self.vertexfs_image[index] = image[index];
+            index += 1;
+        }
+        self.vertexfs_image_loaded = true;
+        Ok(())
+    }
+
+    fn prepare_vertexfs_sync_file(
+        &mut self,
+        backing: usize,
+    ) -> Result<VertexFsSyncResult, IpcError> {
+        if backing >= self.vertexfs_file_count {
+            return Err(IpcError::VfsBadHandle);
+        }
+        let file = self.vertexfs_files[backing];
+        let checksum = vertexfs_checksum32(&file.bytes[..file.len]);
+        if file.inode_id == 0 {
+            let file = &mut self.vertexfs_files[backing];
+            file.checksum = checksum;
+            file.dirty = false;
+            return Ok(VertexFsSyncResult::Cached { checksum });
+        }
+        if !self.vertexfs_image_loaded {
+            return Err(IpcError::VfsUnsupported);
+        }
+        let write_count = self.commit_vertexfs_file_to_image(file, checksum)?;
+        Ok(VertexFsSyncResult::Journaled {
+            inode_id: file.inode_id,
+            checksum,
+            write_count,
+        })
+    }
+
+    fn finish_vertexfs_sync_file(&mut self, backing: usize, checksum: u32) -> Result<(), IpcError> {
+        if backing >= self.vertexfs_file_count {
+            return Err(IpcError::VfsBadHandle);
+        }
+        let file = &mut self.vertexfs_files[backing];
+        file.checksum = checksum;
+        file.dirty = false;
+        Ok(())
+    }
+
+    fn commit_vertexfs_file_to_image(
+        &mut self,
+        file: VfsVertexFsFile,
+        checksum: u32,
+    ) -> Result<usize, IpcError> {
+        let extent_len = file
+            .sector_count
+            .checked_mul(VERTEXFS_SECTOR_SIZE as u32)
+            .and_then(|value| usize::try_from(value).ok())
+            .ok_or(IpcError::VfsNoSpace)?;
+        if file.len > extent_len
+            || file.len > VERTEXFS_SECTOR_SIZE - VERTEXFS_JOURNAL_PAYLOAD_OFFSET
+        {
+            return Err(IpcError::VfsNoSpace);
+        }
+        self.vertexfs_sync_write_count = 0;
+        self.write_vertexfs_journal_pending(file.inode_id, &file.bytes[..file.len])?;
+        self.record_vertexfs_sync_sector(VERTEXFS_JOURNAL_SECTOR)?;
+        self.write_vertexfs_file_extent(file)?;
+        let mut sector = 0;
+        while sector < file.sector_count {
+            self.record_vertexfs_sync_sector(file.first_sector + sector as u64)?;
+            sector += 1;
+        }
+        if self.vertexfs_image_has_inode(file.inode_id)? {
+            self.write_vertexfs_inode_record(file, checksum)?;
+            self.record_vertexfs_sync_section(
+                VERTEXFS_INODE_TABLE_SECTOR,
+                VERTEXFS_INODE_TABLE_SECTORS,
+            )?;
+        } else {
+            self.write_vertexfs_dynamic_metadata(file, checksum)?;
+            self.record_vertexfs_sync_section(
+                VERTEXFS_INODE_TABLE_SECTOR,
+                VERTEXFS_INODE_TABLE_SECTORS,
+            )?;
+            self.record_vertexfs_sync_section(
+                VERTEXFS_DIRECTORY_SECTOR,
+                VERTEXFS_DIRECTORY_SECTORS,
+            )?;
+            self.record_vertexfs_sync_sector(VERTEXFS_FREE_MAP_SECTOR)?;
+        }
+        self.write_vertexfs_journal_clean()?;
+        self.record_vertexfs_sync_sector(VERTEXFS_JOURNAL_SECTOR)?;
+        parse_vertexfs_image(&self.vertexfs_image).map_err(|_| IpcError::VfsUnsupported)?;
+        Ok(self.vertexfs_sync_write_count)
+    }
+
+    fn record_vertexfs_sync_section(
+        &mut self,
+        first_sector: u64,
+        sector_count: u64,
+    ) -> Result<(), IpcError> {
+        let mut index = 0;
+        while index < sector_count {
+            self.record_vertexfs_sync_sector(first_sector + index)?;
+            index += 1;
+        }
+        Ok(())
+    }
+
+    fn record_vertexfs_sync_sector(&mut self, sector: u64) -> Result<(), IpcError> {
+        if self.vertexfs_sync_write_count == self.vertexfs_sync_writes.len() {
+            return Err(IpcError::VfsNoSpace);
+        }
+        let mut bytes = [0u8; VERTEXFS_SECTOR_SIZE];
+        bytes.copy_from_slice(self.vertexfs_image_sector(sector)?);
+        let index = self.vertexfs_sync_write_count;
+        self.vertexfs_sync_writes[index].sector = sector;
+        self.vertexfs_sync_writes[index].bytes = bytes;
+        self.vertexfs_sync_write_count += 1;
+        Ok(())
+    }
+
+    fn write_vertexfs_journal_pending(
+        &mut self,
+        inode_id: u32,
+        payload: &[u8],
+    ) -> Result<(), IpcError> {
+        let sector = self.vertexfs_image_sector_mut(VERTEXFS_JOURNAL_SECTOR)?;
+        sector.fill(0);
+        copy_bytes(
+            &mut sector[..VERTEXFS_JOURNAL_MAGIC.len()],
+            VERTEXFS_JOURNAL_MAGIC,
+        );
+        write_u16_le(sector, 16, VERTEXFS_VERSION);
+        write_u16_le(sector, 18, VERTEXFS_JOURNAL_STATE_PENDING);
+        write_u32_le(sector, 24, inode_id);
+        write_u32_le(sector, 28, payload.len() as u32);
+        write_u32_le(sector, 32, vertexfs_checksum32(payload));
+        copy_bytes(
+            &mut sector
+                [VERTEXFS_JOURNAL_PAYLOAD_OFFSET..VERTEXFS_JOURNAL_PAYLOAD_OFFSET + payload.len()],
+            payload,
+        );
+        write_vertexfs_sector_checksum(sector);
+        Ok(())
+    }
+
+    fn write_vertexfs_file_extent(&mut self, file: VfsVertexFsFile) -> Result<(), IpcError> {
+        let start = file
+            .first_sector
+            .checked_mul(VERTEXFS_SECTOR_SIZE as u64)
+            .and_then(|value| usize::try_from(value).ok())
+            .ok_or(IpcError::VfsNoSpace)?;
+        let extent_len = file
+            .sector_count
+            .checked_mul(VERTEXFS_SECTOR_SIZE as u32)
+            .and_then(|value| usize::try_from(value).ok())
+            .ok_or(IpcError::VfsNoSpace)?;
+        let end = start.checked_add(extent_len).ok_or(IpcError::VfsNoSpace)?;
+        let Some(extent) = self.vertexfs_image.get_mut(start..end) else {
+            return Err(IpcError::VfsNoSpace);
+        };
+        extent.fill(0);
+        copy_bytes(&mut extent[..file.len], &file.bytes[..file.len]);
+        Ok(())
+    }
+
+    fn write_vertexfs_inode_record(
+        &mut self,
+        file: VfsVertexFsFile,
+        checksum: u32,
+    ) -> Result<(), IpcError> {
+        let sector = self.vertexfs_image_section_mut(
+            VERTEXFS_INODE_TABLE_SECTOR,
+            VERTEXFS_INODE_TABLE_SECTORS,
+        )?;
+        let offset = vertexfs_inode_offset_by_id(sector, file.inode_id)?;
+        write_u64_le(sector, offset + 8, file.len as u64);
+        write_u32_le(sector, offset + 28, checksum);
+        write_vertexfs_sector_checksum(sector);
+        Ok(())
+    }
+
+    fn write_vertexfs_dynamic_metadata(
+        &mut self,
+        file: VfsVertexFsFile,
+        checksum: u32,
+    ) -> Result<(), IpcError> {
+        let dynamic_index = vertexfs_dynamic_index_for_inode(file.inode_id)?;
+        if file.parent_inode_id != VERTEXFS_INODE_APP_DIR
+            || file.first_sector != vertexfs_dynamic_data_sector_at(dynamic_index)?
+            || file.sector_count != 1
+        {
+            return Err(IpcError::VfsUnsupported);
+        }
+        let inode_entry_index = VERTEXFS_BASE_INODE_COUNT + dynamic_index;
+        let directory_entry_index = VERTEXFS_BASE_DIRECTORY_COUNT + dynamic_index;
+        let expected_inode_count = VERTEXFS_BASE_INODE_COUNT + dynamic_index;
+        let expected_directory_count = VERTEXFS_BASE_DIRECTORY_COUNT + dynamic_index;
+        {
+            let sector = self.vertexfs_image_section_mut(
+                VERTEXFS_INODE_TABLE_SECTOR,
+                VERTEXFS_INODE_TABLE_SECTORS,
+            )?;
+            if read_u16_le(sector, 18) as usize != expected_inode_count {
+                return Err(IpcError::VfsUnsupported);
+            }
+            write_u16_le(sector, 18, (expected_inode_count + 1) as u16);
+            let offset = vertexfs_inode_offset(inode_entry_index)?;
+            write_u32_le(sector, offset, file.inode_id);
+            write_u16_le(sector, offset + 4, VERTEXFS_KIND_FILE);
+            write_u16_le(sector, offset + 6, 0);
+            write_u64_le(sector, offset + 8, file.len as u64);
+            write_u64_le(sector, offset + 16, file.first_sector);
+            write_u32_le(sector, offset + 24, file.sector_count);
+            write_u32_le(sector, offset + 28, checksum);
+            write_u32_le(sector, offset + 32, file.parent_inode_id);
+            write_vertexfs_fixed_vfs_name(sector, offset + 36, 28, file.vfs_name)?;
+            write_vertexfs_sector_checksum(sector);
+        }
+        {
+            let sector = self.vertexfs_image_section_mut(
+                VERTEXFS_DIRECTORY_SECTOR,
+                VERTEXFS_DIRECTORY_SECTORS,
+            )?;
+            if read_u16_le(sector, 18) as usize != expected_directory_count {
+                return Err(IpcError::VfsUnsupported);
+            }
+            write_u16_le(sector, 18, (expected_directory_count + 1) as u16);
+            let offset = vertexfs_directory_offset(directory_entry_index)?;
+            write_u32_le(sector, offset, file.parent_inode_id);
+            write_u32_le(sector, offset + 4, file.inode_id);
+            write_u16_le(sector, offset + 8, VERTEXFS_KIND_FILE);
+            write_u16_le(sector, offset + 10, 0);
+            write_vertexfs_fixed_vfs_name(
+                sector,
+                offset + 12,
+                VERTEXFS_DIRECTORY_NAME_BYTES,
+                file.vfs_name,
+            )?;
+            write_vertexfs_sector_checksum(sector);
+        }
+        {
+            let sector = self.vertexfs_image_sector_mut(VERTEXFS_FREE_MAP_SECTOR)?;
+            let sector_index =
+                usize::try_from(file.first_sector).map_err(|_| IpcError::VfsUnsupported)?;
+            let Some(byte) = sector.get_mut(32 + sector_index) else {
+                return Err(IpcError::VfsUnsupported);
+            };
+            if *byte != 0 {
+                return Err(IpcError::VfsNoSpace);
+            }
+            *byte = 1;
+            write_vertexfs_sector_checksum(sector);
+        }
+        Ok(())
+    }
+
+    fn vertexfs_image_has_inode(&self, inode_id: u32) -> Result<bool, IpcError> {
+        let sector =
+            self.vertexfs_image_section(VERTEXFS_INODE_TABLE_SECTOR, VERTEXFS_INODE_TABLE_SECTORS)?;
+        let count = read_u16_le(sector, 18) as usize;
+        let mut index = 0;
+        while index < count {
+            let offset = vertexfs_inode_offset(index)?;
+            if read_u32_le(sector, offset) == inode_id {
+                return Ok(true);
+            }
+            index += 1;
+        }
+        Ok(false)
+    }
+
+    fn write_vertexfs_journal_clean(&mut self) -> Result<(), IpcError> {
+        let sector = self.vertexfs_image_sector_mut(VERTEXFS_JOURNAL_SECTOR)?;
+        sector.fill(0);
+        copy_bytes(
+            &mut sector[..VERTEXFS_JOURNAL_MAGIC.len()],
+            VERTEXFS_JOURNAL_MAGIC,
+        );
+        write_u16_le(sector, 16, VERTEXFS_VERSION);
+        write_u16_le(sector, 18, VERTEXFS_JOURNAL_STATE_CLEAN);
+        write_vertexfs_sector_checksum(sector);
+        Ok(())
+    }
+
+    fn vertexfs_image_sector_mut(&mut self, sector: u64) -> Result<&mut [u8], IpcError> {
+        let sector_index = usize::try_from(sector).map_err(|_| IpcError::VfsNoSpace)?;
+        let start = sector_index
+            .checked_mul(VERTEXFS_SECTOR_SIZE)
+            .ok_or(IpcError::VfsNoSpace)?;
+        let end = start
+            .checked_add(VERTEXFS_SECTOR_SIZE)
+            .ok_or(IpcError::VfsNoSpace)?;
+        self.vertexfs_image
+            .get_mut(start..end)
+            .ok_or(IpcError::VfsNoSpace)
+    }
+
+    fn vertexfs_image_sector(&self, sector: u64) -> Result<&[u8], IpcError> {
+        let sector_index = usize::try_from(sector).map_err(|_| IpcError::VfsNoSpace)?;
+        let start = sector_index
+            .checked_mul(VERTEXFS_SECTOR_SIZE)
+            .ok_or(IpcError::VfsNoSpace)?;
+        let end = start
+            .checked_add(VERTEXFS_SECTOR_SIZE)
+            .ok_or(IpcError::VfsNoSpace)?;
+        self.vertexfs_image
+            .get(start..end)
+            .ok_or(IpcError::VfsNoSpace)
+    }
+
+    fn vertexfs_image_section_mut(
+        &mut self,
+        first_sector: u64,
+        sector_count: u64,
+    ) -> Result<&mut [u8], IpcError> {
+        let start_sector = usize::try_from(first_sector).map_err(|_| IpcError::VfsNoSpace)?;
+        let sector_count = usize::try_from(sector_count).map_err(|_| IpcError::VfsNoSpace)?;
+        let start = start_sector
+            .checked_mul(VERTEXFS_SECTOR_SIZE)
+            .ok_or(IpcError::VfsNoSpace)?;
+        let len = sector_count
+            .checked_mul(VERTEXFS_SECTOR_SIZE)
+            .ok_or(IpcError::VfsNoSpace)?;
+        let end = start.checked_add(len).ok_or(IpcError::VfsNoSpace)?;
+        self.vertexfs_image
+            .get_mut(start..end)
+            .ok_or(IpcError::VfsNoSpace)
+    }
+
+    fn vertexfs_image_section(
+        &self,
+        first_sector: u64,
+        sector_count: u64,
+    ) -> Result<&[u8], IpcError> {
+        let start_sector = usize::try_from(first_sector).map_err(|_| IpcError::VfsNoSpace)?;
+        let sector_count = usize::try_from(sector_count).map_err(|_| IpcError::VfsNoSpace)?;
+        let start = start_sector
+            .checked_mul(VERTEXFS_SECTOR_SIZE)
+            .ok_or(IpcError::VfsNoSpace)?;
+        let len = sector_count
+            .checked_mul(VERTEXFS_SECTOR_SIZE)
+            .ok_or(IpcError::VfsNoSpace)?;
+        let end = start.checked_add(len).ok_or(IpcError::VfsNoSpace)?;
+        self.vertexfs_image
+            .get(start..end)
+            .ok_or(IpcError::VfsNoSpace)
+    }
+
     fn vfs_node_link_count(&self, node: VfsNode) -> u64 {
         match node.backing {
             VfsBacking::MemoryFile(backing) => self.vfs_memory_file_link_count(backing),
@@ -3521,6 +4302,7 @@ impl RuntimeState {
         source: &'static str,
         flags: u64,
         dynamic: bool,
+        owner: ProcessId,
     ) -> Result<KernelObjectId, InitError> {
         let mut free_slot = None;
         let mut index = 0;
@@ -3536,7 +4318,7 @@ impl RuntimeState {
         };
         let id = self
             .objects
-            .add_vfs_mount(name, root_node, root_path, source, flags, dynamic)?;
+            .add_vfs_mount(name, root_node, root_path, source, flags, dynamic, owner)?;
         self.vfs_mount_ids[free_slot] = Some(id);
         if free_slot >= self.vfs_mount_count {
             self.vfs_mount_count = free_slot + 1;
@@ -3555,6 +4337,44 @@ impl RuntimeState {
         while self.vfs_mount_count > 0 && self.vfs_mount_ids[self.vfs_mount_count - 1].is_none() {
             self.vfs_mount_count -= 1;
         }
+    }
+
+    fn remove_owned_dynamic_bind_mounts(&mut self, owner: ProcessId) -> u64 {
+        let mut removed = 0;
+        let mut index = 0;
+        while index < self.objects.count {
+            if let Some(KernelObject::VfsMount(mount)) = self.objects.objects[index]
+                && mount.dynamic
+                && mount.owner == owner
+                && mount.flags & VFS_MOUNT_BIND != 0
+            {
+                self.objects.objects[index] = None;
+                self.remove_vfs_mount_id(mount.id);
+                removed += 1;
+            }
+            index += 1;
+        }
+        self.objects.trim_empty_tail();
+        removed
+    }
+
+    fn remove_owned_declared_bind_mounts(&mut self, owner: ProcessId) -> u64 {
+        let mut removed = 0;
+        let mut index = 0;
+        while index < self.objects.count {
+            if let Some(KernelObject::VfsMount(mount)) = self.objects.objects[index]
+                && !mount.dynamic
+                && mount.owner == owner
+                && mount.flags & VFS_MOUNT_BIND != 0
+            {
+                self.objects.objects[index] = None;
+                self.remove_vfs_mount_id(mount.id);
+                removed += 1;
+            }
+            index += 1;
+        }
+        self.objects.trim_empty_tail();
+        removed
     }
 
     fn vfs_node(&self, id: VfsNodeId) -> Option<VfsNode> {
@@ -3584,15 +4404,13 @@ impl RuntimeState {
         None
     }
 
-    fn vfs_node_by_path(&self, path: &[u8]) -> Option<VfsNode> {
-        if path == b"/" {
-            return self.vfs_nodes[0];
+    fn vfs_node_by_path_from(&self, mut node: VfsNode, path: &[u8]) -> Option<VfsNode> {
+        if path.is_empty() {
+            return Some(node);
         }
-        if path.is_empty() || path[0] != b'/' {
+        if path[0] != b'/' {
             return None;
         }
-
-        let mut node = self.vfs_nodes[0]?;
         let mut start = 1;
         while start <= path.len() {
             let mut end = start;
@@ -3609,6 +4427,33 @@ impl RuntimeState {
             start = end + 1;
         }
         None
+    }
+
+    fn vfs_node_by_bind_mount_path(&self, path: &[u8]) -> Option<VfsNode> {
+        let mount = self.objects.get_vfs_mount_by_path(path)?;
+        if mount.flags & VFS_MOUNT_BIND == 0 {
+            return None;
+        }
+        let root_path = mount.root_path.as_bytes();
+        let root = self.vfs_node(mount.root_node)?;
+        if path.len() == root_path.len() {
+            return Some(root);
+        }
+        self.vfs_node_by_path_from(root, &path[root_path.len()..])
+    }
+
+    fn vfs_node_by_path(&self, path: &[u8]) -> Option<VfsNode> {
+        if let Some(node) = self.vfs_node_by_bind_mount_path(path) {
+            return Some(node);
+        }
+        if path == b"/" {
+            return self.vfs_nodes[0];
+        }
+        if path.is_empty() || path[0] != b'/' {
+            return None;
+        }
+
+        self.vfs_node_by_path_from(self.vfs_nodes[0]?, path)
     }
 
     fn vfs_node_index(&self, id: VfsNodeId) -> Option<usize> {
@@ -3665,6 +4510,34 @@ impl RuntimeState {
             index += 1;
         }
         false
+    }
+
+    fn vfs_subtree_has_open_description(&self, root: VfsNodeId) -> bool {
+        let mut index = 0;
+        while index < self.open_file_descriptions.len() {
+            if let Some(description) = self.open_file_descriptions[index]
+                && self.vfs_node_is_descendant_or_self(description.node, root)
+            {
+                return true;
+            }
+            index += 1;
+        }
+        false
+    }
+
+    fn vfs_node_is_descendant_or_self(&self, mut node: VfsNodeId, root: VfsNodeId) -> bool {
+        loop {
+            if node == root {
+                return true;
+            }
+            let Some(current) = self.vfs_node(node) else {
+                return false;
+            };
+            let Some(parent) = current.parent else {
+                return false;
+            };
+            node = parent;
+        }
     }
 
     fn remove_vfs_node(&mut self, id: VfsNodeId) -> Result<(), IpcError> {
@@ -4130,6 +5003,9 @@ impl BootRuntimeConfig {
         if !valid_vfs_root_path(process.mount_root.as_bytes()) {
             return Err(InitError::InvalidBootManifest);
         }
+        if !valid_boot_process_mounts(process) {
+            return Err(InitError::InvalidBootManifest);
+        }
         self.processes[self.process_count] = Some(process);
         self.process_count += 1;
         Ok(())
@@ -4512,6 +5388,16 @@ fn build_boot_config_runtime(
                 .add_endpoint(STATE_VFS_REPLY_ENDPOINT_NAME)?,
         );
     }
+    runtime.vertexfs_device_request_endpoint = Some(
+        runtime
+            .objects
+            .add_endpoint(VERTEXFS_DEVICE_REQUEST_ENDPOINT_NAME)?,
+    );
+    runtime.vertexfs_device_reply_endpoint = Some(
+        runtime
+            .objects
+            .add_endpoint(VERTEXFS_DEVICE_REPLY_ENDPOINT_NAME)?,
+    );
 
     let mut store_index = 0;
     while store_index < config.store_object_count {
@@ -4649,6 +5535,7 @@ fn build_boot_config_runtime(
         CapabilitySpace::new(),
         initial_mount_root,
     )?;
+    install_declared_process_mounts(runtime, initial_process, initial_pid, initial_mount_root)?;
     runtime.process_template_pids[initial_index] = Some(initial_pid);
     runtime.processes.set_current(initial_pid);
 
@@ -5181,6 +6068,21 @@ fn validate_config_caps_for_process(
             return Err(InitError::InvalidBootManifest);
         }
     }
+    if process.name == BLOCK_DRIVER_PROCESS_NAME && runtime.vertexfs_device_reply_endpoint.is_some()
+    {
+        let Ok(request_slot) = usize::try_from(BLOCK_DRIVER_VERTEXFS_REQUEST_CAP_SLOT) else {
+            return Err(InitError::CapabilityTableFull);
+        };
+        let Ok(reply_slot) = usize::try_from(BLOCK_DRIVER_VERTEXFS_REPLY_CAP_SLOT) else {
+            return Err(InitError::CapabilityTableFull);
+        };
+        if request_slot >= MAX_CAPS || occupied_slots[request_slot] {
+            return Err(InitError::InvalidBootManifest);
+        }
+        if reply_slot >= MAX_CAPS || occupied_slots[reply_slot] {
+            return Err(InitError::InvalidBootManifest);
+        }
+    }
 
     Ok(())
 }
@@ -5259,11 +6161,60 @@ fn grant_config_caps_to_process(
             "Native VFS state reply grant: process=vertex-state endpoint=state-vfs-reply rights=send\n",
         );
     }
+    if process.name == BLOCK_DRIVER_PROCESS_NAME
+        && let Some(request_endpoint) = runtime.vertexfs_device_request_endpoint
+    {
+        let cap = runtime
+            .new_capability(
+                request_endpoint,
+                capability::RIGHT_RECEIVE,
+                owner,
+                0,
+                ProcessId::empty(),
+            )
+            .map_err(|_| InitError::CapabilityTableFull)?;
+        grant_process_cap_by_pid(
+            runtime,
+            owner,
+            BLOCK_DRIVER_VERTEXFS_REQUEST_CAP_SLOT,
+            cap,
+            true,
+        )?;
+        serial::write_str(
+            "Native VertexFS device request grant: process=block-driver endpoint=vertexfs-device-request rights=receive\n",
+        );
+    }
+    if process.name == BLOCK_DRIVER_PROCESS_NAME
+        && let Some(reply_endpoint) = runtime.vertexfs_device_reply_endpoint
+    {
+        let cap = runtime
+            .new_capability(
+                reply_endpoint,
+                capability::RIGHT_SEND,
+                owner,
+                0,
+                ProcessId::empty(),
+            )
+            .map_err(|_| InitError::CapabilityTableFull)?;
+        grant_process_cap_by_pid(
+            runtime,
+            owner,
+            BLOCK_DRIVER_VERTEXFS_REPLY_CAP_SLOT,
+            cap,
+            true,
+        )?;
+        serial::write_str(
+            "Native VertexFS device reply grant: process=block-driver endpoint=vertexfs-device-reply rights=send\n",
+        );
+    }
 
     Ok(())
 }
 
 fn install_vfs_nodes(runtime: &mut RuntimeState) -> Result<(), InitError> {
+    let vertexfs_image = vertexfs_boot_image()?;
+    let vertexfs = parse_vertexfs_image(vertexfs_image)?;
+    runtime.load_vertexfs_image(vertexfs_image)?;
     let root = runtime.add_vfs_node(
         "/",
         None,
@@ -5278,6 +6229,7 @@ fn install_vfs_nodes(runtime: &mut RuntimeState) -> Result<(), InitError> {
         "rootfs",
         0,
         false,
+        ProcessId::empty(),
     )?;
     let store_root = runtime.add_vfs_node(
         "store",
@@ -5293,6 +6245,7 @@ fn install_vfs_nodes(runtime: &mut RuntimeState) -> Result<(), InitError> {
         "storefs",
         0,
         false,
+        ProcessId::empty(),
     )?;
     let state_root = runtime.add_vfs_node(
         "state",
@@ -5308,6 +6261,7 @@ fn install_vfs_nodes(runtime: &mut RuntimeState) -> Result<(), InitError> {
         "state:volatile",
         VFS_MOUNT_VOLATILE,
         false,
+        ProcessId::empty(),
     )?;
     let dev_root = runtime.add_vfs_node(
         "dev",
@@ -5323,6 +6277,7 @@ fn install_vfs_nodes(runtime: &mut RuntimeState) -> Result<(), InitError> {
         "devfs",
         0,
         false,
+        ProcessId::empty(),
     )?;
     let proc_root = runtime.add_vfs_node(
         "proc",
@@ -5338,7 +6293,61 @@ fn install_vfs_nodes(runtime: &mut RuntimeState) -> Result<(), InitError> {
         "procfs",
         0,
         false,
+        ProcessId::empty(),
     )?;
+    let fs_root = runtime.add_vfs_node(
+        "fs",
+        Some(root),
+        VfsNodeKind::Directory,
+        VfsBacking::None,
+        "vertexfs",
+    )?;
+    runtime.add_vfs_mount(
+        "mount:vertexfs-v1",
+        fs_root,
+        VfsPath::from_boot_root_path("/fs")?,
+        "vertexfs",
+        0,
+        false,
+        ProcessId::empty(),
+    )?;
+    let vertexfs_readme = runtime.add_vertexfs_file(
+        "readme",
+        vertexfs.readme.payload,
+        Some(vertexfs.readme.inode),
+    )?;
+    runtime.add_vfs_node(
+        "readme",
+        Some(fs_root),
+        VfsNodeKind::RegularFile,
+        VfsBacking::VertexFsFile(vertexfs_readme),
+        "vertexfs",
+    )?;
+    let fs_app = runtime.add_vfs_node(
+        "app",
+        Some(fs_root),
+        VfsNodeKind::Directory,
+        VfsBacking::None,
+        "vertexfs",
+    )?;
+    let vertexfs_app_a =
+        runtime.add_vertexfs_file("a", vertexfs.app_a.payload, Some(vertexfs.app_a.inode))?;
+    runtime.add_vfs_node(
+        "a",
+        Some(fs_app),
+        VfsNodeKind::RegularFile,
+        VfsBacking::VertexFsFile(vertexfs_app_a),
+        "vertexfs",
+    )?;
+    serial::write_str("VertexFS v1 superblock accepted: generation=");
+    serial::write_ascii_bytes(vertexfs.generation);
+    serial::write_str(" feature_flags=metadata-v1\n");
+    serial::write_str("VertexFS v1 mounted: path=/fs source=vertexfs\n");
+    serial::write_str("VertexFS v1 directory record verified: path=/fs/app\n");
+    serial::write_str("VertexFS v1 declared file mounted: path=/fs/app/a\n");
+    if vertexfs.journal_replayed {
+        serial::write_str("VertexFS v1 journal replayed: inode=4 outcome=new\n");
+    }
     let state_a = runtime.add_vfs_memory_file("a", b"state:a=0\n")?;
     runtime.add_vfs_node(
         "a",
@@ -5362,6 +6371,16 @@ fn install_vfs_nodes(runtime: &mut RuntimeState) -> Result<(), InitError> {
         VfsBacking::MemoryFile(state_sub_a),
         "state:volatile",
     )?;
+    runtime.add_vfs_node(
+        "service-report",
+        Some(state_root),
+        VfsNodeKind::RegularFile,
+        VfsBacking::FsServiceReport,
+        "servicefs",
+    )?;
+    serial::write_str(
+        "VFS filesystem service file mounted: path=/state/service-report source=servicefs\n",
+    );
     let mut state_index = 0;
     while state_index < runtime.state_volume_ids.len() {
         if let Some(object_id) = runtime.state_volume_ids[state_index] {
@@ -5395,7 +6414,15 @@ fn install_vfs_nodes(runtime: &mut RuntimeState) -> Result<(), InitError> {
                 VfsBacking::StateVolumeControl(object_id),
                 state.name,
             )?;
-            runtime.add_vfs_mount(state.name, root_node, root_path, state.name, 0, false)?;
+            runtime.add_vfs_mount(
+                state.name,
+                root_node,
+                root_path,
+                state.name,
+                0,
+                false,
+                ProcessId::empty(),
+            )?;
             serial::write_str("VFS state volume mounted: state=");
             serial::write_str(state.name);
             serial::write_str(" path=");
@@ -5473,6 +6500,836 @@ fn install_vfs_nodes(runtime: &mut RuntimeState) -> Result<(), InitError> {
     Ok(())
 }
 
+fn vertexfs_boot_image() -> Result<&'static [u8], InitError> {
+    let Some(modules) = limine::modules() else {
+        serial::write_str("Krust VertexFS v1 image missing: limine modules unavailable\n");
+        return Err(InitError::InvalidBootManifest);
+    };
+
+    let mut found = None;
+    let mut index = 0;
+    while index < modules.module_count() {
+        if let Some(module) = modules.module(index)
+            && c_string_eq_bytes(module.string, VERTEXFS_MODULE_STRING)
+        {
+            if found.is_some() {
+                return reject_vertexfs_image("duplicate module");
+            }
+            found = Some(module);
+        }
+        index += 1;
+    }
+
+    let Some(module) = found else {
+        serial::write_str("Krust VertexFS v1 image missing\n");
+        return Err(InitError::InvalidBootManifest);
+    };
+    if module.address.is_null() {
+        return reject_vertexfs_image("null module");
+    }
+    let Ok(size) = usize::try_from(module.size) else {
+        return reject_vertexfs_image("size overflow");
+    };
+    if size != VERTEXFS_IMAGE_BYTES {
+        serial::write_str("Krust VertexFS v1 image rejected: size=");
+        serial::write_u64_dec(module.size);
+        serial::write_str(" expected=");
+        serial::write_u64_dec(VERTEXFS_IMAGE_BYTES as u64);
+        serial::write_str("\n");
+        return Err(InitError::InvalidBootManifest);
+    }
+
+    serial::write_str("VertexFS v1 image module accepted: bytes=");
+    serial::write_u64_dec(module.size);
+    serial::write_str("\n");
+    Ok(unsafe { core::slice::from_raw_parts(module.address, size) })
+}
+
+fn parse_vertexfs_image(image: &[u8]) -> Result<VertexFsBootFiles<'_>, InitError> {
+    let superblock = vertexfs_sector(image, 0)?;
+    if !vertexfs_magic_matches(superblock, VERTEXFS_SUPERBLOCK_MAGIC) {
+        return reject_vertexfs_image("bad superblock");
+    }
+    if read_u16_le(superblock, 16) != VERTEXFS_VERSION {
+        return reject_vertexfs_image("unsupported superblock version");
+    }
+    if read_u16_le(superblock, 18) as usize != VERTEXFS_SECTOR_SIZE {
+        return reject_vertexfs_image("unsupported sector size");
+    }
+    if !vertexfs_checksum_valid(superblock) {
+        return reject_vertexfs_image("superblock checksum mismatch");
+    }
+    if read_u32_le(superblock, 24) as usize != VERTEXFS_SECTORS {
+        return reject_vertexfs_image("unsupported sector count");
+    }
+    if read_u32_le(superblock, 28) != VERTEXFS_FEATURE_FLAGS {
+        return reject_vertexfs_image("unsupported feature flags");
+    }
+    if !vertexfs_section_matches(
+        superblock,
+        0,
+        VERTEXFS_INODE_TABLE_SECTOR,
+        VERTEXFS_INODE_TABLE_SECTORS,
+    ) || !vertexfs_section_matches(
+        superblock,
+        1,
+        VERTEXFS_DIRECTORY_SECTOR,
+        VERTEXFS_DIRECTORY_SECTORS,
+    ) || !vertexfs_section_matches(superblock, 2, VERTEXFS_FREE_MAP_SECTOR, 1)
+        || !vertexfs_section_matches(superblock, 3, VERTEXFS_JOURNAL_SECTOR, 1)
+        || !vertexfs_section_matches(superblock, 4, VERTEXFS_DATA_SECTOR, VERTEXFS_DATA_SECTORS)
+    {
+        return reject_vertexfs_image("unsupported section layout");
+    }
+    let generation = vertexfs_fixed_string(superblock, VERTEXFS_GENERATION_OFFSET, 64)?;
+
+    let journal = vertexfs_parse_journal(image)?;
+    let inodes = vertexfs_parse_inode_table(image)?;
+    vertexfs_validate_directory(image, &inodes.dynamic)?;
+    let (readme, readme_first, readme_end) = vertexfs_file_payload(image, inodes.readme)?;
+    let (base_app_a, app_a_first, app_a_end) =
+        vertexfs_recoverable_file_payload(image, inodes.app_a, journal)?;
+    if readme_first < app_a_end && app_a_first < readme_end {
+        return reject_vertexfs_image("overlapping file extents");
+    }
+    let mut dynamic_extents = [(0u64, 0u64); VERTEXFS_DYNAMIC_FILE_CAPACITY];
+    let mut dynamic_extent_count = 0;
+    let mut dynamic_index = 0;
+    while dynamic_index < VERTEXFS_DYNAMIC_FILE_CAPACITY {
+        let Some(dynamic) = inodes.dynamic[dynamic_index] else {
+            dynamic_index += 1;
+            continue;
+        };
+        let (_, dynamic_first, dynamic_end) = vertexfs_file_payload(image, dynamic)?;
+        if (dynamic_first < readme_end && readme_first < dynamic_end)
+            || (dynamic_first < app_a_end && app_a_first < dynamic_end)
+        {
+            return reject_vertexfs_image("overlapping file extents");
+        }
+        let mut prior = 0;
+        while prior < dynamic_extent_count {
+            let (prior_first, prior_end) = dynamic_extents[prior];
+            if dynamic_first < prior_end && prior_first < dynamic_end {
+                return reject_vertexfs_image("overlapping file extents");
+            }
+            prior += 1;
+        }
+        dynamic_extents[dynamic_extent_count] = (dynamic_first, dynamic_end);
+        dynamic_extent_count += 1;
+        dynamic_index += 1;
+    }
+    vertexfs_validate_free_map(image, inodes.readme, inodes.app_a, &inodes.dynamic)?;
+    let (app_a, journal_replayed) = vertexfs_replay_journal(inodes.app_a, base_app_a, journal)?;
+
+    Ok(VertexFsBootFiles {
+        generation,
+        readme: VertexFsBootFile {
+            inode: inodes.readme,
+            payload: readme,
+        },
+        app_a: VertexFsBootFile {
+            inode: inodes.app_a,
+            payload: app_a,
+        },
+        journal_replayed,
+    })
+}
+
+fn vertexfs_parse_inode_table(image: &[u8]) -> Result<VertexFsParsedInodes, InitError> {
+    let sector = vertexfs_section(
+        image,
+        VERTEXFS_INODE_TABLE_SECTOR,
+        VERTEXFS_INODE_TABLE_SECTORS,
+    )?;
+    if !vertexfs_magic_matches(sector, VERTEXFS_INODE_TABLE_MAGIC) {
+        return reject_vertexfs_image("bad inode table");
+    }
+    if read_u16_le(sector, 16) != VERTEXFS_VERSION || !vertexfs_checksum_valid(sector) {
+        return reject_vertexfs_image("inode table metadata invalid");
+    }
+    let count = read_u16_le(sector, 18) as usize;
+    if count < VERTEXFS_BASE_INODE_COUNT
+        || count > VERTEXFS_BASE_INODE_COUNT + VERTEXFS_DYNAMIC_FILE_CAPACITY
+    {
+        return reject_vertexfs_image("inode table count mismatch");
+    }
+
+    let root = vertexfs_read_inode(sector, 0);
+    if root.id != VERTEXFS_INODE_ROOT
+        || root.kind != VERTEXFS_KIND_DIR
+        || root.size != 0
+        || root.first_sector != 0
+        || root.sector_count != 0
+        || root.checksum != 0
+        || root.parent != 0
+        || !vertexfs_inode_reserved_zero(sector, 0)
+        || !vertexfs_inode_name_eq(sector, 0, b"/")
+    {
+        return reject_vertexfs_image("root inode mismatch");
+    }
+
+    let readme = vertexfs_read_inode(sector, 1);
+    if readme.id != VERTEXFS_INODE_README
+        || readme.kind != VERTEXFS_KIND_FILE
+        || readme.parent != VERTEXFS_INODE_ROOT
+        || !vertexfs_inode_reserved_zero(sector, 1)
+        || !vertexfs_inode_name_eq(sector, 1, b"readme")
+    {
+        return reject_vertexfs_image("readme inode mismatch");
+    }
+
+    let app_dir = vertexfs_read_inode(sector, 2);
+    if app_dir.id != VERTEXFS_INODE_APP_DIR
+        || app_dir.kind != VERTEXFS_KIND_DIR
+        || app_dir.size != 0
+        || app_dir.first_sector != 0
+        || app_dir.sector_count != 0
+        || app_dir.checksum != 0
+        || app_dir.parent != VERTEXFS_INODE_ROOT
+        || !vertexfs_inode_reserved_zero(sector, 2)
+        || !vertexfs_inode_name_eq(sector, 2, b"app")
+    {
+        return reject_vertexfs_image("app directory inode mismatch");
+    }
+
+    let app_a = vertexfs_read_inode(sector, 3);
+    if app_a.id != VERTEXFS_INODE_APP_A
+        || app_a.kind != VERTEXFS_KIND_FILE
+        || app_a.parent != VERTEXFS_INODE_APP_DIR
+        || !vertexfs_inode_reserved_zero(sector, 3)
+        || !vertexfs_inode_name_eq(sector, 3, b"a")
+    {
+        return reject_vertexfs_image("app/a inode mismatch");
+    }
+
+    let mut dynamic = [None; VERTEXFS_DYNAMIC_FILE_CAPACITY];
+    let dynamic_count = count - VERTEXFS_BASE_INODE_COUNT;
+    let mut dynamic_index = 0;
+    while dynamic_index < dynamic_count {
+        let inode_index = VERTEXFS_BASE_INODE_COUNT + dynamic_index;
+        let inode = vertexfs_read_inode(sector, inode_index);
+        if inode.id != VERTEXFS_DYNAMIC_INODE_FIRST + dynamic_index as u32
+            || inode.kind != VERTEXFS_KIND_FILE
+            || inode.parent != VERTEXFS_INODE_APP_DIR
+            || inode.first_sector != VERTEXFS_DYNAMIC_DATA_SECTOR_FIRST + dynamic_index as u64
+            || inode.sector_count != 1
+            || !vertexfs_inode_reserved_zero(sector, inode_index)
+            || vertexfs_fixed_string(sector, vertexfs_inode_name_offset(inode_index), 28).is_err()
+        {
+            return reject_vertexfs_image("dynamic inode mismatch");
+        }
+        dynamic[dynamic_index] = Some(inode);
+        dynamic_index += 1;
+    }
+
+    Ok(VertexFsParsedInodes {
+        readme,
+        app_a,
+        dynamic,
+    })
+}
+
+fn vertexfs_validate_directory(
+    image: &[u8],
+    dynamic: &[Option<VertexFsInode>; VERTEXFS_DYNAMIC_FILE_CAPACITY],
+) -> Result<(), InitError> {
+    let sector = vertexfs_section(image, VERTEXFS_DIRECTORY_SECTOR, VERTEXFS_DIRECTORY_SECTORS)?;
+    if !vertexfs_magic_matches(sector, VERTEXFS_DIRECTORY_MAGIC) {
+        return reject_vertexfs_image("bad directory");
+    }
+    if read_u16_le(sector, 16) != VERTEXFS_VERSION || !vertexfs_checksum_valid(sector) {
+        return reject_vertexfs_image("directory metadata invalid");
+    }
+    let count = read_u16_le(sector, 18) as usize;
+    if count < VERTEXFS_BASE_DIRECTORY_COUNT
+        || count > VERTEXFS_BASE_DIRECTORY_COUNT + VERTEXFS_DIRECTORY_DYNAMIC_FILE_CAPACITY
+    {
+        return reject_vertexfs_image("directory count mismatch");
+    }
+    let mut dynamic_count = 0;
+    while dynamic_count < VERTEXFS_DYNAMIC_FILE_CAPACITY && dynamic[dynamic_count].is_some() {
+        dynamic_count += 1;
+    }
+    if count != VERTEXFS_BASE_DIRECTORY_COUNT + dynamic_count {
+        return reject_vertexfs_image("directory count mismatch");
+    }
+    if !vertexfs_directory_entry_eq(
+        sector,
+        0,
+        VERTEXFS_INODE_ROOT,
+        VERTEXFS_INODE_README,
+        VERTEXFS_KIND_FILE,
+        b"readme",
+    ) || !vertexfs_directory_entry_eq(
+        sector,
+        1,
+        VERTEXFS_INODE_ROOT,
+        VERTEXFS_INODE_APP_DIR,
+        VERTEXFS_KIND_DIR,
+        b"app",
+    ) || !vertexfs_directory_entry_eq(
+        sector,
+        2,
+        VERTEXFS_INODE_APP_DIR,
+        VERTEXFS_INODE_APP_A,
+        VERTEXFS_KIND_FILE,
+        b"a",
+    ) {
+        return reject_vertexfs_image("directory entry mismatch");
+    }
+    let inode_sector = vertexfs_section(
+        image,
+        VERTEXFS_INODE_TABLE_SECTOR,
+        VERTEXFS_INODE_TABLE_SECTORS,
+    )?;
+    let mut dynamic_index = 0;
+    while dynamic_index < dynamic_count {
+        let Some(dynamic_inode) = dynamic[dynamic_index] else {
+            return reject_vertexfs_image("dynamic directory entry mismatch");
+        };
+        let inode_index = VERTEXFS_BASE_INODE_COUNT + dynamic_index;
+        let directory_index = VERTEXFS_BASE_DIRECTORY_COUNT + dynamic_index;
+        let inode_name =
+            vertexfs_fixed_string(inode_sector, vertexfs_inode_name_offset(inode_index), 28)?;
+        if !vertexfs_directory_entry_eq(
+            sector,
+            directory_index,
+            VERTEXFS_INODE_APP_DIR,
+            dynamic_inode.id,
+            VERTEXFS_KIND_FILE,
+            inode_name,
+        ) {
+            return reject_vertexfs_image("dynamic directory entry mismatch");
+        }
+        dynamic_index += 1;
+    }
+    Ok(())
+}
+
+fn vertexfs_replay_journal<'a>(
+    app_a_inode: VertexFsInode,
+    base_app_a: &'a [u8],
+    journal: Option<VertexFsJournalRecord<'a>>,
+) -> Result<(&'a [u8], bool), InitError> {
+    let Some(record) = journal else {
+        return Ok((base_app_a, false));
+    };
+    if record.target_inode != VERTEXFS_INODE_APP_A || app_a_inode.id != VERTEXFS_INODE_APP_A {
+        return reject_vertexfs_image("journal target unsupported");
+    }
+    if record.payload.len() > MAX_VERTEXFS_FILE_BYTES {
+        return reject_vertexfs_image("journal payload too large");
+    }
+    if record.payload.len() as u64 > app_a_inode.sector_count as u64 * VERTEXFS_SECTOR_SIZE as u64 {
+        return reject_vertexfs_image("journal payload exceeds target extent");
+    }
+    Ok((record.payload, true))
+}
+
+fn vertexfs_parse_journal(image: &[u8]) -> Result<Option<VertexFsJournalRecord<'_>>, InitError> {
+    let sector = vertexfs_sector(image, VERTEXFS_JOURNAL_SECTOR)?;
+    if !vertexfs_magic_matches(sector, VERTEXFS_JOURNAL_MAGIC) {
+        return reject_vertexfs_image("bad journal");
+    }
+    if read_u16_le(sector, 16) != VERTEXFS_VERSION || !vertexfs_checksum_valid(sector) {
+        return reject_vertexfs_image("journal metadata invalid");
+    }
+    let state = read_u16_le(sector, 18);
+    if state == VERTEXFS_JOURNAL_STATE_CLEAN {
+        return Ok(None);
+    }
+    if state != VERTEXFS_JOURNAL_STATE_PENDING {
+        return reject_vertexfs_image("journal state unsupported");
+    }
+    let target_inode = read_u32_le(sector, 24);
+    let payload_len = read_u32_le(sector, 28) as usize;
+    let payload_checksum = read_u32_le(sector, 32);
+    let Some(end) = VERTEXFS_JOURNAL_PAYLOAD_OFFSET.checked_add(payload_len) else {
+        return reject_vertexfs_image("journal payload overflow");
+    };
+    let Some(payload) = sector.get(VERTEXFS_JOURNAL_PAYLOAD_OFFSET..end) else {
+        return reject_vertexfs_image("journal payload out of bounds");
+    };
+    if vertexfs_checksum32(payload) != payload_checksum {
+        return reject_vertexfs_image("journal payload checksum mismatch");
+    }
+    Ok(Some(VertexFsJournalRecord {
+        target_inode,
+        payload,
+    }))
+}
+
+fn vertexfs_file_payload(
+    image: &[u8],
+    inode: VertexFsInode,
+) -> Result<(&[u8], u64, u64), InitError> {
+    let (data, first_sector, end_sector) = vertexfs_file_extent_payload(image, inode)?;
+    if vertexfs_checksum32(data) != inode.checksum {
+        return reject_vertexfs_image("file checksum mismatch");
+    }
+    Ok((data, first_sector, end_sector))
+}
+
+fn vertexfs_recoverable_file_payload<'a>(
+    image: &'a [u8],
+    inode: VertexFsInode,
+    journal: Option<VertexFsJournalRecord<'a>>,
+) -> Result<(&'a [u8], u64, u64), InitError> {
+    let (data, first_sector, end_sector) = vertexfs_file_extent_payload(image, inode)?;
+    if vertexfs_checksum32(data) == inode.checksum {
+        return Ok((data, first_sector, end_sector));
+    }
+    if let Some(record) = journal
+        && record.target_inode == inode.id
+        && vertexfs_extent_starts_with(image, inode, record.payload)
+    {
+        return Ok((record.payload, first_sector, end_sector));
+    }
+    reject_vertexfs_image("file checksum mismatch")
+}
+
+fn vertexfs_file_extent_payload(
+    image: &[u8],
+    inode: VertexFsInode,
+) -> Result<(&[u8], u64, u64), InitError> {
+    if inode.sector_count == 0 {
+        return reject_vertexfs_image("file has no extent");
+    }
+    let Some(end_sector) = inode.first_sector.checked_add(inode.sector_count as u64) else {
+        return reject_vertexfs_image("file extent overflow");
+    };
+    if inode.first_sector < VERTEXFS_DATA_SECTOR
+        || end_sector > VERTEXFS_DATA_SECTOR + VERTEXFS_DATA_SECTORS
+    {
+        return reject_vertexfs_image("file extent outside data section");
+    }
+    let max_len = inode.sector_count as u64 * VERTEXFS_SECTOR_SIZE as u64;
+    if inode.size > max_len || inode.size as usize > MAX_VERTEXFS_FILE_BYTES {
+        return reject_vertexfs_image("file length invalid");
+    }
+    let Ok(start_sector) = usize::try_from(inode.first_sector) else {
+        return reject_vertexfs_image("file sector overflow");
+    };
+    let Some(start) = start_sector.checked_mul(VERTEXFS_SECTOR_SIZE) else {
+        return reject_vertexfs_image("file offset overflow");
+    };
+    let Ok(len) = usize::try_from(inode.size) else {
+        return reject_vertexfs_image("file length overflow");
+    };
+    let Some(end) = start.checked_add(len) else {
+        return reject_vertexfs_image("file data overflow");
+    };
+    let Some(data) = image.get(start..end) else {
+        return reject_vertexfs_image("file data out of bounds");
+    };
+    Ok((data, inode.first_sector, end_sector))
+}
+
+fn vertexfs_extent_starts_with(image: &[u8], inode: VertexFsInode, payload: &[u8]) -> bool {
+    let Some(start_sector) = usize::try_from(inode.first_sector).ok() else {
+        return false;
+    };
+    let Some(start) = start_sector.checked_mul(VERTEXFS_SECTOR_SIZE) else {
+        return false;
+    };
+    let Some(end) = start.checked_add(payload.len()) else {
+        return false;
+    };
+    image
+        .get(start..end)
+        .map(|stored| stored == payload)
+        .unwrap_or(false)
+}
+
+fn vertexfs_validate_free_map(
+    image: &[u8],
+    readme: VertexFsInode,
+    app_a: VertexFsInode,
+    dynamic: &[Option<VertexFsInode>; VERTEXFS_DYNAMIC_FILE_CAPACITY],
+) -> Result<(), InitError> {
+    let sector = vertexfs_sector(image, VERTEXFS_FREE_MAP_SECTOR)?;
+    if !vertexfs_magic_matches(sector, VERTEXFS_FREE_MAP_MAGIC) {
+        return reject_vertexfs_image("bad free-space map");
+    }
+    if read_u16_le(sector, 16) != VERTEXFS_VERSION || !vertexfs_checksum_valid(sector) {
+        return reject_vertexfs_image("free-space metadata invalid");
+    }
+    if read_u16_le(sector, 18) as usize != VERTEXFS_SECTORS {
+        return reject_vertexfs_image("free-space sector count mismatch");
+    }
+
+    let mut index = 0;
+    while index < VERTEXFS_SECTORS {
+        let allocated = sector[32 + index];
+        if allocated != 0 && allocated != 1 {
+            return reject_vertexfs_image("free-space allocation byte invalid");
+        }
+        let sector_number = index as u64;
+        let mut dynamic_allocated = false;
+        let mut dynamic_index = 0;
+        while dynamic_index < VERTEXFS_DYNAMIC_FILE_CAPACITY {
+            if let Some(inode) = dynamic[dynamic_index]
+                && vertexfs_inode_covers_sector(inode, sector_number)
+            {
+                dynamic_allocated = true;
+                break;
+            }
+            dynamic_index += 1;
+        }
+        let expected = sector_number == 0
+            || vertexfs_sector_in_section(
+                sector_number,
+                VERTEXFS_INODE_TABLE_SECTOR,
+                VERTEXFS_INODE_TABLE_SECTORS,
+            )
+            || vertexfs_sector_in_section(
+                sector_number,
+                VERTEXFS_DIRECTORY_SECTOR,
+                VERTEXFS_DIRECTORY_SECTORS,
+            )
+            || sector_number == VERTEXFS_FREE_MAP_SECTOR
+            || sector_number == VERTEXFS_JOURNAL_SECTOR
+            || vertexfs_inode_covers_sector(readme, sector_number)
+            || vertexfs_inode_covers_sector(app_a, sector_number)
+            || dynamic_allocated;
+        if (allocated == 1) != expected {
+            return reject_vertexfs_image("free-space metadata mismatch");
+        }
+        index += 1;
+    }
+    Ok(())
+}
+
+fn vertexfs_sector(image: &[u8], sector: u64) -> Result<&[u8], InitError> {
+    let Ok(sector_index) = usize::try_from(sector) else {
+        return reject_vertexfs_image("sector overflow");
+    };
+    let Some(offset) = sector_index.checked_mul(VERTEXFS_SECTOR_SIZE) else {
+        return reject_vertexfs_image("sector offset overflow");
+    };
+    let Some(end) = offset.checked_add(VERTEXFS_SECTOR_SIZE) else {
+        return reject_vertexfs_image("sector end overflow");
+    };
+    let Some(bytes) = image.get(offset..end) else {
+        return reject_vertexfs_image("sector out of bounds");
+    };
+    Ok(bytes)
+}
+
+fn vertexfs_section(
+    image: &[u8],
+    first_sector: u64,
+    sector_count: u64,
+) -> Result<&[u8], InitError> {
+    let Ok(start_sector) = usize::try_from(first_sector) else {
+        return reject_vertexfs_image("section overflow");
+    };
+    let Ok(sector_count) = usize::try_from(sector_count) else {
+        return reject_vertexfs_image("section overflow");
+    };
+    let Some(start) = start_sector.checked_mul(VERTEXFS_SECTOR_SIZE) else {
+        return reject_vertexfs_image("section offset overflow");
+    };
+    let Some(len) = sector_count.checked_mul(VERTEXFS_SECTOR_SIZE) else {
+        return reject_vertexfs_image("section length overflow");
+    };
+    let Some(end) = start.checked_add(len) else {
+        return reject_vertexfs_image("section end overflow");
+    };
+    let Some(bytes) = image.get(start..end) else {
+        return reject_vertexfs_image("section out of bounds");
+    };
+    Ok(bytes)
+}
+
+fn vertexfs_read_inode(sector: &[u8], index: usize) -> VertexFsInode {
+    let offset = VERTEXFS_INODE_ENTRY_OFFSET + index * VERTEXFS_INODE_ENTRY_LEN;
+    VertexFsInode {
+        id: read_u32_le(sector, offset),
+        kind: read_u16_le(sector, offset + 4),
+        size: read_u64_le(sector, offset + 8),
+        first_sector: read_u64_le(sector, offset + 16),
+        sector_count: read_u32_le(sector, offset + 24),
+        checksum: read_u32_le(sector, offset + 28),
+        parent: read_u32_le(sector, offset + 32),
+    }
+}
+
+fn vertexfs_inode_name_eq(sector: &[u8], index: usize, expected: &[u8]) -> bool {
+    let offset = vertexfs_inode_name_offset(index);
+    vertexfs_fixed_string_eq(sector, offset, 28, expected)
+}
+
+fn vertexfs_inode_reserved_zero(sector: &[u8], index: usize) -> bool {
+    let offset = VERTEXFS_INODE_ENTRY_OFFSET + index * VERTEXFS_INODE_ENTRY_LEN + 6;
+    read_u16_le(sector, offset) == 0
+}
+
+fn vertexfs_inode_name_offset(index: usize) -> usize {
+    VERTEXFS_INODE_ENTRY_OFFSET + index * VERTEXFS_INODE_ENTRY_LEN + 36
+}
+
+fn vertexfs_directory_entry_eq(
+    sector: &[u8],
+    index: usize,
+    parent: u32,
+    child: u32,
+    kind: u16,
+    name: &[u8],
+) -> bool {
+    let offset = VERTEXFS_DIRECTORY_ENTRY_OFFSET + index * VERTEXFS_DIRECTORY_ENTRY_LEN;
+    read_u32_le(sector, offset) == parent
+        && read_u32_le(sector, offset + 4) == child
+        && read_u16_le(sector, offset + 8) == kind
+        && read_u16_le(sector, offset + 10) == 0
+        && vertexfs_fixed_string_eq(sector, offset + 12, VERTEXFS_DIRECTORY_NAME_BYTES, name)
+}
+
+fn vertexfs_inode_covers_sector(inode: VertexFsInode, sector: u64) -> bool {
+    inode
+        .first_sector
+        .checked_add(inode.sector_count as u64)
+        .is_some_and(|end| sector >= inode.first_sector && sector < end)
+}
+
+fn vertexfs_sector_in_section(sector: u64, first_sector: u64, sector_count: u64) -> bool {
+    first_sector
+        .checked_add(sector_count)
+        .is_some_and(|end| sector >= first_sector && sector < end)
+}
+
+fn vertexfs_section_matches(
+    superblock: &[u8],
+    index: usize,
+    first_sector: u64,
+    sector_count: u64,
+) -> bool {
+    let offset = VERTEXFS_SECTION_TABLE_OFFSET + index * VERTEXFS_SECTION_RECORD_LEN;
+    read_u64_le(superblock, offset) == first_sector
+        && read_u64_le(superblock, offset + 8) == sector_count
+}
+
+fn vertexfs_magic_matches(sector: &[u8], magic: &[u8; 16]) -> bool {
+    let mut index = 0;
+    while index < magic.len() {
+        if sector[index] != magic[index] {
+            return false;
+        }
+        index += 1;
+    }
+    true
+}
+
+fn vertexfs_fixed_string(buffer: &[u8], offset: usize, max_len: usize) -> Result<&[u8], InitError> {
+    if offset
+        .checked_add(max_len)
+        .is_none_or(|end| end > buffer.len())
+    {
+        return reject_vertexfs_image("fixed string bounds invalid");
+    }
+    let mut len = 0;
+    while len < max_len && buffer[offset + len] != 0 {
+        let byte = buffer[offset + len];
+        if !byte.is_ascii_graphic() && byte != b' ' {
+            return reject_vertexfs_image("fixed string byte invalid");
+        }
+        len += 1;
+    }
+    if len == 0 {
+        return reject_vertexfs_image("fixed string empty");
+    }
+    let mut index = len;
+    while index < max_len {
+        if buffer[offset + index] != 0 {
+            return reject_vertexfs_image("fixed string not zero padded");
+        }
+        index += 1;
+    }
+    Ok(&buffer[offset..offset + len])
+}
+
+fn vertexfs_fixed_string_eq(buffer: &[u8], offset: usize, max_len: usize, expected: &[u8]) -> bool {
+    if expected.is_empty()
+        || expected.len() > max_len
+        || offset
+            .checked_add(max_len)
+            .is_none_or(|end| end > buffer.len())
+    {
+        return false;
+    }
+    let mut index = 0;
+    while index < expected.len() {
+        if buffer[offset + index] != expected[index] {
+            return false;
+        }
+        index += 1;
+    }
+    while index < max_len {
+        if buffer[offset + index] != 0 {
+            return false;
+        }
+        index += 1;
+    }
+    true
+}
+
+fn vertexfs_checksum_valid(bytes: &[u8]) -> bool {
+    let stored = read_u32_le(bytes, VERTEXFS_CHECKSUM_OFFSET);
+    let mut checksum = 0u32;
+    let mut index = 0;
+    while index < bytes.len() {
+        let byte = if index >= VERTEXFS_CHECKSUM_OFFSET && index < VERTEXFS_CHECKSUM_OFFSET + 4 {
+            0
+        } else {
+            bytes[index]
+        };
+        checksum = checksum.wrapping_add((byte as u32).wrapping_mul(index as u32 + 1));
+        index += 1;
+    }
+    checksum == stored
+}
+
+fn vertexfs_checksum32(bytes: &[u8]) -> u32 {
+    let mut checksum = 0u32;
+    let mut index = 0;
+    while index < bytes.len() {
+        checksum = checksum.wrapping_add((bytes[index] as u32).wrapping_mul(index as u32 + 1));
+        index += 1;
+    }
+    checksum
+}
+
+fn write_vertexfs_sector_checksum(sector: &mut [u8]) {
+    write_u32_le(sector, VERTEXFS_CHECKSUM_OFFSET, 0);
+    let checksum = vertexfs_checksum32(sector);
+    write_u32_le(sector, VERTEXFS_CHECKSUM_OFFSET, checksum);
+}
+
+fn vertexfs_inode_offset_by_id(sector: &[u8], inode_id: u32) -> Result<usize, IpcError> {
+    let count = read_u16_le(sector, 18) as usize;
+    let mut index = 0;
+    while index < count {
+        let offset = vertexfs_inode_offset(index)?;
+        if read_u32_le(sector, offset) == inode_id {
+            return Ok(offset);
+        }
+        index += 1;
+    }
+    Err(IpcError::VfsUnsupported)
+}
+
+fn vertexfs_dynamic_index_for_inode(inode_id: u32) -> Result<usize, IpcError> {
+    if inode_id < VERTEXFS_DYNAMIC_INODE_FIRST {
+        return Err(IpcError::VfsUnsupported);
+    }
+    let index = usize::try_from(inode_id - VERTEXFS_DYNAMIC_INODE_FIRST)
+        .map_err(|_| IpcError::VfsUnsupported)?;
+    if index >= VERTEXFS_DYNAMIC_FILE_CAPACITY {
+        return Err(IpcError::VfsUnsupported);
+    }
+    Ok(index)
+}
+
+fn vertexfs_dynamic_inode_at(index: usize) -> Result<u32, IpcError> {
+    if index >= VERTEXFS_DYNAMIC_FILE_CAPACITY {
+        return Err(IpcError::VfsUnsupported);
+    }
+    Ok(VERTEXFS_DYNAMIC_INODE_FIRST + index as u32)
+}
+
+fn vertexfs_dynamic_data_sector_at(index: usize) -> Result<u64, IpcError> {
+    if index >= VERTEXFS_DYNAMIC_FILE_CAPACITY {
+        return Err(IpcError::VfsUnsupported);
+    }
+    Ok(VERTEXFS_DYNAMIC_DATA_SECTOR_FIRST + index as u64)
+}
+
+fn vertexfs_inode_offset(index: usize) -> Result<usize, IpcError> {
+    let offset = VERTEXFS_INODE_ENTRY_OFFSET
+        .checked_add(
+            index
+                .checked_mul(VERTEXFS_INODE_ENTRY_LEN)
+                .ok_or(IpcError::VfsUnsupported)?,
+        )
+        .ok_or(IpcError::VfsUnsupported)?;
+    if offset
+        .checked_add(VERTEXFS_INODE_ENTRY_LEN)
+        .is_none_or(|end| end > VERTEXFS_INODE_TABLE_BYTES)
+    {
+        return Err(IpcError::VfsUnsupported);
+    }
+    Ok(offset)
+}
+
+fn vertexfs_directory_offset(index: usize) -> Result<usize, IpcError> {
+    let offset = VERTEXFS_DIRECTORY_ENTRY_OFFSET
+        .checked_add(
+            index
+                .checked_mul(VERTEXFS_DIRECTORY_ENTRY_LEN)
+                .ok_or(IpcError::VfsUnsupported)?,
+        )
+        .ok_or(IpcError::VfsUnsupported)?;
+    if offset
+        .checked_add(VERTEXFS_DIRECTORY_ENTRY_LEN)
+        .is_none_or(|end| end > VERTEXFS_DIRECTORY_BYTES)
+    {
+        return Err(IpcError::VfsUnsupported);
+    }
+    Ok(offset)
+}
+
+fn write_vertexfs_fixed_vfs_name(
+    sector: &mut [u8],
+    offset: usize,
+    max_len: usize,
+    name: VfsName,
+) -> Result<(), IpcError> {
+    if name.len == 0
+        || name.len > max_len
+        || offset
+            .checked_add(max_len)
+            .is_none_or(|end| end > sector.len())
+    {
+        return Err(IpcError::VfsUnsupported);
+    }
+    let mut index = 0;
+    while index < max_len {
+        sector[offset + index] = 0;
+        index += 1;
+    }
+    copy_bytes(&mut sector[offset..offset + name.len], name.as_bytes());
+    Ok(())
+}
+
+fn copy_bytes(destination: &mut [u8], source: &[u8]) {
+    let mut index = 0;
+    while index < source.len() {
+        destination[index] = source[index];
+        index += 1;
+    }
+}
+
+fn c_string_eq_bytes(value: *const u8, expected: &[u8]) -> bool {
+    if value.is_null() {
+        return false;
+    }
+    let mut index = 0;
+    while index < expected.len() {
+        if unsafe { value.add(index).read() } != expected[index] {
+            return false;
+        }
+        index += 1;
+    }
+    unsafe { value.add(expected.len()).read() == 0 }
+}
+
+fn reject_vertexfs_image<T>(reason: &str) -> Result<T, InitError> {
+    serial::write_str("Krust VertexFS v1 image rejected: ");
+    serial::write_str(reason);
+    serial::write_str("\n");
+    Err(InitError::InvalidBootManifest)
+}
+
 fn validate_process_mount_roots(
     runtime: &RuntimeState,
     config: &BootRuntimeConfig,
@@ -5489,6 +7346,86 @@ fn validate_process_mount_roots(
         index += 1;
     }
     Ok(())
+}
+
+fn install_declared_process_mounts(
+    runtime: &mut RuntimeState,
+    process: BootProcessConfig,
+    pid: ProcessId,
+    mount_root: VfsPath,
+) -> Result<u64, InitError> {
+    let mut installed = 0;
+    let mut index = 0;
+    while index < process.mount_count {
+        let mount = process.mounts[index].ok_or(InitError::InvalidBootManifest)?;
+        let destination = resolve_vfs_path_under_root(mount_root, mount.path.as_bytes())
+            .map_err(|_| InitError::InvalidBootManifest)?;
+        let source = resolve_vfs_path_under_root(mount_root, mount.source.as_bytes())
+            .map_err(|_| InitError::InvalidBootManifest)?;
+        let (parent_path, _) = split_vfs_parent_child(destination.as_bytes())
+            .map_err(|_| InitError::InvalidBootManifest)?;
+        let parent = runtime
+            .vfs_node_by_path(parent_path)
+            .ok_or(InitError::InvalidBootManifest)?;
+        if !matches!(parent.kind, VfsNodeKind::Directory)
+            || runtime.vfs_node_by_path(destination.as_bytes()).is_some()
+            || runtime
+                .objects
+                .get_vfs_mount_by_exact_path(destination.as_bytes())
+                .is_some()
+        {
+            return Err(InitError::InvalidBootManifest);
+        }
+        let source_node = runtime
+            .vfs_node_by_path(source.as_bytes())
+            .ok_or(InitError::InvalidBootManifest)?;
+        if !matches!(source_node.kind, VfsNodeKind::Directory) {
+            return Err(InitError::InvalidBootManifest);
+        }
+        let source_mount_flags = runtime
+            .objects
+            .get_vfs_mount_by_path(source.as_bytes())
+            .ok_or(InitError::InvalidBootManifest)?
+            .flags;
+        let flags = boot_process_mount_flags_to_vfs(mount.flags)?
+            | (source_mount_flags & VFS_MOUNT_READ_ONLY);
+        runtime.add_vfs_mount(
+            "mount:declared-bind",
+            source_node.id,
+            destination,
+            source_node.mount_source,
+            flags,
+            false,
+            pid,
+        )?;
+        serial::write_str("Krust declared mount snapshot restored: proc=");
+        serial::write_str(process.name);
+        serial::write_str(" path=");
+        serial::write_ascii_bytes(mount.path.as_bytes());
+        serial::write_str(" canonical=");
+        serial::write_ascii_bytes(destination.as_bytes());
+        serial::write_str(" source=");
+        serial::write_ascii_bytes(mount.source.as_bytes());
+        serial::write_str(" canonical_source=");
+        serial::write_ascii_bytes(source.as_bytes());
+        serial::write_str(" flags=");
+        serial_write_vfs_mount_flags(flags);
+        serial::write_str("\n");
+        installed += 1;
+        index += 1;
+    }
+    Ok(installed)
+}
+
+fn boot_process_mount_flags_to_vfs(flags: u16) -> Result<u64, InitError> {
+    if flags & !known_boot_process_mount_flags() != 0 || flags & BOOT_PROCESS_MOUNT_BIND == 0 {
+        return Err(InitError::InvalidBootManifest);
+    }
+    let mut vfs_flags = VFS_MOUNT_BIND;
+    if flags & BOOT_PROCESS_MOUNT_READ_ONLY != 0 {
+        vfs_flags |= VFS_MOUNT_READ_ONLY;
+    }
+    Ok(vfs_flags)
 }
 
 fn grant_object_id(
@@ -5678,6 +7615,9 @@ pub fn exit_current_process(status: u64, frame: &mut SyscallFrame) -> ScheduleRe
     if exiting_name == Some(VERTEX_STATE_PROCESS_NAME) {
         abort_vfs_state_transactions(STATUS_VFS_UNSUPPORTED);
     }
+    if exiting_name == Some(BLOCK_DRIVER_PROCESS_NAME) {
+        abort_vertexfs_sync_transactions(STATUS_VFS_UNSUPPORTED);
+    }
 
     if initial_exited && status != 0 {
         return ScheduleResult::Halt { ok: false };
@@ -5804,6 +7744,9 @@ pub fn fault_current_process(
     if name == VERTEX_STATE_PROCESS_NAME {
         abort_vfs_state_transactions(STATUS_VFS_UNSUPPORTED);
     }
+    if name == BLOCK_DRIVER_PROCESS_NAME {
+        abort_vertexfs_sync_transactions(STATUS_VFS_UNSUPPORTED);
+    }
 
     serial::write_str("User process fault contained: proc=");
     serial::write_str(name);
@@ -5867,6 +7810,7 @@ pub fn send(cap_slot: u64, source: *const u8, len: usize) -> Result<(), IpcError
 
     wake_blocked_receiver(endpoint_id);
     wake_blocked_vfs_state_reply(endpoint_id);
+    wake_blocked_vertexfs_sync_reply(endpoint_id);
 
     Ok(())
 }
@@ -6354,6 +8298,18 @@ fn recycle_exited_process_template(config_process_index: usize) -> Result<(), Ip
     Ok(())
 }
 
+fn process_config_for_pid(runtime: &RuntimeState, pid: ProcessId) -> Option<BootProcessConfig> {
+    let config = runtime.active_config?;
+    let mut index = 0;
+    while index < config.process_count {
+        if runtime.process_template_pids[index] == Some(pid) {
+            return config.processes[index];
+        }
+        index += 1;
+    }
+    None
+}
+
 fn load_process_context(
     name: &'static str,
     image_base: u64,
@@ -6464,7 +8420,14 @@ pub fn create_process(cap_slot: u64, config_process_index: u64) -> Result<u64, I
                 reclaim_detached_address_space(process.name, context.cr3);
                 IpcError::BadCapability
             })?;
+        if install_declared_process_mounts(runtime, process, pid, mount_root).is_err() {
+            let _ = runtime.remove_owned_declared_bind_mounts(pid);
+            let _ = runtime.processes.remove_last_process(pid);
+            reclaim_detached_address_space(process.name, context.cr3);
+            return Err(IpcError::BadCapability);
+        }
         if grant_config_caps_to_process(runtime, config, config_process_index, pid).is_err() {
+            let _ = runtime.remove_owned_declared_bind_mounts(pid);
             let _ = runtime.processes.remove_last_process(pid);
             reclaim_detached_address_space(process.name, context.cr3);
             return Err(IpcError::BadCapability);
@@ -6523,6 +8486,23 @@ pub fn start_process(cap_slot: u64, pid: u64) -> Result<(), IpcError> {
     } else {
         None
     };
+    if let Some(context) = reload_context {
+        let process_config = {
+            let runtime = runtime();
+            process_config_for_pid(runtime, pid).ok_or(IpcError::BadCapability)?
+        };
+        if install_declared_process_mounts(
+            runtime(),
+            process_config,
+            pid,
+            process_snapshot.mount_root,
+        )
+        .is_err()
+        {
+            reclaim_detached_address_space(process_snapshot.name, context.cr3);
+            return Err(IpcError::BadCapability);
+        }
+    }
 
     let (target, lifecycle_state, release_files) = {
         let runtime = runtime();
@@ -6640,6 +8620,9 @@ pub fn kill_process(cap_slot: u64, pid: u64) -> Result<(), IpcError> {
     release_unreferenced_derived_vfs_roots(runtime());
     if target == VERTEX_STATE_PROCESS_NAME {
         abort_vfs_state_transactions(STATUS_VFS_UNSUPPORTED);
+    }
+    if target == BLOCK_DRIVER_PROCESS_NAME {
+        abort_vertexfs_sync_transactions(STATUS_VFS_UNSUPPORTED);
     }
 
     serial::write_str("Krust process kill accepted: proc=");
@@ -7110,6 +9093,12 @@ pub fn vfs_open(cap_slot: u64, path: *const u8, packed_len_flags: u64) -> Result
 
     let cap = lookup_capability(cap_slot, 0).map_err(|_| IpcError::VfsPermission)?;
     let path = &path_bytes[..path_len];
+    if flags & (VFS_OPEN_WRITE | VFS_OPEN_CREATE | VFS_OPEN_TRUNC | VFS_OPEN_APPEND) != 0
+        && runtime().objects.get_vfs_root(cap.object).is_some()
+        && vfs_request_path_is_read_only(path)?
+    {
+        return Err(IpcError::VfsPermission);
+    }
     let mut created_node = None;
     let (node, available_rights) = match resolve_vfs_node_from_cap(cap, path) {
         Ok(resolved) => resolved,
@@ -7148,7 +9137,18 @@ pub fn vfs_open(cap_slot: u64, path: *const u8, packed_len_flags: u64) -> Result
         release_created_vfs_memory_node(runtime(), created_node);
         return Err(IpcError::VfsUnsupported);
     }
-    if flags & VFS_OPEN_TRUNC != 0 && !matches!(node.backing, VfsBacking::MemoryFile(_)) {
+    if matches!(node.backing, VfsBacking::FsServiceReport)
+        && flags & (VFS_OPEN_WRITE | VFS_OPEN_CREATE | VFS_OPEN_TRUNC | VFS_OPEN_APPEND) != 0
+    {
+        release_created_vfs_memory_node(runtime(), created_node);
+        return Err(IpcError::VfsUnsupported);
+    }
+    if flags & VFS_OPEN_TRUNC != 0
+        && !matches!(
+            node.backing,
+            VfsBacking::MemoryFile(_) | VfsBacking::VertexFsFile(_)
+        )
+    {
         release_created_vfs_memory_node(runtime(), created_node);
         return Err(IpcError::VfsUnsupported);
     }
@@ -7248,6 +9248,17 @@ pub fn vfs_read(
             frame,
         );
     }
+    if matches!(node.backing, VfsBacking::FsServiceReport) {
+        return start_vfs_service_read_transaction(
+            node,
+            description,
+            description.offset,
+            destination as u64,
+            max_len,
+            true,
+            frame,
+        );
+    }
     let (copy_len, new_offset) = vfs_read_node(node, description.offset, destination, max_len)?;
     runtime()
         .file_description_mut(description.id)
@@ -7284,6 +9295,17 @@ pub fn vfs_pread(
             description,
             offset,
             destination,
+            max_len,
+            false,
+            frame,
+        );
+    }
+    if matches!(node.backing, VfsBacking::FsServiceReport) {
+        return start_vfs_service_read_transaction(
+            node,
+            description,
+            offset,
+            destination as u64,
             max_len,
             false,
             frame,
@@ -7691,7 +9713,12 @@ pub fn vfs_mount(cap_slot: u64, path: *const u8, packed_len_flags: u64) -> Resul
     if path_len > MAX_VFS_PATH_BYTES {
         return Err(IpcError::VfsBadPath);
     }
-    if flags != VFS_MOUNT_VOLATILE {
+    if flags & !VFS_MOUNT_KNOWN_FLAGS != 0
+        || flags == 0
+        || (flags & VFS_MOUNT_VOLATILE != 0 && flags != VFS_MOUNT_VOLATILE)
+        || (flags & VFS_MOUNT_BIND != 0 && flags & VFS_MOUNT_VOLATILE != 0)
+        || (flags & VFS_MOUNT_READ_ONLY != 0 && flags & VFS_MOUNT_BIND == 0)
+    {
         return Err(IpcError::VfsUnsupported);
     }
     let mut path_bytes = [0u8; MAX_VFS_PATH_BYTES];
@@ -7717,6 +9744,48 @@ pub fn vfs_mount(cap_slot: u64, path: *const u8, packed_len_flags: u64) -> Resul
     if runtime().vfs_node_by_path(path).is_some() {
         return Err(IpcError::VfsExists);
     }
+    if flags & VFS_MOUNT_BIND != 0 {
+        let source_root = runtime()
+            .objects
+            .get_vfs_root(cap.object)
+            .ok_or(IpcError::VfsPermission)?;
+        let source_node = runtime()
+            .vfs_node_by_path(source_root.root_path.as_bytes())
+            .ok_or(IpcError::VfsNotFound)?;
+        if !matches!(source_node.kind, VfsNodeKind::Directory) {
+            return Err(IpcError::VfsNotDirectory);
+        }
+        let source_mount_flags = runtime()
+            .objects
+            .get_vfs_mount_by_path(source_root.root_path.as_bytes())
+            .map(|mount| mount.flags)
+            .unwrap_or(0);
+        let bind_flags = flags | (source_mount_flags & VFS_MOUNT_READ_ONLY);
+        runtime()
+            .add_vfs_mount(
+                "mount:bind",
+                source_node.id,
+                root_path,
+                source_node.mount_source,
+                bind_flags,
+                true,
+                current_process_id(),
+            )
+            .map_err(|_| IpcError::VfsNoSpace)?;
+
+        serial::write_str("VFS bind mount accepted: proc=");
+        serial::write_str(current_process_name());
+        serial::write_str(" path=");
+        serial::write_ascii_bytes(requested_path);
+        serial::write_str(" canonical=");
+        serial::write_ascii_bytes(path);
+        serial::write_str(" source=");
+        serial::write_ascii_bytes(source_root.root_path.as_bytes());
+        serial::write_str(" flags=");
+        serial_write_vfs_mount_flags(bind_flags);
+        serial::write_str("\n");
+        return Ok(());
+    }
 
     let runtime = runtime();
     let node_id = runtime
@@ -7736,6 +9805,7 @@ pub fn vfs_mount(cap_slot: u64, path: *const u8, packed_len_flags: u64) -> Resul
             "volatilefs",
             flags,
             true,
+            current_process_id(),
         )
         .is_err()
     {
@@ -7769,27 +9839,45 @@ pub fn vfs_unmount(cap_slot: u64, path: *const u8, path_len: usize) -> Result<()
     if available & capability::RIGHT_MOUNT == 0 {
         return Err(IpcError::VfsPermission);
     }
-    let node = runtime()
-        .vfs_node_by_path(path)
-        .ok_or(IpcError::VfsNotFound)?;
-    if !matches!(node.kind, VfsNodeKind::Directory) {
-        return Err(IpcError::VfsNotDirectory);
-    }
-    let mount = runtime()
+    let exact_dynamic_bind = runtime()
         .objects
-        .get_vfs_mount_by_root_node(node.id)
-        .ok_or(IpcError::VfsUnsupported)?;
+        .get_vfs_mount_by_exact_path(path)
+        .filter(|mount| mount.dynamic && mount.flags & VFS_MOUNT_BIND != 0);
+    let node = runtime().vfs_node_by_path(path);
+    let mount = if let Some(mount) = exact_dynamic_bind {
+        mount
+    } else {
+        let node = node.ok_or(IpcError::VfsNotFound)?;
+        if !matches!(node.kind, VfsNodeKind::Directory) {
+            return Err(IpcError::VfsNotDirectory);
+        }
+        runtime()
+            .objects
+            .get_vfs_mount_by_root_node(node.id)
+            .ok_or(IpcError::VfsUnsupported)?
+    };
     if !mount.dynamic {
         return Err(IpcError::VfsUnsupported);
     }
-    if runtime().vfs_node_has_open_description(node.id) || runtime().vfs_node_has_children(node.id)
+    if runtime().vfs_subtree_has_open_description(mount.root_node)
+        || (mount.flags & VFS_MOUNT_BIND == 0
+            && node.is_some_and(|node| runtime().vfs_node_has_children(node.id)))
     {
         return Err(IpcError::VfsBusy);
     }
 
     let runtime = runtime();
-    runtime.remove_vfs_node(node.id)?;
-    if let Some(mount_id) = runtime.objects.remove_dynamic_vfs_mount(node.id) {
+    if mount.flags & VFS_MOUNT_BIND == 0
+        && let Some(node) = node
+    {
+        runtime.remove_vfs_node(node.id)?;
+    }
+    let removed_mount = if mount.flags & VFS_MOUNT_BIND != 0 {
+        runtime.objects.remove_dynamic_vfs_mount_by_path(path)
+    } else {
+        runtime.objects.remove_dynamic_vfs_mount(mount.root_node)
+    };
+    if let Some(mount_id) = removed_mount {
         runtime.remove_vfs_mount_id(mount_id);
     }
 
@@ -7803,20 +9891,46 @@ pub fn vfs_unmount(cap_slot: u64, path: *const u8, path_len: usize) -> Result<()
     Ok(())
 }
 
-pub fn vfs_sync(handle: u64) -> Result<(), IpcError> {
+pub fn vfs_sync(handle: u64, frame: &mut SyscallFrame) -> Result<(), IpcError> {
     let (_description, node) = current_open_file(handle)?;
     match node.backing {
         VfsBacking::StoreObject(_)
         | VfsBacking::StateVolumeValue(_)
         | VfsBacking::MemoryFile(_)
+        | VfsBacking::VertexFsFile(_)
         | VfsBacking::Synthetic(_) => {}
         _ => return Err(IpcError::VfsUnsupported),
+    }
+    if let VfsBacking::VertexFsFile(backing) = node.backing {
+        match runtime().prepare_vertexfs_sync_file(backing)? {
+            VertexFsSyncResult::Journaled {
+                inode_id,
+                checksum,
+                write_count,
+            } => {
+                return start_vertexfs_sync_transaction(
+                    backing,
+                    inode_id,
+                    checksum,
+                    write_count,
+                    frame,
+                );
+            }
+            VertexFsSyncResult::Cached { checksum } => {
+                serial::write_str("VertexFS v1 fsync cached runtime file=");
+                serial_write_vfs_name(node.name);
+                serial::write_str(" checksum=");
+                serial::write_u64_dec(checksum as u64);
+                serial::write_str("\n");
+            }
+        }
     }
     serial::write_str("VFS sync accepted: proc=");
     serial::write_str(current_process_name());
     serial::write_str(" file=");
     serial_write_vfs_name(node.name);
     serial::write_str("\n");
+    frame.rax = STATUS_OK;
     Ok(())
 }
 
@@ -7937,6 +10051,9 @@ pub fn vfs_create(cap_slot: u64, path: *const u8, packed_len_flags: u64) -> Resu
     usercopy::copy_from_user(&mut path_bytes, UserPtr::new(path as u64), path_len)
         .map_err(|_| IpcError::InvalidUserBuffer)?;
     let path = &path_bytes[..path_len];
+    if vfs_request_path_is_read_only(path)? {
+        return Err(IpcError::VfsPermission);
+    }
     let cap = lookup_capability(cap_slot, capability::RIGHT_RESOLVE)
         .map_err(|_| IpcError::VfsPermission)?;
     vfs_create_memory_file_node(cap, path, 0)?;
@@ -7959,6 +10076,9 @@ pub fn vfs_mkdir(cap_slot: u64, path: *const u8, packed_len_flags: u64) -> Resul
     usercopy::copy_from_user(&mut path_bytes, UserPtr::new(path as u64), path_len)
         .map_err(|_| IpcError::InvalidUserBuffer)?;
     let requested_path = &path_bytes[..path_len];
+    if vfs_request_path_is_read_only(requested_path)? {
+        return Err(IpcError::VfsPermission);
+    }
     let cap = lookup_capability(cap_slot, capability::RIGHT_RESOLVE)
         .map_err(|_| IpcError::VfsPermission)?;
     let node = vfs_create_directory_node(cap, requested_path)?;
@@ -7983,6 +10103,9 @@ pub fn vfs_unlink(cap_slot: u64, path: *const u8, path_len: usize) -> Result<(),
     let requested_path = &path_bytes[..path_len];
     let canonical_path = resolve_process_vfs_path(requested_path)?;
     let path = canonical_path.as_bytes();
+    if vfs_path_is_read_only(path) {
+        return Err(IpcError::VfsPermission);
+    }
     let cap = lookup_capability(cap_slot, capability::RIGHT_RESOLVE)
         .map_err(|_| IpcError::VfsPermission)?;
     let available = resolve_vfs_root_authority(cap, path)?;
@@ -8034,6 +10157,9 @@ pub fn vfs_rmdir(cap_slot: u64, path: *const u8, path_len: usize) -> Result<(), 
     let requested_path = &path_bytes[..path_len];
     let canonical_path = resolve_process_vfs_path(requested_path)?;
     let path = canonical_path.as_bytes();
+    if vfs_path_is_read_only(path) {
+        return Err(IpcError::VfsPermission);
+    }
     let (parent_path, _) = split_vfs_parent_child(path)?;
     let cap = lookup_capability(cap_slot, capability::RIGHT_RESOLVE)
         .map_err(|_| IpcError::VfsPermission)?;
@@ -8105,6 +10231,9 @@ pub fn vfs_rename(cap_slot: u64, request: *const u8, request_len: usize) -> Resu
     let new_canonical = resolve_process_vfs_path(new_requested)?;
     let old_path = old_canonical.as_bytes();
     let new_path = new_canonical.as_bytes();
+    if vfs_path_is_read_only(old_path) || vfs_path_is_read_only(new_path) {
+        return Err(IpcError::VfsPermission);
+    }
     let (old_parent_path, _) = split_vfs_parent_child(old_path)?;
     let (new_parent_path, new_child_name) = split_vfs_parent_child(new_path)?;
     let new_child_name =
@@ -8203,6 +10332,9 @@ pub fn vfs_link(cap_slot: u64, request: *const u8, request_len: usize) -> Result
     let new_canonical = resolve_process_vfs_path(new_requested)?;
     let old_path = old_canonical.as_bytes();
     let new_path = new_canonical.as_bytes();
+    if vfs_path_is_read_only(new_path) {
+        return Err(IpcError::VfsPermission);
+    }
     let (old_parent_path, _) = split_vfs_parent_child(old_path)?;
     let (new_parent_path, new_child_name) = split_vfs_parent_child(new_path)?;
     let new_child_name =
@@ -8425,6 +10557,42 @@ fn valid_vfs_root_path(path: &[u8]) -> bool {
     true
 }
 
+fn valid_boot_process_mounts(process: BootProcessConfig) -> bool {
+    if process.mount_count > MAX_BOOT_PROCESS_MOUNTS {
+        return false;
+    }
+    let mut index = 0;
+    while index < process.mount_count {
+        let Some(mount) = process.mounts[index] else {
+            return false;
+        };
+        if !valid_vfs_root_path(mount.path.as_bytes())
+            || !valid_vfs_root_path(mount.source.as_bytes())
+            || mount.path == "/"
+            || mount.flags & !known_boot_process_mount_flags() != 0
+            || mount.flags & BOOT_PROCESS_MOUNT_BIND == 0
+        {
+            return false;
+        }
+        let mut prior = 0;
+        while prior < index {
+            let Some(existing) = process.mounts[prior] else {
+                return false;
+            };
+            if existing.path == mount.path {
+                return false;
+            }
+            prior += 1;
+        }
+        index += 1;
+    }
+    true
+}
+
+fn known_boot_process_mount_flags() -> u16 {
+    BOOT_PROCESS_MOUNT_BIND | BOOT_PROCESS_MOUNT_READ_ONLY
+}
+
 fn split_vfs_parent_child(path: &[u8]) -> Result<(&[u8], &[u8]), IpcError> {
     validate_vfs_absolute_path(path)?;
     let mut slash = path.len();
@@ -8489,6 +10657,53 @@ fn resolve_process_vfs_path(path: &[u8]) -> Result<VfsPath, IpcError> {
     Ok(resolved)
 }
 
+fn resolve_vfs_path_under_root(root: VfsPath, path: &[u8]) -> Result<VfsPath, IpcError> {
+    if path == b"/" {
+        return Ok(root);
+    }
+    validate_vfs_absolute_path(path)?;
+    if root.as_bytes() == b"/" {
+        return VfsPath::from_root_path(path);
+    }
+    let combined_len = root
+        .len
+        .checked_add(path.len())
+        .ok_or(IpcError::VfsBadPath)?;
+    if combined_len > MAX_VFS_PATH_BYTES {
+        return Err(IpcError::VfsBadPath);
+    }
+    let mut resolved = VfsPath::empty();
+    let mut index = 0;
+    while index < root.len {
+        resolved.bytes[index] = root.bytes[index];
+        index += 1;
+    }
+    let mut path_index = 0;
+    while path_index < path.len() {
+        resolved.bytes[index] = path[path_index];
+        index += 1;
+        path_index += 1;
+    }
+    resolved.len = combined_len;
+    Ok(resolved)
+}
+
+fn vfs_request_path_is_read_only(path: &[u8]) -> Result<bool, IpcError> {
+    let canonical_path = if path.is_empty() {
+        resolve_process_vfs_path(b"/")?
+    } else {
+        resolve_process_vfs_path(path)?
+    };
+    Ok(vfs_path_is_read_only(canonical_path.as_bytes()))
+}
+
+fn vfs_path_is_read_only(path: &[u8]) -> bool {
+    runtime()
+        .objects
+        .get_vfs_mount_by_path(path)
+        .is_some_and(|mount| mount.flags & VFS_MOUNT_READ_ONLY != 0)
+}
+
 fn resolve_vfs_root_authority(cap: Capability, path: &[u8]) -> Result<u64, IpcError> {
     let root = runtime()
         .objects
@@ -8529,20 +10744,38 @@ fn vfs_create_memory_file_node(
     }
 
     let runtime = runtime();
-    let backing = runtime
-        .add_vfs_empty_memory_file()
-        .map_err(|_| IpcError::VfsNoSpace)?;
-    let node_id = match runtime.add_vfs_node_with_name(
-        child_name,
-        Some(parent.id),
-        VfsNodeKind::RegularFile,
-        VfsBacking::MemoryFile(backing),
-        parent.mount_source,
-    ) {
-        Ok(node_id) => node_id,
-        Err(_) => {
-            let _ = runtime.release_vfs_memory_file(backing);
-            return Err(IpcError::VfsNoSpace);
+    let node_id = if parent.mount_source == "vertexfs" {
+        let parent_inode = vertexfs_directory_inode_for_node(parent)?;
+        let backing = runtime.add_empty_vertexfs_file(child_name, parent_inode)?;
+        match runtime.add_vfs_node_with_name(
+            child_name,
+            Some(parent.id),
+            VfsNodeKind::RegularFile,
+            VfsBacking::VertexFsFile(backing),
+            parent.mount_source,
+        ) {
+            Ok(node_id) => node_id,
+            Err(_) => {
+                let _ = runtime.release_vertexfs_file(backing);
+                return Err(IpcError::VfsNoSpace);
+            }
+        }
+    } else {
+        let backing = runtime
+            .add_vfs_empty_memory_file()
+            .map_err(|_| IpcError::VfsNoSpace)?;
+        match runtime.add_vfs_node_with_name(
+            child_name,
+            Some(parent.id),
+            VfsNodeKind::RegularFile,
+            VfsBacking::MemoryFile(backing),
+            parent.mount_source,
+        ) {
+            Ok(node_id) => node_id,
+            Err(_) => {
+                let _ = runtime.release_vfs_memory_file(backing);
+                return Err(IpcError::VfsNoSpace);
+            }
         }
     };
     let node = runtime.vfs_node(node_id).ok_or(IpcError::VfsBadHandle)?;
@@ -8582,18 +10815,34 @@ fn vfs_create_directory_node(cap: Capability, path: &[u8]) -> Result<VfsNode, Ip
     runtime.vfs_node(node_id).ok_or(IpcError::VfsBadHandle)
 }
 
+fn vertexfs_directory_inode_for_node(node: VfsNode) -> Result<u32, IpcError> {
+    if node.mount_source != "vertexfs" {
+        return Err(IpcError::VfsUnsupported);
+    }
+    if node.name.as_bytes() == b"app" {
+        return Ok(VERTEXFS_INODE_APP_DIR);
+    }
+    Err(IpcError::VfsUnsupported)
+}
+
 fn release_created_vfs_memory_node(runtime: &mut RuntimeState, created_node: Option<VfsNode>) {
     let Some(node) = created_node else {
-        return;
-    };
-    let VfsBacking::MemoryFile(backing) = node.backing else {
         return;
     };
     if runtime.vfs_node_has_open_description(node.id) {
         return;
     }
-    let _ = runtime.remove_vfs_node(node.id);
-    let _ = runtime.release_vfs_memory_file(backing);
+    match node.backing {
+        VfsBacking::MemoryFile(backing) => {
+            let _ = runtime.remove_vfs_node(node.id);
+            let _ = runtime.release_vfs_memory_file(backing);
+        }
+        VfsBacking::VertexFsFile(backing) => {
+            let _ = runtime.remove_vfs_node(node.id);
+            let _ = runtime.release_vertexfs_file(backing);
+        }
+        _ => {}
+    }
 }
 
 fn resolve_vfs_node_from_cap(cap: Capability, path: &[u8]) -> Result<(VfsNode, u64), IpcError> {
@@ -8780,6 +11029,27 @@ fn vfs_read_node(
                     .ok_or(IpcError::VfsUnsupported)?,
             ))
         }
+        VfsBacking::VertexFsFile(index) => {
+            let runtime = runtime();
+            if index >= runtime.vertexfs_file_count {
+                return Err(IpcError::VfsBadHandle);
+            }
+            let file = runtime.vertexfs_files[index];
+            let start = min(usize::try_from(offset).unwrap_or(usize::MAX), file.len);
+            let remaining = file.len - start;
+            let copy_len = min(remaining, max_len);
+            usercopy::copy_to_user(
+                UserPtr::new(destination as u64),
+                &file.bytes[start..start + copy_len],
+            )
+            .map_err(|_| IpcError::InvalidUserBuffer)?;
+            Ok((
+                copy_len,
+                offset
+                    .checked_add(copy_len as u64)
+                    .ok_or(IpcError::VfsUnsupported)?,
+            ))
+        }
         VfsBacking::Synthetic(bytes) => {
             let start = min(usize::try_from(offset).unwrap_or(usize::MAX), bytes.len());
             let remaining = bytes.len() - start;
@@ -8801,6 +11071,7 @@ fn vfs_read_node(
         | VfsBacking::StateVolumeValue(_)
         | VfsBacking::StateVolumeControl(_)
         | VfsBacking::Device(_)
+        | VfsBacking::FsServiceReport
         | VfsBacking::Pipe => Err(IpcError::VfsNotFile),
     }
 }
@@ -8834,6 +11105,35 @@ fn vfs_write_node(node: VfsNode, offset: u64, bytes: &[u8]) -> Result<(usize, u6
             runtime.touch_vfs_memory_file_nodes(index)?;
             Ok((bytes.len(), end as u64))
         }
+        VfsBacking::VertexFsFile(index) => {
+            if bytes.len() > MAX_VERTEXFS_FILE_BYTES {
+                return Err(IpcError::VfsNoSpace);
+            }
+            let start = usize::try_from(offset).map_err(|_| IpcError::VfsNoSpace)?;
+            let end = start.checked_add(bytes.len()).ok_or(IpcError::VfsNoSpace)?;
+            if end > MAX_VERTEXFS_FILE_BYTES {
+                return Err(IpcError::VfsNoSpace);
+            }
+            let runtime = runtime();
+            if index >= runtime.vertexfs_file_count {
+                return Err(IpcError::VfsBadHandle);
+            }
+            {
+                let file = &mut runtime.vertexfs_files[index];
+                let mut cursor = 0;
+                while cursor < bytes.len() {
+                    file.bytes[start + cursor] = bytes[cursor];
+                    cursor += 1;
+                }
+                if end > file.len {
+                    file.len = end;
+                }
+                file.dirty = true;
+                file.checksum = vertexfs_checksum32(&file.bytes[..file.len]);
+            }
+            runtime.touch_vertexfs_file_nodes(index)?;
+            Ok((bytes.len(), end as u64))
+        }
         _ => Err(IpcError::VfsUnsupported),
     }
 }
@@ -8850,6 +11150,21 @@ fn vfs_truncate_node(node: VfsNode, len: usize) -> Result<(), IpcError> {
             }
             runtime.vfs_mem_files[index].len = len;
             runtime.touch_vfs_memory_file_nodes(index)?;
+            Ok(())
+        }
+        VfsBacking::VertexFsFile(index) => {
+            if len > MAX_VERTEXFS_FILE_BYTES {
+                return Err(IpcError::VfsNoSpace);
+            }
+            let runtime = runtime();
+            if index >= runtime.vertexfs_file_count {
+                return Err(IpcError::VfsBadHandle);
+            }
+            runtime.vertexfs_files[index].len = len;
+            runtime.vertexfs_files[index].dirty = true;
+            runtime.vertexfs_files[index].checksum =
+                vertexfs_checksum32(&runtime.vertexfs_files[index].bytes[..len]);
+            runtime.touch_vertexfs_file_nodes(index)?;
             Ok(())
         }
         _ => Err(IpcError::VfsUnsupported),
@@ -8870,7 +11185,15 @@ fn vfs_node_len(node: VfsNode) -> Result<u64, IpcError> {
             }
             Ok(runtime.vfs_mem_files[index].len as u64)
         }
+        VfsBacking::VertexFsFile(index) => {
+            let runtime = runtime();
+            if index >= runtime.vertexfs_file_count {
+                return Err(IpcError::VfsBadHandle);
+            }
+            Ok(runtime.vertexfs_files[index].len as u64)
+        }
         VfsBacking::Synthetic(bytes) => Ok(bytes.len() as u64),
+        VfsBacking::FsServiceReport => Ok(VFS_SERVICE_REPORT_BYTES.len() as u64),
         VfsBacking::None
         | VfsBacking::StateVolume(_)
         | VfsBacking::StateVolumeValue(_)
@@ -8892,6 +11215,31 @@ fn vfs_node_kind_value(kind: VfsNodeKind) -> u64 {
 
 fn serial_write_vfs_name(name: VfsName) {
     serial::write_ascii_bytes(name.as_bytes());
+}
+
+fn serial_write_vfs_mount_flags(flags: u64) {
+    let mut wrote = false;
+    if flags & VFS_MOUNT_VOLATILE != 0 {
+        serial::write_str("volatile");
+        wrote = true;
+    }
+    if flags & VFS_MOUNT_BIND != 0 {
+        if wrote {
+            serial::write_str("|");
+        }
+        serial::write_str("bind");
+        wrote = true;
+    }
+    if flags & VFS_MOUNT_READ_ONLY != 0 {
+        if wrote {
+            serial::write_str("|");
+        }
+        serial::write_str("read-only");
+        wrote = true;
+    }
+    if !wrote {
+        serial::write_str("none");
+    }
 }
 
 fn store_object_len(object: StoreObject) -> Result<usize, IpcError> {
@@ -8935,6 +11283,28 @@ fn write_u16_le(destination: &mut [u8], offset: usize, value: u16) {
     let bytes = value.to_le_bytes();
     destination[offset] = bytes[0];
     destination[offset + 1] = bytes[1];
+}
+
+fn write_u32_le(destination: &mut [u8], offset: usize, value: u32) {
+    let bytes = value.to_le_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        destination[offset + index] = bytes[index];
+        index += 1;
+    }
+}
+
+fn read_u16_le(source: &[u8], offset: usize) -> u16 {
+    u16::from_le_bytes([source[offset], source[offset + 1]])
+}
+
+fn read_u32_le(source: &[u8], offset: usize) -> u32 {
+    u32::from_le_bytes([
+        source[offset],
+        source[offset + 1],
+        source[offset + 2],
+        source[offset + 3],
+    ])
 }
 
 fn read_u64_le(source: &[u8], offset: usize) -> u64 {
@@ -11146,6 +13516,106 @@ fn start_vfs_state_transaction(
     Err(IpcError::Empty)
 }
 
+fn start_vfs_service_read_transaction(
+    node: VfsNode,
+    description: OpenFileDescription,
+    offset: u64,
+    destination: u64,
+    max_len: usize,
+    update_offset: bool,
+    frame: &mut SyscallFrame,
+) -> Result<(), IpcError> {
+    let (request_endpoint, reply_endpoint) = {
+        let runtime = runtime();
+        (
+            runtime
+                .state_vfs_request_endpoint
+                .ok_or(IpcError::VfsUnsupported)?,
+            runtime
+                .state_vfs_reply_endpoint
+                .ok_or(IpcError::VfsUnsupported)?,
+        )
+    };
+    let transaction_id = {
+        let runtime = runtime();
+        let id = runtime.next_vfs_state_transaction_id;
+        if id == 0 || id == u64::MAX {
+            return Err(IpcError::VfsNoSpace);
+        }
+        runtime.next_vfs_state_transaction_id = id + 1;
+        id
+    };
+
+    let current = {
+        let runtime = runtime();
+        let Some(process) = runtime.processes.current_process_mut() else {
+            return Err(IpcError::VfsPermission);
+        };
+        process.saved_frame = *frame;
+        process.has_saved_frame = true;
+        process.state = ProcessState::BlockedOnVfsState {
+            reply_endpoint,
+            node: node.id,
+            description: description.id,
+            operation: VfsStateOperation::ServiceRead,
+            transaction_id,
+            offset,
+            destination,
+            max_len,
+            write_len: 0,
+            update_offset,
+        };
+        process.name
+    };
+
+    let mut queued_request = [0u8; MAX_MESSAGE_BYTES];
+    write_u64_le(&mut queued_request, 0, transaction_id);
+    queued_request[8] = VFS_SERVICE_REQUEST_MAGIC[0];
+    queued_request[9] = VFS_SERVICE_REQUEST_MAGIC[1];
+    queued_request[10] = VFS_SERVICE_REQUEST_VERSION;
+    queued_request[11] = VFS_SERVICE_OP_READ_REPORT;
+    let enqueue_result = {
+        let runtime = runtime();
+        runtime
+            .objects
+            .get_endpoint_mut(request_endpoint)
+            .ok_or(IpcError::BadCapability)?
+            .enqueue(
+                ProcessId::empty(),
+                &queued_request,
+                VFS_SERVICE_REQUEST_BYTES,
+            )
+    };
+    if let Err(error) = enqueue_result {
+        restore_current_vfs_state_waiter(reply_endpoint);
+        return Err(error);
+    }
+
+    serial::write_str("VFS filesystem service request: proc=");
+    serial::write_str(current);
+    serial::write_str(" file=");
+    serial_write_vfs_name(node.name);
+    serial::write_str(" tx=");
+    serial::write_u64_dec(transaction_id);
+    serial::write_str("\n");
+
+    wake_blocked_receiver(request_endpoint);
+
+    if schedule_next_ready(frame) {
+        return Ok(());
+    }
+
+    restore_current_vfs_state_waiter(reply_endpoint);
+    if let Some(endpoint) = runtime().objects.get_endpoint_mut(request_endpoint) {
+        let _ = endpoint.remove_vfs_state_request(ProcessId::empty(), transaction_id);
+    }
+
+    serial::write_str("Scheduler blocked: proc=");
+    serial::write_str(current);
+    serial::write_str(" no ready process for VFS filesystem service transaction\n");
+    Err(IpcError::Empty)
+}
+
 fn restore_current_vfs_state_waiter(reply_endpoint: KernelObjectId) {
     let runtime = runtime();
     if let Some(process) = runtime.processes.current_process_mut()
@@ -11157,6 +13627,146 @@ fn restore_current_vfs_state_waiter(reply_endpoint: KernelObjectId) {
     {
         process.state = ProcessState::Running;
     }
+}
+
+fn start_vertexfs_sync_transaction(
+    backing: usize,
+    inode_id: u32,
+    checksum: u32,
+    write_count: usize,
+    frame: &mut SyscallFrame,
+) -> Result<(), IpcError> {
+    if write_count == 0 || write_count > VERTEXFS_SYNC_MAX_DEVICE_WRITES {
+        return Err(IpcError::VfsUnsupported);
+    }
+    let (request_endpoint, reply_endpoint, first_sector) = {
+        let runtime = runtime();
+        let request_endpoint = runtime
+            .vertexfs_device_request_endpoint
+            .ok_or(IpcError::VfsUnsupported)?;
+        let reply_endpoint = runtime
+            .vertexfs_device_reply_endpoint
+            .ok_or(IpcError::VfsUnsupported)?;
+        if blocked_vertexfs_sync_waiter_index(reply_endpoint).is_some() {
+            return Err(IpcError::VfsBusy);
+        }
+        let first_sector = vertexfs_device_absolute_sector(runtime.vertexfs_sync_writes[0].sector)?;
+        (request_endpoint, reply_endpoint, first_sector)
+    };
+
+    let current = {
+        let runtime = runtime();
+        let Some(process) = runtime.processes.current_process_mut() else {
+            return Err(IpcError::VfsPermission);
+        };
+        process.saved_frame = *frame;
+        process.has_saved_frame = true;
+        process.state = ProcessState::BlockedOnVertexFsSync {
+            request_endpoint,
+            reply_endpoint,
+            backing,
+            inode_id,
+            checksum,
+            write_count,
+            next_write: 1,
+            expected_sector: first_sector,
+        };
+        process.name
+    };
+
+    if let Err(error) = queue_vertexfs_device_write(request_endpoint, 0) {
+        restore_current_vertexfs_sync_waiter(reply_endpoint);
+        return Err(error);
+    }
+    wake_blocked_receiver(request_endpoint);
+
+    serial::write_str("VertexFS v1 fsync device transaction started: proc=");
+    serial::write_str(current);
+    serial::write_str(" inode=");
+    serial::write_u64_dec(inode_id as u64);
+    serial::write_str(" sectors=");
+    serial::write_u64_dec(write_count as u64);
+    serial::write_str("\n");
+
+    if schedule_next_ready(frame) {
+        return Ok(());
+    }
+
+    restore_current_vertexfs_sync_waiter(reply_endpoint);
+    if let Some(endpoint) = runtime().objects.get_endpoint_mut(request_endpoint) {
+        let _ = endpoint.remove_all_from_sender(ProcessId::empty());
+    }
+    serial::write_str("Scheduler blocked: proc=");
+    serial::write_str(current);
+    serial::write_str(" no ready process for VertexFS device sync\n");
+    Err(IpcError::Empty)
+}
+
+fn restore_current_vertexfs_sync_waiter(reply_endpoint: KernelObjectId) {
+    let runtime = runtime();
+    if let Some(process) = runtime.processes.current_process_mut()
+        && let ProcessState::BlockedOnVertexFsSync {
+            reply_endpoint: waiting_endpoint,
+            ..
+        } = process.state
+        && waiting_endpoint == reply_endpoint
+    {
+        process.state = ProcessState::Running;
+    }
+}
+
+fn queue_vertexfs_device_write(
+    request_endpoint: KernelObjectId,
+    write_index: usize,
+) -> Result<u64, IpcError> {
+    let write = {
+        let runtime = runtime();
+        if write_index >= runtime.vertexfs_sync_write_count {
+            return Err(IpcError::VfsBadHandle);
+        }
+        runtime.vertexfs_sync_writes[write_index]
+    };
+    let absolute_sector = vertexfs_device_absolute_sector(write.sector)?;
+    let mut request = [0u8; MAX_MESSAGE_BYTES];
+    write_u16_le(&mut request, 0, BLOCK_PROTOCOL_V1);
+    write_u16_le(&mut request, 2, BLOCK_OP_WRITE_SECTOR);
+    write_u16_le(&mut request, 4, 0);
+    write_u64_le(&mut request, 8, absolute_sector);
+
+    let enqueue_result = {
+        let runtime = runtime();
+        let endpoint = runtime
+            .objects
+            .get_endpoint_mut(request_endpoint)
+            .ok_or(IpcError::BadCapability)?;
+        endpoint.enqueue(ProcessId::empty(), &request, BLOCK_REQUEST_LEN)?;
+        let mut payload = [0u8; MAX_MESSAGE_BYTES];
+        payload.copy_from_slice(&write.bytes);
+        if let Err(error) = endpoint.enqueue(ProcessId::empty(), &payload, VERTEXFS_SECTOR_SIZE) {
+            let _ = endpoint.remove_all_from_sender(ProcessId::empty());
+            return Err(error);
+        }
+        Ok(())
+    };
+    enqueue_result?;
+    Ok(absolute_sector)
+}
+
+fn vertexfs_device_absolute_sector(vertexfs_sector: u64) -> Result<u64, IpcError> {
+    if vertexfs_sector >= VERTEXFS_SECTORS as u64 {
+        return Err(IpcError::VfsUnsupported);
+    }
+    VERTEXDISK_VERTEXFS_IMAGE_SECTOR
+        .checked_add(vertexfs_sector)
+        .ok_or(IpcError::VfsUnsupported)
+}
+
+fn vertexfs_device_ack_ok(message: IpcMessage, expected_sector: u64) -> bool {
+    message.len == BLOCK_WRITE_ACK_LEN
+        && read_u16_le(&message.bytes, 0) == BLOCK_PROTOCOL_V1
+        && read_u16_le(&message.bytes, 2) == BLOCK_OP_WRITE_SECTOR
+        && read_u16_le(&message.bytes, 4) == 0
+        && read_u64_le(&message.bytes, 8) == expected_sector
 }
 
 fn abort_vfs_state_transactions(status: u64) {
@@ -11219,6 +13829,43 @@ fn vfs_state_operation_label(operation: VfsStateOperation) -> &'static str {
         VfsStateOperation::Stat => "stat",
         VfsStateOperation::Write => "write",
         VfsStateOperation::Control => "control",
+        VfsStateOperation::ServiceRead => "service-read",
+    }
+}
+
+fn abort_vertexfs_sync_transactions(status: u64) {
+    let (request_endpoint, reply_endpoint) = {
+        let runtime = runtime();
+        (
+            runtime.vertexfs_device_request_endpoint,
+            runtime.vertexfs_device_reply_endpoint,
+        )
+    };
+    if let Some(endpoint_id) = request_endpoint
+        && let Some(endpoint) = runtime().objects.get_endpoint_mut(endpoint_id)
+    {
+        let _ = endpoint.remove_all_from_sender(ProcessId::empty());
+    }
+    let Some(reply_endpoint) = reply_endpoint else {
+        return;
+    };
+    let runtime = runtime();
+    let mut index = 0;
+    while index < runtime.processes.count {
+        if let Some(process) = runtime.processes.processes[index].as_mut()
+            && let ProcessState::BlockedOnVertexFsSync {
+                reply_endpoint: waiting_endpoint,
+                ..
+            } = process.state
+            && waiting_endpoint == reply_endpoint
+        {
+            process.saved_frame.rax = status;
+            process.state = ProcessState::Ready;
+            serial::write_str("VertexFS v1 fsync device transaction aborted: proc=");
+            serial::write_str(process.name);
+            serial::write_str("\n");
+        }
+        index += 1;
     }
 }
 
@@ -11228,6 +13875,7 @@ fn vfs_state_operation_code(operation: VfsStateOperation) -> u8 {
         VfsStateOperation::Stat => VFS_STATE_OP_STAT_VALUE,
         VfsStateOperation::Write => VFS_STATE_OP_WRITE_VALUE,
         VfsStateOperation::Control => VFS_STATE_OP_CONTROL,
+        VfsStateOperation::ServiceRead => VFS_SERVICE_OP_READ_REPORT,
     }
 }
 
@@ -11567,7 +14215,7 @@ fn wake_blocked_vfs_state_reply(endpoint: KernelObjectId) {
     };
 
     let result = match operation {
-        VfsStateOperation::Read => wake_blocked_vfs_state_read(
+        VfsStateOperation::Read | VfsStateOperation::ServiceRead => wake_blocked_vfs_state_read(
             receiver_cr3,
             current_cr3,
             destination,
@@ -11609,7 +14257,11 @@ fn wake_blocked_vfs_state_reply(endpoint: KernelObjectId) {
             .map(|node| node.name)
             .unwrap_or_else(VfsName::empty)
     };
-    serial::write_str("VFS state transaction wake: proc=");
+    if operation == VfsStateOperation::ServiceRead {
+        serial::write_str("VFS filesystem service transaction wake: proc=");
+    } else {
+        serial::write_str("VFS state transaction wake: proc=");
+    }
     serial::write_str(name);
     serial::write_str(" file=");
     serial_write_vfs_name(file_name);
@@ -11617,6 +14269,120 @@ fn wake_blocked_vfs_state_reply(endpoint: KernelObjectId) {
     serial::write_str(vfs_state_operation_label(operation));
     serial::write_str(" result=");
     serial::write_u64_dec(result);
+    serial::write_str("\n");
+}
+
+fn wake_blocked_vertexfs_sync_reply(endpoint: KernelObjectId) {
+    let Some(waiter_index) = blocked_vertexfs_sync_waiter_index(endpoint) else {
+        return;
+    };
+
+    let (
+        name,
+        receiver_pid,
+        request_endpoint,
+        backing,
+        inode_id,
+        checksum,
+        write_count,
+        next_write,
+        expected_sector,
+    ) = {
+        let runtime = runtime();
+        let Some(waiter) = runtime.processes.processes[waiter_index] else {
+            return;
+        };
+        let ProcessState::BlockedOnVertexFsSync {
+            request_endpoint,
+            backing,
+            inode_id,
+            checksum,
+            write_count,
+            next_write,
+            expected_sector,
+            ..
+        } = waiter.state
+        else {
+            return;
+        };
+        (
+            waiter.name,
+            waiter.pid,
+            request_endpoint,
+            backing,
+            inode_id,
+            checksum,
+            write_count,
+            next_write,
+            expected_sector,
+        )
+    };
+
+    let Some(message) = ({
+        let runtime = runtime();
+        let Some(endpoint_object) = runtime.objects.get_endpoint_mut(endpoint) else {
+            return;
+        };
+        endpoint_object.dequeue_for(receiver_pid)
+    }) else {
+        return;
+    };
+
+    if !vertexfs_device_ack_ok(message, expected_sector) {
+        if let Some(waiter) = runtime().processes.processes[waiter_index].as_mut() {
+            waiter.saved_frame.rax = STATUS_VFS_UNSUPPORTED;
+            waiter.state = ProcessState::Ready;
+        }
+        serial::write_str("VertexFS v1 fsync device write rejected: proc=");
+        serial::write_str(name);
+        serial::write_str(" sector=");
+        serial::write_u64_dec(expected_sector);
+        serial::write_str("\n");
+        return;
+    }
+
+    if next_write < write_count {
+        let Ok(next_sector) = queue_vertexfs_device_write(request_endpoint, next_write) else {
+            if let Some(waiter) = runtime().processes.processes[waiter_index].as_mut() {
+                waiter.saved_frame.rax = STATUS_VFS_UNSUPPORTED;
+                waiter.state = ProcessState::Ready;
+            }
+            serial::write_str("VertexFS v1 fsync device queue failed: proc=");
+            serial::write_str(name);
+            serial::write_str("\n");
+            return;
+        };
+        if let Some(waiter) = runtime().processes.processes[waiter_index].as_mut()
+            && let ProcessState::BlockedOnVertexFsSync {
+                next_write: waiting_next_write,
+                expected_sector: waiting_expected_sector,
+                ..
+            } = &mut waiter.state
+        {
+            *waiting_next_write = next_write + 1;
+            *waiting_expected_sector = next_sector;
+        }
+        wake_blocked_receiver(request_endpoint);
+        return;
+    }
+
+    let result = runtime().finish_vertexfs_sync_file(backing, checksum);
+    if let Some(waiter) = runtime().processes.processes[waiter_index].as_mut() {
+        waiter.saved_frame.rax = if result.is_ok() {
+            STATUS_OK
+        } else {
+            STATUS_VFS_BAD_HANDLE
+        };
+        waiter.state = ProcessState::Ready;
+    }
+    serial::write_str("VertexFS v1 fsync device transaction committed: proc=");
+    serial::write_str(name);
+    serial::write_str(" inode=");
+    serial::write_u64_dec(inode_id as u64);
+    serial::write_str(" sectors=");
+    serial::write_u64_dec(write_count as u64);
+    serial::write_str(" checksum=");
+    serial::write_u64_dec(checksum as u64);
     serial::write_str("\n");
 }
 
@@ -11748,6 +14514,26 @@ fn blocked_vfs_state_waiter_index(endpoint: KernelObjectId) -> Option<usize> {
                 .map(|endpoint_object| {
                     endpoint_object.has_vfs_state_reply_for(process.pid, transaction_id)
                 })
+                .unwrap_or(false)
+        {
+            return Some(index);
+        }
+        index += 1;
+    }
+    None
+}
+
+fn blocked_vertexfs_sync_waiter_index(endpoint: KernelObjectId) -> Option<usize> {
+    let runtime = runtime();
+    let mut index = 0;
+    while index < runtime.processes.count {
+        if let Some(process) = runtime.processes.processes[index]
+            && let ProcessState::BlockedOnVertexFsSync { reply_endpoint, .. } = process.state
+            && reply_endpoint == endpoint
+            && runtime
+                .objects
+                .get_endpoint(endpoint)
+                .map(|endpoint_object| endpoint_object.has_message_for(process.pid))
                 .unwrap_or(false)
         {
             return Some(index);
@@ -12506,6 +15292,14 @@ fn write_vfs_report(runtime: &RuntimeState, report: &mut InspectReport) {
             write_vfs_mount_flags(report, mount.flags);
             report.push_str(" dynamic=");
             report.push_str(if mount.dynamic { "yes" } else { "no" });
+            report.push_str(" owner=");
+            if mount.owner == ProcessId::empty() {
+                report.push_str("system");
+            } else {
+                report.push_str(process_name_by_pid(runtime, mount.owner));
+                report.push_str(":");
+                report.push_u64_dec(mount.owner.raw());
+            }
             report.push_byte(b'\n');
         }
         mount_index += 1;
@@ -12556,11 +15350,22 @@ fn write_vfs_report(runtime: &RuntimeState, report: &mut InspectReport) {
                     report.push_str(" backing=memory-file index=");
                     report.push_u64_dec(file as u64);
                 }
+                VfsBacking::VertexFsFile(file) => {
+                    report.push_str(" backing=vertexfs-file index=");
+                    report.push_u64_dec(file as u64);
+                    if file < runtime.vertexfs_file_count {
+                        report.push_str(" dirty=");
+                        write_yes_no(report, runtime.vertexfs_files[file].dirty);
+                        report.push_str(" checksum=");
+                        report.push_u64_dec(runtime.vertexfs_files[file].checksum as u64);
+                    }
+                }
                 VfsBacking::Device(object) => {
                     report.push_str(" backing=device object_id=");
                     report.push_u64_dec(object.raw());
                 }
                 VfsBacking::Synthetic(_) => report.push_str(" backing=synthetic"),
+                VfsBacking::FsServiceReport => report.push_str(" backing=fs-service"),
                 VfsBacking::Pipe => report.push_str(" backing=pipe"),
             }
             report.push_byte(b'\n');
@@ -12636,6 +15441,20 @@ fn write_vfs_mount_flags(report: &mut InspectReport, flags: u64) {
         report.push_str("volatile");
         wrote = true;
     }
+    if flags & VFS_MOUNT_BIND != 0 {
+        if wrote {
+            report.push_str("|");
+        }
+        report.push_str("bind");
+        wrote = true;
+    }
+    if flags & VFS_MOUNT_READ_ONLY != 0 {
+        if wrote {
+            report.push_str("|");
+        }
+        report.push_str("read-only");
+        wrote = true;
+    }
     if !wrote {
         report.push_str("none");
     }
@@ -12704,6 +15523,8 @@ fn object_reachable_by_config(runtime: &RuntimeState, object_id: KernelObjectId)
         || runtime.secret_id == Some(object_id)
         || runtime.state_vfs_request_endpoint == Some(object_id)
         || runtime.state_vfs_reply_endpoint == Some(object_id)
+        || runtime.vertexfs_device_request_endpoint == Some(object_id)
+        || runtime.vertexfs_device_reply_endpoint == Some(object_id)
 }
 
 fn object_reachable_by_owner(runtime: &RuntimeState, object: KernelObject) -> bool {
@@ -13365,6 +16186,22 @@ fn reap_process_context(pid: ProcessId) -> Result<(), IpcError> {
         process.clear_file_handles();
     }
     runtime.release_process_file_descriptions(pid);
+    let removed_dynamic_bind_mounts = runtime.remove_owned_dynamic_bind_mounts(pid);
+    let removed_declared_bind_mounts = runtime.remove_owned_declared_bind_mounts(pid);
+    if removed_dynamic_bind_mounts > 0 {
+        serial::write_str("Krust process dynamic bind mounts reaped: proc=");
+        serial::write_str(name);
+        serial::write_str(" mounts=");
+        serial::write_u64_dec(removed_dynamic_bind_mounts);
+        serial::write_str("\n");
+    }
+    if removed_declared_bind_mounts > 0 {
+        serial::write_str("Krust process declared mount snapshot reaped: proc=");
+        serial::write_str(name);
+        serial::write_str(" mounts=");
+        serial::write_u64_dec(removed_declared_bind_mounts);
+        serial::write_str("\n");
+    }
     release_unreferenced_derived_vfs_roots(runtime);
     if already_reaped || cr3 == 0 {
         return Ok(());

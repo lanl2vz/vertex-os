@@ -169,6 +169,7 @@ fn validate_vfs_root_capability(capability: &Capability, report: &mut Validation
 
 fn validate_service_mount_root(service: &Service, report: &mut ValidationReport) {
     let Some(value) = service.extra.get("mountRoot") else {
+        report.error(format!("service {} must declare mountRoot", service.id));
         return;
     };
     let Some(root) = value.as_str() else {
@@ -181,6 +182,63 @@ fn validate_service_mount_root(service: &Service, report: &mut ValidationReport)
             service.id, root
         ));
     }
+}
+
+fn validate_service_mounts(service: &Service, report: &mut ValidationReport) {
+    let Some(value) = service.extra.get("mounts") else {
+        return;
+    };
+    let Some(mounts) = value.as_array() else {
+        report.error(format!("service {} mounts must be an array", service.id));
+        return;
+    };
+    if mounts.len() > 4 {
+        report.error(format!(
+            "service {} declares too many mounts; max 4",
+            service.id
+        ));
+    }
+    for (index, mount) in mounts.iter().enumerate() {
+        let context = format!("service {} mounts[{index}]", service.id);
+        let Some(object) = mount.as_object() else {
+            report.error(format!("{context} must be an object"));
+            continue;
+        };
+        let path = validate_required_mount_path(object.get("path"), &context, "path", report);
+        let _source =
+            validate_required_mount_path(object.get("source"), &context, "source", report);
+        if path.is_some_and(|path| path == "/") {
+            report.error(format!("{context} path cannot replace namespace root"));
+        }
+        match object.get("readOnly") {
+            Some(value) if value.is_boolean() => {}
+            Some(_) => report.error(format!("{context} readOnly must be a boolean")),
+            None => report.error(format!("{context} must declare readOnly")),
+        }
+    }
+}
+
+fn validate_required_mount_path<'a>(
+    value: Option<&'a Value>,
+    context: &str,
+    field: &str,
+    report: &mut ValidationReport,
+) -> Option<&'a str> {
+    let Some(value) = value else {
+        report.error(format!("{context} must declare {field}"));
+        return None;
+    };
+    let Some(path) = value.as_str() else {
+        report.error(format!("{context} {field} must be a string"));
+        return None;
+    };
+    if !is_valid_vfs_absolute_path(path) {
+        report.error(format!(
+            "{context} {field} {path} must be an absolute non-trailing-slash path"
+        ));
+        return None;
+    }
+    Some(path)
 }
 
 fn is_valid_vfs_absolute_path(path: &str) -> bool {
@@ -327,6 +385,7 @@ fn validate_services(manifest: &GenerationManifest, report: &mut ValidationRepor
         }
 
         validate_service_mount_root(service, report);
+        validate_service_mounts(service, report);
     }
 }
 

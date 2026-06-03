@@ -105,7 +105,8 @@
       "lifecycle": {
         "startAfter": [],
         "stopBefore": []
-      }
+      },
+      "mountRoot": "/"
     },
     {
       "id": "svc:faulty-service",
@@ -133,9 +134,12 @@
       },
       "health": null,
       "lifecycle": {
-        "startAfter": ["svc:vertex-supervisor"],
+        "startAfter": [
+          "svc:vertex-supervisor"
+        ],
         "stopBefore": []
-      }
+      },
+      "mountRoot": "/"
     }
   ],
   "activation": {

@@ -23,10 +23,10 @@ const MAX_STATE_VOLUMES: usize = 4;
 const STATE_ID_BYTES: usize = 64;
 const STATE_ENTRY_LEN: usize = 84;
 const MAX_VFS_STATE_REQUEST_BYTES: usize = 512;
-const VERTEX_DISK_MAGIC: &[u8; 16] = b"VERTEXDISKV0\0\0\0\0";
+const VERTEX_DISK_MAGIC: &[u8; 16] = b"VERTEXDISKV1\0\0\0\0";
 const STATE_INDEX_MAGIC: &[u8; 16] = b"VDISKSTATEV0\0\0\0\0";
 const JOURNAL_RECORD_MAGIC: &[u8; 16] = b"VDISKJOURNALV0\0\0";
-const VERTEX_DISK_VERSION: u16 = 1;
+const VERTEX_DISK_VERSION: u16 = 2;
 const JOURNAL_RECORD_STATE_WRITE: u16 = 1;
 const VERTEX_DISK_CHECKSUM_OFFSET: usize = 20;
 const VERTEX_DISK_TOTAL_SECTORS_OFFSET: usize = 24;
@@ -35,6 +35,7 @@ const VERTEX_DISK_SECTION_RECORD_LEN: usize = 16;
 const VERTEX_DISK_STATE_INDEX_SECTION: usize = 3;
 const VERTEX_DISK_STATE_DATA_SECTION: usize = 4;
 const VERTEX_DISK_JOURNAL_SECTION: usize = 5;
+const VERTEX_DISK_VERTEXFS_SECTION: usize = 6;
 const STATE_ENTRY_OFFSET: usize = 32;
 const JOURNAL_STATE_ID_OFFSET: usize = 48;
 const JOURNAL_VALUE_OFFSET: usize = 128;
@@ -44,6 +45,11 @@ const VFS_STATE_OP_READ_VALUE: u8 = b'R';
 const VFS_STATE_OP_WRITE_VALUE: u8 = b'W';
 const VFS_STATE_OP_STAT_VALUE: u8 = b'S';
 const VFS_STATE_OP_CONTROL: u8 = b'C';
+const VFS_SERVICE_REQUEST_HEADER_BYTES: usize = 4;
+const VFS_SERVICE_REQUEST_VERSION: u8 = 1;
+const VFS_SERVICE_OP_READ_REPORT: u8 = b'R';
+const VFS_SERVICE_REPORT: &[u8] = b"servicefs:vertex-state-report\n";
+const MAX_VFS_RESPONSE_VALUE_BYTES: usize = 64;
 const PROTOCOL_HEALTH_V0: u16 = 2;
 const MESSAGE_READY: u16 = 1;
 const ENVELOPE_LEN: usize = 16;
@@ -52,6 +58,7 @@ const ENVELOPE_LEN: usize = 16;
 #[unsafe(no_mangle)]
 pub extern "C" fn _start() -> ! {
     let mut table = load_state_table();
+    prove_block_cache_policy();
     send_ready();
     log(b"vertex-state ready");
 
@@ -68,6 +75,11 @@ pub extern "C" fn _start() -> ! {
             sys::exit(1);
         }
         let received_len = received as usize;
+        if let Some(transaction_id) = parse_vfs_service_request(&request, received_len) {
+            send_vfs_response(transaction_id, VFS_SERVICE_REPORT);
+            log(b"vertex-state serves VFS filesystem service report");
+            continue;
+        }
         let parsed = match parse_vfs_state_request(&request, received_len) {
             Some(parsed) => parsed,
             None => {
@@ -494,6 +506,24 @@ fn state_id_eq(entry: &StateEntry, state_id: &[u8]) -> bool {
     bytes_eq(&entry.id[..entry.id_len], state_id)
 }
 
+fn parse_vfs_service_request(
+    buffer: &[u8; MAX_VFS_STATE_REQUEST_BYTES],
+    len: usize,
+) -> Option<u64> {
+    let header_offset = 8;
+    if len != header_offset + VFS_SERVICE_REQUEST_HEADER_BYTES {
+        return None;
+    }
+    if buffer[header_offset] != b'F'
+        || buffer[header_offset + 1] != b'S'
+        || buffer[header_offset + 2] != VFS_SERVICE_REQUEST_VERSION
+        || buffer[header_offset + 3] != VFS_SERVICE_OP_READ_REPORT
+    {
+        return None;
+    }
+    Some(read_u64(buffer, 0))
+}
+
 fn parse_vfs_state_request(
     buffer: &[u8; MAX_VFS_STATE_REQUEST_BYTES],
     len: usize,
@@ -565,9 +595,20 @@ fn read_block_sector_cached(cache: &mut BlockCache, sector: u64, out: &mut [u8; 
 }
 
 fn write_block_sector_cached(cache: &mut BlockCache, sector: u64, bytes: &[u8; SECTOR_SIZE]) {
+    if !try_write_block_sector_cached(cache, sector, bytes, true) {
+        sys::exit(1);
+    }
+}
+
+fn try_write_block_sector_cached(
+    cache: &mut BlockCache,
+    sector: u64,
+    bytes: &[u8; SECTOR_SIZE],
+    issue_block_write: bool,
+) -> bool {
     let Some(slot) = block_cache_slot(cache, sector) else {
         log(b"vertex-state block cache dirty eviction blocked");
-        sys::exit(1);
+        return false;
     };
     let was_dirty = cache.entries[slot].valid && cache.entries[slot].dirty;
     cache.entries[slot].valid = true;
@@ -581,10 +622,15 @@ fn write_block_sector_cached(cache: &mut BlockCache, sector: u64, bytes: &[u8; S
         cache.high_water_dirty = cache.dirty_pages;
     }
 
-    if !write_block_sector_uncached(sector, bytes) {
+    let write_ok = if issue_block_write {
+        write_block_sector_uncached(sector, bytes)
+    } else {
+        false
+    };
+    if !write_ok {
         cache.write_errors = cache.write_errors.saturating_add(1);
         log(b"vertex-state block cache writeback error");
-        sys::exit(1);
+        return false;
     }
     cache.entries[slot].dirty = false;
     if cache.dirty_pages > 0 {
@@ -592,6 +638,7 @@ fn write_block_sector_cached(cache: &mut BlockCache, sector: u64, bytes: &[u8; S
     }
     cache.writebacks = cache.writebacks.saturating_add(1);
     log(b"vertex-state block cache writeback clean");
+    true
 }
 
 fn block_cache_slot(cache: &BlockCache, sector: u64) -> Option<usize> {
@@ -625,6 +672,48 @@ fn block_cache_slot(cache: &BlockCache, sector: u64) -> Option<usize> {
         index += 1;
     }
     None
+}
+
+fn prove_block_cache_policy() {
+    let mut cache = BlockCache::new();
+    let mut index = 0;
+    while index < BLOCK_CACHE_ENTRIES {
+        cache.entries[index].valid = true;
+        cache.entries[index].dirty = false;
+        cache.entries[index].sector = 100 + index as u64;
+        index += 1;
+    }
+    if block_cache_slot(&cache, 1000).is_none() {
+        log(b"vertex-state block cache clean eviction policy failed");
+        sys::exit(1);
+    }
+    log(b"vertex-state block cache clean eviction under pressure");
+
+    index = 0;
+    while index < BLOCK_CACHE_ENTRIES {
+        cache.entries[index].dirty = true;
+        index += 1;
+    }
+    cache.dirty_pages = BLOCK_CACHE_ENTRIES as u64;
+    cache.high_water_dirty = BLOCK_CACHE_ENTRIES as u64;
+    if block_cache_slot(&cache, 1001).is_some() {
+        log(b"vertex-state block cache dirty eviction policy failed");
+        sys::exit(1);
+    }
+    log(b"vertex-state block cache dirty pages are not evicted");
+
+    let mut error_cache = BlockCache::new();
+    let error_sector = [0u8; SECTOR_SIZE];
+    if try_write_block_sector_cached(&mut error_cache, 2000, &error_sector, false)
+        || error_cache.write_errors != 1
+        || error_cache.dirty_pages != 1
+        || !error_cache.entries[0].dirty
+    {
+        log(b"vertex-state block cache writeback error accounting failed");
+        sys::exit(1);
+    }
+    log(b"vertex-state block cache writeback error leaves dirty page dirty");
+    log(b"vertex-state block cache writeback error accounting increments");
 }
 
 fn log_cache_report(cache: &BlockCache) {
@@ -693,7 +782,7 @@ fn valid_superblock(sector: &[u8; SECTOR_SIZE]) -> bool {
 
     let total_sectors = read_u32(sector, VERTEX_DISK_TOTAL_SECTORS_OFFSET) as u64;
     let mut section = 0;
-    while section <= VERTEX_DISK_JOURNAL_SECTION {
+    while section <= VERTEX_DISK_VERTEXFS_SECTION {
         let Some((start, count)) = vertexdisk_section(sector, section) else {
             return false;
         };
@@ -819,7 +908,11 @@ fn starts_with(value: &[u8], prefix: &[u8]) -> bool {
 }
 
 fn send_vfs_response(transaction_id: u64, value: &[u8]) {
-    let mut response = [0u8; 32];
+    if value.len() > MAX_VFS_RESPONSE_VALUE_BYTES {
+        log(b"vertex-state VFS response too large");
+        sys::exit(1);
+    }
+    let mut response = [0u8; 8 + MAX_VFS_RESPONSE_VALUE_BYTES];
     write_u64(&mut response, 0, transaction_id);
     response[8..8 + value.len()].copy_from_slice(value);
     if sys::ipc_send(CAP_VFS_REPLY, &response[..8 + value.len()]) != sys::STATUS_OK {

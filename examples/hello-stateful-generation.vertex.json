@@ -219,7 +219,8 @@
       "lifecycle": {
         "startAfter": [],
         "stopBefore": []
-      }
+      },
+      "mountRoot": "/"
     },
     {
       "id": "svc:logd",
@@ -264,7 +265,8 @@
       },
       "configs": [
         "config:logd"
-      ]
+      ],
+      "mountRoot": "/"
     },
     {
       "id": "svc:netstack",
@@ -296,7 +298,8 @@
           "svc:vertex-supervisor"
         ],
         "stopBefore": []
-      }
+      },
+      "mountRoot": "/"
     },
     {
       "id": "svc:echo-server",
@@ -350,7 +353,8 @@
           "svc:netstack"
         ],
         "stopBefore": []
-      }
+      },
+      "mountRoot": "/"
     }
   ],
   "activation": {

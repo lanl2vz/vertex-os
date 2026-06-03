@@ -338,7 +338,7 @@
     {
       "id": "state:counter",
       "name": "counter",
-      "kind": "vertexdisk-v0",
+      "kind": "vertexdisk-v1",
       "owner": "svc:echo-server",
       "mountIntent": "read-write",
       "snapshotPolicy": {
@@ -676,6 +676,20 @@
       "properties": {
         "root": "/state/counter"
       }
+    },
+    {
+      "id": "cap:vfs.model-reader-vertexfs",
+      "kind": "vfs-root",
+      "provider": "svc:vertex-supervisor",
+      "rights": [
+        "resolve",
+        "read",
+        "write",
+        "create"
+      ],
+      "properties": {
+        "root": "/fs/app"
+      }
     }
   ],
   "services": [
@@ -707,7 +721,8 @@
       "lifecycle": {
         "startAfter": [],
         "stopBefore": []
-      }
+      },
+      "mountRoot": "/"
     },
     {
       "id": "svc:serial-driver",
@@ -743,7 +758,8 @@
           "svc:vertex-supervisor"
         ],
         "stopBefore": []
-      }
+      },
+      "mountRoot": "/"
     },
     {
       "id": "svc:logd",
@@ -794,7 +810,8 @@
       },
       "configs": [
         "config:logd"
-      ]
+      ],
+      "mountRoot": "/"
     },
     {
       "id": "svc:netstack",
@@ -829,7 +846,8 @@
           "svc:vertex-supervisor"
         ],
         "stopBefore": []
-      }
+      },
+      "mountRoot": "/"
     },
     {
       "id": "svc:block-driver",
@@ -906,7 +924,8 @@
           "svc:vertex-supervisor"
         ],
         "stopBefore": []
-      }
+      },
+      "mountRoot": "/"
     },
     {
       "id": "svc:vertex-store",
@@ -948,7 +967,8 @@
           "svc:block-driver"
         ],
         "stopBefore": []
-      }
+      },
+      "mountRoot": "/"
     },
     {
       "id": "svc:vertex-state",
@@ -985,7 +1005,8 @@
           "svc:vertex-supervisor"
         ],
         "stopBefore": []
-      }
+      },
+      "mountRoot": "/"
     },
     {
       "id": "svc:echo-server",
@@ -1081,6 +1102,15 @@
           "rights": [
             "send"
           ]
+        },
+        {
+          "capability": "cap:vfs.model-reader-vertexfs",
+          "rights": [
+            "resolve",
+            "read",
+            "write",
+            "create"
+          ]
         }
       ],
       "provides": [
@@ -1099,7 +1129,8 @@
           "svc:vertex-store"
         ],
         "stopBefore": []
-      }
+      },
+      "mountRoot": "/fs/app"
     },
     {
       "id": "svc:counter-service",
@@ -1133,7 +1164,8 @@
           "svc:vertex-state"
         ],
         "stopBefore": []
-      }
+      },
+      "mountRoot": "/"
     },
     {
       "id": "svc:state-reader",
@@ -1166,7 +1198,8 @@
           "svc:counter-service"
         ],
         "stopBefore": []
-      }
+      },
+      "mountRoot": "/"
     },
     {
       "id": "svc:timer-service",
@@ -1196,7 +1229,8 @@
           "svc:vertex-supervisor"
         ],
         "stopBefore": []
-      }
+      },
+      "mountRoot": "/"
     },
     {
       "id": "svc:flaky-service",
@@ -1219,7 +1253,8 @@
           "svc:vertex-supervisor"
         ],
         "stopBefore": []
-      }
+      },
+      "mountRoot": "/"
     }
   ],
   "activation": {
