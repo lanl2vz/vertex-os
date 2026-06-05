@@ -134,10 +134,11 @@ scripts/krust-test.sh m80
 scripts/krust-test.sh m81
 ```
 
-Next direction: broaden the mature VFS/filesystem model without preserving the
-old ad hoc store/state paths as a compatibility layer. M78-M81 make file
-authority, durable VertexFS metadata, writeback, mount namespaces, coordination,
-and crash/security gates first-class Krust surfaces while keeping the kernel
+Next direction: move the graph operating-system model into the booted system
+without preserving host-side activation as a compatibility layer. M82-M89
+should make the native graph store, generation manager, package closure import,
+state lifecycle, policy validation, operator graph shell, appliance update
+loop, and graph soak gate first-class Vertex OS surfaces while keeping Krust
 small and capability-mediated.
 
 ## M0: Serial Boot
@@ -3808,11 +3809,334 @@ Implementation notes:
 - Preserve the capability model: revocation and namespace restrictions must be
   tested against handles, cached vnodes, mount aliases, and synthetic files.
 
+## M82: Native Graph Store
+
+Status: planned.
+
+Goal: make the booted system persist and query its own generation graph as a
+native, typed graph store instead of treating the graph as a host-compiled boot
+artifact that disappears after activation.
+
+Scope:
+
+```text
+native graph object storage in VertexFS or VertexDisk
+typed records for generations, services, capabilities, packages, store objects,
+state objects, configs, secrets, mounts, devices, and activation edges
+graph identity for every running process and granted capability
+native graph reader service with inspect-only authority
+graph checksum and generation provenance in runtime inspection
+host-imported graph bootstrap without accepting legacy graph encodings
+```
+
+Acceptance tests:
+
+```text
+booted system reads its full active generation graph without host vertexctl
+runtime process and capability records point back to graph node identities
+native graph query returns generation, service, store-object, state, and device nodes
+corrupt graph-store record is rejected before activation side effects
+graph-store checksum mismatch prevents generation selection
+runtime inspect shows graph-store generation hash and object counts
+old compact-only boot records are not accepted as a graph-store fallback
+```
+
+Implementation notes:
+
+- Treat the native graph store as the OS truth, not as documentation for the
+  kernel tables. Kernel tables should remain the enforcement cache derived from
+  the graph.
+- Keep host `vertexctl` useful for building and debugging graph images, but the
+  booted system must be able to inspect the graph without host assistance.
+- Do not introduce JSON parsing in the kernel. Prefer a compact typed graph
+  object format validated by userspace services and exposed to the kernel only
+  through narrow boot/runtime records.
+
+## M83: Native Generation Manager
+
+Status: planned.
+
+Goal: move generation install, activation, rollback, and failure recording into
+a native service so the running Vertex system can manage generations without
+host-side activation glue.
+
+Scope:
+
+```text
+native generation-manager service
+install candidate generation from verified graph and store closure
+atomic selected-generation update with previous and known-good pointers
+activation transaction log with prepare, commit, abort, and rollback states
+restart/failure policy integration with vertex-init
+operator-visible generation history and failure reason
+```
+
+Acceptance tests:
+
+```text
+booted system installs a new candidate generation from native graph-store input
+selected generation changes atomically only after activation succeeds
+failed activation restores the previous known-good generation
+activation failure records service, dependency, and policy error details
+rollback preserves or migrates state according to graph policy
+power loss during prepare, commit, and rollback remounts to one selected generation
+host-side activation metadata is not required for native generation switching
+```
+
+Implementation notes:
+
+- The generation manager should own generation-selection state; the kernel
+  should enforce only the minimal boot-selection and capability checks needed
+  to keep the manager honest.
+- Reuse the M44-M46 boot-manager/update transaction lessons, but remove any
+  special case that assumes one hard-coded example generation.
+- Rollback policy must be graph data, not activation script convention.
+
+## M84: Native Package And Closure Import
+
+Status: planned.
+
+Goal: make package graph fragments and closure materialization native OS
+inputs, so packages can be imported, verified, and linked inside the running
+system.
+
+Scope:
+
+```text
+native package-import service
+package graph fragment parser for the compact typed graph format
+store-object hash verification before materialization
+closure linking against existing graph-store objects
+authority-delta report for imported services
+rejection of undeclared dependencies, excess grants, and missing store objects
+```
+
+Acceptance tests:
+
+```text
+native package import adds a service graph fragment to a candidate generation
+store-object hashes are verified before executable or config use
+missing dependency rejects the package without partial graph-store writes
+package requesting undeclared authority is rejected with an explainable reason
+duplicate package import is idempotent and does not duplicate store objects
+imported package can be activated and then removed by generation rollback
+host graph-link output and native graph-link output produce the same closure hash
+```
+
+Implementation notes:
+
+- Keep package import separate from activation. Importing a package should not
+  grant authority or start a process until a generation transaction activates
+  the resulting graph.
+- Packages should carry graph fragments, not imperative install scripts.
+- The first target is deterministic closure materialization, not a public
+  package ecosystem.
+
+## M85: State Objects And Migration Policy
+
+Status: planned.
+
+Goal: make mutable state a declared graph object with explicit ownership,
+schema, migration, retention, sharing, and rollback policy.
+
+Scope:
+
+```text
+state-object graph records with owner, schema version, and storage class
+declared state sharing and read/write authority
+state migration plan attached to generation transitions
+state retention and garbage-collection policy
+rollback semantics for preserve, fork, discard, and migrate cases
+state health report and migration journal
+```
+
+Acceptance tests:
+
+```text
+generation switch runs a declared state migration exactly once
+failed migration rolls back graph selection and leaves old state readable
+service cannot open undeclared state even when a path alias exists
+shared state requires explicit graph sharing policy and attenuated rights
+rollback follows state policy rather than blindly preserving all volumes
+state garbage collection removes unreferenced state only after retention policy allows it
+state health reports owner, schema, generation, migration status, and last error
+```
+
+Implementation notes:
+
+- This is the point where Vertex must improve on `/var`: every mutable object
+  should have a graph owner and lifecycle policy.
+- Avoid migration scripts with ambient authority. A migration should receive
+  only the old state, new state, and declared helper capabilities.
+- State policy should be testable without relying on POSIX path conventions.
+
+## M86: Native Policy Validation
+
+Status: planned.
+
+Goal: make graph policy validation part of the trusted native activation path,
+so invalid authority edges cannot be installed or activated even when the host
+tooling is bypassed.
+
+Scope:
+
+```text
+native policy validator service
+typed capability edge validation against service requirements and providers
+mount, device, state, config, secret, and network authority checks
+policy explain records for denied graph edges
+activation-time policy hash in generation metadata
+negative matrix for malformed graph and hostile authority requests
+```
+
+Acceptance tests:
+
+```text
+native validator rejects missing providers before process creation
+native validator rejects excess capability grants before graph-store commit
+device, network, state, config, secret, and mount authority checks match kernel enforcement
+policy explanation names the rejected edge, source node, and required rule
+host-validated but tampered graph is rejected inside the booted system
+policy hash is recorded in generation history and runtime inspection
+legacy or unknown policy versions are rejected rather than interpreted loosely
+```
+
+Implementation notes:
+
+- Native validation should produce explicit denial records that the operator
+  shell can query later.
+- Keep the kernel enforcement model simple: it should consume validated compact
+  records, not become the graph policy engine.
+- No compatibility fallback for older policy formats. Add a new version only
+  when the validator and gate understand it.
+
+## M87: Operator Graph Shell
+
+Status: planned.
+
+Goal: build the native operator surface for an ideal NixOS-like graph OS:
+asking what is running, why authority exists, what changed between generations,
+and how to activate or roll back.
+
+Scope:
+
+```text
+native graph-shell commands over console request/reply IPC
+current-generation, generations, generation-status
+diff-generation and planned-authority-delta
+why service capability, who-can object, which-generation process
+state-health, package-list, activation-log
+activate, rollback, and mark-known-good commands through generation-manager authority
+```
+
+Acceptance tests:
+
+```text
+operator shell prints current generation from native graph-store state
+diff-generation reports service, package, capability, state, and device changes
+why command explains a live capability through graph policy provenance
+who-can command lists all graph-authorized writers for a state object
+activate command queues a candidate generation through generation-manager IPC
+rollback command restores previous generation and reports state policy outcome
+unauthorized service cannot invoke operator-only graph commands
+```
+
+Implementation notes:
+
+- This shell is not a POSIX shell. It is a graph operator console with explicit
+  commands and explicit authority.
+- Prefer structured command replies that can later back a richer UI.
+- Every operator answer should identify the generation and policy hash it came
+  from so stale answers are visible.
+
+## M88: End-To-End Appliance Update Gate
+
+Status: planned.
+
+Goal: prove the complete Vertex OS loop inside QEMU: import package closure,
+construct a candidate graph, validate policy, install generation, activate it,
+handle failure, roll back, and preserve or migrate state by policy.
+
+Scope:
+
+```text
+multi-generation QEMU appliance scenario
+native package import and graph linking
+native policy validation
+native generation install and activation
+intentional failed generation and rollback
+state migration and preservation checks
+post-rollback graph explanation and health report
+```
+
+Acceptance tests:
+
+```text
+QEMU installs a new package closure into a candidate generation while booted
+candidate generation activates and starts only graph-declared services
+new service receives only graph-declared capabilities
+second candidate intentionally fails activation and rolls back automatically
+state survives, forks, migrates, or is discarded according to declared policy
+operator graph shell explains both the successful activation and failed rollback
+post-test verifier reports no leaked graph, store, state, process, or capability objects
+```
+
+Implementation notes:
+
+- This should become the flagship “ideal NixOS” proof: a running system changes
+  itself by graph transaction, not by imperative activation scripts.
+- Keep the appliance profile narrow. Do not add desktop, USB, or general POSIX
+  scope to make the demo look bigger.
+- The gate should fail if any step requires host-side activation state after
+  the initial test image is booted.
+
+## M89: Long-Run Graph OS Soak
+
+Status: planned.
+
+Goal: stress the native graph OS model over many install, activation, rollback,
+state migration, service restart, and crash cycles until graph/object/state
+leaks and authority drift are boringly absent.
+
+Scope:
+
+```text
+100-1000 generation install/activate/rollback cycles
+repeated package import, package removal, and closure reuse
+state migration churn with preserve, fork, discard, and rollback cases
+service restart churn under changing generation graphs
+power-loss checkpoints across graph-store, package-store, and state migrations
+leak accounting for graph nodes, store objects, state objects, caps, handles, and vnodes
+operator health report after every cycle batch
+```
+
+Acceptance tests:
+
+```text
+100 native generation cycles return graph, cap, process, vnode, and state counts to baseline
+100 package import/remove cycles reuse closure objects without leaks
+state migration churn preserves declared data and drops only policy-declared garbage
+crash at every graph transaction phase remounts to a valid selected generation
+service restart churn never grants authority from a previous generation
+operator health report stays clean after every cycle batch
+release gate checks final graph-store verifier, filesystem verifier, and leak deltas
+```
+
+Implementation notes:
+
+- This is the graph-OS equivalent of M66-M81. It should be run before adding
+  broad hardware, POSIX personalities, desktop ambitions, or self-hosting.
+- Prefer deterministic cycle scenarios first; randomized stress can come after
+  the deterministic gate is stable.
+- The main output is confidence that the native graph transaction model does
+  not drift under time, crashes, restarts, and repeated updates.
+
 ## Later Direction
 
 Avoid these until the appliance release profile, storage durability, network
 service boundary, update path, supervisor semantics, memory lifecycle,
-interrupt/device failure model, and VFS/filesystem model are solid:
+interrupt/device failure model, VFS/filesystem model, and native graph OS
+transaction loop are solid:
 
 ```text
 USB
@@ -3856,4 +4180,7 @@ reclamation, address-space teardown, object failure atomicity, and soak gates.
 M70-M73 add interrupt routing, DMA ownership, virtio reset/recovery, and
 device-fault isolation. M74-M81 should turn the existing special-purpose
 store/state persistence into a mature capability-mediated VFS and filesystem
-stack before broadening the platform.
+stack. M82-M89 should move the graph store, generation manager, package
+closure import, policy validation, state lifecycle, operator shell, appliance
+update loop, and long-run graph soak into the native system before broadening
+the platform.
