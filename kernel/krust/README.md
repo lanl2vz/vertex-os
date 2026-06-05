@@ -1,6 +1,6 @@
 # Krust Kernel
 
-Krust now covers the M14-M79 native graph-activation proof path, substrate
+Krust now covers the M14-M81 native graph-activation proof path, substrate
 hardening, reproducible build environment, directed IPC ABI v1, and native
 console shell plus virtio device I/O, VertexDisk v1 persistence, native boot
 selection, verified store objects, native update transactions, and store-loaded
@@ -16,7 +16,9 @@ mount roots, service-backed state-volume VFS transactions, and kernel-owned
 open-file handles, directory metadata operations, and bounded block-cache
 writeback, plus image-backed VertexFS journal checkpoint recovery and
 mount-namespace gates, including the current read-only `servicefs`
-request/reply file route. M44-M79 are tracked in
+request/reply file route, advisory byte-range locks, directory watch events,
+VFS poll readiness, bounded pipe buffering, revocation checks for live file
+authority, and the current VFS security/soak gate. M44-M81 are tracked in
 `../../docs/krust-milestones.md`.
 
 The target is intentionally small:
@@ -419,18 +421,19 @@ make smoke
 ```
 
 The smoke test boots QEMU headlessly, captures serial output to
-`build/serial.log`, and passes when it sees the M14-M79 directed IPC, console,
+`build/serial.log`, and passes when it sees the M14-M81 directed IPC, console,
 virtio-block, VertexDisk, verified store, update, store-executable, dynamic
 process, config, secret, package-boundary, appliance, virtio device, networking,
 namespace, policy, ABI-hardening, storage durability, network-boundary, and
 lifecycle, memory-lifecycle, soak, interrupt, DMA, virtio recovery, and
-device-fault transcripts. The same check is available from the repository root:
+device-fault, VFS coordination, and filesystem security transcripts. The same
+check is available from the repository root:
 
 ```sh
 scripts/krust-smoke.sh
 ```
 
-## M26-M79 Substrate Gate
+## M26-M81 Substrate Gate
 
 Run the clean-clone gate from the repository root:
 
@@ -445,12 +448,12 @@ make release-gate
 ```
 
 The gate checks script executability and shell syntax, verifies Makefile recipe
-parsing, checks Rust formatting and Markdown whitespace, confirms the M14-M79
+parsing, checks Rust formatting and Markdown whitespace, confirms the M14-M81
 documentation anchors, checks the pinned M39 toolchain and Cargo lockfiles, runs
 `cargo metadata --locked --offline` and `cargo build --locked --offline`,
 validates `examples/hello-generation.vertex.json`, runs `make doctor`, rebuilds
 from `make clean`, runs `make smoke`, checks package/link/build import commands,
-and then runs the M14-M79 QEMU cases:
+and then runs the M14-M81 QEMU cases:
 `m14`,
 `manifest-cycle`, `bad-cap`, `readiness-timeout`, `rollback`, `store-state-services`,
 `timer`, `preemption`, `user-fault`, `restart`, `manifest-v1`, `cap-lifecycle`,
@@ -463,7 +466,7 @@ and then runs the M14-M79 QEMU cases:
 `m78-bad-superblock`, `m78-journal-replay`,
 `m78-journal-checkpoint-after-journal`, `m78-journal-checkpoint-after-data`,
 `m78-journal-checkpoint-after-inode`, `m78-post-sync-remount`,
-`m78-fsync-fault`, `m79`, and the malformed-manifest cases. If the offline
+`m78-fsync-fault`, `m79`, `m80`, `m81`, and the malformed-manifest cases. If the offline
 build fails, the gate prints the Cargo cache or vendoring prerequisite
 explicitly.
 

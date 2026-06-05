@@ -4,7 +4,7 @@ set -eu
 ROOT_DIR=$(CDPATH= cd "$(dirname "$0")/.." && pwd)
 KRUST_DIR=${KRUST_DIR:-"$ROOT_DIR/kernel/krust"}
 LOG_DIR=${LOG_DIR:-"$KRUST_DIR/build/release-gate"}
-KRUST_CASES=${KRUST_CASES:-"m14 manifest-cycle bad-cap readiness-timeout rollback store-state-services timer preemption user-fault restart manifest-v1 cap-lifecycle typed-arenas quotas m32 m33 m34 m35 m36 m37 m38 m40 m41 m42 m42-driver-fault m43 m43-bad-superblock m44 m45 m46 m47 m47-corrupt-executable m48 m49 m49-config-corrupt m50 m54 m55 m56 m57 m59 m60 m61 m62 m62-journal-replay m62-corrupt-journal m63 m64 m66 m67 m68 m69 m70 m71 m72 m73 m75 m76 m77 m78 m78-bad-superblock m78-journal-replay m78-journal-checkpoint-after-journal m78-journal-checkpoint-after-data m78-journal-checkpoint-after-inode m78-post-sync-remount m78-fsync-fault m79 manifest-truncated manifest-bad-magic manifest-raw-compact manifest-old-compact-magic manifest-unsupported-version manifest-oob-record manifest-missing-provider"}
+KRUST_CASES=${KRUST_CASES:-"m14 manifest-cycle bad-cap readiness-timeout rollback store-state-services timer preemption user-fault restart manifest-v1 cap-lifecycle typed-arenas quotas m32 m33 m34 m35 m36 m37 m38 m40 m41 m42 m42-driver-fault m43 m43-bad-superblock m44 m45 m46 m47 m47-corrupt-executable m48 m49 m49-config-corrupt m50 m54 m55 m56 m57 m59 m60 m61 m62 m62-journal-replay m62-corrupt-journal m63 m64 m66 m67 m68 m69 m70 m71 m72 m73 m75 m76 m77 m78 m78-bad-superblock m78-journal-replay m78-journal-checkpoint-after-journal m78-journal-checkpoint-after-data m78-journal-checkpoint-after-inode m78-post-sync-remount m78-fsync-fault m79 m80 m81 manifest-truncated manifest-bad-magic manifest-raw-compact manifest-old-compact-magic manifest-unsupported-version manifest-oob-record manifest-missing-provider"}
 
 fail() {
     echo "error: $*" >&2
@@ -83,7 +83,7 @@ check_no_trailing_whitespace docs/krust-toolchain.md
 check_no_trailing_whitespace kernel/krust/README.md
 
 step "checking Krust status documentation"
-require_doc_line README.md "M14-M79"
+require_doc_line README.md "M14-M81"
 require_doc_line README.md "scripts/krust-release-gate.sh"
 require_doc_line README.md "docs/krust-toolchain.md"
 require_doc_line README.md "docs/krust-abi-v1.md"
@@ -127,6 +127,8 @@ require_doc_line docs/krust-milestones.md "done: M70 blocking IRQ wait, timeout,
 require_doc_line docs/krust-milestones.md "done: M71 DMA ownership, repeat-map idempotence, release-on-teardown, manifest"
 require_doc_line docs/krust-milestones.md "done: M72 virtio queue reports, timeout-to-reset paths, owner release,"
 require_doc_line docs/krust-milestones.md "done: M73 device-fault isolation, DMA/IRQ/virtio leak deltas, bad hardware"
+require_doc_line docs/krust-milestones.md "done: M80 advisory file locks, directory watch events, bounded pipe buffering,"
+require_doc_line docs/krust-milestones.md "done: M81 capability revocation with live handles, 100-cycle VFS churn,"
 require_doc_line docs/krust-milestones.md "## M42: Minimal Virtio-Block Driver"
 require_doc_line docs/krust-milestones.md "## M43: VertexDisk v1 Layout"
 require_doc_line docs/krust-milestones.md "done: unwrapped compact payload rejected"
@@ -141,7 +143,7 @@ require_doc_line docs/krust-toolchain.md "limine 12.3.0"
 require_doc_line docs/krust-toolchain.md "xorriso 1.5.8.pl01"
 require_doc_line docs/krust-abi-v1.md "M40 freezes ABI v1"
 require_doc_line docs/posix-personality-v0.md "Status: M58 design artifact."
-require_doc_line kernel/krust/README.md "M14-M79"
+require_doc_line kernel/krust/README.md "M14-M81"
 require_doc_line kernel/krust/README.md "scripts/krust-release-gate.sh"
 require_doc_line kernel/krust/README.md "rustc 1.95.0"
 require_doc_line kernel/krust/README.md "directed IPC"
@@ -198,4 +200,4 @@ for case_name in $KRUST_CASES; do
 done
 
 echo
-echo "Krust release gate ok: clean-clone M14-M79 substrate proof is repeatable."
+echo "Krust release gate ok: clean-clone M14-M81 substrate proof is repeatable."

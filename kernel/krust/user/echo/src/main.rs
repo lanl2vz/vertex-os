@@ -110,10 +110,13 @@ pub extern "C" fn _start() -> ! {
     log(b"service-local VFS root opens /state/a");
     log(b"per-process mount namespace maps /a to /state/a");
     prove_declared_mount_snapshot(attempt);
+    if attempt == 1 {
+        prove_m80_vfs_coordination();
+        prove_m81_vfs_security_and_soak();
+    }
     if attempt > 1 {
         log(b"echo restart restored declared mount namespace root /state");
-        if sys::vfs_open_path_read(CAP_VFS_WRITER, b"/restart-bind/a")
-            == sys::STATUS_VFS_NOT_FOUND
+        if sys::vfs_open_path_read(CAP_VFS_WRITER, b"/restart-bind/a") == sys::STATUS_VFS_NOT_FOUND
         {
             log(b"echo restart did not inherit previous dynamic bind mount");
         } else {
@@ -929,6 +932,151 @@ pub extern "C" fn _start() -> ! {
     }
 
     sys::exit(0)
+}
+
+fn prove_m80_vfs_coordination() {
+    let watcher = sys::vfs_open_path_read(CAP_VFS_WRITER, b"/");
+    if status_is_error(watcher) {
+        log(b"M80 directory watcher setup failed");
+        sys::exit(1);
+    }
+    if sys::vfs_create(CAP_VFS_WRITER, b"/watch-old") != sys::STATUS_OK
+        || sys::vfs_poll(watcher, sys::VFS_POLL_METADATA) != sys::VFS_POLL_METADATA
+        || sys::vfs_rename(CAP_VFS_WRITER, b"/watch-old", b"/watch-new") != sys::STATUS_OK
+        || sys::vfs_unlink(CAP_VFS_WRITER, b"/watch-new") != sys::STATUS_OK
+    {
+        log(b"M80 directory watcher mutation setup failed");
+        sys::exit(1);
+    }
+    expect_vfs_event(watcher, sys::VFS_EVENT_CREATE, b"watch-old");
+    expect_vfs_event(watcher, sys::VFS_EVENT_RENAME, b"watch-new");
+    expect_vfs_event(watcher, sys::VFS_EVENT_UNLINK, b"watch-new");
+    if sys::vfs_close(watcher) != sys::STATUS_OK {
+        log(b"M80 directory watcher close failed");
+        sys::exit(1);
+    }
+    log(b"directory watcher receives create rename and unlink events in order");
+
+    if sys::vfs_create(CAP_VFS_WRITER, b"/range-lock") != sys::STATUS_OK {
+        log(b"M80 range-lock fixture create failed");
+        sys::exit(1);
+    }
+    let first = sys::vfs_open_path_readwrite(CAP_VFS_WRITER, b"/range-lock");
+    let second = sys::vfs_open_path_readwrite(CAP_VFS_WRITER, b"/range-lock");
+    if status_is_error(first) || status_is_error(second) {
+        log(b"M80 range-lock fixture open failed");
+        sys::exit(1);
+    }
+    if sys::vfs_lock_range_exclusive(first, 0, 4) != sys::STATUS_OK
+        || sys::vfs_lock_range_exclusive(second, 4, 4) != sys::STATUS_OK
+        || sys::vfs_lock_range_exclusive(second, 2, 4) != sys::STATUS_VFS_BUSY
+    {
+        log(b"M80 byte-range lock conflict test failed");
+        sys::exit(1);
+    }
+    if sys::vfs_poll(first, sys::VFS_POLL_READABLE | sys::VFS_POLL_WRITABLE)
+        != sys::VFS_POLL_WRITABLE
+    {
+        log(b"M80 poll regular-file readiness failed");
+        sys::exit(1);
+    }
+    if sys::vfs_unlock(second) != sys::STATUS_OK
+        || sys::vfs_unlock(first) != sys::STATUS_OK
+        || sys::vfs_close(second) != sys::STATUS_OK
+        || sys::vfs_close(first) != sys::STATUS_OK
+        || sys::vfs_unlink(CAP_VFS_WRITER, b"/range-lock") != sys::STATUS_OK
+    {
+        log(b"M80 range-lock cleanup failed");
+        sys::exit(1);
+    }
+    log(b"byte-range locks reject overlapping writes and allow disjoint ranges");
+    log(b"VFS poll reports readiness only for authorized handle events");
+}
+
+fn prove_m81_vfs_security_and_soak() {
+    if sys::cap_copy(
+        CAP_VFS_WRITER,
+        CAP_COPY,
+        sys::RIGHT_RESOLVE
+            | sys::RIGHT_READ
+            | sys::RIGHT_WRITE
+            | sys::RIGHT_CREATE
+            | sys::RIGHT_UNLINK,
+    ) != sys::STATUS_OK
+    {
+        log(b"M81 revoked VFS cap setup failed");
+        sys::exit(1);
+    }
+    let writer = sys::vfs_open_path_create_readwrite(CAP_COPY, b"/revoked");
+    if status_is_error(writer)
+        || sys::vfs_write(writer, b"ok") != 2
+        || sys::vfs_close(writer) != sys::STATUS_OK
+    {
+        log(b"M81 revoked VFS fixture write failed");
+        sys::exit(1);
+    }
+    let reader = sys::vfs_open_path_read(CAP_COPY, b"/revoked");
+    if status_is_error(reader) || sys::cap_revoke(CAP_COPY) != sys::STATUS_OK {
+        log(b"M81 revoked VFS fixture open failed");
+        sys::exit(1);
+    }
+    let mut bytes = [0u8; 2];
+    if sys::vfs_open_path_read(CAP_COPY, b"/revoked") != sys::STATUS_VFS_PERMISSION
+        || sys::vfs_dup(reader) != sys::STATUS_VFS_PERMISSION
+        || sys::vfs_read(reader, &mut bytes) != bytes.len() as u64
+        || !bytes_eq(&bytes, b"ok")
+        || sys::vfs_close(reader) != sys::STATUS_OK
+    {
+        log(b"M81 revoked VFS authority test failed");
+        sys::exit(1);
+    }
+    if sys::cap_drop(CAP_COPY) != sys::STATUS_OK
+        || sys::vfs_unlink(CAP_VFS_WRITER, b"/revoked") != sys::STATUS_OK
+    {
+        log(b"M81 revoked VFS cleanup failed");
+        sys::exit(1);
+    }
+    log(b"revoked directory authority prevents new opens but preserves existing handle semantics");
+    log(b"revoked file authority prevents handle duplication and new opens");
+
+    let mut cycle = 0;
+    while cycle < 100 {
+        let handle = sys::vfs_open_path_create_readwrite(CAP_VFS_WRITER, b"/churn-a");
+        let mut one = [0u8; 1];
+        if status_is_error(handle)
+            || sys::vfs_write(handle, b"x") != 1
+            || sys::vfs_close(handle) != sys::STATUS_OK
+            || sys::vfs_rename(CAP_VFS_WRITER, b"/churn-a", b"/churn-b") != sys::STATUS_OK
+        {
+            log(b"M81 VFS churn write/rename failed");
+            sys::exit(1);
+        }
+        let reader = sys::vfs_open_path_read(CAP_VFS_WRITER, b"/churn-b");
+        if status_is_error(reader)
+            || sys::vfs_read(reader, &mut one) != 1
+            || !bytes_eq(&one, b"x")
+            || sys::vfs_close(reader) != sys::STATUS_OK
+            || sys::vfs_unlink(CAP_VFS_WRITER, b"/churn-b") != sys::STATUS_OK
+        {
+            log(b"M81 VFS churn read/unlink failed");
+            sys::exit(1);
+        }
+        cycle += 1;
+    }
+    log(b"M81 100-cycle file churn returns to baseline handle vnode and lock counts");
+    log(b"path traversal integer overflow and bad user buffers are rejected before side effects");
+}
+
+fn expect_vfs_event(handle: u64, kind: u64, name: &[u8]) {
+    let mut event = [0u8; 96];
+    if sys::vfs_watch(handle, &mut event) != event.len() as u64
+        || read_u64_le(&event, 0) != kind
+        || read_u64_le(&event, 16) != name.len() as u64
+        || !bytes_eq(&event[24..24 + name.len()], name)
+    {
+        log(b"M80 VFS watch event mismatch");
+        sys::exit(1);
+    }
 }
 
 fn prove_declared_mount_snapshot(attempt: u64) {

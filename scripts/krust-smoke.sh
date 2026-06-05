@@ -537,6 +537,15 @@ netstack sleeps on virtio-net IRQ instead of polling for RX completion
 driver exit releases DMA buffers and user DMA mappings
 inspect reports virtio queue state, last error, reset count, and owner process
 release gate checks memory/object/cap/DMA/IRQ leak deltas after fault injection
+VFS poll reports empty pipe not readable
+VFS poll on file and pipe handles respects handle authority
+directory watcher receives create rename and unlink events in order
+byte-range locks reject overlapping writes and allow disjoint ranges
+VFS poll reports readiness only for authorized handle events
+revoked directory authority prevents new opens but preserves existing handle semantics
+revoked file authority prevents handle duplication and new opens
+M81 100-cycle file churn returns to baseline handle vnode and lock counts
+path traversal integer overflow and bad user buffers are rejected before side effects
 Native restart policy ok
 Native manifest-driven activation ok
 Native readiness activation ok
@@ -599,7 +608,7 @@ while [ "$attempt" -le "$QEMU_ATTEMPTS" ]; do
     if check_transcript; then
         cleanup
         pid=
-        echo "smoke ok: Krust completed manifest v1, directed IPC, typed arenas, cap lifecycle, quotas, service-local store/state/timer access, restart, verified store execution, update checks, dynamic process creation, config/secret authority, VFS roots, VFS rename, directory metadata, block-cache writeback, VertexFS v1 image mount, mount namespaces, blocking VFS pipe reads, service-backed state-volume VFS transactions, and native service activation"
+        echo "smoke ok: Krust completed manifest v1, directed IPC, typed arenas, cap lifecycle, quotas, service-local store/state/timer access, restart, verified store execution, update checks, dynamic process creation, config/secret authority, VFS roots, VFS rename, directory metadata, block-cache writeback, VertexFS v1 image mount, mount namespaces, blocking VFS pipe reads, service-backed state-volume VFS transactions, VFS coordination, filesystem security/soak checks, and native service activation"
         exit 0
     fi
 

@@ -30,6 +30,12 @@ pub extern "C" fn _start() -> ! {
         log(b"logd log-stream open failed");
         sys::exit(1);
     }
+    if sys::vfs_poll(log_stream, sys::VFS_POLL_READABLE) == 0 {
+        log(b"VFS poll reports empty pipe not readable");
+    } else {
+        log(b"logd log-stream empty poll failed");
+        sys::exit(1);
+    }
     let mut stream = [0u8; 64];
     let stream_len = sys::vfs_read(log_stream, &mut stream);
     if status_is_error(stream_len) || stream_len == 0 || stream_len > stream.len() as u64 {
@@ -57,6 +63,14 @@ pub extern "C" fn _start() -> ! {
     let config_handle = sys::vfs_open_read(CAP_CONFIG);
     if config_handle == sys::STATUS_BAD_CAPABILITY {
         log(b"logd config open failed");
+        sys::exit(1);
+    }
+    if sys::vfs_poll(config_handle, sys::VFS_POLL_READABLE) == sys::VFS_POLL_READABLE
+        && sys::vfs_poll(config_handle, sys::VFS_POLL_WRITABLE) == sys::STATUS_VFS_PERMISSION
+    {
+        log(b"VFS poll on file and pipe handles respects handle authority");
+    } else {
+        log(b"logd VFS poll authority test failed");
         sys::exit(1);
     }
     let mut config_stat = [0u8; 64];

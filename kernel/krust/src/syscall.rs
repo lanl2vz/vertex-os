@@ -78,6 +78,8 @@ const SYS_VFS_RENAME: u64 = 66;
 const SYS_VFS_MKDIR: u64 = 67;
 const SYS_VFS_RMDIR: u64 = 68;
 const SYS_VFS_LINK: u64 = 69;
+const SYS_VFS_POLL: u64 = 70;
+const SYS_VFS_WATCH: u64 = 71;
 
 const STATUS_OK: u64 = 0;
 const STATUS_BAD_CAPABILITY: u64 = u64::MAX - 1;
@@ -451,7 +453,7 @@ pub extern "C" fn krust_syscall_dispatch(
             Ok(()) => frame.rax = STATUS_OK,
             Err(error) => frame.rax = ipc_error_status("SYS_VFS_DERIVE_ROOT", error),
         },
-        SYS_VFS_LOCK => match ipc::vfs_lock(arg0, arg1) {
+        SYS_VFS_LOCK => match ipc::vfs_lock(arg0, arg1, arg2) {
             Ok(()) => frame.rax = STATUS_OK,
             Err(error) => frame.rax = ipc_error_status("SYS_VFS_LOCK", error),
         },
@@ -511,6 +513,18 @@ pub extern "C" fn krust_syscall_dispatch(
                 Err(error) => frame.rax = ipc_error_status("SYS_VFS_LINK", error),
             }
         }
+        SYS_VFS_POLL => match ipc::vfs_poll(arg0, arg1, arg2) {
+            Ok(ready) => frame.rax = ready,
+            Err(error) => frame.rax = ipc_error_status("SYS_VFS_POLL", error),
+        },
+        SYS_VFS_WATCH => match ipc::vfs_watch(
+            arg0,
+            arg1 as *mut u8,
+            usize::try_from(arg2).unwrap_or(usize::MAX),
+        ) {
+            Ok(len) => frame.rax = len as u64,
+            Err(error) => frame.rax = ipc_error_status("SYS_VFS_WATCH", error),
+        },
         SYS_VIRTIO_RNG_READ => match ipc::virtio_rng_read(
             arg0,
             arg1 as *mut u8,

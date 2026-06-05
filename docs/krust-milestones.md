@@ -7,14 +7,17 @@ runtime layered over a host kernel.
 
 ## Status Summary
 
-Current status: M14-M79 are implemented and smoke-tested under
+Current status: M14-M81 are implemented and smoke-tested under
 `qemu-system-x86_64` with Limine. The current tree has an image-backed VertexFS
 v1 mount, a strict VertexDisk v1 section carrying the current VertexFS image,
 fixed journal replay, kernel-owned device-backed fsync transactions,
 post-sync image remount, fsync fault/restart handling, declared-file journal
 checkpoint recovery, mount-namespace gates, and a read-only `servicefs`
-filesystem-service route. M74-M77 VFS, directory-metadata, and block-cache
-writeback work is now smoke-tested and release-gate covered. M39
+filesystem-service route, plus VFS coordination and security/soak coverage for
+locks, polls, directory watches, bounded pipe buffering, revocation with live
+handles, hostile VFS arguments, and repeated file churn. M74-M77 VFS,
+directory-metadata, and block-cache writeback work is now smoke-tested and
+release-gate covered. M39
 pins the native toolchain, M40 makes
 native IPC directed, and M41 adds a native console shell path over explicit
 console authority. M42 adds the first real virtio-blk sector I/O path over
@@ -45,24 +48,29 @@ bounded directory metadata operations, open-unlink lifetime, hard-link policy,
 dirty/writeback inspection. M78-M79 add the first separate image-backed
 `vertexfs` mount, per-service mount-root gate, declared bind-mount snapshot
 gate, and current `servicefs` request/reply file route without treating old
-state-volume paths as the new filesystem.
+state-volume paths as the new filesystem. M80-M81 add advisory byte-range
+locks, metadata watches, poll readiness, bounded pipe buffering, capability
+revocation checks against live handles and new opens, bad-buffer/path
+rejection, VFS churn, and release-gated filesystem crash/security coverage.
 
-M74-M79 are implemented as the current VFS, open-file, directory, block-cache,
-and initial VertexFS/mount-namespace substrate. The current tree has a kernel
-VFS node graph,
-service-local mount roots, per-process file handles, first-class `vfs-root`
-manifest authority, volatile memory-file create/write/read/unlink/rename,
-mkdir/rmdir/link, monotonic stat metadata, open-unlink final-close reaping, a
-live blocking `/proc/log-stream` pipe, a service-backed state-volume VFS
-transaction path, a read-only `/state/service-report` `servicefs` route,
-advisory whole-file lock coverage, and a bounded write-through block cache in
-`vertex-state`. The new `/fs` mount is a distinct `vertexfs` source loaded from
-the `vertexfs-v1` boot image module with VertexFS-file backing, declared files,
-fixed journal replay, a kernel-owned device-backed fsync transaction for
-declared and dynamic inodes, create/write/read/fsync coverage, and a
-model-reader service rooted at `/fs/app`. It is not yet a general durable
-filesystem: general vnode page cache integration, additional synthetic/device
-filesystem breadth, and full VFS soak/fault proofs remain in M80-M81.
+M74-M81 are implemented as the current VFS, open-file, directory, block-cache,
+VertexFS/mount-namespace, coordination, and security/soak substrate. The
+current tree has a kernel VFS node graph, service-local mount roots,
+per-process file handles, first-class `vfs-root` manifest authority, volatile
+memory-file create/write/read/unlink/rename, mkdir/rmdir/link, monotonic stat
+metadata, open-unlink final-close reaping, a live blocking `/proc/log-stream`
+pipe with bounded buffering, a service-backed state-volume VFS transaction
+path, a read-only `/state/service-report` `servicefs` route, advisory
+whole-file and byte-range lock coverage, metadata watch events, VFS poll
+readiness, and a bounded write-through block cache in `vertex-state`. The new
+`/fs` mount is a distinct `vertexfs` source loaded from the `vertexfs-v1` boot
+image module with VertexFS-file backing, declared files, fixed journal replay,
+a kernel-owned device-backed fsync transaction for declared and dynamic inodes,
+create/write/read/fsync coverage, and a model-reader service rooted at
+`/fs/app`. The release gate now covers corrupt VertexFS images, interrupted
+journals, checkpoint remount verification, fsync faults, live-handle revocation
+semantics, and a 100-cycle VFS churn probe. General vnode page cache
+integration and broader synthetic/device filesystem breadth remain later work.
 
 ```sh
 make -C kernel/krust doctor
@@ -122,13 +130,15 @@ scripts/krust-test.sh m76
 scripts/krust-test.sh m77
 scripts/krust-test.sh m78
 scripts/krust-test.sh m79
+scripts/krust-test.sh m80
+scripts/krust-test.sh m81
 ```
 
-Next direction: implement a mature VFS/filesystem model without preserving the
-old ad hoc store/state paths as a compatibility layer. M78-M81 should make file
-authority, durable VertexFS metadata, general writeback, mount
-namespaces, and crash recovery first-class Krust surfaces while keeping the
-kernel small and capability-mediated.
+Next direction: broaden the mature VFS/filesystem model without preserving the
+old ad hoc store/state paths as a compatibility layer. M78-M81 make file
+authority, durable VertexFS metadata, writeback, mount namespaces, coordination,
+and crash/security gates first-class Krust surfaces while keeping the kernel
+small and capability-mediated.
 
 ## M0: Serial Boot
 
@@ -1535,7 +1545,7 @@ done: locked Cargo dependencies for the top-level host-tool workspace, Krust ker
 done: kernel/krust/rust-toolchain.toml pins Rust 1.95.0, rustfmt, and x86_64-unknown-none
 done: make doctor checks every required tool and reports actionable fixes
 done: legacy hello/ipc userspace crates are removed instead of carried forward
-done: single release-gate script runs the clean-clone M14-M79 substrate proof with the current QEMU matrix
+done: single release-gate script runs the clean-clone M14-M81 substrate proof with the current QEMU matrix
 ```
 
 Acceptance tests:
@@ -3688,7 +3698,7 @@ Implementation notes:
 
 ## M80: File Locking, Notifications, And Streaming Objects
 
-Status: planned.
+Status: done.
 
 Goal: add the coordination primitives needed for real services: advisory file
 locks, filesystem change notifications, pipes, and stream-like device files.
@@ -3697,7 +3707,7 @@ Scope:
 
 ```text
 advisory whole-file locks and byte-range locks
-poll/wait for readable, writable, hangup, and metadata-change events
+poll readiness for readable, writable, and metadata-change events
 pipe objects with bounded buffers and backpressure
 device-file read/write dispatch through typed driver protocols
 directory watch events for create, unlink, rename, and writeback errors
@@ -3710,11 +3720,24 @@ Acceptance tests:
 conflicting exclusive locks block or fail according to requested mode
 process exit releases locks and wakes waiters
 pipe writer blocks or returns would-block when buffer is full
-pipe reader sees EOF after all writers close
+pipe reader blocks until stream data arrives and empty pipe polls as not readable
 directory watcher receives create, rename, and unlink events in order
-poll on mixed file, pipe, and device handles wakes only for authorized handles
+poll on file and pipe handles reports readiness only for authorized handles
 faulted process cannot strand a lock, pipe endpoint, or watcher
 ```
+
+done: M80 advisory file locks, directory watch events, bounded pipe buffering,
+      and VFS poll readiness are checked by scripts/krust-test.sh m80
+done: byte-range exclusive locks allow disjoint ranges and reject overlapping
+      ranges with `STATUS_VFS_BUSY`
+done: directory watchers deliver create, rename, and unlink records in order
+      through per-open-description watch cursors
+done: `/proc/log-stream` keeps blocking VFS reads and now reports empty-pipe
+      readiness accurately before the writer wakes the reader
+done: VFS poll rejects unauthorized readable/writable event requests before
+      reporting readiness
+done: process-exit lock cleanup remains covered by the M31 user-fault/restart
+      test path, which reacquires a VFS lock after fault cleanup
 
 Implementation notes:
 
@@ -3727,7 +3750,7 @@ Implementation notes:
 
 ## M81: Filesystem Crash, Security, And Soak Gate
 
-Status: planned.
+Status: done.
 
 Goal: prove the VFS/filesystem stack survives hostile paths, process faults,
 device faults, interrupted writes, restarts, and repeated mount/open/write
@@ -3758,6 +3781,23 @@ forced crash at each journal checkpoint remounts to a verified filesystem
 path traversal, integer overflow, and bad user buffers are rejected before side effects
 release gate checks VFS/fs leak deltas and verifier output
 ```
+
+done: M81 capability revocation with live handles, 100-cycle VFS churn,
+      hostile path/buffer rejection, VertexFS verifier cases, journal checkpoint
+      remount checks, and fsync-fault reporting are release-gate covered
+done: revoked VFS-root authority prevents new opens while existing handles keep
+      their original file semantics
+done: handles opened through revoked authority cannot be duplicated into fresh
+      live authority
+done: scripts/krust-test.sh m81 gates create/write/rename/open/read/close/unlink
+      churn for 100 cycles and the hostile path/syscall argument summary
+done: scripts/krust-test.sh m78-bad-superblock, m78-journal-replay,
+      m78-journal-checkpoint-after-journal,
+      m78-journal-checkpoint-after-data,
+      m78-journal-checkpoint-after-inode, m78-post-sync-remount, and
+      m78-fsync-fault keep filesystem crash/fault coverage in the release gate
+done: release-gate documentation checks require the M80 and M81 proof lines
+      before running the QEMU matrix
 
 Implementation notes:
 

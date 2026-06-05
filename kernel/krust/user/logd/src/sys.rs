@@ -24,10 +24,13 @@ const SYS_VFS_PREAD: u64 = 53;
 const SYS_VFS_WRITE: u64 = 54;
 const SYS_VFS_SYNC: u64 = 56;
 const SYS_VFS_DUP: u64 = 57;
+const SYS_VFS_POLL: u64 = 70;
 
 const VFS_OPEN_READ: u64 = 1;
 const VFS_DUP_SHARE_OFFSET: u64 = 1;
 const VFS_SEEK_SET: u64 = 0;
+pub const VFS_POLL_READABLE: u64 = 1;
+pub const VFS_POLL_WRITABLE: u64 = 1 << 1;
 
 pub fn ipc_send(cap_slot: u64, message: &[u8]) -> u64 {
     syscall3(
@@ -139,6 +142,10 @@ pub fn vfs_dup(handle: u64) -> u64 {
 
 pub fn vfs_dup_shared(handle: u64) -> u64 {
     syscall3(SYS_VFS_DUP, handle, VFS_DUP_SHARE_OFFSET, 0)
+}
+
+pub fn vfs_poll(handle: u64, events: u64) -> u64 {
+    syscall3(SYS_VFS_POLL, handle, events, 0)
 }
 
 pub fn vfs_close(handle: u64) -> u64 {

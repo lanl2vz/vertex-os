@@ -45,6 +45,7 @@ const SYS_VFS_READ: u64 = 49;
 const SYS_VFS_CLOSE: u64 = 50;
 const SYS_VFS_STAT: u64 = 51;
 const SYS_VFS_WRITE: u64 = 54;
+const SYS_VFS_DUP: u64 = 57;
 const SYS_VFS_CREATE: u64 = 58;
 const SYS_VFS_UNLINK: u64 = 59;
 const SYS_VFS_DERIVE_ROOT: u64 = 60;
@@ -57,6 +58,8 @@ const SYS_VFS_RENAME: u64 = 66;
 const SYS_VFS_MKDIR: u64 = 67;
 const SYS_VFS_RMDIR: u64 = 68;
 const SYS_VFS_LINK: u64 = 69;
+const SYS_VFS_POLL: u64 = 70;
+const SYS_VFS_WATCH: u64 = 71;
 
 const VFS_OPEN_READ: u64 = 1;
 const VFS_OPEN_WRITE: u64 = 1 << 1;
@@ -65,6 +68,13 @@ const VFS_OPEN_TRUNC: u64 = 1 << 3;
 const VFS_OPEN_APPEND: u64 = 1 << 4;
 const VFS_LOCK_SHARED: u64 = 1;
 const VFS_LOCK_EXCLUSIVE: u64 = 2;
+const VFS_LOCK_RANGE: u64 = 1 << 8;
+pub const VFS_POLL_READABLE: u64 = 1;
+pub const VFS_POLL_WRITABLE: u64 = 1 << 1;
+pub const VFS_POLL_METADATA: u64 = 1 << 3;
+pub const VFS_EVENT_CREATE: u64 = 1;
+pub const VFS_EVENT_RENAME: u64 = 2;
+pub const VFS_EVENT_UNLINK: u64 = 3;
 const VFS_MOUNT_VOLATILE: u64 = 1;
 const VFS_MOUNT_BIND: u64 = 1 << 1;
 const VFS_MOUNT_READ_ONLY: u64 = 1 << 2;
@@ -280,6 +290,32 @@ pub fn vfs_lock_exclusive(handle: u64) -> u64 {
 
 pub fn vfs_unlock(handle: u64) -> u64 {
     syscall3(SYS_VFS_UNLOCK, handle, 0, 0)
+}
+
+pub fn vfs_lock_range_exclusive(handle: u64, offset: u64, len: u64) -> u64 {
+    syscall3(
+        SYS_VFS_LOCK,
+        handle,
+        VFS_LOCK_EXCLUSIVE | VFS_LOCK_RANGE,
+        (len << 32) | offset,
+    )
+}
+
+pub fn vfs_dup(handle: u64) -> u64 {
+    syscall3(SYS_VFS_DUP, handle, 0, 0)
+}
+
+pub fn vfs_poll(handle: u64, events: u64) -> u64 {
+    syscall3(SYS_VFS_POLL, handle, events, 0)
+}
+
+pub fn vfs_watch(handle: u64, buffer: &mut [u8]) -> u64 {
+    syscall3(
+        SYS_VFS_WATCH,
+        handle,
+        buffer.as_mut_ptr() as u64,
+        buffer.len() as u64,
+    )
 }
 
 pub fn vfs_create(cap_slot: u64, path: &[u8]) -> u64 {
