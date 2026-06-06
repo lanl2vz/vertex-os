@@ -26,7 +26,7 @@ const MAX_VFS_STATE_REQUEST_BYTES: usize = 512;
 const VERTEX_DISK_MAGIC: &[u8; 16] = b"VERTEXDISKV1\0\0\0\0";
 const STATE_INDEX_MAGIC: &[u8; 16] = b"VDISKSTATEV0\0\0\0\0";
 const JOURNAL_RECORD_MAGIC: &[u8; 16] = b"VDISKJOURNALV0\0\0";
-const VERTEX_DISK_VERSION: u16 = 2;
+const VERTEX_DISK_VERSION: u16 = 3;
 const JOURNAL_RECORD_STATE_WRITE: u16 = 1;
 const VERTEX_DISK_CHECKSUM_OFFSET: usize = 20;
 const VERTEX_DISK_TOTAL_SECTORS_OFFSET: usize = 24;
@@ -35,7 +35,7 @@ const VERTEX_DISK_SECTION_RECORD_LEN: usize = 16;
 const VERTEX_DISK_STATE_INDEX_SECTION: usize = 3;
 const VERTEX_DISK_STATE_DATA_SECTION: usize = 4;
 const VERTEX_DISK_JOURNAL_SECTION: usize = 5;
-const VERTEX_DISK_VERTEXFS_SECTION: usize = 6;
+const VERTEX_DISK_GRAPH_STORE_SECTION: usize = 7;
 const STATE_ENTRY_OFFSET: usize = 32;
 const JOURNAL_STATE_ID_OFFSET: usize = 48;
 const JOURNAL_VALUE_OFFSET: usize = 128;
@@ -782,7 +782,7 @@ fn valid_superblock(sector: &[u8; SECTOR_SIZE]) -> bool {
 
     let total_sectors = read_u32(sector, VERTEX_DISK_TOTAL_SECTORS_OFFSET) as u64;
     let mut section = 0;
-    while section <= VERTEX_DISK_VERTEXFS_SECTION {
+    while section <= VERTEX_DISK_GRAPH_STORE_SECTION {
         let Some((start, count)) = vertexdisk_section(sector, section) else {
             return false;
         };

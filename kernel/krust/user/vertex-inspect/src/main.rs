@@ -7,15 +7,7 @@ use core::{cell::UnsafeCell, panic::PanicInfo};
 
 const CAP_INSPECT: u64 = 0;
 const CAP_SERIAL_LOG: u64 = 1;
-const CAP_MANIFEST: u64 = 3;
-const KRUSTBOOT_MAGIC: &[u8; 16] = b"KRUSTBOOTM79\0\0\0\0";
-const KRUSTBOOT_VERSION: u16 = 12;
-const MANIFEST_BUFFER_LEN: usize = 32 * 1024;
-const REPORT_BUFFER_LEN: usize = 64 * 1024;
-const OFFSET_VERSION: usize = 16;
-const OFFSET_PROCESSES: usize = 20;
-const OFFSET_ENDPOINTS: usize = 22;
-const OFFSET_GENERATION_ID: usize = 48;
+const REPORT_BUFFER_LEN: usize = 128 * 1024;
 const STRING_LEN: usize = 64;
 
 struct ReportBuffer(UnsafeCell<[u8; REPORT_BUFFER_LEN]>);
@@ -24,30 +16,17 @@ unsafe impl Sync for ReportBuffer {}
 
 static REPORT_BUFFER: ReportBuffer = ReportBuffer(UnsafeCell::new([0; REPORT_BUFFER_LEN]));
 
-struct ManifestBuffer(UnsafeCell<[u8; MANIFEST_BUFFER_LEN]>);
-
-unsafe impl Sync for ManifestBuffer {}
-
-static MANIFEST_BUFFER: ManifestBuffer = ManifestBuffer(UnsafeCell::new([0; MANIFEST_BUFFER_LEN]));
-
 struct GenerationGraph {
     id: [u8; STRING_LEN],
     id_len: usize,
-    processes: u16,
-    endpoints: u16,
+    services: u64,
+    endpoints: u64,
 }
 
 #[unsafe(link_section = ".text._start")]
 #[unsafe(no_mangle)]
 pub extern "C" fn _start() -> ! {
     log(b"vertex-inspect started");
-
-    let generation = read_generation_graph();
-    log_generation_graph(
-        &generation.id[..generation.id_len],
-        generation.processes,
-        generation.endpoints,
-    );
 
     let report = report_buffer();
     let report_len = sys::runtime_inspect(CAP_INSPECT, report);
@@ -59,16 +38,17 @@ pub extern "C" fn _start() -> ! {
         log(b"vertex-inspect runtime report failed");
         sys::exit(1);
     }
-    if sys::runtime_inspect(CAP_SERIAL_LOG, report) == sys::STATUS_BAD_CAPABILITY
-        && sys::process_create(CAP_INSPECT, 1) == sys::STATUS_BAD_CAPABILITY
-    {
-        log(b"M61 inspect authority rejects wrong kind and missing create right");
-    } else {
-        log(b"M61 inspect authority negative test failed");
-        sys::exit(1);
-    }
-
     let report = &report[..report_len as usize];
+    log(b"vertex-inspect runtime report captured");
+    let generation = read_generation_graph(report);
+    log(b"vertex-inspect graph-store header parsed");
+    log_generation_graph(
+        &generation.id[..generation.id_len],
+        generation.services,
+        generation.endpoints,
+    );
+    explain_native_graph_store(report, &generation);
+    log(b"vertex-inspect graph-store proof parsed");
     explain_echo_to_logd(report);
     explain_state_counter(report);
     explain_vertex_inspect_generation(report, &generation.id[..generation.id_len]);
@@ -85,32 +65,18 @@ fn report_buffer() -> &'static mut [u8; REPORT_BUFFER_LEN] {
     unsafe { &mut *REPORT_BUFFER.0.get() }
 }
 
-fn manifest_buffer() -> &'static mut [u8; MANIFEST_BUFFER_LEN] {
-    unsafe { &mut *MANIFEST_BUFFER.0.get() }
-}
-
 #[inline(never)]
-fn read_generation_graph() -> GenerationGraph {
-    let manifest = manifest_buffer();
-    let manifest_len = sys::read_manifest(CAP_MANIFEST, manifest);
-    if manifest_len == sys::STATUS_BAD_CAPABILITY
-        || manifest_len == sys::STATUS_BAD_BUFFER
-        || manifest_len == sys::STATUS_TOO_LARGE
-    {
-        log(b"vertex-inspect manifest read failed");
+fn read_generation_graph(report: &[u8]) -> GenerationGraph {
+    let Some(graph_store) = find_line_contains_all(report, &[b"graph-store v=1", b"generation="])
+    else {
+        log(b"vertex-inspect graph-store query failed");
         sys::exit(1);
-    }
-    let manifest_len = manifest_len as usize;
-    if manifest_len < OFFSET_GENERATION_ID + STRING_LEN
-        || !valid_magic(&manifest[..manifest_len])
-        || read_u16(manifest, OFFSET_VERSION) != KRUSTBOOT_VERSION
-    {
-        log(b"vertex-inspect manifest invalid");
+    };
+    let Some(generation) = field_slice(graph_store, b"generation=", b' ') else {
+        log(b"vertex-inspect graph-store generation missing");
         sys::exit(1);
-    }
+    };
 
-    let generation =
-        fixed_string(&manifest[OFFSET_GENERATION_ID..OFFSET_GENERATION_ID + STRING_LEN]);
     let mut id = [0u8; STRING_LEN];
     let mut index = 0;
     while index < generation.len() {
@@ -118,12 +84,97 @@ fn read_generation_graph() -> GenerationGraph {
         index += 1;
     }
 
+    let Some(counts) = find_line_contains_all(report, &[b"graph-store-object-counts"]) else {
+        log(b"vertex-inspect graph-store counts missing");
+        sys::exit(1);
+    };
+
     GenerationGraph {
         id,
         id_len: generation.len(),
-        processes: read_u16(manifest, OFFSET_PROCESSES),
-        endpoints: read_u16(manifest, OFFSET_ENDPOINTS),
+        services: field_u64(counts, b"services=").unwrap_or(0),
+        endpoints: field_u64(counts, b"endpoints=").unwrap_or(0),
     }
+}
+
+fn explain_native_graph_store(report: &[u8], generation: &GenerationGraph) {
+    let generation_id = &generation.id[..generation.id_len];
+    let graph_store_needles: [&[u8]; 5] = [
+        b"graph-store v=1",
+        b"generation=",
+        b"hash=",
+        b"nodes=",
+        b"source=vertexdisk",
+    ];
+    if find_line_contains_all(report, &graph_store_needles).is_none() {
+        log(b"vertex-inspect native graph-store query failed");
+        sys::exit(1);
+    }
+
+    let counts_needles: [&[u8]; 5] = [
+        b"graph-store-object-counts",
+        b"generation=1",
+        b"services=",
+        b"store_objects=",
+        b"devices=",
+    ];
+    let Some(counts) = find_line_contains_all(report, &counts_needles) else {
+        log(b"vertex-inspect graph-store object counts failed");
+        sys::exit(1);
+    };
+    if field_u64(counts, b"services=").unwrap_or(0) == 0
+        || field_u64(counts, b"store_objects=").unwrap_or(0) == 0
+        || field_u64(counts, b"state=").unwrap_or(0) == 0
+        || field_u64(counts, b"devices=").unwrap_or(0) == 0
+    {
+        log(b"vertex-inspect graph-store object counts failed");
+        sys::exit(1);
+    }
+
+    let graph_node_needles: [&[u8]; 5] = [
+        b"graph-node",
+        b"kind=generation",
+        b"id=",
+        generation_id,
+        b"object_kind=none",
+    ];
+    let service_needles: [&[u8]; 3] = [b"graph-node", b"kind=service", b"id=svc:vertex-inspect"];
+    let store_needles: [&[u8]; 3] = [b"graph-node", b"kind=store-object", b"id=store:"];
+    let state_needles: [&[u8]; 3] =
+        [b"graph-node", b"kind=state-volume", b"id=state:counter"];
+    let device_needles: [&[u8]; 3] = [b"graph-node", b"kind=device", b"id=cap:"];
+    if find_line_contains_all(report, &graph_node_needles).is_none()
+        || find_line_contains_all(report, &service_needles).is_none()
+        || find_line_contains_all(report, &store_needles).is_none()
+        || find_line_contains_all(report, &state_needles).is_none()
+        || find_line_contains_all(report, &device_needles).is_none()
+    {
+        log(b"vertex-inspect graph node query failed");
+        sys::exit(1);
+    }
+
+    let process_needles: [&[u8]; 3] = [
+        b"process[",
+        b"name=vertex-inspect",
+        b"graph_node=svc:vertex-inspect",
+    ];
+    let cap_needles: [&[u8]; 5] = [
+        b"space=initial proc=vertex-inspect cap[1] endpoint=serial-log",
+        b"graph_from=svc:vertex-inspect",
+        b"graph_target=serial-log",
+        b"graph_edge=grant:",
+        b"revoked=no",
+    ];
+    if find_line_contains_all(report, &process_needles).is_none()
+        || find_line_contains_all(report, &cap_needles).is_none()
+    {
+        log(b"vertex-inspect graph process/capability query failed");
+        sys::exit(1);
+    }
+
+    log(b"vertex-inspect native graph-store query ok");
+    log(b"native graph query returns generation service store-object state and device nodes");
+    log(b"runtime process and capability records point back to native graph nodes");
 }
 
 fn explain_echo_to_logd(report: &[u8]) {
@@ -270,22 +321,6 @@ fn explain_secret_authority(report: &[u8]) {
     sys::exit(1);
 }
 
-fn valid_magic(manifest: &[u8]) -> bool {
-    manifest.len() >= KRUSTBOOT_MAGIC.len() && &manifest[..KRUSTBOOT_MAGIC.len()] == KRUSTBOOT_MAGIC
-}
-
-fn read_u16(bytes: &[u8], offset: usize) -> u16 {
-    u16::from_le_bytes([bytes[offset], bytes[offset + 1]])
-}
-
-fn fixed_string(bytes: &[u8]) -> &[u8] {
-    let mut len = 0;
-    while len < bytes.len() && bytes[len] != 0 {
-        len += 1;
-    }
-    &bytes[..len]
-}
-
 fn contains(haystack: &[u8], needle: &[u8]) -> bool {
     find_subslice(haystack, needle).is_some()
 }
@@ -384,6 +419,19 @@ fn field_u64(line: &[u8], key: &[u8]) -> Option<u64> {
     if saw_digit { Some(value) } else { None }
 }
 
+fn field_slice<'a>(line: &'a [u8], key: &[u8], terminator: u8) -> Option<&'a [u8]> {
+    let mut offset = find_subslice(line, key)? + key.len();
+    let start = offset;
+    while offset < line.len() && line[offset] != terminator {
+        offset += 1;
+    }
+    if offset == start {
+        None
+    } else {
+        Some(&line[start..offset])
+    }
+}
+
 fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     if needle.is_empty() {
         return Some(0);
@@ -416,14 +464,14 @@ fn bytes_eq(left: &[u8], right: &[u8]) -> bool {
     true
 }
 
-fn log_generation_graph(generation: &[u8], processes: u16, endpoints: u16) {
+fn log_generation_graph(generation: &[u8], services: u64, endpoints: u64) {
     let mut buffer = [0u8; 128];
     let mut len = append(&mut buffer, 0, b"vertex-inspect generation graph: ");
     len = append(&mut buffer, len, generation);
     len = append(&mut buffer, len, b" processes=");
-    len = append_u16(&mut buffer, len, processes);
+    len = append_u64(&mut buffer, len, services);
     len = append(&mut buffer, len, b" endpoints=");
-    len = append_u16(&mut buffer, len, endpoints);
+    len = append_u64(&mut buffer, len, endpoints);
     log(&buffer[..len]);
 }
 
@@ -449,10 +497,6 @@ fn append(buffer: &mut [u8], mut offset: usize, value: &[u8]) -> usize {
         index += 1;
     }
     offset
-}
-
-fn append_u16(buffer: &mut [u8], offset: usize, value: u16) -> usize {
-    append_u64(buffer, offset, value as u64)
 }
 
 fn append_u64(buffer: &mut [u8], mut offset: usize, mut value: u64) -> usize {

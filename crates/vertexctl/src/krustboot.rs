@@ -4,8 +4,8 @@ use std::fs;
 use std::path::PathBuf;
 use vertex_ir::{GenerationManifest, Service};
 
-const COMPACT_MAGIC: &[u8; 16] = b"KRUSTBOOTM79\0\0\0\0";
-const COMPACT_VERSION: u16 = 12;
+const COMPACT_MAGIC: &[u8; 16] = b"KRUSTBOOTM82\0\0\0\0";
+const COMPACT_VERSION: u16 = 13;
 const V1_MAGIC: &[u8; 16] = b"KRUSTBOOTV1\0\0\0\0\0";
 const V1_VERSION: u16 = 1;
 const V1_HEADER_SIZE: usize = 164;
@@ -13,7 +13,11 @@ const V1_CHECKSUM_OFFSET: usize = 32;
 const V1_RECORD_SIZE: usize = 12;
 const V1_RECORD_COUNT: usize = 9;
 const V1_PAYLOAD_OFFSET: usize = V1_HEADER_SIZE + V1_RECORD_COUNT * V1_RECORD_SIZE;
-const COMPACT_HEADER_SIZE: usize = 176;
+const GRAPH_HEADER_SIZE: usize = 8;
+const COMPACT_GRAPH_NODE_COUNT_OFFSET: usize = 176;
+const COMPACT_GRAPH_EDGE_COUNT_OFFSET: usize = 178;
+const COMPACT_GRAPH_CHECKSUM_OFFSET: usize = 180;
+const COMPACT_HEADER_SIZE: usize = 176 + GRAPH_HEADER_SIZE;
 const STRING_LEN: usize = 64;
 const BOOT_MODULE_RECORD_LEN: usize = STRING_LEN * 2;
 const PROCESS_REF_LIST_LEN: usize = 2 + MAX_PROCESS_REFS * 2;
@@ -43,6 +47,8 @@ const PCI_DEVICE_RECORD_LEN: usize = STRING_LEN * 2;
 const VIRTIO_DEVICE_RECORD_LEN: usize = STRING_LEN * 2;
 const NAMESPACE_ENTRY_RECORD_LEN: usize = STRING_LEN + 8;
 const VFS_ROOT_RECORD_LEN: usize = STRING_LEN * 2;
+const GRAPH_NODE_RECORD_LEN: usize = 4 + STRING_LEN * 2;
+const GRAPH_EDGE_RECORD_LEN: usize = 8 + STRING_LEN;
 const MAX_BOOT_MODULES: usize = 16;
 const MAX_PROCESSES: usize = 16;
 const MAX_ENDPOINTS: usize = 16;
@@ -58,6 +64,8 @@ const MAX_PCI_DEVICES: usize = 4;
 const MAX_VIRTIO_DEVICES: usize = 4;
 const MAX_NAMESPACES: usize = 4;
 const MAX_VFS_ROOTS: usize = 8;
+const MAX_GRAPH_NODES: usize = 128;
+const MAX_GRAPH_EDGES: usize = 224;
 const MAX_NAMESPACE_ENTRIES: usize = 4;
 const MAX_PROCESS_REFS: usize = 4;
 const MAX_PROCESS_MOUNTS: usize = 4;
@@ -104,6 +112,19 @@ const RECORD_STATE_VOLUME: u16 = 6;
 const RECORD_TIMER: u16 = 7;
 const RECORD_GENERATION: u16 = 8;
 const RECORD_POLICY: u16 = 9;
+const GRAPH_NODE_GENERATION: u16 = 1;
+const GRAPH_NODE_SERVICE: u16 = 2;
+const GRAPH_NODE_ENDPOINT: u16 = 3;
+const GRAPH_NODE_STORE_OBJECT: u16 = 4;
+const GRAPH_NODE_CONFIG: u16 = 5;
+const GRAPH_NODE_STATE_VOLUME: u16 = 6;
+const GRAPH_NODE_DEVICE: u16 = 7;
+const GRAPH_NODE_NAMESPACE: u16 = 8;
+const GRAPH_NODE_VFS_ROOT: u16 = 9;
+const GRAPH_NODE_TIMER: u16 = 10;
+const GRAPH_NODE_SECRET: u16 = 11;
+const GRAPH_EDGE_ACTIVATION: u16 = 1;
+const GRAPH_EDGE_CAPABILITY: u16 = 2;
 const RESTART_NEVER: u16 = 0;
 const RESTART_ON_FAILURE: u16 = 1;
 const RESTART_ALWAYS: u16 = 2;
@@ -125,18 +146,45 @@ pub struct KrustBootIdentity {
     compact_version: u16,
 }
 
+pub struct GraphStoreImage {
+    pub generation_id: String,
+    pub node_count: usize,
+    pub edge_count: usize,
+    pub records: Vec<u8>,
+    pub checksum: u32,
+    pub hash: String,
+}
+
 impl KrustBootIdentity {
     pub fn release_profile_label(&self) -> String {
         format!(
-            "Manifest v1 compact KRUSTBOOTM79 version {}",
+            "Manifest v1 compact KRUSTBOOTM82 version {}",
             self.compact_version
         )
     }
 }
 
+pub fn graph_store_image(manifest: &GenerationManifest) -> Result<GraphStoreImage, String> {
+    let plan = derive_plan(manifest)?;
+    validate_plan(&plan)?;
+    let records = serialize_graph_records(&plan)?;
+    let checksum = checksum32(&records);
+    let hash = store_hash_hex(&records);
+    Ok(GraphStoreImage {
+        generation_id: manifest.generation.id.clone(),
+        node_count: plan.graph_nodes.len(),
+        edge_count: plan.graph_edges.len(),
+        records,
+        checksum,
+        hash,
+    })
+}
+
 pub fn compile(manifest: &GenerationManifest) -> Result<Vec<u8>, String> {
     let plan = derive_plan(manifest)?;
     validate_plan(&plan)?;
+    let graph_records = serialize_graph_records(&plan)?;
+    let graph_checksum = checksum32(&graph_records);
 
     let mut body = Vec::new();
     body.extend_from_slice(COMPACT_MAGIC);
@@ -161,6 +209,9 @@ pub fn compile(manifest: &GenerationManifest) -> Result<Vec<u8>, String> {
         &mut body,
         manifest.generation.parent.as_deref().unwrap_or_default(),
     )?;
+    push_count(&mut body, plan.graph_nodes.len(), "graph_nodes")?;
+    push_count(&mut body, plan.graph_edges.len(), "graph_edges")?;
+    push_u32(&mut body, graph_checksum);
 
     for module in &plan.boot_modules {
         push_fixed_str(&mut body, &module.name)?;
@@ -262,6 +313,8 @@ pub fn compile(manifest: &GenerationManifest) -> Result<Vec<u8>, String> {
         push_fixed_str(&mut body, &root.root_path)?;
     }
 
+    body.extend_from_slice(&graph_records);
+
     wrap_v1(manifest, &plan, &body)
 }
 
@@ -288,6 +341,8 @@ pub fn summary(manifest: &GenerationManifest, output_path: &str, byte_len: usize
          virtio_devices: {}\n\
          namespaces: {}\n\
          vfs_roots: {}\n\
+         graph_nodes: {}\n\
+         graph_edges: {}\n\
          bytes: {byte_len}",
         manifest.generation.id,
         manifest.generation.parent.as_deref().unwrap_or("<none>"),
@@ -305,7 +360,9 @@ pub fn summary(manifest: &GenerationManifest, output_path: &str, byte_len: usize
         plan.pci_devices.len(),
         plan.virtio_devices.len(),
         plan.namespaces.len(),
-        plan.vfs_roots.len()
+        plan.vfs_roots.len(),
+        plan.graph_nodes.len(),
+        plan.graph_edges.len()
     )
 }
 
@@ -346,7 +403,22 @@ pub fn corrupt(bytes: &[u8], mode: &str) -> Result<Vec<u8>, String> {
                 return Err("KrustBoot manifest is too short to rewrite compact magic".to_owned());
             }
             out[V1_PAYLOAD_OFFSET..V1_PAYLOAD_OFFSET + COMPACT_MAGIC.len()]
-                .copy_from_slice(b"KRUSTBOOTM75\0\0\0\0");
+                .copy_from_slice(b"KRUSTBOOTM79\0\0\0\0");
+            rewrite_v1_checksum(&mut out)?;
+        }
+        "graph-store-checksum" => {
+            if out.len() < V1_PAYLOAD_OFFSET + COMPACT_GRAPH_CHECKSUM_OFFSET + 4 {
+                return Err(
+                    "KrustBoot manifest is too short to corrupt graph-store checksum".to_owned(),
+                );
+            }
+            let offset = V1_PAYLOAD_OFFSET + COMPACT_GRAPH_CHECKSUM_OFFSET;
+            let checksum = read_u32_at(&out, offset)? ^ 0x8000_0001;
+            out[offset..offset + 4].copy_from_slice(&checksum.to_le_bytes());
+            rewrite_v1_checksum(&mut out)?;
+        }
+        "graph-store-record" => {
+            corrupt_graph_store_record(&mut out)?;
             rewrite_v1_checksum(&mut out)?;
         }
         "missing-provider" => {
@@ -355,7 +427,7 @@ pub fn corrupt(bytes: &[u8], mode: &str) -> Result<Vec<u8>, String> {
         }
         other => {
             return Err(format!(
-                "unknown KrustBoot corruption mode {other}; expected truncated, bad-magic, unsupported-version, out-of-bounds-record, raw-compact, old-compact-magic, or missing-provider"
+                "unknown KrustBoot corruption mode {other}; expected truncated, bad-magic, unsupported-version, out-of-bounds-record, raw-compact, old-compact-magic, graph-store-checksum, graph-store-record, or missing-provider"
             ));
         }
     }
@@ -432,7 +504,7 @@ pub fn validate_release_artifact(bytes: &[u8]) -> Result<KrustBootIdentity, Stri
 
     let payload = V1_PAYLOAD_OFFSET;
     if &bytes[payload..payload + COMPACT_MAGIC.len()] != COMPACT_MAGIC {
-        return Err("unsupported KrustBoot compact magic; expected KRUSTBOOTM79".to_owned());
+        return Err("unsupported KrustBoot compact magic; expected KRUSTBOOTM82".to_owned());
     }
     let compact_version = read_u16_at(bytes, payload + COMPACT_MAGIC.len())?;
     if compact_version != COMPACT_VERSION {
@@ -517,6 +589,8 @@ struct BootPlan {
     virtio_devices: Vec<VirtioDevice>,
     namespaces: Vec<Namespace>,
     vfs_roots: Vec<VfsRoot>,
+    graph_nodes: Vec<GraphNode>,
+    graph_edges: Vec<GraphEdge>,
 }
 
 #[derive(Debug, Clone)]
@@ -642,6 +716,23 @@ struct NamespaceEntry {
 struct VfsRoot {
     id: String,
     root_path: String,
+}
+
+#[derive(Debug, Clone)]
+struct GraphNode {
+    kind: u16,
+    object_kind: u16,
+    id: String,
+    label: String,
+}
+
+#[derive(Debug, Clone)]
+struct GraphEdge {
+    kind: u16,
+    from: String,
+    to: String,
+    rights: u16,
+    id: String,
 }
 
 fn derive_plan(manifest: &GenerationManifest) -> Result<BootPlan, String> {
@@ -1126,7 +1217,7 @@ fn derive_plan(manifest: &GenerationManifest) -> Result<BootPlan, String> {
         }
     }
 
-    Ok(BootPlan {
+    let mut plan = BootPlan {
         boot_modules,
         processes,
         endpoints,
@@ -1142,7 +1233,333 @@ fn derive_plan(manifest: &GenerationManifest) -> Result<BootPlan, String> {
         virtio_devices,
         namespaces,
         vfs_roots,
-    })
+        graph_nodes: Vec::new(),
+        graph_edges: Vec::new(),
+    };
+    derive_graph_store(manifest, &mut plan)?;
+    Ok(plan)
+}
+
+fn derive_graph_store(manifest: &GenerationManifest, plan: &mut BootPlan) -> Result<(), String> {
+    push_graph_node(
+        &mut plan.graph_nodes,
+        GRAPH_NODE_GENERATION,
+        0,
+        manifest.generation.id.clone(),
+        manifest.generation.description.clone(),
+    )?;
+
+    for process in &plan.processes {
+        push_graph_node(
+            &mut plan.graph_nodes,
+            GRAPH_NODE_SERVICE,
+            0,
+            process_graph_node_id(process),
+            process.name.clone(),
+        )?;
+    }
+
+    for endpoint in &plan.endpoints {
+        push_graph_node(
+            &mut plan.graph_nodes,
+            GRAPH_NODE_ENDPOINT,
+            OBJECT_ENDPOINT,
+            endpoint.name.clone(),
+            endpoint.name.clone(),
+        )?;
+    }
+
+    push_graph_node(
+        &mut plan.graph_nodes,
+        GRAPH_NODE_TIMER,
+        OBJECT_TIMER,
+        "monotonic-timer".to_owned(),
+        "monotonic-timer".to_owned(),
+    )?;
+
+    for object in &plan.store_objects {
+        let kind = if object.id.starts_with("config:") {
+            GRAPH_NODE_CONFIG
+        } else {
+            GRAPH_NODE_STORE_OBJECT
+        };
+        push_graph_node(
+            &mut plan.graph_nodes,
+            kind,
+            OBJECT_STORE,
+            object.id.clone(),
+            object.module_string.clone(),
+        )?;
+    }
+
+    for state in &plan.state_volumes {
+        push_graph_node(
+            &mut plan.graph_nodes,
+            GRAPH_NODE_STATE_VOLUME,
+            OBJECT_STATE,
+            state.id.clone(),
+            state.id.clone(),
+        )?;
+    }
+
+    for port in &plan.network_ports {
+        push_graph_device_node(
+            &mut plan.graph_nodes,
+            OBJECT_NETWORK_PORT,
+            &port.id,
+            &port.id,
+        )?;
+    }
+    for port in &plan.io_ports {
+        push_graph_device_node(
+            &mut plan.graph_nodes,
+            OBJECT_IO_PORT_RANGE,
+            &port.id,
+            &port.id,
+        )?;
+    }
+    for region in &plan.mmio_regions {
+        push_graph_device_node(
+            &mut plan.graph_nodes,
+            OBJECT_MMIO_REGION,
+            &region.id,
+            &region.id,
+        )?;
+    }
+    for line in &plan.interrupt_lines {
+        push_graph_device_node(
+            &mut plan.graph_nodes,
+            OBJECT_INTERRUPT_LINE,
+            &line.id,
+            &line.id,
+        )?;
+    }
+    for region in &plan.dma_regions {
+        push_graph_device_node(
+            &mut plan.graph_nodes,
+            OBJECT_DMA_REGION,
+            &region.id,
+            &region.id,
+        )?;
+    }
+    for device in &plan.pci_devices {
+        push_graph_device_node(
+            &mut plan.graph_nodes,
+            OBJECT_PCI_DEVICE,
+            &device.id,
+            &device.kind,
+        )?;
+    }
+    for device in &plan.virtio_devices {
+        push_graph_device_node(
+            &mut plan.graph_nodes,
+            OBJECT_VIRTIO_DEVICE,
+            &device.id,
+            &device.transport,
+        )?;
+    }
+
+    for namespace in &plan.namespaces {
+        push_graph_node(
+            &mut plan.graph_nodes,
+            GRAPH_NODE_NAMESPACE,
+            OBJECT_NAMESPACE,
+            namespace.id.clone(),
+            namespace.id.clone(),
+        )?;
+    }
+
+    for root in &plan.vfs_roots {
+        push_graph_node(
+            &mut plan.graph_nodes,
+            GRAPH_NODE_VFS_ROOT,
+            OBJECT_VFS_ROOT,
+            root.id.clone(),
+            root.root_path.clone(),
+        )?;
+    }
+
+    for secret in &manifest.secrets {
+        push_graph_node(
+            &mut plan.graph_nodes,
+            GRAPH_NODE_SECRET,
+            0,
+            secret.id.clone(),
+            secret.name.clone(),
+        )?;
+    }
+    if plan.processes.iter().any(|process| process.name == "logd")
+        && manifest.secret("secret:logd-token").is_none()
+    {
+        push_graph_node(
+            &mut plan.graph_nodes,
+            GRAPH_NODE_SECRET,
+            0,
+            "secret:logd-token".to_owned(),
+            "logd-token".to_owned(),
+        )?;
+    }
+
+    for (index, process) in plan.processes.iter().enumerate() {
+        push_graph_edge(
+            &plan.graph_nodes,
+            &mut plan.graph_edges,
+            GRAPH_EDGE_ACTIVATION,
+            &manifest.generation.id,
+            &process_graph_node_id(process),
+            0,
+            format!("activate:{index}"),
+        )?;
+        for dependency in &process.start_after {
+            let dependency = plan
+                .processes
+                .iter()
+                .find(|candidate| candidate.name == *dependency)
+                .ok_or_else(|| {
+                    format!(
+                        "graph activation edge for {} references unknown process {}",
+                        process.name, dependency
+                    )
+                })?;
+            let edge_index = plan.graph_edges.len();
+            push_graph_edge(
+                &plan.graph_nodes,
+                &mut plan.graph_edges,
+                GRAPH_EDGE_ACTIVATION,
+                &process_graph_node_id(dependency),
+                &process_graph_node_id(process),
+                0,
+                format!("start:{edge_index}"),
+            )?;
+        }
+    }
+
+    for (index, grant) in plan.grants.iter().enumerate() {
+        let process = plan
+            .processes
+            .iter()
+            .find(|process| process.name == grant.process)
+            .ok_or_else(|| format!("graph grant references unknown process {}", grant.process))?;
+        let target = graph_target_id_for_grant(grant);
+        push_graph_edge(
+            &plan.graph_nodes,
+            &mut plan.graph_edges,
+            GRAPH_EDGE_CAPABILITY,
+            &process_graph_node_id(process),
+            &target,
+            grant.rights,
+            format!("grant:{index}"),
+        )?;
+    }
+
+    if plan.processes.iter().any(|process| process.name == "logd") {
+        let logd = plan
+            .processes
+            .iter()
+            .find(|process| process.name == "logd")
+            .map(process_graph_node_id)
+            .unwrap_or_else(|| "svc:logd".to_owned());
+        push_graph_edge(
+            &plan.graph_nodes,
+            &mut plan.graph_edges,
+            GRAPH_EDGE_CAPABILITY,
+            &logd,
+            "secret:logd-token",
+            RIGHT_READ,
+            "grant:secret-logd-token".to_owned(),
+        )?;
+    }
+
+    Ok(())
+}
+
+fn push_graph_device_node(
+    nodes: &mut Vec<GraphNode>,
+    object_kind: u16,
+    id: &str,
+    label: &str,
+) -> Result<(), String> {
+    push_graph_node(
+        nodes,
+        GRAPH_NODE_DEVICE,
+        object_kind,
+        id.to_owned(),
+        label.to_owned(),
+    )
+}
+
+fn push_graph_node(
+    nodes: &mut Vec<GraphNode>,
+    kind: u16,
+    object_kind: u16,
+    id: String,
+    label: String,
+) -> Result<(), String> {
+    if id.is_empty() {
+        return Err("graph node id must not be empty".to_owned());
+    }
+    if id.len() > STRING_LEN || label.len() > STRING_LEN {
+        return Err(format!("graph node {id} exceeds compact string length"));
+    }
+    if !id.is_ascii() || !label.is_ascii() {
+        return Err(format!("graph node {id} must be ASCII"));
+    }
+    if nodes.iter().any(|node| node.id == id) {
+        return Ok(());
+    }
+    nodes.push(GraphNode {
+        kind,
+        object_kind,
+        id,
+        label,
+    });
+    Ok(())
+}
+
+fn push_graph_edge(
+    nodes: &[GraphNode],
+    edges: &mut Vec<GraphEdge>,
+    kind: u16,
+    from: &str,
+    to: &str,
+    rights: u16,
+    id: String,
+) -> Result<(), String> {
+    if id.is_empty() || id.len() > STRING_LEN || !id.is_ascii() {
+        return Err(format!("invalid graph edge id {id}"));
+    }
+    graph_node_index(nodes, from)?;
+    graph_node_index(nodes, to)?;
+    edges.push(GraphEdge {
+        kind,
+        from: from.to_owned(),
+        to: to.to_owned(),
+        rights,
+        id,
+    });
+    Ok(())
+}
+
+fn process_graph_node_id(process: &NativeProcess) -> String {
+    if process.service_id.is_empty() {
+        format!("proc:{}", process.name)
+    } else {
+        process.service_id.clone()
+    }
+}
+
+fn graph_target_id_for_grant(grant: &Grant) -> String {
+    match grant.object_kind {
+        OBJECT_TIMER => "monotonic-timer".to_owned(),
+        _ => grant.object_name.clone(),
+    }
+}
+
+fn graph_node_index(nodes: &[GraphNode], id: &str) -> Result<usize, String> {
+    nodes
+        .iter()
+        .position(|node| node.id == id)
+        .ok_or_else(|| format!("graph edge references unknown node {id}"))
 }
 
 fn native_service_closure(
@@ -1974,6 +2391,16 @@ fn validate_plan(plan: &BootPlan) -> Result<(), String> {
             "native boot plan exceeds {MAX_VFS_ROOTS} vfs roots"
         ));
     }
+    if plan.graph_nodes.len() > MAX_GRAPH_NODES {
+        return Err(format!(
+            "native graph store exceeds {MAX_GRAPH_NODES} nodes"
+        ));
+    }
+    if plan.graph_edges.len() > MAX_GRAPH_EDGES {
+        return Err(format!(
+            "native graph store exceeds {MAX_GRAPH_EDGES} edges"
+        ));
+    }
     validate_hardware_authority(plan)?;
 
     let initial_count = plan
@@ -2151,6 +2578,31 @@ fn validate_plan(plan: &BootPlan) -> Result<(), String> {
             }
         } else if grant.rights == 0 {
             return Err(format!("grant to {} has no rights", grant.process));
+        }
+    }
+
+    let mut graph_node_ids = BTreeSet::new();
+    for node in &plan.graph_nodes {
+        if node.kind == 0 || node.id.is_empty() {
+            return Err("native graph store contains invalid node".to_owned());
+        }
+        if !graph_node_ids.insert(node.id.as_str()) {
+            return Err(format!("duplicate graph node {}", node.id));
+        }
+    }
+
+    let mut graph_edge_ids = BTreeSet::new();
+    for edge in &plan.graph_edges {
+        if edge.kind == 0 || edge.id.is_empty() {
+            return Err("native graph store contains invalid edge".to_owned());
+        }
+        if !graph_edge_ids.insert(edge.id.as_str()) {
+            return Err(format!("duplicate graph edge {}", edge.id));
+        }
+        graph_node_index(&plan.graph_nodes, &edge.from)?;
+        graph_node_index(&plan.graph_nodes, &edge.to)?;
+        if edge.kind == GRAPH_EDGE_CAPABILITY && edge.rights == 0 {
+            return Err(format!("capability graph edge {} has no rights", edge.id));
         }
     }
 
@@ -2841,6 +3293,47 @@ fn push_process_mount_list(bytes: &mut Vec<u8>, values: &[ProcessMount]) -> Resu
     Ok(())
 }
 
+fn serialize_graph_records(plan: &BootPlan) -> Result<Vec<u8>, String> {
+    if plan.graph_nodes.len() > MAX_GRAPH_NODES {
+        return Err(format!(
+            "native graph store exceeds {MAX_GRAPH_NODES} nodes"
+        ));
+    }
+    if plan.graph_edges.len() > MAX_GRAPH_EDGES {
+        return Err(format!(
+            "native graph store exceeds {MAX_GRAPH_EDGES} edges"
+        ));
+    }
+
+    let mut bytes = Vec::with_capacity(
+        plan.graph_nodes.len() * GRAPH_NODE_RECORD_LEN
+            + plan.graph_edges.len() * GRAPH_EDGE_RECORD_LEN,
+    );
+
+    for node in &plan.graph_nodes {
+        push_u16(&mut bytes, node.kind);
+        push_u16(&mut bytes, node.object_kind);
+        push_fixed_str(&mut bytes, &node.id)?;
+        push_fixed_str(&mut bytes, &node.label)?;
+    }
+
+    for edge in &plan.graph_edges {
+        push_u16(&mut bytes, edge.kind);
+        push_u16(
+            &mut bytes,
+            graph_node_index(&plan.graph_nodes, &edge.from)? as u16,
+        );
+        push_u16(
+            &mut bytes,
+            graph_node_index(&plan.graph_nodes, &edge.to)? as u16,
+        );
+        push_u16(&mut bytes, edge.rights);
+        push_fixed_str(&mut bytes, &edge.id)?;
+    }
+
+    Ok(bytes)
+}
+
 fn push_count(bytes: &mut Vec<u8>, count: usize, label: &str) -> Result<(), String> {
     let count =
         u16::try_from(count).map_err(|_| format!("KrustBoot {label} count does not fit in u16"))?;
@@ -3082,6 +3575,14 @@ fn push_u32(bytes: &mut Vec<u8>, value: u32) {
     bytes.extend_from_slice(&value.to_le_bytes());
 }
 
+fn checksum32(bytes: &[u8]) -> u32 {
+    let mut checksum = 0u32;
+    for (index, byte) in bytes.iter().copied().enumerate() {
+        checksum = checksum.wrapping_add((byte as u32).wrapping_mul(index as u32 + 1));
+    }
+    checksum
+}
+
 fn rewrite_v1_checksum(bytes: &mut [u8]) -> Result<(), String> {
     if bytes.len() < V1_CHECKSUM_OFFSET + 4 {
         return Err("KrustBoot v1 manifest is too short for checksum".to_owned());
@@ -3110,6 +3611,96 @@ fn corrupt_missing_provider(bytes: &mut [u8]) -> Result<(), String> {
         index += 1;
     }
     Ok(())
+}
+
+fn corrupt_graph_store_record(bytes: &mut [u8]) -> Result<(), String> {
+    let payload = V1_PAYLOAD_OFFSET;
+    if bytes.len() < payload + COMPACT_HEADER_SIZE {
+        return Err("KrustBoot manifest is too short to corrupt graph store".to_owned());
+    }
+    let graph_nodes = read_u16_at(bytes, payload + COMPACT_GRAPH_NODE_COUNT_OFFSET)? as usize;
+    let graph_edges = read_u16_at(bytes, payload + COMPACT_GRAPH_EDGE_COUNT_OFFSET)? as usize;
+    if graph_nodes == 0 {
+        return Err("KrustBoot graph store has no node record to corrupt".to_owned());
+    }
+    let graph_offset = compact_graph_records_offset(bytes)?;
+    let graph_len = graph_nodes
+        .checked_mul(GRAPH_NODE_RECORD_LEN)
+        .and_then(|len| len.checked_add(graph_edges.checked_mul(GRAPH_EDGE_RECORD_LEN)?))
+        .ok_or_else(|| "KrustBoot graph store length overflow".to_owned())?;
+    let graph_end = graph_offset
+        .checked_add(graph_len)
+        .ok_or_else(|| "KrustBoot graph store end overflow".to_owned())?;
+    if graph_end > bytes.len() || graph_offset + 2 > bytes.len() {
+        return Err("KrustBoot graph store is out of bounds".to_owned());
+    }
+    bytes[graph_offset..graph_offset + 2].copy_from_slice(&0u16.to_le_bytes());
+    let graph_checksum = checksum32(&bytes[graph_offset..graph_end]);
+    let checksum_offset = payload + COMPACT_GRAPH_CHECKSUM_OFFSET;
+    bytes[checksum_offset..checksum_offset + 4].copy_from_slice(&graph_checksum.to_le_bytes());
+    Ok(())
+}
+
+fn compact_graph_records_offset(bytes: &[u8]) -> Result<usize, String> {
+    let payload = V1_PAYLOAD_OFFSET;
+    if bytes.len() < payload + COMPACT_HEADER_SIZE {
+        return Err("KrustBoot manifest is too short for compact header".to_owned());
+    }
+    let boot_modules = read_u16_at(bytes, payload + 18)? as usize;
+    let processes = read_u16_at(bytes, payload + 20)? as usize;
+    let endpoints = read_u16_at(bytes, payload + 22)? as usize;
+    let grants = read_u16_at(bytes, payload + 24)? as usize;
+    let store_objects = read_u16_at(bytes, payload + 26)? as usize;
+    let state_volumes = read_u16_at(bytes, payload + 28)? as usize;
+    let network_ports = read_u16_at(bytes, payload + 30)? as usize;
+    let io_ports = read_u16_at(bytes, payload + 32)? as usize;
+    let mmio_regions = read_u16_at(bytes, payload + 34)? as usize;
+    let interrupt_lines = read_u16_at(bytes, payload + 36)? as usize;
+    let dma_regions = read_u16_at(bytes, payload + 38)? as usize;
+    let pci_devices = read_u16_at(bytes, payload + 40)? as usize;
+    let virtio_devices = read_u16_at(bytes, payload + 42)? as usize;
+    let namespaces = read_u16_at(bytes, payload + 44)? as usize;
+    let vfs_roots = read_u16_at(bytes, payload + 46)? as usize;
+
+    let mut offset = payload + COMPACT_HEADER_SIZE;
+    offset = checked_advance(offset, boot_modules, BOOT_MODULE_RECORD_LEN)?;
+    offset = checked_advance(offset, processes, PROCESS_RECORD_LEN)?;
+    offset = checked_advance(offset, endpoints, ENDPOINT_RECORD_LEN)?;
+    offset = checked_advance(offset, grants, GRANT_RECORD_LEN)?;
+    offset = checked_advance(offset, store_objects, STORE_OBJECT_RECORD_LEN)?;
+    offset = checked_advance(offset, state_volumes, STATE_VOLUME_RECORD_LEN)?;
+    offset = checked_advance(offset, network_ports, NETWORK_PORT_RECORD_LEN)?;
+    offset = checked_advance(offset, io_ports, IO_PORT_RECORD_LEN)?;
+    offset = checked_advance(offset, mmio_regions, MMIO_REGION_RECORD_LEN)?;
+    offset = checked_advance(offset, interrupt_lines, INTERRUPT_LINE_RECORD_LEN)?;
+    offset = checked_advance(offset, dma_regions, DMA_REGION_RECORD_LEN)?;
+    offset = checked_advance(offset, pci_devices, PCI_DEVICE_RECORD_LEN)?;
+    offset = checked_advance(offset, virtio_devices, VIRTIO_DEVICE_RECORD_LEN)?;
+    let mut namespace_index = 0;
+    while namespace_index < namespaces {
+        if offset + STRING_LEN + 2 > bytes.len() {
+            return Err("KrustBoot namespace records are out of bounds".to_owned());
+        }
+        let entry_count = read_u16_at(bytes, offset + STRING_LEN)? as usize;
+        offset = offset
+            .checked_add(STRING_LEN + 2)
+            .and_then(|offset| {
+                offset.checked_add(entry_count.checked_mul(NAMESPACE_ENTRY_RECORD_LEN)?)
+            })
+            .ok_or_else(|| "KrustBoot namespace record length overflow".to_owned())?;
+        namespace_index += 1;
+    }
+    checked_advance(offset, vfs_roots, VFS_ROOT_RECORD_LEN)
+}
+
+fn checked_advance(offset: usize, count: usize, record_len: usize) -> Result<usize, String> {
+    offset
+        .checked_add(
+            count
+                .checked_mul(record_len)
+                .ok_or_else(|| "KrustBoot compact section length overflow".to_owned())?,
+        )
+        .ok_or_else(|| "KrustBoot compact section offset overflow".to_owned())
 }
 
 fn read_u16_at(bytes: &[u8], offset: usize) -> Result<u16, String> {
@@ -3216,6 +3807,8 @@ mod tests {
             virtio_devices: Vec::new(),
             namespaces: Vec::new(),
             vfs_roots: Vec::new(),
+            graph_nodes: Vec::new(),
+            graph_edges: Vec::new(),
         }
     }
 

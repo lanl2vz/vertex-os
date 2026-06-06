@@ -14,7 +14,6 @@ pub const STATUS_BAD_CAPABILITY: u64 = u64::MAX - 1;
 pub const STATUS_BAD_BUFFER: u64 = u64::MAX - 2;
 pub const STATUS_TOO_LARGE: u64 = u64::MAX - 3;
 pub const STATUS_TIMEOUT: u64 = u64::MAX - 9;
-pub const RIGHT_READ: u64 = 1 << 0;
 pub const RIGHT_SEND: u64 = 1 << 4;
 pub const RIGHT_RECEIVE: u64 = 1 << 5;
 pub const RIGHT_CONTROL: u64 = 1 << 6;
@@ -89,6 +88,10 @@ pub fn process_create(process_index: u64) -> u64 {
     syscall3(SYS_PROCESS_CREATE, CAP_PROCESS_CONTROL, process_index, 0)
 }
 
+pub fn process_create_with_cap(cap_slot: u64, process_index: u64) -> u64 {
+    syscall3(SYS_PROCESS_CREATE, cap_slot, process_index, 0)
+}
+
 pub fn process_start(pid: u64) -> u64 {
     syscall3(SYS_PROCESS_START, CAP_PROCESS_CONTROL, pid, 0)
 }
@@ -106,9 +109,13 @@ pub fn sleep_ms(milliseconds: u64) -> u64 {
 }
 
 pub fn runtime_inspect(buffer: &mut [u8]) -> u64 {
+    runtime_inspect_with_cap(CAP_PROCESS_CONTROL, buffer)
+}
+
+pub fn runtime_inspect_with_cap(cap_slot: u64, buffer: &mut [u8]) -> u64 {
     syscall3(
         SYS_RUNTIME_INSPECT,
-        CAP_PROCESS_CONTROL,
+        cap_slot,
         buffer.as_mut_ptr() as u64,
         buffer.len() as u64,
     )

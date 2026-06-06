@@ -6,19 +6,8 @@ pub const STATUS_BAD_BUFFER: u64 = u64::MAX - 2;
 pub const STATUS_TOO_LARGE: u64 = u64::MAX - 3;
 
 const SYS_EXIT: u64 = 2;
-const SYS_BOOT_READ: u64 = 6;
 const SYS_LOG_WRITE: u64 = 7;
-const SYS_PROCESS_CREATE: u64 = 9;
 const SYS_RUNTIME_INSPECT: u64 = 31;
-
-pub fn read_manifest(cap_slot: u64, buffer: &mut [u8]) -> u64 {
-    syscall3(
-        SYS_BOOT_READ,
-        cap_slot,
-        buffer.as_mut_ptr() as u64,
-        buffer.len() as u64,
-    )
-}
 
 pub fn log(cap_slot: u64, message: &[u8]) -> u64 {
     syscall3(
@@ -36,10 +25,6 @@ pub fn runtime_inspect(cap_slot: u64, buffer: &mut [u8]) -> u64 {
         buffer.as_mut_ptr() as u64,
         buffer.len() as u64,
     )
-}
-
-pub fn process_create(cap_slot: u64, process_index: u64) -> u64 {
-    syscall3(SYS_PROCESS_CREATE, cap_slot, process_index, 0)
 }
 
 pub fn exit(status: u64) -> ! {

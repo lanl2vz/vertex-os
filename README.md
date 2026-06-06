@@ -30,12 +30,12 @@ vertex-os/
     netstack/            Demo network capability provider
     echo-server/         Demo service consuming log and network capabilities
   kernel/
-    krust/               Bootable Krust kernel prototype, currently covering M14-M81 native graph activation, substrate hardening, pinned tooling, ABI v1 IPC, console shell, virtio device I/O, VertexDisk v1 durability, native boot selection, verified store objects, native updates, store-loaded executables, dynamic process creation, native config/secrets, package/link/build import, the first appliance transcript, native user-space driver objects, netstack boundaries, capability namespaces, policy compilation, lifecycle supervision, a supported standalone appliance profile, owned frame reclamation, address-space teardown, failure-atomic kernel object creation, memory lifecycle soak gates, interrupt routing, DMA ownership, virtio recovery, device-fault isolation, VFS root authority, open-file handles, directory metadata operations, bounded block-cache writeback, image-backed VertexFS/mount-namespace gates, VFS coordination primitives, and filesystem security/soak gates
+    krust/               Bootable Krust kernel prototype, currently covering M14-M82 native graph activation, substrate hardening, pinned tooling, ABI v1 IPC, console shell, virtio device I/O, VertexDisk v1 durability, native boot selection, verified store objects, native updates, store-loaded executables, dynamic process creation, native config/secrets, package/link/build import, the first appliance transcript, native user-space driver objects, netstack boundaries, capability namespaces, policy compilation, lifecycle supervision, a supported standalone appliance profile, owned frame reclamation, address-space teardown, failure-atomic kernel object creation, memory lifecycle soak gates, interrupt routing, DMA ownership, virtio recovery, device-fault isolation, VFS root authority, open-file handles, directory metadata operations, bounded block-cache writeback, image-backed VertexFS/mount-namespace gates, VFS coordination primitives, filesystem security/soak gates, and the native VertexDisk graph-store read/provenance surface
   lang/
     vertex-lang/         Planned typed system-definition language
 ```
 
-## Krust M14-M81
+## Krust M14-M82
 
 The current native activation path lives in `kernel/krust`. It is isolated
 from the host-side Cargo workspace and boots a Limine ISO under QEMU. The ISO
@@ -78,7 +78,12 @@ journal checkpoint recovery, writable bind alias gates, and the current
 read-only `servicefs` request/reply file route. M80-M81 add byte-range advisory
 locks, directory watch events, VFS poll readiness, bounded pipe buffering,
 revocation checks for live file authority, hostile VFS argument rejection, and a
-100-cycle file churn security/soak gate.
+100-cycle file churn security/soak gate. M82 adds a `KRUSTBOOTM82` version 13
+compact graph header plus a native VertexDisk graph-store object, imports
+runtime graph tables from that disk object, exposes graph
+checksum/hash/object-count inspection, records process/capability graph
+provenance in runtime inspect, and rejects malformed compact or disk
+graph-store records before activation.
 
 ```sh
 scripts/krust-smoke.sh
@@ -86,13 +91,13 @@ scripts/krust-smoke.sh
 
 The clean-clone release gate validates the host-side tool build, checks the
 Krust toolchain, rebuilds the standalone ISO from clean kernel artifacts, and
-runs the M14-M81 substrate gate with the M14-M81 QEMU test matrix:
+runs the M14-M82 substrate gate with the M14-M82 QEMU test matrix:
 
 ```sh
 scripts/krust-release-gate.sh
 ```
 
-See [docs/krust-milestones.md](docs/krust-milestones.md) for M0 through M81
+See [docs/krust-milestones.md](docs/krust-milestones.md) for M0 through M82
 current status and the appliance OS MVP profile,
 [docs/krust-toolchain.md](docs/krust-toolchain.md) for the pinned M39 toolchain,
 and [docs/krust-abi-v1.md](docs/krust-abi-v1.md) for the current syscall,

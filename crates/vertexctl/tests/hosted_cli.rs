@@ -382,7 +382,7 @@ fn compile_boot_manifest_emits_krustboot_plan() {
 }
 
 #[test]
-fn release_profile_validates_m79_krustboot_identity() {
+fn release_profile_validates_m82_krustboot_identity() {
     let dir = temp_dir("release-profile");
     let krustboot_path = dir.join("hello-generation.krustboot");
     let old_krustboot_path = dir.join("old-generation.krustboot");
@@ -404,7 +404,7 @@ fn release_profile_validates_m79_krustboot_identity() {
         &kernel_path.to_string_lossy(),
         &vertexdisk_path.to_string_lossy(),
     ]));
-    assert!(profile.contains("krustboot=Manifest v1 compact KRUSTBOOTM79 version 12"));
+    assert!(profile.contains("krustboot=Manifest v1 compact KRUSTBOOTM82 version 13"));
 
     assert_success(run(&[
         "corrupt-boot-manifest",
@@ -421,7 +421,7 @@ fn release_profile_validates_m79_krustboot_identity() {
         &vertexdisk_path.to_string_lossy(),
     ]));
     assert!(stderr.contains("unsupported KrustBoot compact magic"));
-    assert!(stderr.contains("expected KRUSTBOOTM79"));
+    assert!(stderr.contains("expected KRUSTBOOTM82"));
 }
 
 #[test]
@@ -656,7 +656,7 @@ fn create_vertex_disk_rejects_state_volumes_above_krust_limit() {
 }
 
 #[test]
-fn create_vertex_disk_embeds_strict_vertexfs_section() {
+fn create_vertex_disk_embeds_strict_vertexfs_and_graph_sections() {
     let dir = temp_dir("vertexdisk-vertexfs-section");
     let manifest_path = repo_root().join("examples/hello-generation.vertex.json");
     let output_path = dir.join("hello.img");
@@ -672,7 +672,7 @@ fn create_vertex_disk_embeds_strict_vertexfs_section() {
     assert!(stdout.contains("wrote VertexDisk v1 image"));
     let bytes = fs::read(&output_path).expect("read VertexDisk image");
     assert_eq!(&bytes[..16], b"VERTEXDISKV1\0\0\0\0");
-    assert_eq!(u16::from_le_bytes([bytes[16], bytes[17]]), 2);
+    assert_eq!(u16::from_le_bytes([bytes[16], bytes[17]]), 3);
 
     let section_offset = 32 + 6 * 16;
     let vertexfs_start = u64::from_le_bytes(
@@ -692,6 +692,33 @@ fn create_vertex_disk_embeds_strict_vertexfs_section() {
         &bytes[vertexfs_offset..vertexfs_offset + 16],
         b"VERTEXFSV1\0\0\0\0\0\0"
     );
+
+    let graph_section_offset = 32 + 7 * 16;
+    let graph_start = u64::from_le_bytes(
+        bytes[graph_section_offset..graph_section_offset + 8]
+            .try_into()
+            .expect("graph-store section start"),
+    ) as usize;
+    let graph_count = u64::from_le_bytes(
+        bytes[graph_section_offset + 8..graph_section_offset + 16]
+            .try_into()
+            .expect("graph-store section count"),
+    );
+    assert_eq!(graph_count, 128);
+
+    let graph_offset = graph_start * 512;
+    assert_eq!(
+        &bytes[graph_offset..graph_offset + 16],
+        b"VDISKGRAPHV0\0\0\0\0"
+    );
+    assert_eq!(
+        fixed_string(&bytes[graph_offset + 32..graph_offset + 96]),
+        "gen:hello-0001"
+    );
+    let graph_nodes = u16::from_le_bytes([bytes[graph_offset + 96], bytes[graph_offset + 97]]);
+    let graph_edges = u16::from_le_bytes([bytes[graph_offset + 98], bytes[graph_offset + 99]]);
+    assert!(graph_nodes > 0);
+    assert!(graph_edges > 0);
 }
 
 #[test]
@@ -1508,6 +1535,14 @@ fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
     haystack
         .windows(needle.len())
         .any(|window| window == needle)
+}
+
+fn fixed_string(bytes: &[u8]) -> &str {
+    let end = bytes
+        .iter()
+        .position(|byte| *byte == 0)
+        .unwrap_or(bytes.len());
+    std::str::from_utf8(&bytes[..end]).expect("fixed string is utf-8")
 }
 
 #[cfg(unix)]

@@ -7,7 +7,7 @@ runtime layered over a host kernel.
 
 ## Status Summary
 
-Current status: M14-M81 are implemented and smoke-tested under
+Current status: M14-M82 are implemented and smoke-tested under
 `qemu-system-x86_64` with Limine. The current tree has an image-backed VertexFS
 v1 mount, a strict VertexDisk v1 section carrying the current VertexFS image,
 fixed journal replay, kernel-owned device-backed fsync transactions,
@@ -52,8 +52,12 @@ state-volume paths as the new filesystem. M80-M81 add advisory byte-range
 locks, metadata watches, poll readiness, bounded pipe buffering, capability
 revocation checks against live handles and new opens, bad-buffer/path
 rejection, VFS churn, and release-gated filesystem crash/security coverage.
+M82 makes the active generation graph a native typed VertexDisk graph-store
+object, records graph provenance for processes and capabilities, exposes graph
+checksum/hash/object counts through runtime inspection, and rejects corrupt
+compact or disk graph-store records before activation.
 
-M74-M81 are implemented as the current VFS, open-file, directory, block-cache,
+M74-M82 are implemented as the current VFS, open-file, directory, block-cache,
 VertexFS/mount-namespace, coordination, and security/soak substrate. The
 current tree has a kernel VFS node graph, service-local mount roots,
 per-process file handles, first-class `vfs-root` manifest authority, volatile
@@ -69,8 +73,10 @@ a kernel-owned device-backed fsync transaction for declared and dynamic inodes,
 create/write/read/fsync coverage, and a model-reader service rooted at
 `/fs/app`. The release gate now covers corrupt VertexFS images, interrupted
 journals, checkpoint remount verification, fsync faults, live-handle revocation
-semantics, and a 100-cycle VFS churn probe. General vnode page cache
-integration and broader synthetic/device filesystem breadth remain later work.
+semantics, a 100-cycle VFS churn probe, native graph-store checksum rejection,
+and invalid graph-record rejection. General vnode page cache integration,
+broader synthetic/device filesystem breadth, and durable graph-store mutation
+remain later work.
 
 ```sh
 make -C kernel/krust doctor
@@ -132,14 +138,17 @@ scripts/krust-test.sh m78
 scripts/krust-test.sh m79
 scripts/krust-test.sh m80
 scripts/krust-test.sh m81
+scripts/krust-test.sh m82
+scripts/krust-test.sh manifest-graph-store-checksum
+scripts/krust-test.sh manifest-graph-store-record
 ```
 
 Next direction: move the graph operating-system model into the booted system
-without preserving host-side activation as a compatibility layer. M82-M89
-should make the native graph store, generation manager, package closure import,
+without preserving host-side activation as a compatibility layer. M83-M89
+should make the generation manager, package closure import,
 state lifecycle, policy validation, operator graph shell, appliance update
-loop, and graph soak gate first-class Vertex OS surfaces while keeping Krust
-small and capability-mediated.
+loop, and graph soak gate first-class Vertex OS surfaces on top of the M82
+native graph-store substrate while keeping Krust small and capability-mediated.
 
 ## M0: Serial Boot
 
@@ -1546,7 +1555,7 @@ done: locked Cargo dependencies for the top-level host-tool workspace, Krust ker
 done: kernel/krust/rust-toolchain.toml pins Rust 1.95.0, rustfmt, and x86_64-unknown-none
 done: make doctor checks every required tool and reports actionable fixes
 done: legacy hello/ipc userspace crates are removed instead of carried forward
-done: single release-gate script runs the clean-clone M14-M81 substrate proof with the current QEMU matrix
+done: single release-gate script runs the clean-clone M14-M82 substrate proof with the current QEMU matrix
 ```
 
 Acceptance tests:
@@ -2564,8 +2573,8 @@ Implementation notes:
 Implementation notes:
 
 - M61 introduced `KRUSTBOOTM61` version 7 and rejected M60 compact payloads
-  instead of accepting them as a compatibility format. M79 supersedes the M75
-  compact identity with `KRUSTBOOTM79` version 12 and rejects older compact
+  instead of accepting them as a compatibility format. M82 supersedes the M79
+  compact identity with `KRUSTBOOTM82` version 13 and rejects older compact
   payloads as legacy.
 - The kernel rejects current-process capabilities whose generation provenance
   does not match the active runtime generation, rejects `SYS_CAP_MOVE` before
@@ -2746,7 +2755,7 @@ Supported profile:
 ```text
 x86_64 one CPU
 Limine boot
-KrustBoot Manifest v1 / compact payload KRUSTBOOTM79 version 12
+KrustBoot Manifest v1 / compact payload KRUSTBOOTM82 version 13
 QEMU virtio-blk, virtio-rng, virtio-net, and virtio-console
 VertexDisk store/state/update layout
 no legacy transport or payload compatibility
@@ -2773,8 +2782,8 @@ Implementation notes:
 - Do not expand to SMP, USB, GPU, a full filesystem, or Linux/POSIX
   compatibility until the profile can boot, update, recover, and explain its
   authority graph repeatably.
-- The compact native payload identity is now `KRUSTBOOTM79` version 12. M75,
-  M65, M61, and older compact payload identities are rejected rather than
+- The compact native payload identity is now `KRUSTBOOTM82` version 13. M79,
+  M75, M65, M61, and older compact payload identities are rejected rather than
   retained as compatibility formats.
 - The release gate records a supported profile artifact containing the exact
   toolchain, manifest hash, KrustBoot hash, kernel hash, VertexDisk hash, and
@@ -3534,9 +3543,9 @@ done: `vertexctl create-vertexfs`, `inspect-vertexfs`, and `verify-vertexfs`
       build reproducible VertexFS v1 images with a strict superblock, inode
       table, directory block, extent records, free-space map, journal-v1
       feature flag and sector, generation id, and checksums
-done: `vertexctl create-vertex-disk` writes a strict `VERTEXDISKV1` version-2
-      VertexDisk image with an explicit VertexFS image section; the kernel,
-      block-driver, vertex-store, and vertex-state reject the old
+done: `vertexctl create-vertex-disk` writes a strict `VERTEXDISKV1` version-3
+      VertexDisk image with explicit VertexFS and graph-store sections; the
+      kernel, block-driver, vertex-store, and vertex-state reject the old
       `VERTEXDISKV0`/version-1 identity instead of parsing it as a fallback
 done: block-driver validates the VertexDisk VertexFS section, reads its
       VertexFS v1 superblock from the real virtio-backed image, writes the same
@@ -3636,9 +3645,10 @@ done: compact process records carry validated `mountRoot` values; hosted
       `vertexctl` rejects services that omit `mountRoot`, and Krust resolves all
       VFS syscall paths through the current process mount root before authority
       checks
-done: compact process records now use `KRUSTBOOTM79` version 12 and carry
-      explicit per-process declared bind-mount snapshot entries; old M75/version
-      11 process records are rejected instead of parsed as compatibility input
+done: M79 compact process records carried explicit per-process declared
+      bind-mount snapshot entries; M82 supersedes that compact identity with
+      `KRUSTBOOTM82` version 13, and old M75/M79 records are rejected instead
+      of parsed as compatibility input
 done: hosted `vertexctl` validates service `mounts` entries as explicit
       `{path, source, readOnly}` records and rejects malformed or implicit mount
       records before emitting a boot manifest
@@ -3811,46 +3821,75 @@ Implementation notes:
 
 ## M82: Native Graph Store
 
-Status: planned.
+Status: done.
 
 Goal: make the booted system persist and query its own generation graph as a
-native, typed graph store instead of treating the graph as a host-compiled boot
-artifact that disappears after activation.
+native, typed VertexDisk graph-store object instead of treating the graph as
+only a host-compiled boot artifact that disappears after activation.
 
-Scope:
+Implemented:
 
 ```text
-native graph object storage in VertexFS or VertexDisk
-typed records for generations, services, capabilities, packages, store objects,
-state objects, configs, secrets, mounts, devices, and activation edges
-graph identity for every running process and granted capability
-native graph reader service with inspect-only authority
-graph checksum and generation provenance in runtime inspection
-host-imported graph bootstrap without accepting legacy graph encodings
+done: KrustBoot compact payload identity is `KRUSTBOOTM82` version 13
+done: hosted `vertexctl` emits native typed graph records for generation,
+      service, endpoint, store-object, config, state-volume, device,
+      namespace, vfs-root, timer, secret, activation, and capability edges
+done: graph node and edge counts plus checksum live in the compact graph header
+done: VertexDisk v1 carries a required graph-store object section with graph
+      magic, generation identity, node/edge counts, checksum, BLAKE3 hash, and
+      typed graph records
+done: Krust validates graph checksum, graph record bounds, node references,
+      duplicate node/edge IDs, and graph coverage for services, endpoints,
+      store/config/state/device objects, VFS roots, and grants before activation
+done: kernel imports runtime graph nodes and edges from the VertexDisk graph
+      object after cross-checking it against the compact boot graph hash and
+      checksum
+done: kernel runtime config stores the VertexDisk graph-store hash, checksum,
+      source, nodes, edges, process graph nodes, and capability graph provenance
+done: runtime inspect exposes graph-store generation, hash, checksum, object
+      counts, representative graph nodes, process graph nodes, and capability
+      graph edges to inspect-authorized userspace with `source=vertexdisk`
+done: `vertex-inspect` queries the native runtime report through inspect-only
+      authority and proves generation, service, store-object, state-volume, and
+      device graph nodes plus process/capability graph provenance
+done: `vertex-init` delegates graph inspect authority to `vertex-inspect`
+      without delegating manifest-read authority
+done: corrupt compact graph-store checksum and invalid graph-record inputs are
+      rejected as malformed KrustBoot manifests before activation
+done: corrupt VertexDisk graph-store objects are rejected before native runtime
+      activation
+done: old compact payload identities are rejected rather than accepted as
+      native graph-store fallbacks
 ```
 
 Acceptance tests:
 
 ```text
-booted system reads its full active generation graph without host vertexctl
-runtime process and capability records point back to graph node identities
-native graph query returns generation, service, store-object, state, and device nodes
-corrupt graph-store record is rejected before activation side effects
-graph-store checksum mismatch prevents generation selection
-runtime inspect shows graph-store generation hash and object counts
-old compact-only boot records are not accepted as a graph-store fallback
+done: scripts/krust-test.sh m82
+done: scripts/krust-test.sh m82-vertexdisk-graph-corrupt
+done: scripts/krust-test.sh manifest-graph-store-checksum
+done: scripts/krust-test.sh manifest-graph-store-record
+done: scripts/krust-test.sh manifest-old-compact-magic
+done: scripts/krust-test.sh m38 remains compatible with the current inspect
+      generation graph
 ```
 
 Implementation notes:
 
-- Treat the native graph store as the OS truth, not as documentation for the
-  kernel tables. Kernel tables should remain the enforcement cache derived from
-  the graph.
+- Treat the VertexDisk graph-store object as the OS truth, not as
+  documentation for the kernel tables. Kernel tables should remain the
+  enforcement cache derived from the graph.
 - Keep host `vertexctl` useful for building and debugging graph images, but the
   booted system must be able to inspect the graph without host assistance.
 - Do not introduce JSON parsing in the kernel. Prefer a compact typed graph
   object format validated by userspace services and exposed to the kernel only
   through narrow boot/runtime records.
+- M82 deliberately updates stale inspect-generation graph data to the current
+  declared mount contract instead of carrying a compatibility path in echo,
+  vertex-init, or the kernel.
+- Durable native graph mutation, graph-store garbage collection, and candidate
+  generation installation are M83-M89 responsibilities; M82 establishes the
+  booted system's durable typed graph-store read/provenance substrate.
 
 ## M83: Native Generation Manager
 
@@ -4180,7 +4219,8 @@ reclamation, address-space teardown, object failure atomicity, and soak gates.
 M70-M73 add interrupt routing, DMA ownership, virtio reset/recovery, and
 device-fault isolation. M74-M81 should turn the existing special-purpose
 store/state persistence into a mature capability-mediated VFS and filesystem
-stack. M82-M89 should move the graph store, generation manager, package
+stack. M82 moves the active generation graph into a native typed graph-store
+read/provenance substrate. M83-M89 should move the generation manager, package
 closure import, policy validation, state lifecycle, operator shell, appliance
 update loop, and long-run graph soak into the native system before broadening
 the platform.

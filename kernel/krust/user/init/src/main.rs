@@ -5,10 +5,10 @@ mod sys;
 
 use core::{cell::UnsafeCell, panic::PanicInfo};
 
-const KRUSTBOOT_MAGIC: &[u8; 16] = b"KRUSTBOOTM79\0\0\0\0";
-const KRUSTBOOT_VERSION: u16 = 12;
-const MANIFEST_BUFFER_LEN: usize = 32 * 1024;
-const REPORT_BUFFER_LEN: usize = 64 * 1024;
+const KRUSTBOOT_MAGIC: &[u8; 16] = b"KRUSTBOOTM82\0\0\0\0";
+const KRUSTBOOT_VERSION: u16 = 13;
+const MANIFEST_BUFFER_LEN: usize = 64 * 1024;
+const REPORT_BUFFER_LEN: usize = 128 * 1024;
 const OFFSET_VERSION: usize = 16;
 const OFFSET_BOOT_MODULES: usize = 18;
 const OFFSET_PROCESSES: usize = 20;
@@ -28,6 +28,7 @@ const OFFSET_VFS_ROOTS: usize = 46;
 const OFFSET_GENERATION_ID: usize = 48;
 const STRING_LEN: usize = 64;
 const OFFSET_PARENT_GENERATION_ID: usize = OFFSET_GENERATION_ID + STRING_LEN;
+const GRAPH_HEADER_LEN: usize = 8;
 const BOOT_MODULE_RECORD_LEN: usize = STRING_LEN * 2;
 const PROCESS_REF_COUNT: usize = 4;
 const REF_LIST_LEN: usize = 2 + PROCESS_REF_COUNT * 2;
@@ -60,7 +61,6 @@ const M37_GENERATION_B_STORE_RESPONSE: &[u8] = b"krustboot:gen:switch-b-0002";
 const M40_VERTEX_STORE_INIT_REPLY_SLOT: u64 = 6;
 const M38_PROCESS_NAME: &[u8] = b"vertex-inspect";
 const M38_INSPECT_CAP_SLOT: u64 = 0;
-const M38_MANIFEST_CAP_SLOT: u64 = 3;
 const M41_PROCESS_NAME: &[u8] = b"console-shell";
 const M41_INSPECT_CAP_SLOT: u64 = 8;
 const M54_UPDATE_CAP_SLOT: u64 = 9;
@@ -110,7 +110,7 @@ pub extern "C" fn _start() -> ! {
         sys::exit(1);
     };
 
-    if manifest_len < OFFSET_PARENT_GENERATION_ID + STRING_LEN
+    if manifest_len < boot_modules_base()
         || !valid_magic(&manifest[..manifest_len])
         || read_u16(manifest, OFFSET_VERSION) != KRUSTBOOT_VERSION
     {
@@ -307,7 +307,7 @@ fn fixed_string(bytes: &[u8]) -> &[u8] {
 }
 
 fn boot_modules_base() -> usize {
-    OFFSET_PARENT_GENERATION_ID + STRING_LEN
+    OFFSET_PARENT_GENERATION_ID + STRING_LEN + GRAPH_HEADER_LEN
 }
 
 fn process_base(boot_modules: u16) -> usize {
@@ -639,6 +639,15 @@ fn run_m61_init_abi_tests(parent_generation: &[u8]) {
         log(b"M61 capability move rejects occupied target without dropping source");
     } else {
         log(b"M61 capability move occupied-target test failed");
+        activation_failed(parent_generation);
+    }
+
+    if sys::runtime_inspect_with_cap(sys::CAP_LOG, report_buffer()) == sys::STATUS_BAD_CAPABILITY
+        && sys::process_create_with_cap(sys::CAP_MANIFEST, 1) == sys::STATUS_BAD_CAPABILITY
+    {
+        log(b"M61 inspect authority rejects wrong kind and missing create right");
+    } else {
+        log(b"M61 inspect authority negative test failed");
         activation_failed(parent_generation);
     }
 }
@@ -1455,7 +1464,7 @@ fn endpoint_index_by_name(
 }
 
 fn grant_introspection_authority(process_index: u64, parent_generation: &[u8]) {
-    log(b"vertex-init delegates inspect authority to vertex-inspect");
+    log(b"vertex-init delegates graph inspect authority to vertex-inspect");
     if sys::cap_transfer(
         process_index,
         sys::CAP_PROCESS_CONTROL,
@@ -1464,17 +1473,6 @@ fn grant_introspection_authority(process_index: u64, parent_generation: &[u8]) {
     ) != sys::STATUS_OK
     {
         log(b"vertex-init inspect cap transfer failed");
-        activation_failed(parent_generation);
-    }
-
-    if sys::cap_transfer(
-        process_index,
-        sys::CAP_MANIFEST,
-        M38_MANIFEST_CAP_SLOT,
-        sys::RIGHT_READ,
-    ) != sys::STATUS_OK
-    {
-        log(b"vertex-init manifest cap transfer failed");
         activation_failed(parent_generation);
     }
 }

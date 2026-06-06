@@ -41,14 +41,16 @@ const BLOCK_IDLE_ROUNDS: u64 = 500;
 const SECTOR_SIZE: usize = 512;
 const WRITEBACK_PATTERN: &[u8] = b"M43 VertexDisk journal writeback\n";
 const VERTEX_DISK_MAGIC: &[u8; 16] = b"VERTEXDISKV1\0\0\0\0";
-const VERTEX_DISK_VERSION: u16 = 2;
+const VERTEX_DISK_VERSION: u16 = 3;
 const VERTEX_DISK_CHECKSUM_OFFSET: usize = 20;
 const VERTEX_DISK_TOTAL_SECTORS_OFFSET: usize = 24;
 const VERTEX_DISK_SECTION_TABLE_OFFSET: usize = 32;
 const VERTEX_DISK_SECTION_RECORD_LEN: usize = 16;
 const VERTEX_DISK_JOURNAL_SECTION: usize = 5;
 const VERTEX_DISK_VERTEXFS_SECTION: usize = 6;
+const VERTEX_DISK_GRAPH_STORE_SECTION: usize = 7;
 const VERTEXFS_SUPERBLOCK_MAGIC: &[u8; 16] = b"VERTEXFSV1\0\0\0\0\0\0";
+const GRAPH_STORE_MAGIC: &[u8; 16] = b"VDISKGRAPHV0\0\0\0\0";
 
 const PCI_CONFIG_ADDRESS: u16 = 0x0cf8;
 const PCI_CONFIG_DATA: u16 = 0x0cfc;
@@ -548,6 +550,7 @@ struct VertexDiskLayout {
     state_data: Section,
     journal: Section,
     vertexfs: Section,
+    graph_store: Section,
 }
 
 #[derive(Clone, Copy)]
@@ -626,6 +629,25 @@ fn validate_vertexfs_device_section(device: &mut VirtioBlock, layout: VertexDisk
         sys::exit(1);
     }
     log(b"block-driver writes VertexFS device image section");
+    validate_graph_store_section(device, layout);
+}
+
+fn validate_graph_store_section(device: &mut VirtioBlock, layout: VertexDiskLayout) {
+    if layout.graph_store.count <= 1 {
+        log(b"VertexDisk graph-store section rejected");
+        sys::exit(1);
+    }
+
+    let mut sector = [0u8; SECTOR_SIZE];
+    if !device.read_sector(layout.graph_store.start, &mut sector) {
+        log(b"block-driver graph-store section read failed");
+        sys::exit(1);
+    }
+    if !starts_with(&sector, GRAPH_STORE_MAGIC) || !metadata_checksum_valid(&sector) {
+        log(b"block-driver graph-store section rejected");
+        sys::exit(1);
+    }
+    log(b"block-driver reads VertexDisk graph-store section");
 }
 
 fn serve_block_request(device: &mut VirtioBlock, layout: &VertexDiskLayout) -> bool {
@@ -883,7 +905,7 @@ fn vertexdisk_layout(sector: &[u8; SECTOR_SIZE]) -> Option<VertexDiskLayout> {
     }
 
     let mut section = 0;
-    while section <= VERTEX_DISK_VERTEXFS_SECTION {
+    while section <= VERTEX_DISK_GRAPH_STORE_SECTION {
         checked_section(sector, section, total_sectors)?;
         section += 1;
     }
@@ -895,6 +917,7 @@ fn vertexdisk_layout(sector: &[u8; SECTOR_SIZE]) -> Option<VertexDiskLayout> {
         state_data: checked_section(sector, 4, total_sectors)?,
         journal: checked_section(sector, VERTEX_DISK_JOURNAL_SECTION, total_sectors)?,
         vertexfs: checked_section(sector, VERTEX_DISK_VERTEXFS_SECTION, total_sectors)?,
+        graph_store: checked_section(sector, VERTEX_DISK_GRAPH_STORE_SECTION, total_sectors)?,
     })
 }
 

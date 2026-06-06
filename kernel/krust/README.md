@@ -1,6 +1,6 @@
 # Krust Kernel
 
-Krust now covers the M14-M81 native graph-activation proof path, substrate
+Krust now covers the M14-M82 native graph-activation proof path, substrate
 hardening, reproducible build environment, directed IPC ABI v1, and native
 console shell plus virtio device I/O, VertexDisk v1 persistence, native boot
 selection, verified store objects, native update transactions, and store-loaded
@@ -18,7 +18,8 @@ writeback, plus image-backed VertexFS journal checkpoint recovery and
 mount-namespace gates, including the current read-only `servicefs`
 request/reply file route, advisory byte-range locks, directory watch events,
 VFS poll readiness, bounded pipe buffering, revocation checks for live file
-authority, and the current VFS security/soak gate. M44-M81 are tracked in
+authority, the current VFS security/soak gate, and the native VertexDisk
+graph-store read/provenance surface. M44-M82 are tracked in
 `../../docs/krust-milestones.md`.
 
 The target is intentionally small:
@@ -43,6 +44,7 @@ Krust allocates typed endpoint and process arenas from the kernel heap and check
 Krust creates fixed kernel objects and boot capabilities
 Krust prints the boot capability table
 Limine loads the native VertexDisk image plus compact generation manifests
+Krust imports the active typed generation graph from the VertexDisk graph-store object after cross-checking compact graph metadata
 Krust resolves each declared process executable from the native store, verifies its BLAKE3 identity and checksum, and then loads it into a fresh low-half address space
 Krust creates a runtime endpoint table and one initial runtime process from the KrustBoot manifest
 Krust records non-initial KrustBoot process records as templates and allocates runtime process IDs only through SYS_PROCESS_CREATE
@@ -77,7 +79,8 @@ echo and reader-service receive different namespace capabilities for object alia
 echo runs with process mount root /state and proves /a resolves as /state/a without accepting the old process-record format
 model-reader reads an immutable object through vertex-store and VertexDisk/block-driver
 counter-service and reader-service access mutable state through vertex-state persisted on VertexDisk
-vertex-inspect reads the generation graph and asks the kernel for a process/capability graph through inspect-only authority
+vertex-inspect reads the generation graph from runtime inspect and asks the kernel for a process/capability graph through inspect-only authority
+runtime inspect exposes the active native graph-store hash, checksum, source, object counts, representative graph nodes, process graph nodes, and capability graph edges
 logd reads immutable config and secret caps, echo proves those objects stay inaccessible without explicit grants, and runtime inspection redacts secret values
 the native boot manager records selected, previous, known-good, last-failed, and boot-attempt state for generation fallback
 native update transactions verify manifest/store closure before committing selected_generation
@@ -421,19 +424,19 @@ make smoke
 ```
 
 The smoke test boots QEMU headlessly, captures serial output to
-`build/serial.log`, and passes when it sees the M14-M81 directed IPC, console,
+`build/serial.log`, and passes when it sees the M14-M82 directed IPC, console,
 virtio-block, VertexDisk, verified store, update, store-executable, dynamic
 process, config, secret, package-boundary, appliance, virtio device, networking,
 namespace, policy, ABI-hardening, storage durability, network-boundary, and
 lifecycle, memory-lifecycle, soak, interrupt, DMA, virtio recovery, and
-device-fault, VFS coordination, and filesystem security transcripts. The same
-check is available from the repository root:
+device-fault, VFS coordination, filesystem security, and native graph-store
+transcripts. The same check is available from the repository root:
 
 ```sh
 scripts/krust-smoke.sh
 ```
 
-## M26-M81 Substrate Gate
+## M26-M82 Substrate Gate
 
 Run the clean-clone gate from the repository root:
 
@@ -448,12 +451,12 @@ make release-gate
 ```
 
 The gate checks script executability and shell syntax, verifies Makefile recipe
-parsing, checks Rust formatting and Markdown whitespace, confirms the M14-M81
+parsing, checks Rust formatting and Markdown whitespace, confirms the M14-M82
 documentation anchors, checks the pinned M39 toolchain and Cargo lockfiles, runs
 `cargo metadata --locked --offline` and `cargo build --locked --offline`,
 validates `examples/hello-generation.vertex.json`, runs `make doctor`, rebuilds
 from `make clean`, runs `make smoke`, checks package/link/build import commands,
-and then runs the M14-M81 QEMU cases:
+and then runs the M14-M82 QEMU cases:
 `m14`,
 `manifest-cycle`, `bad-cap`, `readiness-timeout`, `rollback`, `store-state-services`,
 `timer`, `preemption`, `user-fault`, `restart`, `manifest-v1`, `cap-lifecycle`,
@@ -466,9 +469,10 @@ and then runs the M14-M81 QEMU cases:
 `m78-bad-superblock`, `m78-journal-replay`,
 `m78-journal-checkpoint-after-journal`, `m78-journal-checkpoint-after-data`,
 `m78-journal-checkpoint-after-inode`, `m78-post-sync-remount`,
-`m78-fsync-fault`, `m79`, `m80`, `m81`, and the malformed-manifest cases. If the offline
-build fails, the gate prints the Cargo cache or vendoring prerequisite
-explicitly.
+`m78-fsync-fault`, `m79`, `m80`, `m81`, `m82`, `manifest-graph-store-checksum`,
+`manifest-graph-store-record`, and the remaining malformed-manifest cases. If
+the offline build fails, the gate prints the Cargo cache or vendoring
+prerequisite explicitly.
 
 The expected transcript includes:
 

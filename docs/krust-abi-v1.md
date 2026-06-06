@@ -5,7 +5,7 @@ native Krust QEMU/Limine milestone. It is intentionally small and unstable. Its
 current job is to boot native `vertex-init`, create services from verified
 process templates, and enforce explicit process-local capabilities.
 
-Milestone status: ABI v1 now covers the M14-M79 native activation and substrate
+Milestone status: ABI v1 now covers the M14-M82 native activation and substrate
 proof. M25 adds the release gate. M26-M29 add Manifest v1 parsing, capability
 provenance/revocation, typed arena allocation checks, and resource quotas.
 M30-M31 add PIT-backed preemption and user page-fault containment. M32-M36 add
@@ -34,11 +34,14 @@ native VFS object model, service-local mount roots, open-file handle table,
 descriptor lifecycle, and volatile create/unlink path. M76-M77 add directory
 metadata syscalls, 64-byte stat metadata, open-unlink lifetime, hard-link
 policy, and bounded state-volume block-cache writeback. M78-M79 add the strict
-VertexFS v1 boot image, the `KRUSTBOOTM79` compact process-record layout,
-mandatory service mount roots, declared bind-mount snapshots, and kernel-owned
-VertexFS fsync writeback through block-driver device endpoints, plus the
-current read-only `servicefs` request/reply file route. The ABI is still
-intentionally small, but this subset is the current native contract.
+VertexFS v1 boot image, mandatory service mount roots, declared bind-mount
+snapshots, and kernel-owned VertexFS fsync writeback through block-driver
+device endpoints, plus the current read-only `servicefs` request/reply file
+route. M80-M81 add VFS coordination and filesystem security/soak coverage. M82
+updates the compact payload identity to `KRUSTBOOTM82` version 13 and adds the
+native typed graph-store header plus graph node/edge records used for runtime
+graph provenance. The ABI is still intentionally small, but this subset is the
+current native contract.
 
 ## Machine ABI
 
@@ -799,10 +802,13 @@ pci_devices
 virtio_devices
 namespaces
 vfs_roots
+graph_store_header
+graph_nodes
+graph_edges
 ```
 
-The compact payload identity is `KRUSTBOOTM79` version 12. Older compact
-payload identities, including M75 and M61, are rejected instead of being
+The compact payload identity is `KRUSTBOOTM82` version 13. Older compact
+payload identities, including M79, M75, and M61, are rejected instead of being
 retained as compatibility formats.
 
 Manifest v1 adds a fixed header, record table, checksum, and record bounds
@@ -818,6 +824,22 @@ rejects services that omit it, and rejects malformed declared mount entries.
 Older compact process records without `mount_root` or mount snapshot records are
 rejected by the version check rather than accepted through a compatibility
 parser.
+
+The M82 graph-store header carries graph node count, graph edge count, and a
+checksum for the typed graph record region. The graph records identify
+generation, service, endpoint, store-object, config, state-volume, device,
+namespace, VFS-root, timer, secret, activation, and capability-edge objects.
+The kernel validates the compact graph records before activation and uses their
+hash/checksum to cross-check the native VertexDisk graph-store object.
+
+M82 also extends the native VertexDisk image with a required graph-store object
+section. That section carries `VDISKGRAPHV0`, generation identity, node/edge
+counts, byte length, checksum, BLAKE3 hash, and the same typed graph records.
+The kernel imports runtime graph tables from this VertexDisk object, not from
+host JSON, and rejects corrupt disk graph-store data before native runtime
+activation. `SYS_RUNTIME_INSPECT` exposes the active graph-store hash,
+checksum, object counts, process graph nodes, capability graph edges, and
+`source=vertexdisk`.
 
 Krust also creates fixed boot caps for native `vertex-init`:
 

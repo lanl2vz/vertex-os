@@ -23,14 +23,14 @@ const BLOCK_OP_READ_SECTOR: u16 = 1;
 const SECTOR_SIZE: usize = 512;
 const VERTEX_DISK_MAGIC: &[u8; 16] = b"VERTEXDISKV1\0\0\0\0";
 const STORE_INDEX_MAGIC: &[u8; 16] = b"VDISKSTOREV0\0\0\0\0";
-const VERTEX_DISK_VERSION: u16 = 2;
+const VERTEX_DISK_VERSION: u16 = 3;
 const VERTEX_DISK_CHECKSUM_OFFSET: usize = 20;
 const VERTEX_DISK_TOTAL_SECTORS_OFFSET: usize = 24;
 const VERTEX_DISK_SECTION_TABLE_OFFSET: usize = 32;
 const VERTEX_DISK_SECTION_RECORD_LEN: usize = 16;
 const VERTEX_DISK_STORE_INDEX_SECTION: usize = 1;
 const VERTEX_DISK_STORE_DATA_SECTION: usize = 2;
-const VERTEX_DISK_VERTEXFS_SECTION: usize = 6;
+const VERTEX_DISK_GRAPH_STORE_SECTION: usize = 7;
 const MAX_STORE_INDEX_SECTORS: usize = 16;
 const STORE_INDEX_BYTES: usize = MAX_STORE_INDEX_SECTORS * SECTOR_SIZE;
 const STORE_ENTRY_OFFSET: usize = 32;
@@ -338,7 +338,7 @@ fn valid_superblock(sector: &[u8; SECTOR_SIZE]) -> bool {
 
     let total_sectors = read_u32(sector, VERTEX_DISK_TOTAL_SECTORS_OFFSET) as u64;
     let mut section = 0;
-    while section <= VERTEX_DISK_VERTEXFS_SECTION {
+    while section <= VERTEX_DISK_GRAPH_STORE_SECTION {
         let Some((start, count)) = vertexdisk_section(sector, section) else {
             return false;
         };

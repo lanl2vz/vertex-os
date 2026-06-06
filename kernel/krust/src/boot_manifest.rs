@@ -4,8 +4,8 @@ pub const MODULE_STRING: &[u8] = b"krustboot-manifest";
 pub const FALLBACK_MODULE_STRING: &[u8] = b"krustboot-fallback-manifest";
 pub const BAD_GENERATION_MODULE_STRING: &[u8] = b"krustboot-bad-generation-manifest";
 
-const COMPACT_MAGIC: &[u8; 16] = b"KRUSTBOOTM79\0\0\0\0";
-const COMPACT_VERSION: u16 = 12;
+const COMPACT_MAGIC: &[u8; 16] = b"KRUSTBOOTM82\0\0\0\0";
+const COMPACT_VERSION: u16 = 13;
 const V1_MAGIC: &[u8; 16] = b"KRUSTBOOTV1\0\0\0\0\0";
 const V1_VERSION: u16 = 1;
 const V1_HEADER_SIZE: usize = 164;
@@ -29,6 +29,8 @@ const MAX_PCI_DEVICES: usize = 4;
 const MAX_VIRTIO_DEVICES: usize = 4;
 const MAX_NAMESPACES: usize = 4;
 const MAX_VFS_ROOTS: usize = 8;
+const MAX_GRAPH_NODES: usize = 128;
+const MAX_GRAPH_EDGES: usize = 224;
 const MAX_RUNTIME_OBJECTS: usize = 64;
 const FIXED_RUNTIME_OBJECTS: usize = 4;
 const SERIAL_LOG_ENDPOINT_NAME: &str = "serial-log";
@@ -39,6 +41,15 @@ const MAX_LEGACY_IRQ_LINE: u64 = 15;
 pub const MAX_NAMESPACE_ENTRIES: usize = 4;
 pub const MAX_PROCESS_REFS: usize = 4;
 pub const MAX_PROCESS_MOUNTS: usize = 4;
+
+pub const GRAPH_NODE_GENERATION: u16 = 1;
+pub const GRAPH_NODE_SERVICE: u16 = 2;
+pub const GRAPH_NODE_ENDPOINT: u16 = 3;
+pub const GRAPH_NODE_STORE_OBJECT: u16 = 4;
+pub const GRAPH_NODE_CONFIG: u16 = 5;
+pub const GRAPH_NODE_STATE_VOLUME: u16 = 6;
+pub const GRAPH_NODE_DEVICE: u16 = 7;
+pub const GRAPH_EDGE_CAPABILITY: u16 = 2;
 
 pub const RIGHT_SEND: u16 = 1 << 0;
 pub const RIGHT_RECEIVE: u16 = 1 << 1;
@@ -197,11 +208,31 @@ pub struct VfsRoot<'a> {
     pub root_path: &'a str,
 }
 
+#[derive(Clone, Copy)]
+pub struct GraphNode<'a> {
+    pub kind: u16,
+    pub object_kind: u16,
+    pub id: &'a str,
+    pub label: &'a str,
+}
+
+#[derive(Clone, Copy)]
+pub struct GraphEdge<'a> {
+    pub kind: u16,
+    pub from_index: usize,
+    pub to_index: usize,
+    pub rights: u16,
+    pub id: &'a str,
+}
+
 pub struct Manifest<'a> {
     generation_id: &'a str,
     parent_generation_id: &'a str,
     source_base: u64,
     source_len: u64,
+    graph_store_base: u64,
+    graph_store_len: u64,
+    graph_store_checksum: u32,
     layout_version: u16,
     record_count: usize,
     boot_modules: [Option<BootModule<'a>>; MAX_BOOT_MODULES],
@@ -234,6 +265,10 @@ pub struct Manifest<'a> {
     namespace_count: usize,
     vfs_roots: [Option<VfsRoot<'a>>; MAX_VFS_ROOTS],
     vfs_root_count: usize,
+    graph_nodes: [Option<GraphNode<'a>>; MAX_GRAPH_NODES],
+    graph_node_count: usize,
+    graph_edges: [Option<GraphEdge<'a>>; MAX_GRAPH_EDGES],
+    graph_edge_count: usize,
 }
 
 struct Global<T>(UnsafeCell<T>);
@@ -266,14 +301,18 @@ pub enum ParseError {
     TooManyNamespaces,
     TooManyNamespaceEntries,
     TooManyVfsRoots,
+    TooManyGraphNodes,
+    TooManyGraphEdges,
     TooManyRuntimeObjects,
     InvalidString,
     InvalidReference,
     InvalidRights,
     InvalidObjectKind,
+    InvalidGraphRecord,
     UnsupportedStateVolumes,
     TrailingBytes,
     BadChecksum,
+    BadGraphStoreChecksum,
     BadRecordTable,
     OutOfBoundsRecord,
 }
@@ -285,6 +324,9 @@ impl<'a> Manifest<'a> {
             parent_generation_id: "",
             source_base: 0,
             source_len: 0,
+            graph_store_base: 0,
+            graph_store_len: 0,
+            graph_store_checksum: 0,
             layout_version: 0,
             record_count: 0,
             boot_modules: [None; MAX_BOOT_MODULES],
@@ -317,6 +359,10 @@ impl<'a> Manifest<'a> {
             namespace_count: 0,
             vfs_roots: [None; MAX_VFS_ROOTS],
             vfs_root_count: 0,
+            graph_nodes: [None; MAX_GRAPH_NODES],
+            graph_node_count: 0,
+            graph_edges: [None; MAX_GRAPH_EDGES],
+            graph_edge_count: 0,
         }
     }
 
@@ -334,6 +380,18 @@ impl<'a> Manifest<'a> {
 
     pub fn source_len(&self) -> u64 {
         self.source_len
+    }
+
+    pub fn graph_store_base(&self) -> u64 {
+        self.graph_store_base
+    }
+
+    pub fn graph_store_len(&self) -> u64 {
+        self.graph_store_len
+    }
+
+    pub fn graph_store_checksum(&self) -> u32 {
+        self.graph_store_checksum
     }
 
     pub fn layout_version(&self) -> u16 {
@@ -402,6 +460,14 @@ impl<'a> Manifest<'a> {
 
     pub fn vfs_root_count(&self) -> usize {
         self.vfs_root_count
+    }
+
+    pub fn graph_node_count(&self) -> usize {
+        self.graph_node_count
+    }
+
+    pub fn graph_edge_count(&self) -> usize {
+        self.graph_edge_count
     }
 
     pub fn boot_module(&self, index: usize) -> Option<BootModule<'a>> {
@@ -519,6 +585,22 @@ impl<'a> Manifest<'a> {
     pub fn vfs_root(&self, index: usize) -> Option<VfsRoot<'a>> {
         if index < self.vfs_root_count {
             self.vfs_roots[index]
+        } else {
+            None
+        }
+    }
+
+    pub fn graph_node(&self, index: usize) -> Option<GraphNode<'a>> {
+        if index < self.graph_node_count {
+            self.graph_nodes[index]
+        } else {
+            None
+        }
+    }
+
+    pub fn graph_edge(&self, index: usize) -> Option<GraphEdge<'a>> {
+        if index < self.graph_edge_count {
+            self.graph_edges[index]
         } else {
             None
         }
@@ -674,12 +756,16 @@ fn parse_compact_into(
     )?;
     let generation_id = reader.read_fixed_str()?;
     let parent_generation_id = reader.read_fixed_str_allow_empty()?;
+    let graph_node_count = reader.read_count(MAX_GRAPH_NODES, ParseError::TooManyGraphNodes)?;
+    let graph_edge_count = reader.read_count(MAX_GRAPH_EDGES, ParseError::TooManyGraphEdges)?;
+    let graph_store_checksum = reader.read_u32()?;
 
     *manifest = Manifest::empty();
     manifest.generation_id = generation_id;
     manifest.parent_generation_id = parent_generation_id;
     manifest.source_base = bytes.as_ptr() as u64;
     manifest.source_len = bytes.len() as u64;
+    manifest.graph_store_checksum = graph_store_checksum;
     manifest.boot_module_count = boot_module_count;
     manifest.process_count = process_count;
     manifest.endpoint_count = endpoint_count;
@@ -695,6 +781,8 @@ fn parse_compact_into(
     manifest.virtio_device_count = virtio_device_count;
     manifest.namespace_count = namespace_count;
     manifest.vfs_root_count = vfs_root_count;
+    manifest.graph_node_count = graph_node_count;
+    manifest.graph_edge_count = graph_edge_count;
 
     let mut index = 0;
     while index < boot_module_count {
@@ -887,6 +975,38 @@ fn parse_compact_into(
         index += 1;
     }
 
+    let graph_store_start = reader.offset;
+
+    index = 0;
+    while index < graph_node_count {
+        manifest.graph_nodes[index] = Some(GraphNode {
+            kind: reader.read_u16()?,
+            object_kind: reader.read_u16()?,
+            id: reader.read_fixed_str()?,
+            label: reader.read_fixed_str_allow_empty()?,
+        });
+        index += 1;
+    }
+
+    index = 0;
+    while index < graph_edge_count {
+        manifest.graph_edges[index] = Some(GraphEdge {
+            kind: reader.read_u16()?,
+            from_index: reader.read_u16()? as usize,
+            to_index: reader.read_u16()? as usize,
+            rights: reader.read_u16()?,
+            id: reader.read_fixed_str()?,
+        });
+        index += 1;
+    }
+
+    let graph_store_end = reader.offset;
+    manifest.graph_store_base = bytes[graph_store_start..].as_ptr() as u64;
+    manifest.graph_store_len = (graph_store_end - graph_store_start) as u64;
+    if checksum32(&bytes[graph_store_start..graph_store_end]) != graph_store_checksum {
+        return Err(ParseError::BadGraphStoreChecksum);
+    }
+
     validate_manifest(manifest)?;
 
     if !reader.finished() {
@@ -1071,6 +1191,7 @@ fn ranges_overlap(
 }
 
 fn validate_manifest(manifest: &Manifest<'_>) -> Result<(), ParseError> {
+    validate_graph_store(manifest)?;
     if manifest.endpoint_count == 0 {
         return Err(ParseError::InvalidReference);
     }
@@ -1258,6 +1379,355 @@ fn validate_manifest(manifest: &Manifest<'_>) -> Result<(), ParseError> {
     }
 
     Ok(())
+}
+
+fn validate_graph_store(manifest: &Manifest<'_>) -> Result<(), ParseError> {
+    if manifest.graph_node_count == 0 {
+        return Err(ParseError::InvalidGraphRecord);
+    }
+    let mut generation_nodes = 0;
+    let mut index = 0;
+    while index < manifest.graph_node_count {
+        let node = manifest
+            .graph_node(index)
+            .ok_or(ParseError::InvalidGraphRecord)?;
+        if node.kind == 0 || node.id.is_empty() || node.label.len() > STRING_LEN {
+            return Err(ParseError::InvalidGraphRecord);
+        }
+        if node.kind == GRAPH_NODE_GENERATION {
+            generation_nodes += 1;
+            if node.id != manifest.generation_id {
+                return Err(ParseError::InvalidGraphRecord);
+            }
+        }
+        let mut previous = 0;
+        while previous < index {
+            let prior = manifest
+                .graph_node(previous)
+                .ok_or(ParseError::InvalidGraphRecord)?;
+            if prior.id == node.id {
+                return Err(ParseError::InvalidGraphRecord);
+            }
+            previous += 1;
+        }
+        index += 1;
+    }
+    if generation_nodes != 1 {
+        return Err(ParseError::InvalidGraphRecord);
+    }
+
+    index = 0;
+    while index < manifest.process_count {
+        let process = manifest
+            .process(index)
+            .ok_or(ParseError::InvalidReference)?;
+        if !graph_has_node(manifest, GRAPH_NODE_SERVICE, graph_process_node_id(process)) {
+            return Err(ParseError::InvalidGraphRecord);
+        }
+        index += 1;
+    }
+
+    index = 0;
+    while index < manifest.endpoint_count {
+        let endpoint = manifest
+            .endpoint(index)
+            .ok_or(ParseError::InvalidReference)?;
+        if !graph_has_node(manifest, GRAPH_NODE_ENDPOINT, endpoint.name) {
+            return Err(ParseError::InvalidGraphRecord);
+        }
+        index += 1;
+    }
+
+    index = 0;
+    while index < manifest.store_object_count {
+        let object = manifest
+            .store_object(index)
+            .ok_or(ParseError::InvalidReference)?;
+        let kind = if object.id.starts_with("config:") {
+            GRAPH_NODE_CONFIG
+        } else {
+            GRAPH_NODE_STORE_OBJECT
+        };
+        if !graph_has_node(manifest, kind, object.id) {
+            return Err(ParseError::InvalidGraphRecord);
+        }
+        index += 1;
+    }
+
+    index = 0;
+    while index < manifest.state_volume_count {
+        let state = manifest
+            .state_volume(index)
+            .ok_or(ParseError::InvalidReference)?;
+        if !graph_has_node(manifest, GRAPH_NODE_STATE_VOLUME, state.id) {
+            return Err(ParseError::InvalidGraphRecord);
+        }
+        index += 1;
+    }
+
+    validate_graph_device_nodes(manifest)?;
+
+    index = 0;
+    while index < manifest.graph_edge_count {
+        let edge = manifest
+            .graph_edge(index)
+            .ok_or(ParseError::InvalidGraphRecord)?;
+        if edge.kind == 0
+            || edge.id.is_empty()
+            || edge.from_index >= manifest.graph_node_count
+            || edge.to_index >= manifest.graph_node_count
+        {
+            return Err(ParseError::InvalidGraphRecord);
+        }
+        if edge.kind == GRAPH_EDGE_CAPABILITY && edge.rights == 0 {
+            return Err(ParseError::InvalidGraphRecord);
+        }
+        let mut previous = 0;
+        while previous < index {
+            let prior = manifest
+                .graph_edge(previous)
+                .ok_or(ParseError::InvalidGraphRecord)?;
+            if prior.id == edge.id {
+                return Err(ParseError::InvalidGraphRecord);
+            }
+            previous += 1;
+        }
+        index += 1;
+    }
+
+    index = 0;
+    while index < manifest.grant_count {
+        let grant = manifest.grant(index).ok_or(ParseError::InvalidReference)?;
+        let process = manifest
+            .process(grant.process_index)
+            .ok_or(ParseError::InvalidReference)?;
+        let Some(from_index) = graph_node_index(manifest, graph_process_node_id(process)) else {
+            return Err(ParseError::InvalidGraphRecord);
+        };
+        let Some(to_index) = graph_node_index(manifest, graph_object_node_id(manifest, grant)?)
+        else {
+            return Err(ParseError::InvalidGraphRecord);
+        };
+        if !graph_has_capability_edge(manifest, from_index, to_index, grant.rights) {
+            return Err(ParseError::InvalidGraphRecord);
+        }
+        index += 1;
+    }
+
+    Ok(())
+}
+
+fn validate_graph_device_nodes(manifest: &Manifest<'_>) -> Result<(), ParseError> {
+    let mut index = 0;
+    while index < manifest.network_port_count {
+        let object = manifest
+            .network_port(index)
+            .ok_or(ParseError::InvalidReference)?;
+        if !graph_has_device_node(manifest, OBJECT_NETWORK_PORT, object.id) {
+            return Err(ParseError::InvalidGraphRecord);
+        }
+        index += 1;
+    }
+    index = 0;
+    while index < manifest.io_port_count {
+        let object = manifest
+            .io_port(index)
+            .ok_or(ParseError::InvalidReference)?;
+        if !graph_has_device_node(manifest, OBJECT_IO_PORT_RANGE, object.id) {
+            return Err(ParseError::InvalidGraphRecord);
+        }
+        index += 1;
+    }
+    index = 0;
+    while index < manifest.mmio_region_count {
+        let object = manifest
+            .mmio_region(index)
+            .ok_or(ParseError::InvalidReference)?;
+        if !graph_has_device_node(manifest, OBJECT_MMIO_REGION, object.id) {
+            return Err(ParseError::InvalidGraphRecord);
+        }
+        index += 1;
+    }
+    index = 0;
+    while index < manifest.interrupt_line_count {
+        let object = manifest
+            .interrupt_line(index)
+            .ok_or(ParseError::InvalidReference)?;
+        if !graph_has_device_node(manifest, OBJECT_INTERRUPT_LINE, object.id) {
+            return Err(ParseError::InvalidGraphRecord);
+        }
+        index += 1;
+    }
+    index = 0;
+    while index < manifest.dma_region_count {
+        let object = manifest
+            .dma_region(index)
+            .ok_or(ParseError::InvalidReference)?;
+        if !graph_has_device_node(manifest, OBJECT_DMA_REGION, object.id) {
+            return Err(ParseError::InvalidGraphRecord);
+        }
+        index += 1;
+    }
+    index = 0;
+    while index < manifest.pci_device_count {
+        let object = manifest
+            .pci_device(index)
+            .ok_or(ParseError::InvalidReference)?;
+        if !graph_has_any_device_node(manifest, object.id) {
+            return Err(ParseError::InvalidGraphRecord);
+        }
+        index += 1;
+    }
+    index = 0;
+    while index < manifest.virtio_device_count {
+        let object = manifest
+            .virtio_device(index)
+            .ok_or(ParseError::InvalidReference)?;
+        if !graph_has_any_device_node(manifest, object.id) {
+            return Err(ParseError::InvalidGraphRecord);
+        }
+        index += 1;
+    }
+    Ok(())
+}
+
+fn graph_process_node_id(process: Process<'_>) -> &str {
+    if process.service_id.is_empty() {
+        process.name
+    } else {
+        process.service_id
+    }
+}
+
+fn graph_object_node_id<'a>(
+    manifest: &'a Manifest<'a>,
+    grant: Grant,
+) -> Result<&'a str, ParseError> {
+    match grant.object_kind {
+        OBJECT_ENDPOINT => manifest
+            .endpoint(grant.object_index)
+            .map(|object| object.name)
+            .ok_or(ParseError::InvalidReference),
+        OBJECT_STORE => manifest
+            .store_object(grant.object_index)
+            .map(|object| object.id)
+            .ok_or(ParseError::InvalidReference),
+        OBJECT_TIMER => Ok("monotonic-timer"),
+        OBJECT_NETWORK_PORT => manifest
+            .network_port(grant.object_index)
+            .map(|object| object.id)
+            .ok_or(ParseError::InvalidReference),
+        OBJECT_IO_PORT_RANGE => manifest
+            .io_port(grant.object_index)
+            .map(|object| object.id)
+            .ok_or(ParseError::InvalidReference),
+        OBJECT_MMIO_REGION => manifest
+            .mmio_region(grant.object_index)
+            .map(|object| object.id)
+            .ok_or(ParseError::InvalidReference),
+        OBJECT_INTERRUPT_LINE => manifest
+            .interrupt_line(grant.object_index)
+            .map(|object| object.id)
+            .ok_or(ParseError::InvalidReference),
+        OBJECT_DMA_REGION => manifest
+            .dma_region(grant.object_index)
+            .map(|object| object.id)
+            .ok_or(ParseError::InvalidReference),
+        OBJECT_PCI_DEVICE => manifest
+            .pci_device(grant.object_index)
+            .map(|object| object.id)
+            .ok_or(ParseError::InvalidReference),
+        OBJECT_VIRTIO_DEVICE => manifest
+            .virtio_device(grant.object_index)
+            .map(|object| object.id)
+            .ok_or(ParseError::InvalidReference),
+        OBJECT_NAMESPACE => manifest
+            .namespace(grant.object_index)
+            .map(|object| object.id)
+            .ok_or(ParseError::InvalidReference),
+        OBJECT_VFS_ROOT => manifest
+            .vfs_root(grant.object_index)
+            .map(|object| object.id)
+            .ok_or(ParseError::InvalidReference),
+        _ => Err(ParseError::InvalidObjectKind),
+    }
+}
+
+fn graph_has_node(manifest: &Manifest<'_>, kind: u16, id: &str) -> bool {
+    let mut index = 0;
+    while index < manifest.graph_node_count {
+        if let Some(node) = manifest.graph_node(index)
+            && node.kind == kind
+            && node.id == id
+        {
+            return true;
+        }
+        index += 1;
+    }
+    false
+}
+
+fn graph_has_device_node(manifest: &Manifest<'_>, object_kind: u16, id: &str) -> bool {
+    let mut index = 0;
+    while index < manifest.graph_node_count {
+        if let Some(node) = manifest.graph_node(index)
+            && node.kind == GRAPH_NODE_DEVICE
+            && node.object_kind == object_kind
+            && node.id == id
+        {
+            return true;
+        }
+        index += 1;
+    }
+    false
+}
+
+fn graph_has_any_device_node(manifest: &Manifest<'_>, id: &str) -> bool {
+    let mut index = 0;
+    while index < manifest.graph_node_count {
+        if let Some(node) = manifest.graph_node(index)
+            && node.kind == GRAPH_NODE_DEVICE
+            && node.id == id
+        {
+            return true;
+        }
+        index += 1;
+    }
+    false
+}
+
+fn graph_node_index(manifest: &Manifest<'_>, id: &str) -> Option<usize> {
+    let mut index = 0;
+    while index < manifest.graph_node_count {
+        if let Some(node) = manifest.graph_node(index)
+            && node.id == id
+        {
+            return Some(index);
+        }
+        index += 1;
+    }
+    None
+}
+
+fn graph_has_capability_edge(
+    manifest: &Manifest<'_>,
+    from_index: usize,
+    to_index: usize,
+    rights: u16,
+) -> bool {
+    let mut index = 0;
+    while index < manifest.graph_edge_count {
+        if let Some(edge) = manifest.graph_edge(index)
+            && edge.kind == GRAPH_EDGE_CAPABILITY
+            && edge.from_index == from_index
+            && edge.to_index == to_index
+            && edge.rights == rights
+        {
+            return true;
+        }
+        index += 1;
+    }
+    false
 }
 
 fn validate_process_mounts(process: Process<'_>) -> Result<(), ParseError> {
@@ -1611,4 +2081,14 @@ fn v1_checksum(bytes: &[u8]) -> u32 {
         index += 1;
     }
     hash
+}
+
+fn checksum32(bytes: &[u8]) -> u32 {
+    let mut checksum = 0u32;
+    let mut index = 0;
+    while index < bytes.len() {
+        checksum = checksum.wrapping_add((bytes[index] as u32).wrapping_mul(index as u32 + 1));
+        index += 1;
+    }
+    checksum
 }

@@ -14,7 +14,7 @@ pub const BOOT_ENDPOINT_ID: u64 = 1;
 
 const MAX_MESSAGE_BYTES: usize = 512;
 const ENDPOINT_QUEUE_CAPACITY: usize = 4;
-const MAX_BOOT_READ_BYTES: usize = 32 * 1024;
+const MAX_BOOT_READ_BYTES: usize = 64 * 1024;
 const MAX_OBJECTS: usize = 128;
 const MAX_PROCESSES: usize = 16;
 const MAX_CAPS: usize = 32;
@@ -108,12 +108,14 @@ const MAX_NAMESPACE_ENTRIES: usize = 4;
 const MAX_BOOT_VFS_ROOTS: usize = 8;
 const MAX_BOOT_STATE_VOLUMES: usize = 4;
 const MAX_BOOT_PROCESS_MOUNTS: usize = 4;
+const MAX_BOOT_GRAPH_NODES: usize = 128;
+const MAX_BOOT_GRAPH_EDGES: usize = 224;
 const MAX_VFS_MOUNTS: usize = 16;
 const BUILTIN_VFS_MOUNTS: usize = 6;
 const MAX_CAP_LINEAGE: usize = 1024;
 const MAX_REVOKED_CAPS: usize = MAX_CAP_LINEAGE;
 const MAX_GENERATION_CONFIGS: usize = 4;
-const MAX_INSPECT_REPORT_BYTES: usize = 64 * 1024;
+const MAX_INSPECT_REPORT_BYTES: usize = 128 * 1024;
 const MAX_SERVICE_LIFECYCLE_EVENTS: usize = 128;
 const DMA_MAPPING_INFO_BYTES: usize = 24;
 const PROTOCOL_HEALTH_V0: u16 = 2;
@@ -254,6 +256,20 @@ pub const BOOT_OBJECT_PCI_DEVICE: u16 = 10;
 pub const BOOT_OBJECT_VIRTIO_DEVICE: u16 = 11;
 pub const BOOT_OBJECT_NAMESPACE: u16 = 12;
 pub const BOOT_OBJECT_VFS_ROOT: u16 = 13;
+const GRAPH_NODE_GENERATION: u16 = 1;
+const GRAPH_NODE_SERVICE: u16 = 2;
+const GRAPH_NODE_ENDPOINT: u16 = 3;
+const GRAPH_NODE_STORE_OBJECT: u16 = 4;
+const GRAPH_NODE_CONFIG: u16 = 5;
+const GRAPH_NODE_STATE_VOLUME: u16 = 6;
+const GRAPH_NODE_DEVICE: u16 = 7;
+const GRAPH_NODE_NAMESPACE: u16 = 8;
+const GRAPH_NODE_VFS_ROOT: u16 = 9;
+const GRAPH_NODE_TIMER: u16 = 10;
+const GRAPH_NODE_SECRET: u16 = 11;
+const GRAPH_EDGE_ACTIVATION: u16 = 1;
+const GRAPH_EDGE_CAPABILITY: u16 = 2;
+const GRAPH_EDGE_MOUNT: u16 = 3;
 
 pub const FRAME_R15: usize = 0;
 pub const FRAME_R14: usize = 8;
@@ -376,6 +392,7 @@ pub struct ProcessContext {
 #[derive(Clone, Copy)]
 pub struct BootProcessConfig {
     pub name: &'static str,
+    pub graph_node: &'static str,
     pub image_base: u64,
     pub image_length: u64,
     pub initial: bool,
@@ -497,6 +514,23 @@ pub struct BootVfsRootConfig {
 }
 
 #[derive(Clone, Copy)]
+pub struct BootGraphNodeConfig {
+    pub kind: u16,
+    pub object_kind: u16,
+    pub id: &'static str,
+    pub label: &'static str,
+}
+
+#[derive(Clone, Copy)]
+pub struct BootGraphEdgeConfig {
+    pub kind: u16,
+    pub from_index: usize,
+    pub to_index: usize,
+    pub rights: u64,
+    pub id: &'static str,
+}
+
+#[derive(Clone, Copy)]
 pub struct BootGrantConfig {
     pub process_index: usize,
     pub cap_slot: u64,
@@ -509,6 +543,9 @@ pub struct BootGrantConfig {
 pub struct BootRuntimeConfig {
     generation_id: &'static str,
     manifest_hash: [u8; 64],
+    graph_store_hash: [u8; 64],
+    graph_store_checksum: u32,
+    graph_store_source: &'static str,
     processes: [Option<BootProcessConfig>; MAX_PROCESSES],
     process_count: usize,
     endpoints: [Option<BootEndpointConfig>; MAX_OBJECTS],
@@ -536,6 +573,10 @@ pub struct BootRuntimeConfig {
     namespace_count: usize,
     vfs_roots: [Option<BootVfsRootConfig>; MAX_BOOT_VFS_ROOTS],
     vfs_root_count: usize,
+    graph_nodes: [Option<BootGraphNodeConfig>; MAX_BOOT_GRAPH_NODES],
+    graph_node_count: usize,
+    graph_edges: [Option<BootGraphEdgeConfig>; MAX_BOOT_GRAPH_EDGES],
+    graph_edge_count: usize,
     grants: [Option<BootGrantConfig>; MAX_BOOT_GRANTS],
     grant_count: usize,
 }
@@ -1367,6 +1408,7 @@ static BOOT_MANAGER: Global<BootManagerState> = Global(UnsafeCell::new(BootManag
 static FRAME_ALLOCATOR: Global<Option<*mut memory::FrameAllocator>> = Global(UnsafeCell::new(None));
 static VIRTIO_RNG_STATE: Global<VirtioRngState> = Global(UnsafeCell::new(VirtioRngState::new()));
 static VIRTIO_NET_STATE: Global<VirtioNetState> = Global(UnsafeCell::new(VirtioNetState::new()));
+static INSPECT_REPORT: Global<InspectReport> = Global(UnsafeCell::new(InspectReport::new()));
 
 impl CapabilitySpace {
     const fn new() -> Self {
@@ -2443,6 +2485,11 @@ impl InspectReport {
             len: 0,
             truncated: false,
         }
+    }
+
+    fn clear(&mut self) {
+        self.len = 0;
+        self.truncated = false;
     }
 
     fn push_byte(&mut self, byte: u8) {
@@ -5073,6 +5120,9 @@ impl BootRuntimeConfig {
         Self {
             generation_id: "",
             manifest_hash: [0; 64],
+            graph_store_hash: [0; 64],
+            graph_store_checksum: 0,
+            graph_store_source: "",
             processes: [None; MAX_PROCESSES],
             process_count: 0,
             endpoints: [None; MAX_OBJECTS],
@@ -5100,6 +5150,10 @@ impl BootRuntimeConfig {
             namespace_count: 0,
             vfs_roots: [None; MAX_BOOT_VFS_ROOTS],
             vfs_root_count: 0,
+            graph_nodes: [None; MAX_BOOT_GRAPH_NODES],
+            graph_node_count: 0,
+            graph_edges: [None; MAX_BOOT_GRAPH_EDGES],
+            graph_edge_count: 0,
             grants: [None; MAX_BOOT_GRANTS],
             grant_count: 0,
         }
@@ -5108,6 +5162,9 @@ impl BootRuntimeConfig {
     pub fn reset(&mut self) {
         self.generation_id = "";
         self.manifest_hash = [0; 64];
+        self.graph_store_hash = [0; 64];
+        self.graph_store_checksum = 0;
+        self.graph_store_source = "";
         self.process_count = 0;
         self.endpoint_count = 0;
         self.manifest_module = None;
@@ -5122,6 +5179,8 @@ impl BootRuntimeConfig {
         self.virtio_device_count = 0;
         self.namespace_count = 0;
         self.vfs_root_count = 0;
+        self.graph_node_count = 0;
+        self.graph_edge_count = 0;
         self.grant_count = 0;
     }
 
@@ -5131,6 +5190,18 @@ impl BootRuntimeConfig {
 
     pub fn set_manifest_hash(&mut self, hash: [u8; 64]) {
         self.manifest_hash = hash;
+    }
+
+    pub fn set_graph_store_hash(&mut self, hash: [u8; 64]) {
+        self.graph_store_hash = hash;
+    }
+
+    pub fn set_graph_store_checksum(&mut self, checksum: u32) {
+        self.graph_store_checksum = checksum;
+    }
+
+    pub fn set_graph_store_source(&mut self, source: &'static str) {
+        self.graph_store_source = source;
     }
 
     pub fn add_process(&mut self, process: BootProcessConfig) -> Result<(), InitError> {
@@ -5265,6 +5336,48 @@ impl BootRuntimeConfig {
         }
         self.vfs_roots[self.vfs_root_count] = Some(root);
         self.vfs_root_count += 1;
+        Ok(())
+    }
+
+    pub fn add_graph_node(&mut self, node: BootGraphNodeConfig) -> Result<(), InitError> {
+        if self.graph_node_count == self.graph_nodes.len() || node.kind == 0 || node.id.is_empty() {
+            return Err(InitError::InvalidBootManifest);
+        }
+        let mut index = 0;
+        while index < self.graph_node_count {
+            if let Some(existing) = self.graph_nodes[index]
+                && existing.id == node.id
+            {
+                return Err(InitError::InvalidBootManifest);
+            }
+            index += 1;
+        }
+        self.graph_nodes[self.graph_node_count] = Some(node);
+        self.graph_node_count += 1;
+        Ok(())
+    }
+
+    pub fn add_graph_edge(&mut self, edge: BootGraphEdgeConfig) -> Result<(), InitError> {
+        if self.graph_edge_count == self.graph_edges.len()
+            || edge.kind == 0
+            || edge.id.is_empty()
+            || edge.from_index >= self.graph_node_count
+            || edge.to_index >= self.graph_node_count
+            || (edge.kind == GRAPH_EDGE_CAPABILITY && edge.rights == 0)
+        {
+            return Err(InitError::InvalidBootManifest);
+        }
+        let mut index = 0;
+        while index < self.graph_edge_count {
+            if let Some(existing) = self.graph_edges[index]
+                && existing.id == edge.id
+            {
+                return Err(InitError::InvalidBootManifest);
+            }
+            index += 1;
+        }
+        self.graph_edges[self.graph_edge_count] = Some(edge);
+        self.graph_edge_count += 1;
         Ok(())
     }
 
@@ -5772,6 +5885,8 @@ fn validate_boot_config_installable(config: &BootRuntimeConfig) -> Result<(), In
     validate_counted_config_entries(&config.virtio_devices, config.virtio_device_count)?;
     validate_counted_config_entries(&config.namespaces, config.namespace_count)?;
     validate_counted_config_entries(&config.vfs_roots, config.vfs_root_count)?;
+    validate_counted_config_entries(&config.graph_nodes, config.graph_node_count)?;
+    validate_counted_config_entries(&config.graph_edges, config.graph_edge_count)?;
     validate_counted_config_entries(&config.grants, config.grant_count)?;
 
     if config.endpoint_count == 0 {
@@ -5802,6 +5917,7 @@ fn validate_boot_config_installable(config: &BootRuntimeConfig) -> Result<(), In
         return Err(InitError::ObjectTableFull);
     }
     validate_boot_config_hardware_authority(config)?;
+    validate_boot_config_graph_store(config)?;
 
     let mut namespace_index = 0;
     while namespace_index < config.namespace_count {
@@ -5870,6 +5986,88 @@ fn validate_boot_config_installable(config: &BootRuntimeConfig) -> Result<(), In
 
 fn initial_process_reserved_cap_slot(config: &BootRuntimeConfig, slot: u64) -> bool {
     slot == 2 || slot == INIT_TIMER_CAP_SLOT || (slot == 0 && config.manifest_module.is_some())
+}
+
+fn validate_boot_config_graph_store(config: &BootRuntimeConfig) -> Result<(), InitError> {
+    if config.graph_node_count == 0
+        || config.graph_store_hash[0] == 0
+        || config.graph_store_source.is_empty()
+    {
+        return Err(InitError::InvalidBootManifest);
+    }
+    let mut generation_nodes = 0;
+    let mut index = 0;
+    while index < config.graph_node_count {
+        let node = config.graph_nodes[index].ok_or(InitError::InvalidBootManifest)?;
+        if node.kind == 0 || node.id.is_empty() {
+            return Err(InitError::InvalidBootManifest);
+        }
+        if node.kind == GRAPH_NODE_GENERATION {
+            generation_nodes += 1;
+            if node.id != config.generation_id {
+                return Err(InitError::InvalidBootManifest);
+            }
+        }
+        let mut previous = 0;
+        while previous < index {
+            let prior = config.graph_nodes[previous].ok_or(InitError::InvalidBootManifest)?;
+            if prior.id == node.id {
+                return Err(InitError::InvalidBootManifest);
+            }
+            previous += 1;
+        }
+        index += 1;
+    }
+    if generation_nodes != 1 {
+        return Err(InitError::InvalidBootManifest);
+    }
+
+    index = 0;
+    while index < config.graph_edge_count {
+        let edge = config.graph_edges[index].ok_or(InitError::InvalidBootManifest)?;
+        if edge.kind == 0
+            || edge.id.is_empty()
+            || edge.from_index >= config.graph_node_count
+            || edge.to_index >= config.graph_node_count
+            || (edge.kind == GRAPH_EDGE_CAPABILITY && edge.rights == 0)
+        {
+            return Err(InitError::InvalidBootManifest);
+        }
+        let mut previous = 0;
+        while previous < index {
+            let prior = config.graph_edges[previous].ok_or(InitError::InvalidBootManifest)?;
+            if prior.id == edge.id {
+                return Err(InitError::InvalidBootManifest);
+            }
+            previous += 1;
+        }
+        index += 1;
+    }
+
+    index = 0;
+    while index < config.process_count {
+        let process = config.processes[index].ok_or(InitError::InvalidBootManifest)?;
+        if !boot_graph_has_node(config, GRAPH_NODE_SERVICE, process.graph_node) {
+            return Err(InitError::InvalidBootManifest);
+        }
+        index += 1;
+    }
+
+    Ok(())
+}
+
+fn boot_graph_has_node(config: &BootRuntimeConfig, kind: u16, id: &str) -> bool {
+    let mut index = 0;
+    while index < config.graph_node_count {
+        if let Some(node) = config.graph_nodes[index]
+            && node.kind == kind
+            && node.id == id
+        {
+            return true;
+        }
+        index += 1;
+    }
+    false
 }
 
 fn validate_counted_config_entries<T: Copy, const N: usize>(
@@ -13180,12 +13378,13 @@ pub fn runtime_inspect(
     max_len: usize,
 ) -> Result<usize, IpcError> {
     let _process_control = process_control_from_cap(cap_slot, capability::RIGHT_INSPECT)?;
-    let mut report = InspectReport::new();
     let caller = current_process_name();
+    let report = inspect_report();
+    report.clear();
 
     {
         let runtime = runtime();
-        build_inspect_report(runtime, &mut report);
+        build_inspect_report(runtime, report);
     }
 
     if report.truncated || report.len > max_len {
@@ -15233,6 +15432,7 @@ fn build_inspect_report(runtime: &RuntimeState, report: &mut InspectReport) {
     report.push_str("generation=");
     report.push_str(runtime.generation_id);
     report.push_byte(b'\n');
+    write_graph_store_report(runtime, report);
     report.push_str("processes=");
     report.push_u64_dec(runtime.processes.count as u64);
     report.push_byte(b'\n');
@@ -15305,6 +15505,8 @@ fn build_inspect_report(runtime: &RuntimeState, report: &mut InspectReport) {
             report.push_u64_dec(process.context.cr3);
             report.push_str(" generation=");
             report.push_str(runtime.generation_id);
+            report.push_str(" graph_node=");
+            report.push_str(process_graph_node(runtime, process.name));
             report.push_byte(b'\n');
 
             write_capability_space_report(runtime, report, process, "current", process.caps);
@@ -15422,6 +15624,155 @@ fn build_inspect_report(runtime: &RuntimeState, report: &mut InspectReport) {
             report.push_byte(b'\n');
         }
         event_index += 1;
+    }
+}
+
+fn write_graph_store_report(runtime: &RuntimeState, report: &mut InspectReport) {
+    let Some(config) = runtime.active_config else {
+        report.push_str("graph-store v=1 status=unavailable\n");
+        return;
+    };
+    report.push_str("graph-store v=1 generation=");
+    report.push_str(config.generation_id);
+    report.push_str(" hash=");
+    report.push_bytes(&config.graph_store_hash);
+    report.push_str(" checksum=");
+    report.push_u64_dec(config.graph_store_checksum as u64);
+    report.push_str(" nodes=");
+    report.push_u64_dec(config.graph_node_count as u64);
+    report.push_str(" edges=");
+    report.push_u64_dec(config.graph_edge_count as u64);
+    report.push_str(" source=");
+    report.push_str(config.graph_store_source);
+    report.push_byte(b'\n');
+
+    report.push_str("graph-store-object-counts generation=");
+    report.push_u64_dec(graph_node_kind_count(config, GRAPH_NODE_GENERATION));
+    report.push_str(" services=");
+    report.push_u64_dec(graph_node_kind_count(config, GRAPH_NODE_SERVICE));
+    report.push_str(" endpoints=");
+    report.push_u64_dec(graph_node_kind_count(config, GRAPH_NODE_ENDPOINT));
+    report.push_str(" store_objects=");
+    report.push_u64_dec(graph_node_kind_count(config, GRAPH_NODE_STORE_OBJECT));
+    report.push_str(" configs=");
+    report.push_u64_dec(graph_node_kind_count(config, GRAPH_NODE_CONFIG));
+    report.push_str(" state=");
+    report.push_u64_dec(graph_node_kind_count(config, GRAPH_NODE_STATE_VOLUME));
+    report.push_str(" devices=");
+    report.push_u64_dec(graph_node_kind_count(config, GRAPH_NODE_DEVICE));
+    report.push_str(" namespaces=");
+    report.push_u64_dec(graph_node_kind_count(config, GRAPH_NODE_NAMESPACE));
+    report.push_str(" vfs_roots=");
+    report.push_u64_dec(graph_node_kind_count(config, GRAPH_NODE_VFS_ROOT));
+    report.push_str(" secrets=");
+    report.push_u64_dec(graph_node_kind_count(config, GRAPH_NODE_SECRET));
+    report.push_byte(b'\n');
+
+    let mut index = 0;
+    while index < config.graph_node_count {
+        if let Some(node) = config.graph_nodes[index] {
+            report.push_str("graph-node[");
+            report.push_u64_dec(index as u64);
+            report.push_str("] kind=");
+            report.push_str(graph_node_kind_label(node.kind));
+            report.push_str(" id=");
+            report.push_str(node.id);
+            report.push_str(" object_kind=");
+            report.push_str(boot_object_kind_label(node.object_kind));
+            report.push_str(" label=");
+            report.push_str(node.label);
+            report.push_byte(b'\n');
+        }
+        index += 1;
+    }
+
+    index = 0;
+    while index < config.graph_edge_count {
+        if let Some(edge) = config.graph_edges[index] {
+            report.push_str("graph-edge[");
+            report.push_u64_dec(index as u64);
+            report.push_str("] kind=");
+            report.push_str(graph_edge_kind_label(edge.kind));
+            report.push_str(" id=");
+            report.push_str(edge.id);
+            report.push_str(" from=");
+            report.push_str(graph_node_id(config, edge.from_index));
+            report.push_str(" to=");
+            report.push_str(graph_node_id(config, edge.to_index));
+            report.push_str(" rights=");
+            write_rights_report(report, edge.rights);
+            report.push_byte(b'\n');
+        }
+        index += 1;
+    }
+}
+
+fn graph_node_kind_count(config: &BootRuntimeConfig, kind: u16) -> u64 {
+    let mut count = 0;
+    let mut index = 0;
+    while index < config.graph_node_count {
+        if let Some(node) = config.graph_nodes[index]
+            && node.kind == kind
+        {
+            count += 1;
+        }
+        index += 1;
+    }
+    count
+}
+
+fn graph_node_id(config: &BootRuntimeConfig, index: usize) -> &'static str {
+    if index < config.graph_node_count
+        && let Some(node) = config.graph_nodes[index]
+    {
+        return node.id;
+    }
+    "<invalid>"
+}
+
+fn graph_node_kind_label(kind: u16) -> &'static str {
+    match kind {
+        GRAPH_NODE_GENERATION => "generation",
+        GRAPH_NODE_SERVICE => "service",
+        GRAPH_NODE_ENDPOINT => "endpoint",
+        GRAPH_NODE_STORE_OBJECT => "store-object",
+        GRAPH_NODE_CONFIG => "config",
+        GRAPH_NODE_STATE_VOLUME => "state-volume",
+        GRAPH_NODE_DEVICE => "device",
+        GRAPH_NODE_NAMESPACE => "namespace",
+        GRAPH_NODE_VFS_ROOT => "vfs-root",
+        GRAPH_NODE_TIMER => "timer",
+        GRAPH_NODE_SECRET => "secret",
+        _ => "unknown",
+    }
+}
+
+fn graph_edge_kind_label(kind: u16) -> &'static str {
+    match kind {
+        GRAPH_EDGE_ACTIVATION => "activation",
+        GRAPH_EDGE_CAPABILITY => "capability",
+        GRAPH_EDGE_MOUNT => "mount",
+        _ => "unknown",
+    }
+}
+
+fn boot_object_kind_label(kind: u16) -> &'static str {
+    match kind {
+        0 => "none",
+        BOOT_OBJECT_ENDPOINT => "endpoint",
+        BOOT_OBJECT_STORE => "store",
+        BOOT_OBJECT_STATE => "state",
+        BOOT_OBJECT_TIMER => "timer",
+        BOOT_OBJECT_NETWORK_PORT => "network-port",
+        BOOT_OBJECT_IO_PORT_RANGE => "io-port",
+        BOOT_OBJECT_MMIO_REGION => "mmio-region",
+        BOOT_OBJECT_INTERRUPT_LINE => "interrupt-line",
+        BOOT_OBJECT_DMA_REGION => "dma-region",
+        BOOT_OBJECT_PCI_DEVICE => "pci-device",
+        BOOT_OBJECT_VIRTIO_DEVICE => "virtio-device",
+        BOOT_OBJECT_NAMESPACE => "namespace",
+        BOOT_OBJECT_VFS_ROOT => "vfs-root",
+        _ => "unknown",
     }
 }
 
@@ -15958,6 +16309,12 @@ fn write_capability_space_report(
             report.push_u64_dec(cap.parent_cap_id);
             report.push_str(" generation=");
             report.push_str(cap.generation_id);
+            report.push_str(" graph_from=");
+            report.push_str(process_graph_node(runtime, process.name));
+            report.push_str(" graph_target=");
+            write_capability_graph_target(runtime, report, cap.object);
+            report.push_str(" graph_edge=");
+            write_capability_graph_edge(runtime, report, process.name, slot, cap);
             report.push_str(" owner_pid=");
             report.push_u64_dec(cap.owner_process.raw());
             report.push_str(" owner=");
@@ -15976,6 +16333,138 @@ fn write_capability_space_report(
         }
         slot += 1;
     }
+}
+
+fn process_graph_node(runtime: &RuntimeState, process_name: &str) -> &'static str {
+    let Some(config) = runtime.active_config else {
+        return "<unknown>";
+    };
+    let mut index = 0;
+    while index < config.process_count {
+        if let Some(process) = config.processes[index]
+            && process.name == process_name
+        {
+            return process.graph_node;
+        }
+        index += 1;
+    }
+    "<unknown>"
+}
+
+fn write_capability_graph_target(
+    runtime: &RuntimeState,
+    report: &mut InspectReport,
+    object: KernelObjectId,
+) {
+    if let Some(target) = graph_node_for_object(runtime, object) {
+        report.push_str(target);
+    } else {
+        report.push_str("<unknown>");
+    }
+}
+
+fn write_capability_graph_edge(
+    runtime: &RuntimeState,
+    report: &mut InspectReport,
+    process_name: &str,
+    slot: usize,
+    cap: Capability,
+) {
+    if let Some(index) = boot_grant_index_for_cap(runtime, process_name, slot, cap.object) {
+        report.push_str("grant:");
+        report.push_u64_dec(index as u64);
+        return;
+    }
+    if let Some(target) = graph_node_for_object(runtime, cap.object)
+        && target == "secret:logd-token"
+    {
+        report.push_str("grant:secret-logd-token");
+        return;
+    }
+    report.push_str("runtime-derived");
+}
+
+fn boot_grant_index_for_cap(
+    runtime: &RuntimeState,
+    process_name: &str,
+    slot: usize,
+    object: KernelObjectId,
+) -> Option<usize> {
+    let config = runtime.active_config?;
+    let mut process_index = 0;
+    while process_index < config.process_count {
+        let process = config.processes[process_index]?;
+        if process.name == process_name {
+            let mut grant_index = 0;
+            while grant_index < config.grant_count {
+                let grant = config.grants[grant_index]?;
+                if grant.process_index == process_index
+                    && grant.cap_slot == slot as u64
+                    && grant_object_id(runtime, grant).ok() == Some(object)
+                {
+                    return Some(grant_index);
+                }
+                grant_index += 1;
+            }
+        }
+        process_index += 1;
+    }
+    None
+}
+
+fn graph_node_for_object(runtime: &RuntimeState, object: KernelObjectId) -> Option<&'static str> {
+    let mut index = 0;
+    while index < runtime.objects.count {
+        if let Some(entry) = runtime.objects.objects[index] {
+            match entry {
+                KernelObject::IpcEndpoint(endpoint) if endpoint.id == object => {
+                    return Some(endpoint.name);
+                }
+                KernelObject::StoreObject(store) if store.id == object => {
+                    return Some(store.name);
+                }
+                KernelObject::StateVolume(state) if state.id == object => {
+                    return Some(state.name);
+                }
+                KernelObject::Timer(timer) if timer.id == object => {
+                    return Some(timer.name);
+                }
+                KernelObject::NetworkPort(port) if port.id == object => {
+                    return Some(port.name);
+                }
+                KernelObject::IoPortRange(port) if port.id == object => {
+                    return Some(port.name);
+                }
+                KernelObject::MmioRegion(region) if region.id == object => {
+                    return Some(region.name);
+                }
+                KernelObject::InterruptLine(line) if line.id == object => {
+                    return Some(line.name);
+                }
+                KernelObject::DmaRegion(region) if region.id == object => {
+                    return Some(region.name);
+                }
+                KernelObject::PciDevice(device) if device.id == object => {
+                    return Some(device.name);
+                }
+                KernelObject::VirtioDevice(device) if device.id == object => {
+                    return Some(device.name);
+                }
+                KernelObject::Namespace(namespace) if namespace.id == object => {
+                    return Some(namespace.name);
+                }
+                KernelObject::VfsRoot(root) if root.id == object => {
+                    return Some(root.name);
+                }
+                KernelObject::Secret(secret) if secret.id == object => {
+                    return Some(secret.name);
+                }
+                _ => {}
+            }
+        }
+        index += 1;
+    }
+    None
 }
 
 fn process_name_by_pid(runtime: &RuntimeState, pid: ProcessId) -> &'static str {
@@ -16510,6 +16999,10 @@ fn store_hash_hex(bytes: &[u8; 32], out: &mut [u8; 64]) {
 
 fn runtime() -> &'static mut RuntimeState {
     unsafe { &mut *RUNTIME.0.get() }
+}
+
+fn inspect_report() -> &'static mut InspectReport {
+    unsafe { &mut *INSPECT_REPORT.0.get() }
 }
 
 fn staging_runtime() -> &'static mut RuntimeState {

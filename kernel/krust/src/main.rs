@@ -24,7 +24,8 @@ const DMA_KERNEL_ALLOCATED_BASE: u64 = u64::MAX;
 const VERTEXDISK_MODULE_STRING: &[u8] = b"vertexdisk-store";
 const VERTEX_DISK_MAGIC: &[u8; 16] = b"VERTEXDISKV1\0\0\0\0";
 const STORE_INDEX_MAGIC: &[u8; 16] = b"VDISKSTOREV0\0\0\0\0";
-const VERTEX_DISK_VERSION: u16 = 2;
+const GRAPH_STORE_MAGIC: &[u8; 16] = b"VDISKGRAPHV0\0\0\0\0";
+const VERTEX_DISK_VERSION: u16 = 3;
 const VERTEX_DISK_SECTOR_SIZE: usize = 512;
 const VERTEX_DISK_CHECKSUM_OFFSET: usize = 20;
 const VERTEX_DISK_TOTAL_SECTORS_OFFSET: usize = 24;
@@ -32,9 +33,18 @@ const VERTEX_DISK_SECTION_TABLE_OFFSET: usize = 32;
 const VERTEX_DISK_SECTION_RECORD_LEN: usize = 16;
 const VERTEX_DISK_STORE_INDEX_SECTION: usize = 1;
 const VERTEX_DISK_STORE_DATA_SECTION: usize = 2;
-const VERTEX_DISK_VERTEXFS_SECTION: usize = 6;
+const VERTEX_DISK_GRAPH_STORE_SECTION: usize = 7;
 const STORE_ENTRY_OFFSET: usize = 32;
 const STORE_ENTRY_LEN: usize = 144;
+const GRAPH_GENERATION_OFFSET: usize = 32;
+const GRAPH_NODE_COUNT_OFFSET: usize = 96;
+const GRAPH_EDGE_COUNT_OFFSET: usize = 98;
+const GRAPH_DATA_SECTOR_OFFSET: usize = 100;
+const GRAPH_BYTE_LEN_OFFSET: usize = 108;
+const GRAPH_RECORD_CHECKSUM_OFFSET: usize = 112;
+const GRAPH_HASH_OFFSET: usize = 116;
+const GRAPH_NODE_RECORD_LEN: usize = 4 + 64 * 2;
+const GRAPH_EDGE_RECORD_LEN: usize = 8 + 64;
 
 struct Global<T>(UnsafeCell<T>);
 
@@ -779,16 +789,48 @@ fn prepare_native_boot_config(
         serial::write_str("KrustBoot runtime plan failed: manifest size overflow\n");
         return None;
     };
-    let source_bytes = unsafe {
+    let source_bytes: &'static [u8] = unsafe {
         core::slice::from_raw_parts(boot_manifest.source_base() as *const u8, source_len)
     };
     let mut manifest_hash = [0u8; 64];
     store_hash_hex(blake3::hash(source_bytes).as_bytes(), &mut manifest_hash);
     config.set_manifest_hash(manifest_hash);
+    let Ok(graph_store_len) = usize::try_from(boot_manifest.graph_store_len()) else {
+        serial::write_str("KrustBoot runtime plan failed: graph-store size overflow\n");
+        return None;
+    };
+    let graph_store_bytes: &'static [u8] = unsafe {
+        core::slice::from_raw_parts(
+            boot_manifest.graph_store_base() as *const u8,
+            graph_store_len,
+        )
+    };
+    let mut compact_graph_store_hash = [0u8; 64];
+    store_hash_hex(
+        blake3::hash(graph_store_bytes).as_bytes(),
+        &mut compact_graph_store_hash,
+    );
+    let Some(graph_store) =
+        load_native_graph_store(boot_manifest, graph_store_bytes, compact_graph_store_hash)
+    else {
+        return None;
+    };
+    config.set_graph_store_hash(graph_store.hash);
+    config.set_graph_store_checksum(graph_store.checksum);
+    config.set_graph_store_source("vertexdisk");
     serial::write_str("KrustBoot native runtime manifest hash ready: ");
     serial::write_str(manifest_module_name);
     serial::write_str("\n");
-    build_boot_runtime_config(boot_manifest, hhdm_offset, allocator, config)?;
+    serial::write_str("Native graph store loaded from VertexDisk: generation=");
+    serial::write_str(boot_manifest.generation_id());
+    serial::write_str(" nodes=");
+    serial::write_u64_dec(graph_store.node_count as u64);
+    serial::write_str(" edges=");
+    serial::write_u64_dec(graph_store.edge_count as u64);
+    serial::write_str(" hash=");
+    serial::write_ascii_bytes(&graph_store.hash);
+    serial::write_str("\n");
+    build_boot_runtime_config(boot_manifest, graph_store, hhdm_offset, allocator, config)?;
     serial::write_str("KrustBoot native runtime config built: ");
     serial::write_str(manifest_module_name);
     serial::write_str("\n");
@@ -877,6 +919,7 @@ fn verified_process_store_object(
 
 fn build_boot_runtime_config(
     boot_manifest: &boot_manifest::Manifest<'static>,
+    graph_store: NativeGraphStoreObject,
     hhdm_offset: u64,
     allocator: &mut memory::FrameAllocator,
     config: &mut ipc::BootRuntimeConfig,
@@ -914,6 +957,11 @@ fn build_boot_runtime_config(
         if config
             .add_process(ipc::BootProcessConfig {
                 name: process.name,
+                graph_node: if process.service_id.is_empty() {
+                    process.name
+                } else {
+                    process.service_id
+                },
                 image_base: store_object.bytes.as_ptr() as u64,
                 image_length: store_object.bytes.len() as u64,
                 initial: process.initial,
@@ -1154,6 +1202,43 @@ fn build_boot_runtime_config(
     }
 
     index = 0;
+    while index < graph_store.node_count {
+        let node = graph_store.graph_node(index)?;
+        if config
+            .add_graph_node(ipc::BootGraphNodeConfig {
+                kind: node.kind,
+                object_kind: node.object_kind,
+                id: node.id,
+                label: node.label,
+            })
+            .is_err()
+        {
+            serial::write_str("KrustBoot runtime plan failed: graph node table\n");
+            return None;
+        }
+        index += 1;
+    }
+
+    index = 0;
+    while index < graph_store.edge_count {
+        let edge = graph_store.graph_edge(index)?;
+        if config
+            .add_graph_edge(ipc::BootGraphEdgeConfig {
+                kind: edge.kind,
+                from_index: edge.from_index,
+                to_index: edge.to_index,
+                rights: capability_rights_from_boot(edge.rights),
+                id: edge.id,
+            })
+            .is_err()
+        {
+            serial::write_str("KrustBoot runtime plan failed: graph edge table\n");
+            return None;
+        }
+        index += 1;
+    }
+
+    index = 0;
     while index < boot_manifest.grant_count() {
         let grant = boot_manifest.grant(index)?;
         let rights = capability_rights_from_boot(grant.rights);
@@ -1381,6 +1466,247 @@ fn store_object_for_module(
     None
 }
 
+#[derive(Clone, Copy)]
+struct NativeGraphStoreObject {
+    records: &'static [u8],
+    node_count: usize,
+    edge_count: usize,
+    checksum: u32,
+    hash: [u8; 64],
+}
+
+#[derive(Clone, Copy)]
+struct NativeGraphNode {
+    kind: u16,
+    object_kind: u16,
+    id: &'static str,
+    label: &'static str,
+}
+
+#[derive(Clone, Copy)]
+struct NativeGraphEdge {
+    kind: u16,
+    from_index: usize,
+    to_index: usize,
+    rights: u16,
+    id: &'static str,
+}
+
+impl NativeGraphStoreObject {
+    fn graph_node(self, index: usize) -> Option<NativeGraphNode> {
+        if index >= self.node_count {
+            return None;
+        }
+        let offset = index.checked_mul(GRAPH_NODE_RECORD_LEN)?;
+        let record = self.records.get(offset..offset + GRAPH_NODE_RECORD_LEN)?;
+        Some(NativeGraphNode {
+            kind: read_u16(record, 0),
+            object_kind: read_u16(record, 2),
+            id: fixed_string_at(record, 4, false)?,
+            label: fixed_string_at(record, 68, true)?,
+        })
+    }
+
+    fn graph_edge(self, index: usize) -> Option<NativeGraphEdge> {
+        if index >= self.edge_count {
+            return None;
+        }
+        let edge_base = self.node_count.checked_mul(GRAPH_NODE_RECORD_LEN)?;
+        let offset = edge_base.checked_add(index.checked_mul(GRAPH_EDGE_RECORD_LEN)?)?;
+        let record = self.records.get(offset..offset + GRAPH_EDGE_RECORD_LEN)?;
+        Some(NativeGraphEdge {
+            kind: read_u16(record, 0),
+            from_index: read_u16(record, 2) as usize,
+            to_index: read_u16(record, 4) as usize,
+            rights: read_u16(record, 6),
+            id: fixed_string_at(record, 8, false)?,
+        })
+    }
+}
+
+fn load_native_graph_store(
+    boot_manifest: &boot_manifest::Manifest<'static>,
+    compact_records: &'static [u8],
+    compact_hash: [u8; 64],
+) -> Option<NativeGraphStoreObject> {
+    let disk = native_vertexdisk_bytes()?;
+    let superblock = disk.get(..VERTEX_DISK_SECTOR_SIZE)?;
+    if !valid_vertexdisk_superblock(superblock) {
+        serial::write_str("Krust native VertexDisk superblock rejected\n");
+        return None;
+    }
+
+    let (graph_start, graph_count) =
+        vertexdisk_section(superblock, VERTEX_DISK_GRAPH_STORE_SECTION)?;
+    let section = vertexdisk_section_bytes(disk, graph_start, graph_count)?;
+    let header = section.get(..VERTEX_DISK_SECTOR_SIZE)?;
+    if !valid_graph_store_header(header) {
+        serial::write_str("Krust native graph-store object rejected\n");
+        return None;
+    }
+    if !fixed_string_eq(
+        header,
+        GRAPH_GENERATION_OFFSET,
+        boot_manifest.generation_id().as_bytes(),
+    ) {
+        serial::write_str("Krust native graph-store generation mismatch\n");
+        return None;
+    }
+
+    let node_count = read_u16(header, GRAPH_NODE_COUNT_OFFSET) as usize;
+    let edge_count = read_u16(header, GRAPH_EDGE_COUNT_OFFSET) as usize;
+    if node_count != boot_manifest.graph_node_count()
+        || edge_count != boot_manifest.graph_edge_count()
+    {
+        serial::write_str("Krust native graph-store count mismatch\n");
+        return None;
+    }
+
+    let byte_len = read_u32(header, GRAPH_BYTE_LEN_OFFSET) as usize;
+    let expected_len = node_count
+        .checked_mul(GRAPH_NODE_RECORD_LEN)?
+        .checked_add(edge_count.checked_mul(GRAPH_EDGE_RECORD_LEN)?)?;
+    if byte_len != expected_len || byte_len != compact_records.len() {
+        serial::write_str("Krust native graph-store length mismatch\n");
+        return None;
+    }
+    let checksum = read_u32(header, GRAPH_RECORD_CHECKSUM_OFFSET);
+    if checksum != boot_manifest.graph_store_checksum() {
+        serial::write_str("Krust native graph-store checksum metadata mismatch\n");
+        return None;
+    }
+
+    let data_sector = read_u64(header, GRAPH_DATA_SECTOR_OFFSET);
+    if !graph_store_data_bounds_valid(data_sector, byte_len, graph_start, graph_count) {
+        serial::write_str("Krust native graph-store bounds invalid\n");
+        return None;
+    }
+    let data_offset = sector_byte_offset(data_sector)?;
+    let records = disk.get(data_offset..data_offset.checked_add(byte_len)?)?;
+    if checksum32(records) != checksum {
+        serial::write_str("Krust native graph-store checksum mismatch\n");
+        return None;
+    }
+
+    let mut hash = [0u8; 64];
+    store_hash_hex(blake3::hash(records).as_bytes(), &mut hash);
+    if !fixed_string_eq(header, GRAPH_HASH_OFFSET, &hash) {
+        serial::write_str("Krust native graph-store hash metadata mismatch\n");
+        return None;
+    }
+    if hash != compact_hash {
+        serial::write_str("Krust native graph-store compact hash mismatch\n");
+        return None;
+    }
+
+    let graph_store = NativeGraphStoreObject {
+        records,
+        node_count,
+        edge_count,
+        checksum,
+        hash,
+    };
+    if !native_graph_store_records_valid(graph_store, boot_manifest.generation_id()) {
+        serial::write_str("Krust native graph-store records invalid\n");
+        return None;
+    }
+
+    serial::write_str("VertexDisk graph-store object accepted: generation=");
+    serial::write_str(boot_manifest.generation_id());
+    serial::write_str(" checksum=");
+    serial::write_u64_dec(checksum as u64);
+    serial::write_str("\n");
+    Some(graph_store)
+}
+
+fn valid_graph_store_header(header: &[u8]) -> bool {
+    header.len() >= VERTEX_DISK_SECTOR_SIZE
+        && starts_with(header, GRAPH_STORE_MAGIC)
+        && read_u16(header, 16) == VERTEX_DISK_VERSION
+        && metadata_checksum_valid(header)
+}
+
+fn graph_store_data_bounds_valid(
+    data_sector: u64,
+    byte_len: usize,
+    graph_start: u64,
+    graph_count: u64,
+) -> bool {
+    if byte_len == 0 || data_sector != graph_start + 1 || graph_count <= 1 {
+        return false;
+    }
+    let sectors = sectors_for_len(byte_len) as u64;
+    data_sector >= graph_start
+        && data_sector
+            .checked_add(sectors)
+            .is_some_and(|end| end <= graph_start + graph_count)
+}
+
+fn native_graph_store_records_valid(
+    graph_store: NativeGraphStoreObject,
+    generation_id: &str,
+) -> bool {
+    let mut generation_nodes = 0;
+    let mut index = 0;
+    while index < graph_store.node_count {
+        let Some(node) = graph_store.graph_node(index) else {
+            return false;
+        };
+        if node.kind == 0 || node.id.is_empty() {
+            return false;
+        }
+        if node.kind == 1 {
+            generation_nodes += 1;
+            if node.id != generation_id {
+                return false;
+            }
+        }
+        let mut previous = 0;
+        while previous < index {
+            let Some(prior) = graph_store.graph_node(previous) else {
+                return false;
+            };
+            if prior.id == node.id {
+                return false;
+            }
+            previous += 1;
+        }
+        index += 1;
+    }
+    if generation_nodes != 1 {
+        return false;
+    }
+
+    index = 0;
+    while index < graph_store.edge_count {
+        let Some(edge) = graph_store.graph_edge(index) else {
+            return false;
+        };
+        if edge.kind == 0
+            || edge.id.is_empty()
+            || edge.from_index >= graph_store.node_count
+            || edge.to_index >= graph_store.node_count
+        {
+            return false;
+        }
+        if edge.kind == 2 && edge.rights == 0 {
+            return false;
+        }
+        let mut previous = 0;
+        while previous < index {
+            let Some(prior) = graph_store.graph_edge(previous) else {
+                return false;
+            };
+            if prior.id == edge.id {
+                return false;
+            }
+            previous += 1;
+        }
+        index += 1;
+    }
+    true
+}
+
 struct NativeStoreObject {
     bytes: &'static [u8],
     checksum: u32,
@@ -1453,7 +1779,7 @@ fn valid_vertexdisk_superblock(sector: &[u8]) -> bool {
 
     let total_sectors = read_u32(sector, VERTEX_DISK_TOTAL_SECTORS_OFFSET) as u64;
     let mut section = 0;
-    while section <= VERTEX_DISK_VERTEXFS_SECTION {
+    while section <= VERTEX_DISK_GRAPH_STORE_SECTION {
         let Some((start, count)) = vertexdisk_section(sector, section) else {
             return false;
         };
@@ -1559,6 +1885,31 @@ fn fixed_string_eq(buffer: &[u8], offset: usize, value: &[u8]) -> bool {
         index += 1;
     }
     value.len() == 64 || buffer[offset + value.len()] == 0
+}
+
+fn fixed_string_at(
+    buffer: &'static [u8],
+    offset: usize,
+    allow_empty: bool,
+) -> Option<&'static str> {
+    if offset + 64 > buffer.len() {
+        return None;
+    }
+    let mut len = 0;
+    while len < 64 && buffer[offset + len] != 0 {
+        len += 1;
+    }
+    if len == 0 && !allow_empty {
+        return None;
+    }
+    let mut padding = len;
+    while padding < 64 {
+        if buffer[offset + padding] != 0 {
+            return None;
+        }
+        padding += 1;
+    }
+    core::str::from_utf8(&buffer[offset..offset + len]).ok()
 }
 
 fn starts_with(bytes: &[u8], prefix: &[u8]) -> bool {
@@ -2291,6 +2642,8 @@ fn print_boot_manifest_error(error: boot_manifest::ParseError) {
             serial::write_str("too many namespace entries")
         }
         boot_manifest::ParseError::TooManyVfsRoots => serial::write_str("too many vfs roots"),
+        boot_manifest::ParseError::TooManyGraphNodes => serial::write_str("too many graph nodes"),
+        boot_manifest::ParseError::TooManyGraphEdges => serial::write_str("too many graph edges"),
         boot_manifest::ParseError::TooManyRuntimeObjects => {
             serial::write_str("too many runtime objects")
         }
@@ -2298,11 +2651,15 @@ fn print_boot_manifest_error(error: boot_manifest::ParseError) {
         boot_manifest::ParseError::InvalidReference => serial::write_str("invalid reference"),
         boot_manifest::ParseError::InvalidRights => serial::write_str("invalid rights"),
         boot_manifest::ParseError::InvalidObjectKind => serial::write_str("invalid object kind"),
+        boot_manifest::ParseError::InvalidGraphRecord => serial::write_str("invalid graph record"),
         boot_manifest::ParseError::UnsupportedStateVolumes => {
             serial::write_str("unsupported direct state-volume grants")
         }
         boot_manifest::ParseError::TrailingBytes => serial::write_str("trailing bytes"),
         boot_manifest::ParseError::BadChecksum => serial::write_str("bad checksum"),
+        boot_manifest::ParseError::BadGraphStoreChecksum => {
+            serial::write_str("graph-store checksum mismatch")
+        }
         boot_manifest::ParseError::BadRecordTable => serial::write_str("bad record table"),
         boot_manifest::ParseError::OutOfBoundsRecord => serial::write_str("out-of-bounds record"),
     }
