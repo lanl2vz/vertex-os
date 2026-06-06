@@ -4,10 +4,13 @@
 mod arena;
 mod boot_manifest;
 mod capability;
+mod device;
 mod elf;
 mod exceptions;
 mod gdt;
+mod inspect;
 mod ipc;
+mod kernel;
 mod limine;
 mod memory;
 mod paging;
@@ -16,6 +19,7 @@ mod syscall;
 mod timer;
 mod usercopy;
 mod userspace;
+mod vfs;
 
 use core::panic::PanicInfo;
 use core::{arch::asm, cell::UnsafeCell};
