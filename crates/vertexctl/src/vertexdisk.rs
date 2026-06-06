@@ -4,29 +4,42 @@ use std::path::PathBuf;
 
 use crate::krustboot;
 use crate::vertexfs;
+use vertex_abi::vertexdisk as vdisk_abi;
 use vertex_ir::GenerationManifest;
 
-const SECTOR_SIZE: usize = 512;
+const SECTOR_SIZE: usize = vdisk_abi::SECTOR_SIZE;
 const SECTORS: usize = 65_536;
-const SUPERBLOCK_MAGIC: &[u8; 16] = b"VERTEXDISKV1\0\0\0\0";
-const STORE_INDEX_MAGIC: &[u8; 16] = b"VDISKSTOREV0\0\0\0\0";
-const STATE_INDEX_MAGIC: &[u8; 16] = b"VDISKSTATEV0\0\0\0\0";
-const GRAPH_STORE_MAGIC: &[u8; 16] = b"VDISKGRAPHV0\0\0\0\0";
-const VERSION: u16 = 3;
-const CHECKSUM_OFFSET: usize = 20;
-const SECTION_TABLE_OFFSET: usize = 32;
-const SECTION_RECORD_LEN: usize = 16;
+const SUPERBLOCK_MAGIC: &[u8; 16] = vdisk_abi::MAGIC;
+const STORE_INDEX_MAGIC: &[u8; 16] = vdisk_abi::STORE_INDEX_MAGIC;
+const STATE_INDEX_MAGIC: &[u8; 16] = vdisk_abi::STATE_INDEX_MAGIC;
+const VERSION: u16 = vdisk_abi::VERSION;
+const CHECKSUM_OFFSET: usize = vdisk_abi::CHECKSUM_OFFSET;
+const SECTION_TABLE_OFFSET: usize = vdisk_abi::SECTION_TABLE_OFFSET;
+const SECTION_RECORD_LEN: usize = vdisk_abi::SECTION_RECORD_LEN;
+const GENERATION_METADATA_MAGIC: &[u8; 16] = vdisk_abi::GENERATION_METADATA_MAGIC;
+const GENERATION_METADATA_COUNT_OFFSET: usize = vdisk_abi::GENERATION_METADATA_COUNT_OFFSET;
+const GENERATION_METADATA_TRANSACTION_STATE_OFFSET: usize =
+    vdisk_abi::GENERATION_METADATA_TRANSACTION_STATE_OFFSET;
+const GENERATION_METADATA_FAILURE_REASON_OFFSET: usize =
+    vdisk_abi::GENERATION_METADATA_FAILURE_REASON_OFFSET;
+const GENERATION_METADATA_SELECTED_OFFSET: usize = vdisk_abi::GENERATION_METADATA_SELECTED_OFFSET;
+const GENERATION_METADATA_PREVIOUS_OFFSET: usize = vdisk_abi::GENERATION_METADATA_PREVIOUS_OFFSET;
+const GENERATION_METADATA_KNOWN_GOOD_OFFSET: usize =
+    vdisk_abi::GENERATION_METADATA_KNOWN_GOOD_OFFSET;
+const GENERATION_METADATA_TRANSACTION_TARGET_OFFSET: usize =
+    vdisk_abi::GENERATION_METADATA_TRANSACTION_TARGET_OFFSET;
+const GENERATION_METADATA_ENTRY_OFFSET: usize = vdisk_abi::GENERATION_METADATA_ENTRY_OFFSET;
+const GENERATION_METADATA_ENTRY_LEN: usize = vdisk_abi::GENERATION_METADATA_ENTRY_LEN;
+const GENERATION_TRANSACTION_CLEAN: u16 = vdisk_abi::GENERATION_TRANSACTION_CLEAN;
+const GENERATION_TRANSACTION_PREPARE: u16 = vdisk_abi::GENERATION_TRANSACTION_PREPARE;
+const GENERATION_TRANSACTION_COMMIT: u16 = vdisk_abi::GENERATION_TRANSACTION_COMMIT;
+const GENERATION_TRANSACTION_ROLLBACK: u16 = vdisk_abi::GENERATION_TRANSACTION_ROLLBACK;
+const GENERATION_FAILURE_NONE: u16 = vdisk_abi::GENERATION_FAILURE_NONE;
+const GENERATION_FAILURE_ACTIVATION_FAILED: u16 = vdisk_abi::GENERATION_FAILURE_ACTIVATION_FAILED;
 const STORE_ENTRY_OFFSET: usize = 32;
 const STORE_ENTRY_LEN: usize = 144;
 const STATE_ENTRY_OFFSET: usize = 32;
 const STATE_ENTRY_LEN: usize = 84;
-const GRAPH_GENERATION_OFFSET: usize = 32;
-const GRAPH_NODE_COUNT_OFFSET: usize = 96;
-const GRAPH_EDGE_COUNT_OFFSET: usize = 98;
-const GRAPH_DATA_SECTOR_OFFSET: usize = 100;
-const GRAPH_BYTE_LEN_OFFSET: usize = 108;
-const GRAPH_RECORD_CHECKSUM_OFFSET: usize = 112;
-const GRAPH_HASH_OFFSET: usize = 116;
 const GENERATION_METADATA_SECTOR: u64 = 1;
 const STORE_INDEX_SECTOR: u64 = 2;
 const STORE_INDEX_SECTORS: u64 = 16;
@@ -42,10 +55,10 @@ const VERTEXFS_IMAGE_SECTOR: u64 = JOURNAL_SECTOR + JOURNAL_SECTORS;
 const VERTEXFS_IMAGE_SECTORS: u64 = 64;
 const GRAPH_STORE_SECTOR: u64 = VERTEXFS_IMAGE_SECTOR + VERTEXFS_IMAGE_SECTORS;
 const GRAPH_STORE_SECTORS: u64 = 128;
-const JOURNAL_RECORD_MAGIC: &[u8; 16] = b"VDISKJOURNALV0\0\0";
-const JOURNAL_RECORD_STATE_WRITE: u16 = 1;
-const JOURNAL_STATE_ID_OFFSET: usize = 48;
-const JOURNAL_VALUE_OFFSET: usize = 128;
+const JOURNAL_RECORD_MAGIC: &[u8; 16] = vdisk_abi::JOURNAL_RECORD_MAGIC;
+const JOURNAL_RECORD_STATE_WRITE: u16 = vdisk_abi::JOURNAL_RECORD_STATE_WRITE;
+const JOURNAL_STATE_ID_OFFSET: usize = vdisk_abi::JOURNAL_STATE_ID_OFFSET;
+const JOURNAL_VALUE_OFFSET: usize = vdisk_abi::JOURNAL_VALUE_OFFSET;
 const HELLO_OBJECT: &[u8] = b"hello from Krust store\n";
 const HELLO_OBJECT_ID: &str = "store:hello-text";
 const BLOCK_DRIVER_FAULT_OBJECT: &[u8] = b"krust-block-driver-fault\n";
@@ -63,14 +76,18 @@ pub fn create_image(manifests: &[GenerationManifest]) -> Result<Vec<u8>, String>
     let mut image = vec![0u8; SECTOR_SIZE * SECTORS];
     let states = state_entries(manifests)?;
     let mut objects = store_payloads(manifests)?;
-    let graph_store = krustboot::graph_store_image(&manifests[0])?;
+    let graph_stores = manifests
+        .iter()
+        .map(krustboot::graph_store_image)
+        .collect::<Result<Vec<_>, _>>()?;
     assign_store_sectors(&mut objects)?;
     write_superblock(&mut image);
+    write_generation_metadata(&mut image, manifests)?;
     write_store_index(&mut image, &objects)?;
     write_state_index(&mut image, &states)?;
     write_store_payloads(&mut image, &objects);
     write_vertexfs_image(&mut image, &manifests[0])?;
-    write_graph_store(&mut image, &graph_store)?;
+    write_graph_stores(&mut image, &graph_stores)?;
     Ok(image)
 }
 
@@ -110,9 +127,30 @@ pub fn corrupt(bytes: &[u8], mode: &str) -> Result<Vec<u8>, String> {
                 .ok_or_else(|| "VertexDisk graph-store object missing".to_owned())?;
             *byte ^= 1;
         }
+        "generation-prepare" => {
+            write_generation_transaction_checkpoint(
+                &mut out,
+                GENERATION_TRANSACTION_PREPARE,
+                GENERATION_FAILURE_NONE,
+            )?;
+        }
+        "generation-commit" => {
+            write_generation_transaction_checkpoint(
+                &mut out,
+                GENERATION_TRANSACTION_COMMIT,
+                GENERATION_FAILURE_NONE,
+            )?;
+        }
+        "generation-rollback" => {
+            write_generation_transaction_checkpoint(
+                &mut out,
+                GENERATION_TRANSACTION_ROLLBACK,
+                GENERATION_FAILURE_ACTIVATION_FAILED,
+            )?;
+        }
         other => {
             return Err(format!(
-                "unknown VertexDisk corruption mode {other}; expected bad-superblock, store-object, store-executable, config-object, missing-store-object, interrupted-state-journal, corrupt-state-journal, or graph-store"
+                "unknown VertexDisk corruption mode {other}; expected bad-superblock, store-object, store-executable, config-object, missing-store-object, interrupted-state-journal, corrupt-state-journal, graph-store, generation-prepare, generation-commit, or generation-rollback"
             ));
         }
     }
@@ -133,14 +171,54 @@ fn write_superblock(image: &mut [u8]) {
     write_u16(sector, 16, VERSION);
     write_u16(sector, 18, SECTOR_SIZE as u16);
     write_u32(sector, 24, SECTORS as u32);
-    write_section(sector, 0, GENERATION_METADATA_SECTOR, 1);
-    write_section(sector, 1, STORE_INDEX_SECTOR, STORE_INDEX_SECTORS);
-    write_section(sector, 2, STORE_DATA_SECTOR, STORE_DATA_SECTORS);
-    write_section(sector, 3, STATE_INDEX_SECTOR, 1);
-    write_section(sector, 4, STATE_DATA_SECTOR, STATE_DATA_SECTORS);
-    write_section(sector, 5, JOURNAL_SECTOR, JOURNAL_SECTORS);
-    write_section(sector, 6, VERTEXFS_IMAGE_SECTOR, VERTEXFS_IMAGE_SECTORS);
-    write_section(sector, 7, GRAPH_STORE_SECTOR, GRAPH_STORE_SECTORS);
+    write_section(
+        sector,
+        vdisk_abi::SECTION_GENERATION_METADATA,
+        GENERATION_METADATA_SECTOR,
+        1,
+    );
+    write_section(
+        sector,
+        vdisk_abi::SECTION_STORE_INDEX,
+        STORE_INDEX_SECTOR,
+        STORE_INDEX_SECTORS,
+    );
+    write_section(
+        sector,
+        vdisk_abi::SECTION_STORE_DATA,
+        STORE_DATA_SECTOR,
+        STORE_DATA_SECTORS,
+    );
+    write_section(
+        sector,
+        vdisk_abi::SECTION_STATE_INDEX,
+        STATE_INDEX_SECTOR,
+        1,
+    );
+    write_section(
+        sector,
+        vdisk_abi::SECTION_STATE_DATA,
+        STATE_DATA_SECTOR,
+        STATE_DATA_SECTORS,
+    );
+    write_section(
+        sector,
+        vdisk_abi::SECTION_JOURNAL,
+        JOURNAL_SECTOR,
+        JOURNAL_SECTORS,
+    );
+    write_section(
+        sector,
+        vdisk_abi::SECTION_VERTEXFS,
+        VERTEXFS_IMAGE_SECTOR,
+        VERTEXFS_IMAGE_SECTORS,
+    );
+    write_section(
+        sector,
+        vdisk_abi::SECTION_GRAPH_STORE,
+        GRAPH_STORE_SECTOR,
+        GRAPH_STORE_SECTORS,
+    );
     write_checksum(sector);
 }
 
@@ -180,7 +258,24 @@ fn store_payloads(manifests: &[GenerationManifest]) -> Result<Vec<StorePayload>,
     for id in required {
         objects.push(store_payload(manifests, &id)?);
     }
+    for manifest in manifests {
+        objects.push(StorePayload {
+            id: generation_manifest_store_id(&manifest.generation.id)?,
+            bytes: krustboot::compile(manifest)?,
+            sector: 0,
+        });
+    }
     Ok(objects)
+}
+
+fn generation_manifest_store_id(generation_id: &str) -> Result<String, String> {
+    let id = format!("store:krustboot:{generation_id}");
+    if id.as_bytes().len() > 64 {
+        return Err(format!(
+            "VertexDisk generation manifest store id {id} exceeds 64 bytes"
+        ));
+    }
+    Ok(id)
 }
 
 fn store_payload(manifests: &[GenerationManifest], id: &str) -> Result<StorePayload, String> {
@@ -292,49 +387,167 @@ fn write_vertexfs_image(image: &mut [u8], manifest: &GenerationManifest) -> Resu
     Ok(())
 }
 
-fn write_graph_store(
+fn write_generation_metadata(
     image: &mut [u8],
-    graph_store: &krustboot::GraphStoreImage,
+    manifests: &[GenerationManifest],
 ) -> Result<(), String> {
-    let data_capacity = (GRAPH_STORE_SECTORS - 1) as usize * SECTOR_SIZE;
-    if graph_store.records.len() > data_capacity {
+    let capacity = (SECTOR_SIZE - GENERATION_METADATA_ENTRY_OFFSET) / GENERATION_METADATA_ENTRY_LEN;
+    if manifests.len() > capacity || manifests.len() > u16::MAX as usize {
         return Err(format!(
-            "VertexDisk graph store requires {} bytes, capacity is {data_capacity}",
-            graph_store.records.len()
+            "VertexDisk generation metadata holds at most {capacity} generations"
         ));
     }
-    if graph_store.node_count > u16::MAX as usize || graph_store.edge_count > u16::MAX as usize {
-        return Err("VertexDisk graph store count exceeds u16".to_owned());
-    }
-    if graph_store.records.len() > u32::MAX as usize {
-        return Err("VertexDisk graph store byte length exceeds u32".to_owned());
-    }
 
-    let sector = sector_mut(image, GRAPH_STORE_SECTOR);
-    sector[..GRAPH_STORE_MAGIC.len()].copy_from_slice(GRAPH_STORE_MAGIC);
+    let sector = sector_mut(image, GENERATION_METADATA_SECTOR);
+    sector[..GENERATION_METADATA_MAGIC.len()].copy_from_slice(GENERATION_METADATA_MAGIC);
     write_u16(sector, 16, VERSION);
-    write_u16(sector, 18, 1);
-    write_fixed_str(sector, GRAPH_GENERATION_OFFSET, &graph_store.generation_id);
     write_u16(
         sector,
-        GRAPH_NODE_COUNT_OFFSET,
-        graph_store.node_count as u16,
+        GENERATION_METADATA_COUNT_OFFSET,
+        manifests.len() as u16,
     );
     write_u16(
         sector,
-        GRAPH_EDGE_COUNT_OFFSET,
-        graph_store.edge_count as u16,
+        GENERATION_METADATA_TRANSACTION_STATE_OFFSET,
+        GENERATION_TRANSACTION_CLEAN,
     );
-    write_u64(sector, GRAPH_DATA_SECTOR_OFFSET, GRAPH_STORE_SECTOR + 1);
-    write_u32(
+    write_u16(
         sector,
-        GRAPH_BYTE_LEN_OFFSET,
-        graph_store.records.len() as u32,
+        GENERATION_METADATA_FAILURE_REASON_OFFSET,
+        GENERATION_FAILURE_NONE,
     );
-    write_u32(sector, GRAPH_RECORD_CHECKSUM_OFFSET, graph_store.checksum);
-    write_fixed_str(sector, GRAPH_HASH_OFFSET, &graph_store.hash);
+    write_fixed_str(
+        sector,
+        GENERATION_METADATA_SELECTED_OFFSET,
+        &manifests[0].generation.id,
+    );
+    write_fixed_str(
+        sector,
+        GENERATION_METADATA_KNOWN_GOOD_OFFSET,
+        &manifests[0].generation.id,
+    );
+    for (index, manifest) in manifests.iter().enumerate() {
+        let offset = GENERATION_METADATA_ENTRY_OFFSET + index * GENERATION_METADATA_ENTRY_LEN;
+        write_fixed_str(sector, offset, &manifest.generation.id);
+    }
     write_checksum(sector);
-    write_bytes(image, GRAPH_STORE_SECTOR + 1, &graph_store.records);
+    Ok(())
+}
+
+fn write_generation_transaction_checkpoint(
+    image: &mut [u8],
+    transaction_state: u16,
+    failure_reason: u16,
+) -> Result<(), String> {
+    let sector = sector_mut(image, GENERATION_METADATA_SECTOR);
+    if !sector.starts_with(GENERATION_METADATA_MAGIC) {
+        return Err("VertexDisk generation metadata missing".to_owned());
+    }
+    let count = read_u16(sector, GENERATION_METADATA_COUNT_OFFSET) as usize;
+    if count < 2 {
+        return Err(
+            "VertexDisk generation transaction checkpoint requires two generations".to_owned(),
+        );
+    }
+    let selected = fixed_string_at(sector, GENERATION_METADATA_ENTRY_OFFSET)?;
+    let candidate = fixed_string_at(
+        sector,
+        GENERATION_METADATA_ENTRY_OFFSET + GENERATION_METADATA_ENTRY_LEN,
+    )?;
+    write_u16(
+        sector,
+        GENERATION_METADATA_TRANSACTION_STATE_OFFSET,
+        transaction_state,
+    );
+    write_u16(
+        sector,
+        GENERATION_METADATA_FAILURE_REASON_OFFSET,
+        failure_reason,
+    );
+    match transaction_state {
+        GENERATION_TRANSACTION_PREPARE => {
+            write_fixed_str(sector, GENERATION_METADATA_SELECTED_OFFSET, &selected);
+            write_fixed_str(sector, GENERATION_METADATA_PREVIOUS_OFFSET, &selected);
+            write_fixed_str(sector, GENERATION_METADATA_KNOWN_GOOD_OFFSET, &selected);
+            write_fixed_str(
+                sector,
+                GENERATION_METADATA_TRANSACTION_TARGET_OFFSET,
+                &candidate,
+            );
+        }
+        GENERATION_TRANSACTION_COMMIT => {
+            write_fixed_str(sector, GENERATION_METADATA_SELECTED_OFFSET, &candidate);
+            write_fixed_str(sector, GENERATION_METADATA_PREVIOUS_OFFSET, &selected);
+            write_fixed_str(sector, GENERATION_METADATA_KNOWN_GOOD_OFFSET, &selected);
+            write_fixed_str(
+                sector,
+                GENERATION_METADATA_TRANSACTION_TARGET_OFFSET,
+                &candidate,
+            );
+        }
+        GENERATION_TRANSACTION_ROLLBACK => {
+            write_fixed_str(sector, GENERATION_METADATA_SELECTED_OFFSET, &selected);
+            write_fixed_str(sector, GENERATION_METADATA_PREVIOUS_OFFSET, &candidate);
+            write_fixed_str(sector, GENERATION_METADATA_KNOWN_GOOD_OFFSET, &selected);
+            write_fixed_str(
+                sector,
+                GENERATION_METADATA_TRANSACTION_TARGET_OFFSET,
+                &selected,
+            );
+        }
+        other => {
+            return Err(format!(
+                "unsupported generation transaction checkpoint state {other}"
+            ));
+        }
+    }
+    write_checksum(sector);
+    Ok(())
+}
+
+fn write_graph_stores(
+    image: &mut [u8],
+    graph_stores: &[krustboot::GraphStoreImage],
+) -> Result<(), String> {
+    let mut cursor = GRAPH_STORE_SECTOR;
+    let limit = GRAPH_STORE_SECTOR + GRAPH_STORE_SECTORS;
+    for graph_store in graph_stores {
+        if graph_store.node_count > u16::MAX as usize || graph_store.edge_count > u16::MAX as usize
+        {
+            return Err("VertexDisk graph store count exceeds u16".to_owned());
+        }
+        if graph_store.records.len() > u32::MAX as usize {
+            return Err("VertexDisk graph store byte length exceeds u32".to_owned());
+        }
+        let data_sectors = sectors_for_len(graph_store.records.len()) as u64;
+        let object_sectors = 1u64
+            .checked_add(data_sectors)
+            .ok_or_else(|| "VertexDisk graph store sector count overflow".to_owned())?;
+        if cursor
+            .checked_add(object_sectors)
+            .is_none_or(|end| end > limit)
+        {
+            return Err(format!(
+                "VertexDisk graph stores require more than {GRAPH_STORE_SECTORS} sectors"
+            ));
+        }
+
+        vdisk_abi::write_graph_store_header(
+            sector_mut(image, cursor),
+            vdisk_abi::GraphStoreHeaderFields {
+                generation_id: &graph_store.generation_id,
+                node_count: graph_store.node_count,
+                edge_count: graph_store.edge_count,
+                data_sector: cursor + 1,
+                byte_len: graph_store.records.len(),
+                record_checksum: graph_store.checksum,
+                hash: &graph_store.hash,
+            },
+        )
+        .map_err(|error| format!("VertexDisk graph store header invalid: {error:?}"))?;
+        write_bytes(image, cursor + 1, &graph_store.records);
+        cursor += object_sectors;
+    }
     Ok(())
 }
 
@@ -527,6 +740,7 @@ fn write_section(sector: &mut [u8], index: usize, first_sector: u64, sector_coun
 fn write_fixed_str(buffer: &mut [u8], offset: usize, value: &str) {
     let bytes = value.as_bytes();
     let len = bytes.len().min(64);
+    buffer[offset..offset + 64].fill(0);
     buffer[offset..offset + len].copy_from_slice(&bytes[..len]);
 }
 
@@ -555,6 +769,12 @@ fn native_store_candidate_paths(module_string: &str) -> Vec<PathBuf> {
         module_string
     };
     vec![
+        PathBuf::from(format!(
+            "user/target/x86_64-unknown-none/debug/{module_string}"
+        )),
+        PathBuf::from(format!(
+            "kernel/krust/user/target/x86_64-unknown-none/debug/{module_string}"
+        )),
         PathBuf::from(format!(
             "user/{crate_dir}/target/x86_64-unknown-none/debug/{module_string}"
         )),

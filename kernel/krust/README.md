@@ -165,7 +165,7 @@ make build
 ```
 
 This builds `target/x86_64-unknown-none/debug/krust` and the supported native
-user programs under `user/*/target/x86_64-unknown-none/debug/`: `vertex-init`,
+user programs under `user/target/x86_64-unknown-none/debug/`: `vertex-init`,
 `serial-driver`, `logd`, `echo`, `netstack`, `block-driver`, `vertex-store`,
 `vertex-state`, `vertex-inspect`, `model-reader`, `counter`, `state-reader`,
 `timer`, `flaky`, `cpu-hog`, and `faulty-service`.

@@ -19,32 +19,50 @@ mod userspace;
 
 use core::panic::PanicInfo;
 use core::{arch::asm, cell::UnsafeCell};
+use vertex_abi::{graph as graph_abi, vertexdisk as vdisk_abi};
 
 const DMA_KERNEL_ALLOCATED_BASE: u64 = u64::MAX;
 const VERTEXDISK_MODULE_STRING: &[u8] = b"vertexdisk-store";
-const VERTEX_DISK_MAGIC: &[u8; 16] = b"VERTEXDISKV1\0\0\0\0";
-const STORE_INDEX_MAGIC: &[u8; 16] = b"VDISKSTOREV0\0\0\0\0";
-const GRAPH_STORE_MAGIC: &[u8; 16] = b"VDISKGRAPHV0\0\0\0\0";
-const VERTEX_DISK_VERSION: u16 = 3;
-const VERTEX_DISK_SECTOR_SIZE: usize = 512;
-const VERTEX_DISK_CHECKSUM_OFFSET: usize = 20;
-const VERTEX_DISK_TOTAL_SECTORS_OFFSET: usize = 24;
-const VERTEX_DISK_SECTION_TABLE_OFFSET: usize = 32;
-const VERTEX_DISK_SECTION_RECORD_LEN: usize = 16;
-const VERTEX_DISK_STORE_INDEX_SECTION: usize = 1;
-const VERTEX_DISK_STORE_DATA_SECTION: usize = 2;
-const VERTEX_DISK_GRAPH_STORE_SECTION: usize = 7;
+const VERTEX_DISK_MAGIC: &[u8; 16] = vdisk_abi::MAGIC;
+const STORE_INDEX_MAGIC: &[u8; 16] = vdisk_abi::STORE_INDEX_MAGIC;
+const VERTEX_DISK_VERSION: u16 = vdisk_abi::VERSION;
+const VERTEX_DISK_SECTOR_SIZE: usize = vdisk_abi::SECTOR_SIZE;
+const VERTEX_DISK_TOTAL_SECTORS_OFFSET: usize = vdisk_abi::TOTAL_SECTORS_OFFSET;
+const VERTEX_DISK_SECTION_TABLE_OFFSET: usize = vdisk_abi::SECTION_TABLE_OFFSET;
+const VERTEX_DISK_SECTION_RECORD_LEN: usize = vdisk_abi::SECTION_RECORD_LEN;
+const VERTEX_DISK_GENERATION_METADATA_SECTION: usize = vdisk_abi::SECTION_GENERATION_METADATA;
+const VERTEX_DISK_STORE_INDEX_SECTION: usize = vdisk_abi::SECTION_STORE_INDEX;
+const VERTEX_DISK_STORE_DATA_SECTION: usize = vdisk_abi::SECTION_STORE_DATA;
+const VERTEX_DISK_GRAPH_STORE_SECTION: usize = vdisk_abi::SECTION_GRAPH_STORE;
+const GENERATION_METADATA_MAGIC: &[u8; 16] = vdisk_abi::GENERATION_METADATA_MAGIC;
+const GENERATION_METADATA_COUNT_OFFSET: usize = vdisk_abi::GENERATION_METADATA_COUNT_OFFSET;
+const GENERATION_METADATA_TRANSACTION_STATE_OFFSET: usize =
+    vdisk_abi::GENERATION_METADATA_TRANSACTION_STATE_OFFSET;
+const GENERATION_METADATA_FAILURE_REASON_OFFSET: usize =
+    vdisk_abi::GENERATION_METADATA_FAILURE_REASON_OFFSET;
+const GENERATION_METADATA_SELECTED_OFFSET: usize = vdisk_abi::GENERATION_METADATA_SELECTED_OFFSET;
+const GENERATION_METADATA_PREVIOUS_OFFSET: usize = vdisk_abi::GENERATION_METADATA_PREVIOUS_OFFSET;
+const GENERATION_METADATA_KNOWN_GOOD_OFFSET: usize =
+    vdisk_abi::GENERATION_METADATA_KNOWN_GOOD_OFFSET;
+const GENERATION_METADATA_TRANSACTION_TARGET_OFFSET: usize =
+    vdisk_abi::GENERATION_METADATA_TRANSACTION_TARGET_OFFSET;
+const GENERATION_METADATA_ENTRY_OFFSET: usize = vdisk_abi::GENERATION_METADATA_ENTRY_OFFSET;
+const GENERATION_METADATA_ENTRY_LEN: usize = vdisk_abi::GENERATION_METADATA_ENTRY_LEN;
+const GENERATION_TRANSACTION_CLEAN: u16 = vdisk_abi::GENERATION_TRANSACTION_CLEAN;
+const GENERATION_TRANSACTION_PREPARE: u16 = vdisk_abi::GENERATION_TRANSACTION_PREPARE;
+const GENERATION_TRANSACTION_COMMIT: u16 = vdisk_abi::GENERATION_TRANSACTION_COMMIT;
+const GENERATION_TRANSACTION_ROLLBACK: u16 = vdisk_abi::GENERATION_TRANSACTION_ROLLBACK;
+const GENERATION_TRANSACTION_ABORT: u16 = vdisk_abi::GENERATION_TRANSACTION_ABORT;
+const GENERATION_FAILURE_NONE: u16 = vdisk_abi::GENERATION_FAILURE_NONE;
+const GENERATION_FAILURE_ACTIVATION_FAILED: u16 = vdisk_abi::GENERATION_FAILURE_ACTIVATION_FAILED;
+const GENERATION_FAILURE_VERIFICATION_FAILED: u16 =
+    vdisk_abi::GENERATION_FAILURE_VERIFICATION_FAILED;
+const GENERATION_FAILURE_RUNTIME_BUILD_FAILED: u16 =
+    vdisk_abi::GENERATION_FAILURE_RUNTIME_BUILD_FAILED;
+const GENERATION_FAILURE_ROLLBACK_BUILD_FAILED: u16 =
+    vdisk_abi::GENERATION_FAILURE_ROLLBACK_BUILD_FAILED;
 const STORE_ENTRY_OFFSET: usize = 32;
 const STORE_ENTRY_LEN: usize = 144;
-const GRAPH_GENERATION_OFFSET: usize = 32;
-const GRAPH_NODE_COUNT_OFFSET: usize = 96;
-const GRAPH_EDGE_COUNT_OFFSET: usize = 98;
-const GRAPH_DATA_SECTOR_OFFSET: usize = 100;
-const GRAPH_BYTE_LEN_OFFSET: usize = 108;
-const GRAPH_RECORD_CHECKSUM_OFFSET: usize = 112;
-const GRAPH_HASH_OFFSET: usize = 116;
-const GRAPH_NODE_RECORD_LEN: usize = 4 + 64 * 2;
-const GRAPH_EDGE_RECORD_LEN: usize = 8 + 64;
 
 struct Global<T>(UnsafeCell<T>);
 
@@ -63,6 +81,16 @@ struct BootManifests {
     selected: &'static boot_manifest::Manifest<'static>,
     fallback: Option<&'static boot_manifest::Manifest<'static>>,
     bad_generation: Option<&'static boot_manifest::Manifest<'static>>,
+}
+
+#[derive(Clone, Copy)]
+struct VertexDiskGenerationRecovery {
+    selected_generation: &'static str,
+    previous_generation: &'static str,
+    known_good_generation: &'static str,
+    transaction_state: u16,
+    transaction_target: &'static str,
+    failure_reason: u16,
 }
 
 #[unsafe(link_section = ".text._start")]
@@ -683,6 +711,7 @@ fn run_native_boot(allocator: &mut memory::FrameAllocator, boot_manifests: &Boot
         boot_manifests.selected,
         boot_manifest::MODULE_STRING,
         "krustboot-manifest",
+        true,
         &SELECTED_BOOT_CONFIG,
     ) else {
         serial::write_str("Native runtime init failed from KrustBoot manifest\n");
@@ -693,6 +722,9 @@ fn run_native_boot(allocator: &mut memory::FrameAllocator, boot_manifests: &Boot
         serial::write_str("KrustBoot selected generation registration failed\n");
         return;
     }
+    let recovered_generation =
+        recover_vertexdisk_generation_selection(boot_manifests.selected.generation_id());
+    register_vertexdisk_generation_configs(allocator, boot_manifests.selected.generation_id());
 
     if let Some(fallback_manifest) = boot_manifests.fallback {
         if fallback_manifest.generation_id() == boot_manifests.selected.generation_id() {
@@ -704,6 +736,7 @@ fn run_native_boot(allocator: &mut memory::FrameAllocator, boot_manifests: &Boot
             fallback_manifest,
             boot_manifest::FALLBACK_MODULE_STRING,
             "krustboot-fallback-manifest",
+            true,
             &FALLBACK_BOOT_CONFIG,
         ) {
             if ipc::register_generation_config(fallback_config).is_err() {
@@ -735,6 +768,7 @@ fn run_native_boot(allocator: &mut memory::FrameAllocator, boot_manifests: &Boot
             bad_generation_manifest,
             boot_manifest::BAD_GENERATION_MODULE_STRING,
             "krustboot-bad-generation-manifest",
+            true,
             &BAD_GENERATION_BOOT_CONFIG,
         ) {
             if ipc::register_generation_config(bad_generation_config).is_err() {
@@ -750,8 +784,59 @@ fn run_native_boot(allocator: &mut memory::FrameAllocator, boot_manifests: &Boot
         }
     }
 
+    let active_config = if let Some(recovered) = recovered_generation {
+        ipc::install_generation_recovery(
+            recovered.selected_generation,
+            recovered.previous_generation,
+            recovered.known_good_generation,
+            generation_transaction_label(recovered.transaction_state),
+            recovered.transaction_target,
+            generation_failure_reason_label(recovered.failure_reason),
+        );
+        match ipc::generation_config_by_id(recovered.selected_generation.as_bytes()) {
+            Some(active) => {
+                if !recovered.previous_generation.is_empty()
+                    && let Some(previous) =
+                        ipc::generation_config_by_id(recovered.previous_generation.as_bytes())
+                {
+                    ipc::set_rollback_boot_config(previous);
+                }
+                if recovered.failure_reason != GENERATION_FAILURE_NONE
+                    && (!recovered.transaction_target.is_empty()
+                        || !recovered.previous_generation.is_empty())
+                {
+                    let failed_generation = if recovered.transaction_state
+                        == GENERATION_TRANSACTION_ROLLBACK
+                        && !recovered.previous_generation.is_empty()
+                    {
+                        recovered.previous_generation
+                    } else {
+                        recovered.transaction_target
+                    };
+                    if !failed_generation.is_empty() {
+                        ipc::set_failed_generation_id(failed_generation);
+                    }
+                }
+                serial::write_str("VertexDisk selected generation active: ");
+                serial::write_str(recovered.selected_generation);
+                serial::write_str("\n");
+                active
+            }
+            None => {
+                serial::write_str(
+                    "VertexDisk selected generation config missing; using bootstrap: ",
+                );
+                serial::write_str(boot_manifests.selected.generation_id());
+                serial::write_str("\n");
+                config
+            }
+        }
+    } else {
+        config
+    };
+
     ipc::install_frame_allocator(allocator as *mut memory::FrameAllocator);
-    if ipc::init_from_boot_config(config).is_err() {
+    if ipc::init_from_boot_config(active_config).is_err() {
         serial::write_str("Native runtime init failed from KrustBoot manifest\n");
         return;
     }
@@ -769,6 +854,7 @@ fn prepare_native_boot_config(
     boot_manifest: &boot_manifest::Manifest<'static>,
     manifest_module_string: &[u8],
     manifest_module_name: &'static str,
+    require_module: bool,
     config_slot: &'static Global<ipc::BootRuntimeConfig>,
 ) -> Option<&'static ipc::BootRuntimeConfig> {
     let Some(hhdm_offset) = limine::hhdm_offset() else {
@@ -834,16 +920,237 @@ fn prepare_native_boot_config(
     serial::write_str("KrustBoot native runtime config built: ");
     serial::write_str(manifest_module_name);
     serial::write_str("\n");
-    let Some(_manifest_module) = find_module_by_string(manifest_module_string) else {
-        serial::write_str("KrustBoot runtime init failed: manifest module missing\n");
-        return None;
-    };
+    if require_module {
+        let Some(_manifest_module) = find_module_by_string(manifest_module_string) else {
+            serial::write_str("KrustBoot runtime init failed: manifest module missing\n");
+            return None;
+        };
+    }
     config.set_manifest_module(ipc::BootModuleConfig {
         name: manifest_module_name,
         base: boot_manifest.source_base(),
         length: boot_manifest.source_len(),
     });
     Some(unsafe { &*config_slot.0.get() })
+}
+
+fn recover_vertexdisk_generation_selection(
+    bootstrap_generation: &'static str,
+) -> Option<VertexDiskGenerationRecovery> {
+    let metadata = load_vertexdisk_generation_metadata()?;
+    let transaction_state = read_u16(metadata, GENERATION_METADATA_TRANSACTION_STATE_OFFSET);
+    let failure_reason = read_u16(metadata, GENERATION_METADATA_FAILURE_REASON_OFFSET);
+    let selected_generation =
+        graph_abi::fixed_str_at(metadata, GENERATION_METADATA_SELECTED_OFFSET, false)
+            .unwrap_or(bootstrap_generation);
+    let previous_generation =
+        graph_abi::fixed_str_at(metadata, GENERATION_METADATA_PREVIOUS_OFFSET, true)?;
+    let known_good_generation =
+        graph_abi::fixed_str_at(metadata, GENERATION_METADATA_KNOWN_GOOD_OFFSET, true)?;
+    let transaction_target = graph_abi::fixed_str_at(
+        metadata,
+        GENERATION_METADATA_TRANSACTION_TARGET_OFFSET,
+        true,
+    )?;
+
+    if generation_transaction_label(transaction_state) == "unknown" {
+        serial::write_str("VertexDisk generation metadata transaction state invalid\n");
+        return None;
+    }
+
+    serial::write_str("VertexDisk generation selection recovered: selected=");
+    serial::write_str(selected_generation);
+    serial::write_str(" previous=");
+    write_optional_generation(previous_generation);
+    serial::write_str(" known_good=");
+    write_optional_generation(known_good_generation);
+    serial::write_str(" transaction=");
+    serial::write_str(generation_transaction_label(transaction_state));
+    serial::write_str(" target=");
+    write_optional_generation(transaction_target);
+    serial::write_str(" failure_reason=");
+    serial::write_str(generation_failure_reason_label(failure_reason));
+    serial::write_str("\n");
+
+    if transaction_state != GENERATION_TRANSACTION_CLEAN {
+        serial::write_str("VertexDisk generation transaction recovery: state=");
+        serial::write_str(generation_transaction_label(transaction_state));
+        serial::write_str(" selected=");
+        serial::write_str(selected_generation);
+        serial::write_str(" target=");
+        write_optional_generation(transaction_target);
+        serial::write_str("\n");
+        match transaction_state {
+            GENERATION_TRANSACTION_PREPARE => {
+                serial::write_str("power loss during prepare remounts selected_generation=");
+                serial::write_str(selected_generation);
+                serial::write_str("\n");
+            }
+            GENERATION_TRANSACTION_COMMIT => {
+                serial::write_str("power loss during commit remounts selected_generation=");
+                serial::write_str(selected_generation);
+                serial::write_str("\n");
+            }
+            GENERATION_TRANSACTION_ROLLBACK => {
+                serial::write_str("power loss during rollback remounts selected_generation=");
+                serial::write_str(selected_generation);
+                serial::write_str("\n");
+            }
+            _ => {}
+        }
+    }
+
+    Some(VertexDiskGenerationRecovery {
+        selected_generation,
+        previous_generation,
+        known_good_generation,
+        transaction_state,
+        transaction_target,
+        failure_reason,
+    })
+}
+
+fn write_optional_generation(generation: &str) {
+    if generation.is_empty() {
+        serial::write_str("<none>");
+    } else {
+        serial::write_str(generation);
+    }
+}
+
+fn generation_transaction_label(state: u16) -> &'static str {
+    match state {
+        GENERATION_TRANSACTION_CLEAN => "clean",
+        GENERATION_TRANSACTION_PREPARE => "prepare",
+        GENERATION_TRANSACTION_COMMIT => "commit",
+        GENERATION_TRANSACTION_ROLLBACK => "rollback",
+        GENERATION_TRANSACTION_ABORT => "abort",
+        _ => "unknown",
+    }
+}
+
+fn generation_failure_reason_label(reason: u16) -> &'static str {
+    match reason {
+        GENERATION_FAILURE_NONE => "",
+        GENERATION_FAILURE_ACTIVATION_FAILED => "activation-failed",
+        GENERATION_FAILURE_VERIFICATION_FAILED => "verification-failed",
+        GENERATION_FAILURE_RUNTIME_BUILD_FAILED => "runtime-build-failed",
+        GENERATION_FAILURE_ROLLBACK_BUILD_FAILED => "rollback-build-failed",
+        _ => "unknown",
+    }
+}
+
+fn register_vertexdisk_generation_configs(
+    allocator: &mut memory::FrameAllocator,
+    selected_generation: &str,
+) {
+    let Some(metadata) = load_vertexdisk_generation_metadata() else {
+        return;
+    };
+    let count = read_u16(metadata, GENERATION_METADATA_COUNT_OFFSET) as usize;
+    let mut config_slot = 0;
+    let mut index = 0;
+    while index < count {
+        let offset = GENERATION_METADATA_ENTRY_OFFSET + index * GENERATION_METADATA_ENTRY_LEN;
+        if offset + GENERATION_METADATA_ENTRY_LEN > metadata.len() {
+            serial::write_str("VertexDisk generation metadata bounds invalid\n");
+            return;
+        }
+        let Some(generation_id) = graph_abi::fixed_str_at(metadata, offset, false) else {
+            serial::write_str("VertexDisk generation metadata generation invalid\n");
+            return;
+        };
+        let mut store_id = [0u8; graph_abi::STRING_LEN];
+        let Some(store_id) = generation_manifest_store_id(generation_id, &mut store_id) else {
+            serial::write_str("VertexDisk generation metadata store id invalid\n");
+            return;
+        };
+        if generation_id == selected_generation {
+            index += 1;
+            continue;
+        }
+        let Some(store_object) = load_native_store_object(store_id) else {
+            return;
+        };
+        if checksum32(store_object.bytes) != store_object.checksum {
+            serial::write_str(
+                "VertexDisk generation metadata store checksum mismatch: generation=",
+            );
+            serial::write_str(generation_id);
+            serial::write_str("\n");
+            return;
+        }
+
+        let (manifest, slot, name) = if config_slot == 0 {
+            match boot_manifest::parse_fallback(store_object.bytes) {
+                Ok(manifest) => (
+                    manifest,
+                    &FALLBACK_BOOT_CONFIG,
+                    "vertexdisk-generation-manifest",
+                ),
+                Err(error) => {
+                    serial::write_str("VertexDisk generation manifest parse failed: ");
+                    print_boot_manifest_error(error);
+                    serial::write_str("\n");
+                    return;
+                }
+            }
+        } else if config_slot == 1 {
+            match boot_manifest::parse_bad_generation(store_object.bytes) {
+                Ok(manifest) => (
+                    manifest,
+                    &BAD_GENERATION_BOOT_CONFIG,
+                    "vertexdisk-generation-manifest-2",
+                ),
+                Err(error) => {
+                    serial::write_str("VertexDisk generation manifest parse failed: ");
+                    print_boot_manifest_error(error);
+                    serial::write_str("\n");
+                    return;
+                }
+            }
+        } else {
+            serial::write_str("VertexDisk generation metadata capacity reached\n");
+            return;
+        };
+        if let Some(config) =
+            prepare_native_boot_config(allocator, manifest, b"", name, false, slot)
+        {
+            if ipc::register_generation_config(config).is_err() {
+                serial::write_str("VertexDisk generation registration failed\n");
+                return;
+            }
+            serial::write_str("VertexDisk native generation ready: ");
+            serial::write_str(manifest.generation_id());
+            serial::write_str("\n");
+            config_slot += 1;
+        }
+
+        index += 1;
+    }
+}
+
+fn generation_manifest_store_id<'a>(
+    generation_id: &str,
+    out: &'a mut [u8; graph_abi::STRING_LEN],
+) -> Option<&'a str> {
+    let prefix = b"store:krustboot:";
+    let bytes = generation_id.as_bytes();
+    if prefix.len().checked_add(bytes.len())? > out.len() {
+        return None;
+    }
+    let mut len = 0;
+    while len < prefix.len() {
+        out[len] = prefix[len];
+        len += 1;
+    }
+    let mut index = 0;
+    while index < bytes.len() {
+        out[len + index] = bytes[index];
+        index += 1;
+    }
+    len += bytes.len();
+    core::str::from_utf8(&out[..len]).ok()
 }
 
 fn verified_process_store_object(
@@ -1468,59 +1775,20 @@ fn store_object_for_module(
 
 #[derive(Clone, Copy)]
 struct NativeGraphStoreObject {
-    records: &'static [u8],
+    records: graph_abi::RecordSet<'static>,
     node_count: usize,
     edge_count: usize,
     checksum: u32,
     hash: [u8; 64],
 }
 
-#[derive(Clone, Copy)]
-struct NativeGraphNode {
-    kind: u16,
-    object_kind: u16,
-    id: &'static str,
-    label: &'static str,
-}
-
-#[derive(Clone, Copy)]
-struct NativeGraphEdge {
-    kind: u16,
-    from_index: usize,
-    to_index: usize,
-    rights: u16,
-    id: &'static str,
-}
-
 impl NativeGraphStoreObject {
-    fn graph_node(self, index: usize) -> Option<NativeGraphNode> {
-        if index >= self.node_count {
-            return None;
-        }
-        let offset = index.checked_mul(GRAPH_NODE_RECORD_LEN)?;
-        let record = self.records.get(offset..offset + GRAPH_NODE_RECORD_LEN)?;
-        Some(NativeGraphNode {
-            kind: read_u16(record, 0),
-            object_kind: read_u16(record, 2),
-            id: fixed_string_at(record, 4, false)?,
-            label: fixed_string_at(record, 68, true)?,
-        })
+    fn graph_node(self, index: usize) -> Option<graph_abi::NodeRecord<'static>> {
+        self.records.node(index)
     }
 
-    fn graph_edge(self, index: usize) -> Option<NativeGraphEdge> {
-        if index >= self.edge_count {
-            return None;
-        }
-        let edge_base = self.node_count.checked_mul(GRAPH_NODE_RECORD_LEN)?;
-        let offset = edge_base.checked_add(index.checked_mul(GRAPH_EDGE_RECORD_LEN)?)?;
-        let record = self.records.get(offset..offset + GRAPH_EDGE_RECORD_LEN)?;
-        Some(NativeGraphEdge {
-            kind: read_u16(record, 0),
-            from_index: read_u16(record, 2) as usize,
-            to_index: read_u16(record, 4) as usize,
-            rights: read_u16(record, 6),
-            id: fixed_string_at(record, 8, false)?,
-        })
+    fn graph_edge(self, index: usize) -> Option<graph_abi::EdgeRecord<'static>> {
+        self.records.edge(index)
     }
 }
 
@@ -1539,22 +1807,18 @@ fn load_native_graph_store(
     let (graph_start, graph_count) =
         vertexdisk_section(superblock, VERTEX_DISK_GRAPH_STORE_SECTION)?;
     let section = vertexdisk_section_bytes(disk, graph_start, graph_count)?;
-    let header = section.get(..VERTEX_DISK_SECTOR_SIZE)?;
-    if !valid_graph_store_header(header) {
-        serial::write_str("Krust native graph-store object rejected\n");
-        return None;
-    }
-    if !fixed_string_eq(
-        header,
-        GRAPH_GENERATION_OFFSET,
-        boot_manifest.generation_id().as_bytes(),
-    ) {
+    let Some(graph_header) = find_native_graph_store_header(
+        section,
+        graph_start,
+        graph_count,
+        boot_manifest.generation_id(),
+    ) else {
         serial::write_str("Krust native graph-store generation mismatch\n");
         return None;
-    }
+    };
 
-    let node_count = read_u16(header, GRAPH_NODE_COUNT_OFFSET) as usize;
-    let edge_count = read_u16(header, GRAPH_EDGE_COUNT_OFFSET) as usize;
+    let node_count = graph_header.node_count();
+    let edge_count = graph_header.edge_count();
     if node_count != boot_manifest.graph_node_count()
         || edge_count != boot_manifest.graph_edge_count()
     {
@@ -1562,21 +1826,19 @@ fn load_native_graph_store(
         return None;
     }
 
-    let byte_len = read_u32(header, GRAPH_BYTE_LEN_OFFSET) as usize;
-    let expected_len = node_count
-        .checked_mul(GRAPH_NODE_RECORD_LEN)?
-        .checked_add(edge_count.checked_mul(GRAPH_EDGE_RECORD_LEN)?)?;
+    let byte_len = graph_header.byte_len()?;
+    let expected_len = graph_abi::RecordSet::expected_len(node_count, edge_count)?;
     if byte_len != expected_len || byte_len != compact_records.len() {
         serial::write_str("Krust native graph-store length mismatch\n");
         return None;
     }
-    let checksum = read_u32(header, GRAPH_RECORD_CHECKSUM_OFFSET);
+    let checksum = graph_header.record_checksum();
     if checksum != boot_manifest.graph_store_checksum() {
         serial::write_str("Krust native graph-store checksum metadata mismatch\n");
         return None;
     }
 
-    let data_sector = read_u64(header, GRAPH_DATA_SECTOR_OFFSET);
+    let data_sector = graph_header.data_sector();
     if !graph_store_data_bounds_valid(data_sector, byte_len, graph_start, graph_count) {
         serial::write_str("Krust native graph-store bounds invalid\n");
         return None;
@@ -1590,7 +1852,11 @@ fn load_native_graph_store(
 
     let mut hash = [0u8; 64];
     store_hash_hex(blake3::hash(records).as_bytes(), &mut hash);
-    if !fixed_string_eq(header, GRAPH_HASH_OFFSET, &hash) {
+    let Some(header_hash) = graph_header.hash() else {
+        serial::write_str("Krust native graph-store hash metadata invalid\n");
+        return None;
+    };
+    if header_hash.as_bytes() != &hash {
         serial::write_str("Krust native graph-store hash metadata mismatch\n");
         return None;
     }
@@ -1599,8 +1865,12 @@ fn load_native_graph_store(
         return None;
     }
 
+    let Some(record_set) = graph_abi::RecordSet::new(records, node_count, edge_count) else {
+        serial::write_str("Krust native graph-store record layout invalid\n");
+        return None;
+    };
     let graph_store = NativeGraphStoreObject {
-        records,
+        records: record_set,
         node_count,
         edge_count,
         checksum,
@@ -1619,11 +1889,60 @@ fn load_native_graph_store(
     Some(graph_store)
 }
 
-fn valid_graph_store_header(header: &[u8]) -> bool {
-    header.len() >= VERTEX_DISK_SECTOR_SIZE
-        && starts_with(header, GRAPH_STORE_MAGIC)
-        && read_u16(header, 16) == VERTEX_DISK_VERSION
-        && metadata_checksum_valid(header)
+fn find_native_graph_store_header(
+    section: &'static [u8],
+    graph_start: u64,
+    graph_count: u64,
+    generation_id: &str,
+) -> Option<vdisk_abi::GraphStoreHeader<'static>> {
+    let mut header_sector = graph_start;
+    let graph_limit = graph_start.checked_add(graph_count)?;
+    while header_sector < graph_limit {
+        let section_sector = header_sector.checked_sub(graph_start)?;
+        let header_offset = usize::try_from(section_sector)
+            .ok()?
+            .checked_mul(VERTEX_DISK_SECTOR_SIZE)?;
+        let header = section.get(header_offset..header_offset + VERTEX_DISK_SECTOR_SIZE)?;
+        if sector_is_zero(header) {
+            return None;
+        }
+        let Some(graph_header) = vdisk_abi::GraphStoreHeader::new(header) else {
+            serial::write_str("Krust native graph-store object rejected\n");
+            return None;
+        };
+        let Some(candidate_generation_id) = graph_header.generation_id() else {
+            serial::write_str("Krust native graph-store generation invalid\n");
+            return None;
+        };
+        if candidate_generation_id == generation_id {
+            return Some(graph_header);
+        }
+        let byte_len = graph_header.byte_len()?;
+        let record_sectors = graph_store_record_sectors(byte_len)?;
+        let next_header = graph_header.data_sector().checked_add(record_sectors)?;
+        if next_header <= header_sector || next_header > graph_limit {
+            serial::write_str("Krust native graph-store bounds invalid\n");
+            return None;
+        }
+        header_sector = next_header;
+    }
+    None
+}
+
+fn sector_is_zero(bytes: &[u8]) -> bool {
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] != 0 {
+            return false;
+        }
+        index += 1;
+    }
+    true
+}
+
+fn graph_store_record_sectors(byte_len: usize) -> Option<u64> {
+    let rounded = byte_len.checked_add(VERTEX_DISK_SECTOR_SIZE - 1)?;
+    Some((rounded / VERTEX_DISK_SECTOR_SIZE).max(1) as u64)
 }
 
 fn graph_store_data_bounds_valid(
@@ -1632,7 +1951,7 @@ fn graph_store_data_bounds_valid(
     graph_start: u64,
     graph_count: u64,
 ) -> bool {
-    if byte_len == 0 || data_sector != graph_start + 1 || graph_count <= 1 {
+    if byte_len == 0 || graph_count <= 1 {
         return false;
     }
     let sectors = sectors_for_len(byte_len) as u64;
@@ -1655,7 +1974,7 @@ fn native_graph_store_records_valid(
         if node.kind == 0 || node.id.is_empty() {
             return false;
         }
-        if node.kind == 1 {
+        if node.kind == graph_abi::NODE_GENERATION {
             generation_nodes += 1;
             if node.id != generation_id {
                 return false;
@@ -1689,7 +2008,7 @@ fn native_graph_store_records_valid(
         {
             return false;
         }
-        if edge.kind == 2 && edge.rights == 0 {
+        if edge.kind == graph_abi::EDGE_CAPABILITY && edge.rights == 0 {
             return false;
         }
         let mut previous = 0;
@@ -1710,6 +2029,27 @@ fn native_graph_store_records_valid(
 struct NativeStoreObject {
     bytes: &'static [u8],
     checksum: u32,
+}
+
+fn load_vertexdisk_generation_metadata() -> Option<&'static [u8]> {
+    let disk = native_vertexdisk_bytes()?;
+    let superblock = disk.get(..VERTEX_DISK_SECTOR_SIZE)?;
+    if !valid_vertexdisk_superblock(superblock) {
+        serial::write_str("Krust native VertexDisk superblock rejected\n");
+        return None;
+    }
+    let (metadata_start, metadata_count) =
+        vertexdisk_section(superblock, VERTEX_DISK_GENERATION_METADATA_SECTION)?;
+    let metadata = vertexdisk_section_bytes(disk, metadata_start, metadata_count)?;
+    if metadata.len() < VERTEX_DISK_SECTOR_SIZE
+        || !starts_with(metadata, GENERATION_METADATA_MAGIC)
+        || read_u16(metadata, 16) != VERTEX_DISK_VERSION
+        || !metadata_checksum_valid(metadata)
+    {
+        serial::write_str("VertexDisk generation metadata rejected\n");
+        return None;
+    }
+    Some(&metadata[..VERTEX_DISK_SECTOR_SIZE])
 }
 
 fn load_native_store_object(id: &str) -> Option<NativeStoreObject> {
@@ -1844,23 +2184,7 @@ fn sectors_for_len(len: usize) -> usize {
 }
 
 fn metadata_checksum_valid(bytes: &[u8]) -> bool {
-    if bytes.len() < VERTEX_DISK_CHECKSUM_OFFSET + 4 {
-        return false;
-    }
-    let stored = read_u32(bytes, VERTEX_DISK_CHECKSUM_OFFSET);
-    let mut checksum = 0u32;
-    let mut index = 0;
-    while index < bytes.len() {
-        let byte =
-            if index >= VERTEX_DISK_CHECKSUM_OFFSET && index < VERTEX_DISK_CHECKSUM_OFFSET + 4 {
-                0
-            } else {
-                bytes[index]
-            };
-        checksum = checksum.wrapping_add((byte as u32).wrapping_mul(index as u32 + 1));
-        index += 1;
-    }
-    checksum == stored
+    vdisk_abi::metadata_checksum_valid(bytes)
 }
 
 fn checksum32(bytes: &[u8]) -> u32 {
@@ -1885,31 +2209,6 @@ fn fixed_string_eq(buffer: &[u8], offset: usize, value: &[u8]) -> bool {
         index += 1;
     }
     value.len() == 64 || buffer[offset + value.len()] == 0
-}
-
-fn fixed_string_at(
-    buffer: &'static [u8],
-    offset: usize,
-    allow_empty: bool,
-) -> Option<&'static str> {
-    if offset + 64 > buffer.len() {
-        return None;
-    }
-    let mut len = 0;
-    while len < 64 && buffer[offset + len] != 0 {
-        len += 1;
-    }
-    if len == 0 && !allow_empty {
-        return None;
-    }
-    let mut padding = len;
-    while padding < 64 {
-        if buffer[offset + padding] != 0 {
-            return None;
-        }
-        padding += 1;
-    }
-    core::str::from_utf8(&buffer[offset..offset + len]).ok()
 }
 
 fn starts_with(bytes: &[u8], prefix: &[u8]) -> bool {

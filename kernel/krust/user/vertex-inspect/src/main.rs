@@ -140,8 +140,7 @@ fn explain_native_graph_store(report: &[u8], generation: &GenerationGraph) {
     ];
     let service_needles: [&[u8]; 3] = [b"graph-node", b"kind=service", b"id=svc:vertex-inspect"];
     let store_needles: [&[u8]; 3] = [b"graph-node", b"kind=store-object", b"id=store:"];
-    let state_needles: [&[u8]; 3] =
-        [b"graph-node", b"kind=state-volume", b"id=state:counter"];
+    let state_needles: [&[u8]; 3] = [b"graph-node", b"kind=state-volume", b"id=state:counter"];
     let device_needles: [&[u8]; 3] = [b"graph-node", b"kind=device", b"id=cap:"];
     if find_line_contains_all(report, &graph_node_needles).is_none()
         || find_line_contains_all(report, &service_needles).is_none()

@@ -1,19 +1,20 @@
 use core::{cell::UnsafeCell, str};
+use vertex_abi::{graph as graph_abi, krustboot as krustboot_abi};
 
 pub const MODULE_STRING: &[u8] = b"krustboot-manifest";
 pub const FALLBACK_MODULE_STRING: &[u8] = b"krustboot-fallback-manifest";
 pub const BAD_GENERATION_MODULE_STRING: &[u8] = b"krustboot-bad-generation-manifest";
 
-const COMPACT_MAGIC: &[u8; 16] = b"KRUSTBOOTM82\0\0\0\0";
-const COMPACT_VERSION: u16 = 13;
-const V1_MAGIC: &[u8; 16] = b"KRUSTBOOTV1\0\0\0\0\0";
-const V1_VERSION: u16 = 1;
-const V1_HEADER_SIZE: usize = 164;
-const V1_CHECKSUM_OFFSET: usize = 32;
-const V1_RECORD_SIZE: usize = 12;
-const V1_RECORD_COUNT: usize = 9;
-const V1_PAYLOAD_OFFSET: usize = V1_HEADER_SIZE + V1_RECORD_COUNT * V1_RECORD_SIZE;
-const STRING_LEN: usize = 64;
+const COMPACT_MAGIC: &[u8; 16] = krustboot_abi::COMPACT_MAGIC;
+const COMPACT_VERSION: u16 = krustboot_abi::COMPACT_VERSION;
+const V1_MAGIC: &[u8; 16] = krustboot_abi::V1_MAGIC;
+const V1_VERSION: u16 = krustboot_abi::V1_VERSION;
+const V1_HEADER_SIZE: usize = krustboot_abi::V1_HEADER_SIZE;
+const V1_CHECKSUM_OFFSET: usize = krustboot_abi::V1_CHECKSUM_OFFSET;
+const V1_RECORD_SIZE: usize = krustboot_abi::V1_RECORD_SIZE;
+const V1_RECORD_COUNT: usize = krustboot_abi::V1_RECORD_COUNT;
+const V1_PAYLOAD_OFFSET: usize = krustboot_abi::V1_PAYLOAD_OFFSET;
+const STRING_LEN: usize = graph_abi::STRING_LEN;
 const MAX_BOOT_MODULES: usize = 16;
 const MAX_PROCESSES: usize = 16;
 const MAX_ENDPOINTS: usize = 16;
@@ -42,14 +43,14 @@ pub const MAX_NAMESPACE_ENTRIES: usize = 4;
 pub const MAX_PROCESS_REFS: usize = 4;
 pub const MAX_PROCESS_MOUNTS: usize = 4;
 
-pub const GRAPH_NODE_GENERATION: u16 = 1;
-pub const GRAPH_NODE_SERVICE: u16 = 2;
-pub const GRAPH_NODE_ENDPOINT: u16 = 3;
-pub const GRAPH_NODE_STORE_OBJECT: u16 = 4;
-pub const GRAPH_NODE_CONFIG: u16 = 5;
-pub const GRAPH_NODE_STATE_VOLUME: u16 = 6;
-pub const GRAPH_NODE_DEVICE: u16 = 7;
-pub const GRAPH_EDGE_CAPABILITY: u16 = 2;
+pub const GRAPH_NODE_GENERATION: u16 = graph_abi::NODE_GENERATION;
+pub const GRAPH_NODE_SERVICE: u16 = graph_abi::NODE_SERVICE;
+pub const GRAPH_NODE_ENDPOINT: u16 = graph_abi::NODE_ENDPOINT;
+pub const GRAPH_NODE_STORE_OBJECT: u16 = graph_abi::NODE_STORE_OBJECT;
+pub const GRAPH_NODE_CONFIG: u16 = graph_abi::NODE_CONFIG;
+pub const GRAPH_NODE_STATE_VOLUME: u16 = graph_abi::NODE_STATE_VOLUME;
+pub const GRAPH_NODE_DEVICE: u16 = graph_abi::NODE_DEVICE;
+pub const GRAPH_EDGE_CAPABILITY: u16 = graph_abi::EDGE_CAPABILITY;
 
 pub const RIGHT_SEND: u16 = 1 << 0;
 pub const RIGHT_RECEIVE: u16 = 1 << 1;

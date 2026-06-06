@@ -80,6 +80,7 @@ const SYS_VFS_RMDIR: u64 = 68;
 const SYS_VFS_LINK: u64 = 69;
 const SYS_VFS_POLL: u64 = 70;
 const SYS_VFS_WATCH: u64 = 71;
+const SYS_VERIFY_GENERATION: u64 = 72;
 
 const STATUS_OK: u64 = 0;
 const STATUS_BAD_CAPABILITY: u64 = u64::MAX - 1;
@@ -598,6 +599,14 @@ pub extern "C" fn krust_syscall_dispatch(
                 Err(error) => frame.rax = ipc_error_status("SYS_NAMESPACE_RESOLVE", error),
             }
         }
+        SYS_VERIFY_GENERATION => match ipc::verify_generation(
+            arg0,
+            arg1 as *const u8,
+            usize::try_from(arg2).unwrap_or(usize::MAX),
+        ) {
+            Ok(()) => frame.rax = STATUS_OK,
+            Err(error) => frame.rax = ipc_error_status("SYS_VERIFY_GENERATION", error),
+        },
         _ => {
             serial::write_str("Unknown userspace syscall: ");
             serial::write_u64_dec(number);

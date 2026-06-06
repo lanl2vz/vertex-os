@@ -122,6 +122,9 @@ fn poll_serial_input(input: &mut [u8; 96], input_len: &mut usize) -> bool {
             }
         }
         _ => {
+            if !byte.is_ascii_graphic() && byte != b' ' {
+                return true;
+            }
             if *input_len >= input.len() {
                 log(b"console-driver input line too long");
                 *input_len = 0;

@@ -15,24 +15,25 @@ BOOT_MANIFEST := $(BUILD_DIR)/hello-generation.krustboot
 FALLBACK_BOOT_MANIFEST := $(BUILD_DIR)/fallback-generation.krustboot
 BAD_GENERATION_BOOT_MANIFEST := $(BUILD_DIR)/bad-generation.krustboot
 KERNEL_ELF := target/$(KRUST_TARGET)/debug/krust
-INIT_TARGET_DIR := user/init/target/$(KRUST_TARGET)/debug
-SERIAL_DRIVER_TARGET_DIR := user/serial-driver/target/$(KRUST_TARGET)/debug
-CONSOLE_DRIVER_TARGET_DIR := user/console-driver/target/$(KRUST_TARGET)/debug
-CONSOLE_SHELL_TARGET_DIR := user/console-shell/target/$(KRUST_TARGET)/debug
-LOGD_TARGET_DIR := user/logd/target/$(KRUST_TARGET)/debug
-ECHO_TARGET_DIR := user/echo/target/$(KRUST_TARGET)/debug
-NETSTACK_TARGET_DIR := user/netstack/target/$(KRUST_TARGET)/debug
-BLOCK_DRIVER_TARGET_DIR := user/block-driver/target/$(KRUST_TARGET)/debug
-VERTEX_STORE_TARGET_DIR := user/vertex-store/target/$(KRUST_TARGET)/debug
-VERTEX_STATE_TARGET_DIR := user/vertex-state/target/$(KRUST_TARGET)/debug
-VERTEX_INSPECT_TARGET_DIR := user/vertex-inspect/target/$(KRUST_TARGET)/debug
-MODEL_READER_TARGET_DIR := user/model-reader/target/$(KRUST_TARGET)/debug
-COUNTER_TARGET_DIR := user/counter/target/$(KRUST_TARGET)/debug
-STATE_READER_TARGET_DIR := user/state-reader/target/$(KRUST_TARGET)/debug
-TIMER_TARGET_DIR := user/timer/target/$(KRUST_TARGET)/debug
-FLAKY_TARGET_DIR := user/flaky/target/$(KRUST_TARGET)/debug
-HOG_TARGET_DIR := user/hog/target/$(KRUST_TARGET)/debug
-FAULTY_TARGET_DIR := user/faulty/target/$(KRUST_TARGET)/debug
+USER_TARGET_DIR := user/target/$(KRUST_TARGET)/debug
+INIT_TARGET_DIR := $(USER_TARGET_DIR)
+SERIAL_DRIVER_TARGET_DIR := $(USER_TARGET_DIR)
+CONSOLE_DRIVER_TARGET_DIR := $(USER_TARGET_DIR)
+CONSOLE_SHELL_TARGET_DIR := $(USER_TARGET_DIR)
+LOGD_TARGET_DIR := $(USER_TARGET_DIR)
+ECHO_TARGET_DIR := $(USER_TARGET_DIR)
+NETSTACK_TARGET_DIR := $(USER_TARGET_DIR)
+BLOCK_DRIVER_TARGET_DIR := $(USER_TARGET_DIR)
+VERTEX_STORE_TARGET_DIR := $(USER_TARGET_DIR)
+VERTEX_STATE_TARGET_DIR := $(USER_TARGET_DIR)
+VERTEX_INSPECT_TARGET_DIR := $(USER_TARGET_DIR)
+MODEL_READER_TARGET_DIR := $(USER_TARGET_DIR)
+COUNTER_TARGET_DIR := $(USER_TARGET_DIR)
+STATE_READER_TARGET_DIR := $(USER_TARGET_DIR)
+TIMER_TARGET_DIR := $(USER_TARGET_DIR)
+FLAKY_TARGET_DIR := $(USER_TARGET_DIR)
+HOG_TARGET_DIR := $(USER_TARGET_DIR)
+FAULTY_TARGET_DIR := $(USER_TARGET_DIR)
 VERTEX_INIT_ELF := $(INIT_TARGET_DIR)/vertex-init
 SERIAL_DRIVER_ELF := $(SERIAL_DRIVER_TARGET_DIR)/serial-driver
 CONSOLE_DRIVER_ELF := $(CONSOLE_DRIVER_TARGET_DIR)/console-driver
@@ -54,6 +55,8 @@ FAULTY_ELF := $(FAULTY_TARGET_DIR)/faulty
 VERTEX_MANIFEST ?= ../../examples/hello-generation.vertex.json
 FALLBACK_MANIFEST ?=
 BAD_GENERATION_MANIFEST ?=
+BOOT_FALLBACK_MANIFEST ?= $(FALLBACK_MANIFEST)
+BOOT_BAD_GENERATION_MANIFEST ?= $(BAD_GENERATION_MANIFEST)
 KRUSTBOOT_CORRUPT ?=
 VERTEX_DISK_CORRUPT ?=
 VERTEXFS_CORRUPT ?=
@@ -79,24 +82,7 @@ kernel:
 	$(CARGO) build --locked --target $(KRUST_TARGET)
 
 user:
-	cd user/init && $(CARGO) build --locked --target $(KRUST_TARGET)
-	cd user/serial-driver && $(CARGO) build --locked --target $(KRUST_TARGET)
-	cd user/console-driver && $(CARGO) build --locked --target $(KRUST_TARGET)
-	cd user/console-shell && $(CARGO) build --locked --target $(KRUST_TARGET)
-	cd user/logd && $(CARGO) build --locked --target $(KRUST_TARGET)
-	cd user/echo && $(CARGO) build --locked --target $(KRUST_TARGET)
-	cd user/netstack && $(CARGO) build --locked --target $(KRUST_TARGET)
-	cd user/block-driver && $(CARGO) build --locked --target $(KRUST_TARGET)
-	cd user/vertex-store && $(CARGO) build --locked --target $(KRUST_TARGET)
-	cd user/vertex-state && $(CARGO) build --locked --target $(KRUST_TARGET)
-	cd user/vertex-inspect && $(CARGO) build --locked --target $(KRUST_TARGET)
-	cd user/model-reader && $(CARGO) build --locked --target $(KRUST_TARGET)
-	cd user/counter && $(CARGO) build --locked --target $(KRUST_TARGET)
-	cd user/state-reader && $(CARGO) build --locked --target $(KRUST_TARGET)
-	cd user/timer && $(CARGO) build --locked --target $(KRUST_TARGET)
-	cd user/flaky && $(CARGO) build --locked --target $(KRUST_TARGET)
-	cd user/hog && $(CARGO) build --locked --target $(KRUST_TARGET)
-	cd user/faulty && $(CARGO) build --locked --target $(KRUST_TARGET)
+	cd user && $(CARGO) build --workspace --locked --target $(KRUST_TARGET)
 
 boot-manifest: user
 	mkdir -p $(BUILD_DIR)
@@ -104,16 +90,16 @@ boot-manifest: user
 	@if [ -n "$(KRUSTBOOT_CORRUPT)" ]; then \
 		$(VERTEXCTL) corrupt-boot-manifest $(KRUSTBOOT_CORRUPT) $(BOOT_MANIFEST) $(BOOT_MANIFEST); \
 	fi
-	@if [ -n "$(FALLBACK_MANIFEST)" ]; then \
-		$(VERTEXCTL) compile-boot-manifest $(FALLBACK_MANIFEST) $(FALLBACK_BOOT_MANIFEST); \
-	else \
-		cp $(BOOT_MANIFEST) $(FALLBACK_BOOT_MANIFEST); \
-	fi
-	@if [ -n "$(BAD_GENERATION_MANIFEST)" ]; then \
-		$(VERTEXCTL) compile-boot-manifest $(BAD_GENERATION_MANIFEST) $(BAD_GENERATION_BOOT_MANIFEST); \
-	else \
-		cp $(BOOT_MANIFEST) $(BAD_GENERATION_BOOT_MANIFEST); \
-	fi
+		@if [ -n "$(BOOT_FALLBACK_MANIFEST)" ]; then \
+			$(VERTEXCTL) compile-boot-manifest $(BOOT_FALLBACK_MANIFEST) $(FALLBACK_BOOT_MANIFEST); \
+		else \
+			cp $(BOOT_MANIFEST) $(FALLBACK_BOOT_MANIFEST); \
+		fi
+		@if [ -n "$(BOOT_BAD_GENERATION_MANIFEST)" ]; then \
+			$(VERTEXCTL) compile-boot-manifest $(BOOT_BAD_GENERATION_MANIFEST) $(BAD_GENERATION_BOOT_MANIFEST); \
+		else \
+			cp $(BOOT_MANIFEST) $(BAD_GENERATION_BOOT_MANIFEST); \
+		fi
 
 block-image: user
 	mkdir -p $(BUILD_DIR)
@@ -191,7 +177,7 @@ release-gate:
 	../../scripts/krust-release-gate.sh
 
 clean:
-	rm -rf $(BUILD_DIR) target user/init/target user/serial-driver/target user/console-driver/target user/console-shell/target user/logd/target user/echo/target user/netstack/target user/block-driver/target user/vertex-store/target user/vertex-state/target user/vertex-inspect/target user/model-reader/target user/counter/target user/state-reader/target user/timer/target user/flaky/target user/hog/target user/faulty/target
+	rm -rf $(BUILD_DIR) target user/target user/*/target
 
 check-tools:
 	@command -v $(RUSTC) >/dev/null 2>&1 || { echo "error: rustc not found. Install Rust $(REQUIRED_RUST), or run rustup from kernel/krust so rust-toolchain.toml installs it."; exit 1; }
@@ -236,10 +222,7 @@ check-tool-versions:
 check-cargo-locks:
 	@test -f ../../Cargo.lock || { echo "error: repository Cargo.lock missing. Run cargo generate-lockfile at the repository root with Rust $(REQUIRED_RUST)."; exit 1; }
 	@test -f Cargo.lock || { echo "error: kernel/krust/Cargo.lock missing. Run cargo generate-lockfile with Rust $(REQUIRED_RUST)."; exit 1; }
-	@for manifest in user/*/Cargo.toml; do \
-		lock="$${manifest%Cargo.toml}Cargo.lock"; \
-		test -f "$$lock" || { echo "error: $$lock missing. Run cargo generate-lockfile in $${manifest%/Cargo.toml}."; exit 1; }; \
-	done
+	@test -f user/Cargo.lock || { echo "error: kernel/krust/user/Cargo.lock missing. Run cargo generate-lockfile --manifest-path kernel/krust/user/Cargo.toml with Rust $(REQUIRED_RUST)."; exit 1; }
 
 check-rust-target:
 	@ls "$$($(RUSTC) --print sysroot)/lib/rustlib/$(KRUST_TARGET)/lib"/libcore-*.rlib >/dev/null 2>&1 || { echo "error: Rust target $(KRUST_TARGET) is not installed for Rust $(REQUIRED_RUST). Run: rustup target add $(KRUST_TARGET) --toolchain $(REQUIRED_RUST)"; exit 1; }

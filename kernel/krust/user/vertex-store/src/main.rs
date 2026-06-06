@@ -4,6 +4,7 @@
 mod sys;
 
 use core::panic::PanicInfo;
+use vertex_abi::vertexdisk as vdisk_abi;
 
 const CAP_STORE_REQUEST: u64 = 0;
 const CAP_SERIAL_LOG: u64 = 1;
@@ -20,17 +21,17 @@ const GENERATION_B_MANIFEST: &[u8] = b"krustboot:gen:switch-b-0002";
 const HELLO_OBJECT: &[u8] = b"hello from Krust store\n";
 const BLOCK_PROTOCOL_V1: u16 = 1;
 const BLOCK_OP_READ_SECTOR: u16 = 1;
-const SECTOR_SIZE: usize = 512;
-const VERTEX_DISK_MAGIC: &[u8; 16] = b"VERTEXDISKV1\0\0\0\0";
-const STORE_INDEX_MAGIC: &[u8; 16] = b"VDISKSTOREV0\0\0\0\0";
-const VERTEX_DISK_VERSION: u16 = 3;
-const VERTEX_DISK_CHECKSUM_OFFSET: usize = 20;
-const VERTEX_DISK_TOTAL_SECTORS_OFFSET: usize = 24;
-const VERTEX_DISK_SECTION_TABLE_OFFSET: usize = 32;
-const VERTEX_DISK_SECTION_RECORD_LEN: usize = 16;
-const VERTEX_DISK_STORE_INDEX_SECTION: usize = 1;
-const VERTEX_DISK_STORE_DATA_SECTION: usize = 2;
-const VERTEX_DISK_GRAPH_STORE_SECTION: usize = 7;
+const SECTOR_SIZE: usize = vdisk_abi::SECTOR_SIZE;
+const VERTEX_DISK_MAGIC: &[u8; 16] = vdisk_abi::MAGIC;
+const STORE_INDEX_MAGIC: &[u8; 16] = vdisk_abi::STORE_INDEX_MAGIC;
+const VERTEX_DISK_VERSION: u16 = vdisk_abi::VERSION;
+const VERTEX_DISK_CHECKSUM_OFFSET: usize = vdisk_abi::CHECKSUM_OFFSET;
+const VERTEX_DISK_TOTAL_SECTORS_OFFSET: usize = vdisk_abi::TOTAL_SECTORS_OFFSET;
+const VERTEX_DISK_SECTION_TABLE_OFFSET: usize = vdisk_abi::SECTION_TABLE_OFFSET;
+const VERTEX_DISK_SECTION_RECORD_LEN: usize = vdisk_abi::SECTION_RECORD_LEN;
+const VERTEX_DISK_STORE_INDEX_SECTION: usize = vdisk_abi::SECTION_STORE_INDEX;
+const VERTEX_DISK_STORE_DATA_SECTION: usize = vdisk_abi::SECTION_STORE_DATA;
+const VERTEX_DISK_GRAPH_STORE_SECTION: usize = vdisk_abi::SECTION_GRAPH_STORE;
 const MAX_STORE_INDEX_SECTORS: usize = 16;
 const STORE_INDEX_BYTES: usize = MAX_STORE_INDEX_SECTORS * SECTOR_SIZE;
 const STORE_ENTRY_OFFSET: usize = 32;

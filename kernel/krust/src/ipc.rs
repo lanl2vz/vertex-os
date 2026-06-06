@@ -9,6 +9,7 @@ use crate::{
     usercopy::{self, UserPtr},
     userspace,
 };
+use vertex_abi::graph as graph_abi;
 
 pub const BOOT_ENDPOINT_ID: u64 = 1;
 
@@ -162,14 +163,21 @@ const STATE_VFS_REQUEST_ENDPOINT_NAME: &str = "state-vfs-request";
 const STATE_VFS_REPLY_ENDPOINT_NAME: &str = "state-vfs-reply";
 const VERTEXFS_DEVICE_REQUEST_ENDPOINT_NAME: &str = "vertexfs-device-request";
 const VERTEXFS_DEVICE_REPLY_ENDPOINT_NAME: &str = "vertexfs-device-reply";
+const GENERATION_METADATA_BLOCK_REQUEST_ENDPOINT_NAME: &str = "generation-metadata-block-request";
+const GENERATION_METADATA_BLOCK_REPLY_ENDPOINT_NAME: &str = "generation-metadata-block-reply";
 const STATE_VOLUME_VALUE_FILE_NAME: &str = "value";
 const STATE_VOLUME_CONTROL_FILE_NAME: &str = "control";
 const BLOCK_DRIVER_PROCESS_NAME: &str = "block-driver";
+const GENERATION_MANAGER_PROCESS_NAME: &str = "gen-manager";
 const VERTEX_STATE_PROCESS_NAME: &str = "vertex-state";
 const VERTEX_STATE_VFS_REPLY_CAP_SLOT: u64 = 6;
 const VERTEX_STATE_VFS_REQUEST_CAP_SLOT: u64 = 7;
 const BLOCK_DRIVER_VERTEXFS_REQUEST_CAP_SLOT: u64 = 13;
 const BLOCK_DRIVER_VERTEXFS_REPLY_CAP_SLOT: u64 = 14;
+const BLOCK_DRIVER_GENERATION_METADATA_REQUEST_CAP_SLOT: u64 = 16;
+const BLOCK_DRIVER_GENERATION_METADATA_REPLY_CAP_SLOT: u64 = 17;
+const GENERATION_MANAGER_METADATA_REQUEST_CAP_SLOT: u64 = 4;
+const GENERATION_MANAGER_METADATA_REPLY_CAP_SLOT: u64 = 5;
 const VFS_STATE_TRANSACTION_ID_BYTES: usize = 8;
 const VFS_STATE_REQUEST_HEADER_BYTES: usize = 8;
 const VFS_STATE_REQUEST_MAGIC: &[u8; 2] = b"VS";
@@ -256,20 +264,20 @@ pub const BOOT_OBJECT_PCI_DEVICE: u16 = 10;
 pub const BOOT_OBJECT_VIRTIO_DEVICE: u16 = 11;
 pub const BOOT_OBJECT_NAMESPACE: u16 = 12;
 pub const BOOT_OBJECT_VFS_ROOT: u16 = 13;
-const GRAPH_NODE_GENERATION: u16 = 1;
-const GRAPH_NODE_SERVICE: u16 = 2;
-const GRAPH_NODE_ENDPOINT: u16 = 3;
-const GRAPH_NODE_STORE_OBJECT: u16 = 4;
-const GRAPH_NODE_CONFIG: u16 = 5;
-const GRAPH_NODE_STATE_VOLUME: u16 = 6;
-const GRAPH_NODE_DEVICE: u16 = 7;
-const GRAPH_NODE_NAMESPACE: u16 = 8;
-const GRAPH_NODE_VFS_ROOT: u16 = 9;
-const GRAPH_NODE_TIMER: u16 = 10;
-const GRAPH_NODE_SECRET: u16 = 11;
-const GRAPH_EDGE_ACTIVATION: u16 = 1;
-const GRAPH_EDGE_CAPABILITY: u16 = 2;
-const GRAPH_EDGE_MOUNT: u16 = 3;
+const GRAPH_NODE_GENERATION: u16 = graph_abi::NODE_GENERATION;
+const GRAPH_NODE_SERVICE: u16 = graph_abi::NODE_SERVICE;
+const GRAPH_NODE_ENDPOINT: u16 = graph_abi::NODE_ENDPOINT;
+const GRAPH_NODE_STORE_OBJECT: u16 = graph_abi::NODE_STORE_OBJECT;
+const GRAPH_NODE_CONFIG: u16 = graph_abi::NODE_CONFIG;
+const GRAPH_NODE_STATE_VOLUME: u16 = graph_abi::NODE_STATE_VOLUME;
+const GRAPH_NODE_DEVICE: u16 = graph_abi::NODE_DEVICE;
+const GRAPH_NODE_NAMESPACE: u16 = graph_abi::NODE_NAMESPACE;
+const GRAPH_NODE_VFS_ROOT: u16 = graph_abi::NODE_VFS_ROOT;
+const GRAPH_NODE_TIMER: u16 = graph_abi::NODE_TIMER;
+const GRAPH_NODE_SECRET: u16 = graph_abi::NODE_SECRET;
+const GRAPH_EDGE_ACTIVATION: u16 = graph_abi::EDGE_ACTIVATION;
+const GRAPH_EDGE_CAPABILITY: u16 = graph_abi::EDGE_CAPABILITY;
+const GRAPH_EDGE_MOUNT: u16 = graph_abi::EDGE_MOUNT;
 
 pub const FRAME_R15: usize = 0;
 pub const FRAME_R14: usize = 8;
@@ -1367,6 +1375,8 @@ struct RuntimeState {
     state_vfs_reply_endpoint: Option<KernelObjectId>,
     vertexfs_device_request_endpoint: Option<KernelObjectId>,
     vertexfs_device_reply_endpoint: Option<KernelObjectId>,
+    generation_metadata_block_request_endpoint: Option<KernelObjectId>,
+    generation_metadata_block_reply_endpoint: Option<KernelObjectId>,
     next_vfs_state_transaction_id: u64,
     vertexfs_sync_writes: [VertexFsDeviceWrite; VERTEXFS_SYNC_MAX_DEVICE_WRITES],
     vertexfs_sync_write_count: usize,
@@ -1391,6 +1401,13 @@ struct BootManagerState {
     previous_generation: &'static str,
     known_good_generation: &'static str,
     last_failed_generation: &'static str,
+    last_failure_reason: &'static str,
+    last_failure_service: &'static str,
+    last_failure_dependency: &'static str,
+    last_failure_policy: &'static str,
+    last_transaction_state: &'static str,
+    last_transaction_target: &'static str,
+    transaction_counter: u64,
     boot_attempt_counter: u64,
 }
 
@@ -3617,6 +3634,8 @@ impl RuntimeState {
             state_vfs_reply_endpoint: None,
             vertexfs_device_request_endpoint: None,
             vertexfs_device_reply_endpoint: None,
+            generation_metadata_block_request_endpoint: None,
+            generation_metadata_block_reply_endpoint: None,
             next_vfs_state_transaction_id: 1,
             vertexfs_sync_writes: [VertexFsDeviceWrite::empty(); VERTEXFS_SYNC_MAX_DEVICE_WRITES],
             vertexfs_sync_write_count: 0,
@@ -3647,6 +3666,8 @@ impl RuntimeState {
         self.state_vfs_reply_endpoint = None;
         self.vertexfs_device_request_endpoint = None;
         self.vertexfs_device_reply_endpoint = None;
+        self.generation_metadata_block_request_endpoint = None;
+        self.generation_metadata_block_reply_endpoint = None;
         self.next_vfs_state_transaction_id = 1;
         self.vertexfs_sync_write_count = 0;
         self.vfs_mount_count = 0;
@@ -5482,6 +5503,13 @@ impl BootManagerState {
             previous_generation: "",
             known_good_generation: "",
             last_failed_generation: "",
+            last_failure_reason: "",
+            last_failure_service: "",
+            last_failure_dependency: "",
+            last_failure_policy: "",
+            last_transaction_state: "idle",
+            last_transaction_target: "",
+            transaction_counter: 0,
             boot_attempt_counter: 0,
         }
     }
@@ -5516,15 +5544,55 @@ impl BootManagerState {
     fn install_selected(&mut self, previous: &'static str, selected: &'static str) {
         self.previous_generation = previous;
         self.selected_generation = selected;
+        self.last_failure_reason = "";
+        self.last_failure_service = "";
+        self.last_failure_dependency = "";
+        self.last_failure_policy = "";
+        self.last_transaction_state = "commit";
+        self.last_transaction_target = selected;
+        self.transaction_counter = self.transaction_counter.saturating_add(1);
         self.boot_attempt_counter = self.boot_attempt_counter.saturating_add(1);
+        serial::write_str("Native generation manager journal commit: selected_generation=");
+        serial::write_str(selected);
+        serial::write_str("\n");
         serial::write_str("Native update transaction selected_generation updated: ");
         serial::write_str(selected);
+        serial::write_str("\n");
+    }
+
+    fn install_prepare(&mut self, previous: &'static str, target: &'static str) {
+        self.previous_generation = previous;
+        self.last_transaction_state = "prepare";
+        self.last_transaction_target = target;
+        self.transaction_counter = self.transaction_counter.saturating_add(1);
+        serial::write_str("Native generation manager journal prepare: previous=");
+        serial::write_str(previous);
+        serial::write_str(" target=");
+        serial::write_str(target);
+        serial::write_str("\n");
+    }
+
+    fn install_abort(&mut self, target: &'static str, reason: &'static str) {
+        self.last_failed_generation = target;
+        self.last_failure_reason = reason;
+        self.record_failure_detail(target, reason);
+        self.last_transaction_state = "abort";
+        self.last_transaction_target = target;
+        self.transaction_counter = self.transaction_counter.saturating_add(1);
+        serial::write_str("Native generation manager journal abort: generation=");
+        serial::write_str(target);
+        serial::write_str(" reason=");
+        serial::write_str(reason);
         serial::write_str("\n");
     }
 
     fn mark_known_good(&mut self, generation_id: &'static str) {
         self.known_good_generation = generation_id;
         self.selected_generation = generation_id;
+        self.last_failure_reason = "";
+        self.last_failure_service = "";
+        self.last_failure_dependency = "";
+        self.last_failure_policy = "";
         serial::write_str("Native boot manager known_good_generation=");
         serial::write_str(generation_id);
         serial::write_str("\n");
@@ -5535,8 +5603,20 @@ impl BootManagerState {
 
     fn mark_failed_and_fallback(&mut self, failed: &'static str, fallback: &'static str) {
         self.last_failed_generation = failed;
+        self.last_failure_reason = "activation-failed";
+        self.last_failure_service = failed;
+        self.last_failure_dependency = "service-readiness";
+        self.last_failure_policy = "known-good-rollback";
         self.previous_generation = failed;
         self.selected_generation = fallback;
+        self.last_transaction_state = "rollback";
+        self.last_transaction_target = fallback;
+        self.transaction_counter = self.transaction_counter.saturating_add(1);
+        serial::write_str("Native generation manager journal rollback: failed=");
+        serial::write_str(failed);
+        serial::write_str(" selected_generation=");
+        serial::write_str(fallback);
+        serial::write_str(" reason=activation-failed\n");
         serial::write_str("Native boot manager last_failed_generation=");
         serial::write_str(failed);
         serial::write_str("\n");
@@ -5550,6 +5630,91 @@ impl BootManagerState {
         serial::write_str(failed);
         serial::write_str(" fallback=");
         serial::write_str(fallback);
+        serial::write_str("\n");
+        self.log_failure_detail();
+    }
+
+    fn recover_from_disk(
+        &mut self,
+        selected: &'static str,
+        previous: &'static str,
+        known_good: &'static str,
+        transaction: &'static str,
+        target: &'static str,
+        failure_reason: &'static str,
+    ) {
+        self.selected_generation = selected;
+        self.previous_generation = previous;
+        self.known_good_generation = known_good;
+        self.last_failure_reason = failure_reason;
+        if !failure_reason.is_empty() {
+            self.last_failure_service = if transaction == "rollback" && !previous.is_empty() {
+                previous
+            } else {
+                target
+            };
+            self.last_failure_dependency = if transaction == "rollback" {
+                "service-readiness"
+            } else {
+                "store-closure"
+            };
+            self.last_failure_policy = if transaction == "rollback" {
+                "known-good-rollback"
+            } else {
+                "activation"
+            };
+        }
+        self.last_transaction_state = transaction;
+        self.last_transaction_target = target;
+        if !failure_reason.is_empty() {
+            self.last_failed_generation = if transaction == "rollback" && !previous.is_empty() {
+                previous
+            } else {
+                target
+            };
+        }
+        serial::write_str("Native generation manager recovered durable state from VertexDisk\n");
+        serial::write_str("Native generation manager durable selected_generation=");
+        serial::write_str(selected);
+        serial::write_str("\n");
+        self.log_failure_detail();
+    }
+
+    fn record_failure_detail(&mut self, generation: &'static str, reason: &'static str) {
+        self.last_failure_service = generation;
+        match reason {
+            "verification-failed" => {
+                self.last_failure_dependency = "store-closure";
+                self.last_failure_policy = "installable-generation";
+            }
+            "runtime-build-failed" => {
+                self.last_failure_dependency = "service-readiness";
+                self.last_failure_policy = "activation";
+            }
+            "rollback-build-failed" => {
+                self.last_failure_dependency = "rollback-runtime";
+                self.last_failure_policy = "known-good-rollback";
+            }
+            _ => {
+                self.last_failure_dependency = "unknown";
+                self.last_failure_policy = "activation";
+            }
+        }
+        self.log_failure_detail();
+    }
+
+    fn log_failure_detail(&self) {
+        if self.last_failure_reason.is_empty() {
+            return;
+        }
+        serial::write_str("Native generation manager failure detail: service=");
+        serial::write_str(self.last_failure_service);
+        serial::write_str(" dependency=");
+        serial::write_str(self.last_failure_dependency);
+        serial::write_str(" policy=");
+        serial::write_str(self.last_failure_policy);
+        serial::write_str(" reason=");
+        serial::write_str(self.last_failure_reason);
         serial::write_str("\n");
     }
 }
@@ -5647,6 +5812,16 @@ fn build_boot_config_runtime(
         runtime
             .objects
             .add_endpoint(VERTEXFS_DEVICE_REPLY_ENDPOINT_NAME)?,
+    );
+    runtime.generation_metadata_block_request_endpoint = Some(
+        runtime
+            .objects
+            .add_endpoint(GENERATION_METADATA_BLOCK_REQUEST_ENDPOINT_NAME)?,
+    );
+    runtime.generation_metadata_block_reply_endpoint = Some(
+        runtime
+            .objects
+            .add_endpoint(GENERATION_METADATA_BLOCK_REPLY_ENDPOINT_NAME)?,
     );
 
     let mut store_index = 0;
@@ -6340,11 +6515,39 @@ pub fn register_generation_config(config: &'static BootRuntimeConfig) -> Result<
     })
 }
 
+pub fn generation_config_by_id(generation_id: &[u8]) -> Option<&'static BootRuntimeConfig> {
+    generation_runtimes()
+        .find(generation_id)
+        .map(|runtime| runtime.config)
+}
+
 pub fn set_rollback_boot_config(config: &'static BootRuntimeConfig) {
     set_rollback_runtime(GenerationRuntime {
         generation_id: config.generation_id,
         config,
     });
+}
+
+pub fn set_failed_generation_id(generation_id: &'static str) {
+    set_failed_generation(generation_id);
+}
+
+pub fn install_generation_recovery(
+    selected: &'static str,
+    previous: &'static str,
+    known_good: &'static str,
+    transaction: &'static str,
+    target: &'static str,
+    failure_reason: &'static str,
+) {
+    boot_manager().recover_from_disk(
+        selected,
+        previous,
+        known_good,
+        transaction,
+        target,
+        failure_reason,
+    );
 }
 
 pub fn install_frame_allocator(allocator: *mut memory::FrameAllocator) {
@@ -6540,6 +6743,98 @@ fn grant_config_caps_to_process(
         )?;
         serial::write_str(
             "Native VertexFS device reply grant: process=block-driver endpoint=vertexfs-device-reply rights=send\n",
+        );
+    }
+    if process.name == BLOCK_DRIVER_PROCESS_NAME
+        && let Some(request_endpoint) = runtime.generation_metadata_block_request_endpoint
+    {
+        let cap = runtime
+            .new_capability(
+                request_endpoint,
+                capability::RIGHT_RECEIVE,
+                owner,
+                0,
+                ProcessId::empty(),
+            )
+            .map_err(|_| InitError::CapabilityTableFull)?;
+        grant_process_cap_by_pid(
+            runtime,
+            owner,
+            BLOCK_DRIVER_GENERATION_METADATA_REQUEST_CAP_SLOT,
+            cap,
+            true,
+        )?;
+        serial::write_str(
+            "Native generation metadata block request grant: process=block-driver endpoint=generation-metadata-block-request rights=receive\n",
+        );
+    }
+    if process.name == BLOCK_DRIVER_PROCESS_NAME
+        && let Some(reply_endpoint) = runtime.generation_metadata_block_reply_endpoint
+    {
+        let cap = runtime
+            .new_capability(
+                reply_endpoint,
+                capability::RIGHT_SEND,
+                owner,
+                0,
+                ProcessId::empty(),
+            )
+            .map_err(|_| InitError::CapabilityTableFull)?;
+        grant_process_cap_by_pid(
+            runtime,
+            owner,
+            BLOCK_DRIVER_GENERATION_METADATA_REPLY_CAP_SLOT,
+            cap,
+            true,
+        )?;
+        serial::write_str(
+            "Native generation metadata block reply grant: process=block-driver endpoint=generation-metadata-block-reply rights=send\n",
+        );
+    }
+    if process.name == GENERATION_MANAGER_PROCESS_NAME
+        && let Some(request_endpoint) = runtime.generation_metadata_block_request_endpoint
+    {
+        let cap = runtime
+            .new_capability(
+                request_endpoint,
+                capability::RIGHT_SEND,
+                owner,
+                0,
+                ProcessId::empty(),
+            )
+            .map_err(|_| InitError::CapabilityTableFull)?;
+        grant_process_cap_by_pid(
+            runtime,
+            owner,
+            GENERATION_MANAGER_METADATA_REQUEST_CAP_SLOT,
+            cap,
+            true,
+        )?;
+        serial::write_str(
+            "Native generation metadata block request grant: process=gen-manager endpoint=generation-metadata-block-request rights=send\n",
+        );
+    }
+    if process.name == GENERATION_MANAGER_PROCESS_NAME
+        && let Some(reply_endpoint) = runtime.generation_metadata_block_reply_endpoint
+    {
+        let cap = runtime
+            .new_capability(
+                reply_endpoint,
+                capability::RIGHT_RECEIVE,
+                owner,
+                0,
+                ProcessId::empty(),
+            )
+            .map_err(|_| InitError::CapabilityTableFull)?;
+        grant_process_cap_by_pid(
+            runtime,
+            owner,
+            GENERATION_MANAGER_METADATA_REPLY_CAP_SLOT,
+            cap,
+            true,
+        )?;
+        serial::write_str(
+            "Native generation metadata block reply grant: process=gen-manager endpoint=generation-metadata-block-reply rights=receive\n",
         );
     }
 
@@ -8399,7 +8694,9 @@ pub fn activate_generation(
         return Ok(());
     }
 
+    boot_manager().install_prepare(previous_generation, target.generation_id);
     if verify_generation_transaction(target).is_err() {
+        boot_manager().install_abort(target.generation_id, "verification-failed");
         serial::write_str("Native update transaction selected_generation unchanged: ");
         serial::write_str(previous_generation);
         serial::write_str("\n");
@@ -8425,7 +8722,10 @@ pub fn activate_generation(
     serial::write_str("\n");
     serial::write_str("old generation service loses old capability\n");
 
-    init_from_boot_config(target.config).map_err(|_| IpcError::BadCapability)?;
+    if init_from_boot_config(target.config).is_err() {
+        boot_manager().install_abort(target.generation_id, "runtime-build-failed");
+        return Err(IpcError::BadCapability);
+    }
     serial::write_str("Native update transaction journal commit\n");
     boot_manager().install_selected(previous_generation, target.generation_id);
     let context = initial_process_context().ok_or(IpcError::BadCapability)?;
@@ -8437,6 +8737,43 @@ pub fn activate_generation(
     unsafe {
         gdt::enter_user_mode(context.cr3, context.entry, context.stack_top);
     }
+}
+
+pub fn verify_generation(cap_slot: u64, generation: *const u8, len: usize) -> Result<(), IpcError> {
+    if len > MAX_MESSAGE_BYTES {
+        return Err(IpcError::MessageTooLarge);
+    }
+
+    let _process_control = process_control_from_cap(
+        cap_slot,
+        capability::RIGHT_CONTROL | capability::RIGHT_REVOKE,
+    )?;
+    let mut generation_id = [0u8; MAX_MESSAGE_BYTES];
+    usercopy::copy_from_user(&mut generation_id, UserPtr::new(generation as u64), len)
+        .map_err(|_| IpcError::InvalidUserBuffer)?;
+
+    let requested = &generation_id[..len];
+    let target = match generation_runtimes().find(requested) {
+        Some(target) => target,
+        None => {
+            serial::write_str("Native generation verification rejected: requested=");
+            serial::write_ascii_bytes(requested);
+            serial::write_str(" reason=missing-store-object\n");
+            return Err(IpcError::BadCapability);
+        }
+    };
+    if failed_generation_is(target.generation_id) {
+        serial::write_str("Native generation verification rejected: requested=");
+        serial::write_ascii_bytes(requested);
+        serial::write_str(" failed=yes\n");
+        return Err(IpcError::BadCapability);
+    }
+
+    verify_generation_transaction(target)?;
+    serial::write_str("Native generation verification accepted: generation=");
+    serial::write_str(target.generation_id);
+    serial::write_str("\n");
+    Ok(())
 }
 
 fn verify_generation_transaction(target: GenerationRuntime) -> Result<(), IpcError> {
@@ -8572,7 +8909,11 @@ pub fn rollback_generation(
     serial::write_u64_dec(old_cap_count);
     serial::write_str("\n");
 
-    init_from_boot_config(rollback.config).map_err(|_| IpcError::BadCapability)?;
+    boot_manager().install_prepare(previous_generation, rollback.generation_id);
+    if init_from_boot_config(rollback.config).is_err() {
+        boot_manager().install_abort(rollback.generation_id, "rollback-build-failed");
+        return Err(IpcError::BadCapability);
+    }
     if let Some(previous_config) = previous_config {
         set_rollback_runtime(GenerationRuntime {
             generation_id: previous_generation,
@@ -15432,6 +15773,7 @@ fn build_inspect_report(runtime: &RuntimeState, report: &mut InspectReport) {
     report.push_str("generation=");
     report.push_str(runtime.generation_id);
     report.push_byte(b'\n');
+    write_generation_manager_report(report);
     write_graph_store_report(runtime, report);
     report.push_str("processes=");
     report.push_u64_dec(runtime.processes.count as u64);
@@ -15624,6 +15966,41 @@ fn build_inspect_report(runtime: &RuntimeState, report: &mut InspectReport) {
             report.push_byte(b'\n');
         }
         event_index += 1;
+    }
+}
+
+fn write_generation_manager_report(report: &mut InspectReport) {
+    let manager = boot_manager_state();
+    report.push_str("generation-manager v=1 selected=");
+    push_generation_field(report, manager.selected_generation);
+    report.push_str(" previous=");
+    push_generation_field(report, manager.previous_generation);
+    report.push_str(" known_good=");
+    push_generation_field(report, manager.known_good_generation);
+    report.push_str(" last_failed=");
+    push_generation_field(report, manager.last_failed_generation);
+    report.push_str(" transaction=");
+    report.push_str(manager.last_transaction_state);
+    report.push_str(" target=");
+    push_generation_field(report, manager.last_transaction_target);
+    report.push_str(" tx_counter=");
+    report.push_u64_dec(manager.transaction_counter);
+    report.push_str(" failure_reason=");
+    push_generation_field(report, manager.last_failure_reason);
+    report.push_str(" failure_service=");
+    push_generation_field(report, manager.last_failure_service);
+    report.push_str(" failure_dependency=");
+    push_generation_field(report, manager.last_failure_dependency);
+    report.push_str(" failure_policy=");
+    push_generation_field(report, manager.last_failure_policy);
+    report.push_byte(b'\n');
+}
+
+fn push_generation_field(report: &mut InspectReport, value: &str) {
+    if value.is_empty() {
+        report.push_str("<none>");
+    } else {
+        report.push_str(value);
     }
 }
 
@@ -16976,6 +17353,10 @@ fn failed_generation_is(generation_id: &'static str) -> bool {
 
 fn boot_manager() -> &'static mut BootManagerState {
     unsafe { &mut *BOOT_MANAGER.0.get() }
+}
+
+fn boot_manager_state() -> &'static BootManagerState {
+    unsafe { &*BOOT_MANAGER.0.get() }
 }
 
 fn store_hash_matches(bytes: &[u8], expected: &str) -> bool {

@@ -7,7 +7,7 @@ runtime layered over a host kernel.
 
 ## Status Summary
 
-Current status: M14-M82 are implemented and smoke-tested under
+Current status: M14-M83 are implemented and smoke-tested under
 `qemu-system-x86_64` with Limine. The current tree has an image-backed VertexFS
 v1 mount, a strict VertexDisk v1 section carrying the current VertexFS image,
 fixed journal replay, kernel-owned device-backed fsync transactions,
@@ -55,7 +55,10 @@ rejection, VFS churn, and release-gated filesystem crash/security coverage.
 M82 makes the active generation graph a native typed VertexDisk graph-store
 object, records graph provenance for processes and capabilities, exposes graph
 checksum/hash/object counts through runtime inspection, and rejects corrupt
-compact or disk graph-store records before activation.
+compact or disk graph-store records before activation. M83 moves generation
+installation, rollback, durable selected-generation metadata, and
+prepare/commit/rollback recovery into the native generation-manager and
+block-driver authority path.
 
 M74-M82 are implemented as the current VFS, open-file, directory, block-cache,
 VertexFS/mount-namespace, coordination, and security/soak substrate. The
@@ -141,14 +144,18 @@ scripts/krust-test.sh m81
 scripts/krust-test.sh m82
 scripts/krust-test.sh manifest-graph-store-checksum
 scripts/krust-test.sh manifest-graph-store-record
+scripts/krust-test.sh m83
+scripts/krust-test.sh m83-hostless
+scripts/krust-test.sh m83-power-prepare
+scripts/krust-test.sh m83-power-commit
+scripts/krust-test.sh m83-power-rollback
 ```
 
-Next direction: move the graph operating-system model into the booted system
-without preserving host-side activation as a compatibility layer. M83-M89
-should make the generation manager, package closure import,
-state lifecycle, policy validation, operator graph shell, appliance update
-loop, and graph soak gate first-class Vertex OS surfaces on top of the M82
-native graph-store substrate while keeping Krust small and capability-mediated.
+Next direction: move package closure import, richer state lifecycle policy,
+policy validation, the operator graph shell, appliance update loop, and the
+graph soak gate into first-class Vertex OS surfaces on top of the M82 graph
+store and M83 generation-manager substrate while keeping Krust small and
+capability-mediated.
 
 ## M0: Serial Boot
 
@@ -1555,7 +1562,7 @@ done: locked Cargo dependencies for the top-level host-tool workspace, Krust ker
 done: kernel/krust/rust-toolchain.toml pins Rust 1.95.0, rustfmt, and x86_64-unknown-none
 done: make doctor checks every required tool and reports actionable fixes
 done: legacy hello/ipc userspace crates are removed instead of carried forward
-done: single release-gate script runs the clean-clone M14-M82 substrate proof with the current QEMU matrix
+done: single release-gate script runs the clean-clone M14-M83 substrate proof with the current QEMU matrix
 ```
 
 Acceptance tests:
@@ -3887,13 +3894,14 @@ Implementation notes:
 - M82 deliberately updates stale inspect-generation graph data to the current
   declared mount contract instead of carrying a compatibility path in echo,
   vertex-init, or the kernel.
-- Durable native graph mutation, graph-store garbage collection, and candidate
-  generation installation are M83-M89 responsibilities; M82 establishes the
-  booted system's durable typed graph-store read/provenance substrate.
+- Durable native graph mutation and graph-store garbage collection remain
+  M84-M89 responsibilities; M82 establishes the booted system's durable typed
+  graph-store read/provenance substrate, and M83 uses that substrate for native
+  candidate generation installation.
 
 ## M83: Native Generation Manager
 
-Status: planned.
+Status: done.
 
 Goal: move generation install, activation, rollback, and failure recording into
 a native service so the running Vertex system can manage generations without
@@ -3902,24 +3910,60 @@ host-side activation glue.
 Scope:
 
 ```text
-native generation-manager service
-install candidate generation from verified graph and store closure
-atomic selected-generation update with previous and known-good pointers
-activation transaction log with prepare, commit, abort, and rollback states
-restart/failure policy integration with vertex-init
-operator-visible generation history and failure reason
+done: native generation-manager service receives install, rollback, and
+      shutdown commands through explicit endpoint authority
+done: vertex-init delegates generation update authority to generation-manager
+      instead of retaining it in the supervisor process
+done: candidate generation manifests are stored as deterministic native
+      VertexDisk store objects (`store:krustboot:<generation>`)
+done: VertexDisk generation metadata records selected, previous, known-good,
+      transaction state, transaction target, failure reason, and candidate
+      generation IDs
+done: kernel registers candidate generation configs from VertexDisk metadata
+      and graph-store/store-closure input without requiring a host fallback
+      boot-module manifest
+done: generation-manager install verifies manifest hash and store closure
+      before switching to the candidate generation
+done: generation-manager writes prepare/commit/rollback/abort generation
+      metadata checkpoints through native block-driver authority, scoped to the
+      VertexDisk generation metadata section
+done: generation-manager asks the kernel to verify the candidate generation
+      before committing durable selected-generation metadata
+done: rollback returns to the previous known-good generation and preserves the
+      counter state according to the current graph state policy
+done: activation failure records service, dependency, policy, and reason
+      details in the native generation-manager state and runtime inspect report
+done: VertexDisk recovery metadata handles prepare, commit, and rollback
+      checkpoints and remounts to exactly one selected generation on boot
+done: console shutdown waits for finite state clients to drain before issuing
+      the state-service control write, so generation activation completion does
+      not race in-flight state VFS transactions
+todo: state migration policy remains preserve-only for the current counter
+      state case; richer migrate/fork/discard policies move to M85
 ```
 
 Acceptance tests:
 
 ```text
-booted system installs a new candidate generation from native graph-store input
-selected generation changes atomically only after activation succeeds
-failed activation restores the previous known-good generation
-activation failure records service, dependency, and policy error details
-rollback preserves or migrates state according to graph policy
-power loss during prepare, commit, and rollback remounts to one selected generation
-host-side activation metadata is not required for native generation switching
+done: booted system installs a new candidate generation from native graph-store input
+done: selected generation changes atomically only after activation succeeds
+done: failed activation restores the previous known-good generation
+done: activation failure records service, dependency, and policy error details
+done: rollback preserves state according to the current graph policy
+done: power loss during prepare, commit, and rollback remounts to one selected generation
+done: host-side activation metadata is not required for native generation switching
+done: live generation-manager writes are served by the native block-driver and
+      are limited to the VertexDisk generation metadata object
+```
+
+Acceptance gates:
+
+```text
+done: scripts/krust-test.sh m83
+done: scripts/krust-test.sh m83-hostless
+done: scripts/krust-test.sh m83-power-prepare
+done: scripts/krust-test.sh m83-power-commit
+done: scripts/krust-test.sh m83-power-rollback
 ```
 
 Implementation notes:
@@ -3930,6 +3974,14 @@ Implementation notes:
 - Reuse the M44-M46 boot-manager/update transaction lessons, but remove any
   special case that assumes one hard-coded example generation.
 - Rollback policy must be graph data, not activation script convention.
+- The current implementation makes generation selection durable and recoverable
+  as VertexDisk metadata. The live path is native: `gen-manager` holds only
+  scoped send/receive endpoint authority, `block-driver` validates the request
+  against the generation metadata section, and the kernel verifies candidate
+  generation closure before the manager commits selected-generation metadata.
+- M83 intentionally keeps migration policy minimal. The graph records preserve
+  policy for the current counter state; richer migrate/fork/discard semantics
+  are M85 work.
 
 ## M84: Native Package And Closure Import
 
@@ -4220,7 +4272,7 @@ M70-M73 add interrupt routing, DMA ownership, virtio reset/recovery, and
 device-fault isolation. M74-M81 should turn the existing special-purpose
 store/state persistence into a mature capability-mediated VFS and filesystem
 stack. M82 moves the active generation graph into a native typed graph-store
-read/provenance substrate. M83-M89 should move the generation manager, package
-closure import, policy validation, state lifecycle, operator shell, appliance
-update loop, and long-run graph soak into the native system before broadening
-the platform.
+read/provenance substrate, and M83 moves generation management into the native
+system. M84-M89 should move package closure import, policy validation, state
+lifecycle, operator shell, appliance update loop, and long-run graph soak into
+the native system before broadening the platform.

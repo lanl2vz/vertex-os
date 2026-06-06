@@ -61,6 +61,16 @@
       "references": []
     },
     {
+      "id": "store:generation-manager-demo",
+      "name": "generation-manager-demo",
+      "kind": "executable",
+      "path": "/vertex/store/demo-generation-manager",
+      "hashAlgorithm": "blake3",
+      "hash": "demo-not-a-real-hash-generation-manager",
+      "sizeBytes": 65536,
+      "references": []
+    },
+    {
       "id": "store:logd-demo",
       "name": "logd-demo",
       "kind": "executable",
@@ -210,6 +220,13 @@
       "id": "exe:console-shell",
       "storeObject": "store:console-shell-demo",
       "entrypoint": "bin/console-shell",
+      "abi": "krust-native-process.v0",
+      "argsDefault": []
+    },
+    {
+      "id": "exe:generation-manager",
+      "storeObject": "store:generation-manager-demo",
+      "entrypoint": "bin/generation-manager",
       "abi": "krust-native-process.v0",
       "argsDefault": []
     },
@@ -430,6 +447,19 @@
       "properties": {
         "protocol": "vertex.console.control.v1",
         "role": "control",
+        "client": "svc:console-shell"
+      }
+    },
+    {
+      "id": "cap:generation-manager.request",
+      "kind": "ipc-endpoint",
+      "provider": "svc:generation-manager",
+      "rights": [
+        "send"
+      ],
+      "properties": {
+        "protocol": "vertex.generation-manager.v1",
+        "role": "request",
         "client": "svc:console-shell"
       }
     },
@@ -1134,7 +1164,14 @@
         ],
         "stopBefore": []
       },
-      "mountRoot": "/state"
+      "mountRoot": "/state",
+      "mounts": [
+        {
+          "path": "/declared-ro",
+          "source": "/",
+          "readOnly": true
+        }
+      ]
     },
     {
       "id": "svc:model-reader",
@@ -1246,6 +1283,35 @@
       "mountRoot": "/"
     },
     {
+      "id": "svc:generation-manager",
+      "name": "gen-manager",
+      "executable": "exe:generation-manager",
+      "args": [],
+      "env": {},
+      "requires": [],
+      "provides": [
+        "cap:generation-manager.request"
+      ],
+      "state": [],
+      "secrets": [],
+      "restart": "never",
+      "resources": {
+        "memoryMaxBytes": 33554432,
+        "cpuShares": 25
+      },
+      "health": {
+        "kind": "ipc-ping",
+        "target": "cap:generation-manager.request"
+      },
+      "lifecycle": {
+        "startAfter": [
+          "svc:vertex-inspect"
+        ],
+        "stopBefore": []
+      },
+      "mountRoot": "/"
+    },
+    {
       "id": "svc:console-shell",
       "name": "console-shell",
       "executable": "exe:console-shell",
@@ -1276,6 +1342,12 @@
             "resolve",
             "control"
           ]
+        },
+        {
+          "capability": "cap:generation-manager.request",
+          "rights": [
+            "send"
+          ]
         }
       ],
       "provides": [
@@ -1295,7 +1367,7 @@
       },
       "lifecycle": {
         "startAfter": [
-          "svc:vertex-inspect"
+          "svc:generation-manager"
         ],
         "stopBefore": []
       },
@@ -1371,6 +1443,7 @@
       "svc:model-reader",
       "svc:counter-service",
       "svc:vertex-inspect",
+      "svc:generation-manager",
       "svc:console-shell",
       "svc:timer-service",
       "svc:flaky-service"

@@ -9,6 +9,7 @@ publish = false
 
 [dependencies]
 blake3 = { version = "1.8.3", default-features = false, features = ["pure"] }
+vertex-abi = { path = "../../crates/vertex-abi" }
 
 [profile.dev]
 panic = "abort"

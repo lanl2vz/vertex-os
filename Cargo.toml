@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "crates/vertex-abi",
     "crates/vertex-ir",
     "crates/vertex-supervisor",
     "crates/vertexctl",
@@ -18,4 +19,5 @@ license = "MIT OR Apache-2.0"
 blake3 = { version = "1.8.3", default-features = false, features = ["pure"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
+vertex-abi = { path = "crates/vertex-abi" }
 vertex-ir = { path = "crates/vertex-ir" }

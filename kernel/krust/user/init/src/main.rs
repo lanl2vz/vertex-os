@@ -4,9 +4,10 @@
 mod sys;
 
 use core::{cell::UnsafeCell, panic::PanicInfo};
+use vertex_abi::{graph as graph_abi, krustboot as krustboot_abi};
 
-const KRUSTBOOT_MAGIC: &[u8; 16] = b"KRUSTBOOTM82\0\0\0\0";
-const KRUSTBOOT_VERSION: u16 = 13;
+const KRUSTBOOT_MAGIC: &[u8; 16] = krustboot_abi::COMPACT_MAGIC;
+const KRUSTBOOT_VERSION: u16 = krustboot_abi::COMPACT_VERSION;
 const MANIFEST_BUFFER_LEN: usize = 64 * 1024;
 const REPORT_BUFFER_LEN: usize = 128 * 1024;
 const OFFSET_VERSION: usize = 16;
@@ -26,7 +27,7 @@ const OFFSET_VIRTIO_DEVICES: usize = 42;
 const OFFSET_NAMESPACES: usize = 44;
 const OFFSET_VFS_ROOTS: usize = 46;
 const OFFSET_GENERATION_ID: usize = 48;
-const STRING_LEN: usize = 64;
+const STRING_LEN: usize = graph_abi::STRING_LEN;
 const OFFSET_PARENT_GENERATION_ID: usize = OFFSET_GENERATION_ID + STRING_LEN;
 const GRAPH_HEADER_LEN: usize = 8;
 const BOOT_MODULE_RECORD_LEN: usize = STRING_LEN * 2;
@@ -62,8 +63,9 @@ const M40_VERTEX_STORE_INIT_REPLY_SLOT: u64 = 6;
 const M38_PROCESS_NAME: &[u8] = b"vertex-inspect";
 const M38_INSPECT_CAP_SLOT: u64 = 0;
 const M41_PROCESS_NAME: &[u8] = b"console-shell";
-const M41_INSPECT_CAP_SLOT: u64 = 8;
-const M54_UPDATE_CAP_SLOT: u64 = 9;
+const M41_INSPECT_CAP_SLOT: u64 = 9;
+const GENERATION_MANAGER_PROCESS_NAME: &[u8] = b"gen-manager";
+const GENERATION_MANAGER_UPDATE_CAP_SLOT: u64 = 3;
 const FLAKY_PROCESS_NAME: &[u8] = b"flaky-service";
 const FAULTY_PROCESS_NAME: &[u8] = b"faulty-service";
 const TIMER_PROCESS_NAME: &[u8] = b"timer-service";
@@ -205,6 +207,7 @@ pub extern "C" fn _start() -> ! {
             transfer_endpoint_requirements(
                 &manifest[..manifest_len],
                 boot_modules,
+                processes,
                 process_index,
                 pid,
                 name,
@@ -217,6 +220,9 @@ pub extern "C" fn _start() -> ! {
         }
         if bytes_eq(name, M41_PROCESS_NAME) {
             grant_console_shell_authority(pid, parent_generation);
+        }
+        if bytes_eq(name, GENERATION_MANAGER_PROCESS_NAME) {
+            grant_generation_manager_authority(pid, parent_generation);
         }
         start_service(name, pid, parent_generation);
         if bytes_eq(generation, M37_GENERATION_A) && bytes_eq(name, b"vertex-store") {
@@ -541,6 +547,7 @@ fn wait_ready(expected_name: &[u8], parent_generation: &[u8]) {
 fn transfer_endpoint_requirements(
     manifest: &[u8],
     boot_modules: u16,
+    processes: u16,
     process_index: usize,
     pid: u64,
     name: &[u8],
@@ -572,6 +579,15 @@ fn transfer_endpoint_requirements(
             log(b"vertex-init cap transfer failed");
             activation_failed(parent_generation);
         }
+        log_transferred_endpoint_cap(
+            manifest,
+            boot_modules,
+            processes,
+            name,
+            target_slot,
+            endpoint_index,
+            manifest_rights,
+        );
         if sys::cap_drop(sys::CAP_DERIVED) != sys::STATUS_OK {
             log(b"vertex-init cap scratch drop failed");
             activation_failed(parent_generation);
@@ -1478,7 +1494,7 @@ fn grant_introspection_authority(process_index: u64, parent_generation: &[u8]) {
 }
 
 fn grant_console_shell_authority(process_index: u64, parent_generation: &[u8]) {
-    log(b"vertex-init delegates inspect and update authority to console-shell");
+    log(b"vertex-init delegates inspect authority to console-shell");
     if sys::cap_transfer(
         process_index,
         sys::CAP_PROCESS_CONTROL,
@@ -1489,14 +1505,18 @@ fn grant_console_shell_authority(process_index: u64, parent_generation: &[u8]) {
         log(b"vertex-init console-shell inspect cap transfer failed");
         activation_failed(parent_generation);
     }
+}
+
+fn grant_generation_manager_authority(process_index: u64, parent_generation: &[u8]) {
+    log(b"vertex-init delegates generation update authority to generation-manager");
     if sys::cap_transfer(
         process_index,
         sys::CAP_PROCESS_CONTROL,
-        M54_UPDATE_CAP_SLOT,
+        GENERATION_MANAGER_UPDATE_CAP_SLOT,
         sys::RIGHT_CONTROL | sys::RIGHT_REVOKE,
     ) != sys::STATUS_OK
     {
-        log(b"vertex-init console-shell update cap transfer failed");
+        log(b"vertex-init generation-manager update cap transfer failed");
         activation_failed(parent_generation);
     }
 }
@@ -1547,6 +1567,28 @@ fn log_derive(value: &[u8], endpoint_index: u16, rights: u16) {
     let len = append(&mut buffer, len, b" from endpoint[");
     let len = append_decimal(&mut buffer, len, endpoint_index as u64);
     let len = append(&mut buffer, len, b"] rights=");
+    let len = append_manifest_endpoint_rights(&mut buffer, len, rights);
+    log(&buffer[..len]);
+}
+
+fn log_transferred_endpoint_cap(
+    manifest: &[u8],
+    boot_modules: u16,
+    processes: u16,
+    process_name: &[u8],
+    cap_slot: u64,
+    endpoint_index: u16,
+    rights: u16,
+) {
+    let endpoint = endpoint_name(manifest, boot_modules, processes, endpoint_index as usize);
+    let mut buffer = [0u8; 160];
+    let len = append(&mut buffer, 0, b"proc=");
+    let len = append(&mut buffer, len, process_name);
+    let len = append(&mut buffer, len, b" cap[");
+    let len = append_decimal(&mut buffer, len, cap_slot);
+    let len = append(&mut buffer, len, b"] endpoint=");
+    let len = append(&mut buffer, len, endpoint);
+    let len = append(&mut buffer, len, b" rights=");
     let len = append_manifest_endpoint_rights(&mut buffer, len, rights);
     log(&buffer[..len]);
 }

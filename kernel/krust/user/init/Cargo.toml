@@ -5,17 +5,9 @@ edition = "2024"
 license = "MIT OR Apache-2.0"
 publish = false
 
-[workspace]
+[dependencies]
+vertex-abi.workspace = true
 
 [[bin]]
 name = "vertex-init"
 path = "src/main.rs"
-
-[profile.dev]
-panic = "abort"
-
-[profile.release]
-panic = "abort"
-lto = true
-codegen-units = 1
-strip = "debuginfo"

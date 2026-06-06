@@ -1,5 +1,5 @@
 [package]
-name = "krust-vertex-state"
+name = "krust-generation-manager"
 version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
@@ -9,5 +9,5 @@ publish = false
 vertex-abi.workspace = true
 
 [[bin]]
-name = "vertex-state"
+name = "generation-manager"
 path = "src/main.rs"

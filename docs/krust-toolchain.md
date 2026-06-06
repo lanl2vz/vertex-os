@@ -30,8 +30,8 @@ rustup toolchain install 1.95.0 --profile minimal --component rustfmt --target x
 ```
 
 Cargo dependencies are locked by `Cargo.lock` at the repository root, by
-`kernel/krust/Cargo.lock`, and by each supported native userspace crate under
-`kernel/krust/user/*/Cargo.lock`. Krust builds invoke Cargo with `--locked`.
+`kernel/krust/Cargo.lock`, and by the native userspace workspace lockfile at
+`kernel/krust/user/Cargo.lock`. Krust builds invoke Cargo with `--locked`.
 The release gate also runs the top-level host-tool workspace with
 `--locked --offline`.
 

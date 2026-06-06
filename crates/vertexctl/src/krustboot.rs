@@ -2,23 +2,23 @@ use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::PathBuf;
+use vertex_abi::{graph as graph_abi, krustboot as krustboot_abi};
 use vertex_ir::{GenerationManifest, Service};
 
-const COMPACT_MAGIC: &[u8; 16] = b"KRUSTBOOTM82\0\0\0\0";
-const COMPACT_VERSION: u16 = 13;
-const V1_MAGIC: &[u8; 16] = b"KRUSTBOOTV1\0\0\0\0\0";
-const V1_VERSION: u16 = 1;
-const V1_HEADER_SIZE: usize = 164;
-const V1_CHECKSUM_OFFSET: usize = 32;
-const V1_RECORD_SIZE: usize = 12;
-const V1_RECORD_COUNT: usize = 9;
-const V1_PAYLOAD_OFFSET: usize = V1_HEADER_SIZE + V1_RECORD_COUNT * V1_RECORD_SIZE;
-const GRAPH_HEADER_SIZE: usize = 8;
-const COMPACT_GRAPH_NODE_COUNT_OFFSET: usize = 176;
-const COMPACT_GRAPH_EDGE_COUNT_OFFSET: usize = 178;
-const COMPACT_GRAPH_CHECKSUM_OFFSET: usize = 180;
-const COMPACT_HEADER_SIZE: usize = 176 + GRAPH_HEADER_SIZE;
-const STRING_LEN: usize = 64;
+const COMPACT_MAGIC: &[u8; 16] = krustboot_abi::COMPACT_MAGIC;
+const COMPACT_VERSION: u16 = krustboot_abi::COMPACT_VERSION;
+const V1_MAGIC: &[u8; 16] = krustboot_abi::V1_MAGIC;
+const V1_VERSION: u16 = krustboot_abi::V1_VERSION;
+const V1_HEADER_SIZE: usize = krustboot_abi::V1_HEADER_SIZE;
+const V1_CHECKSUM_OFFSET: usize = krustboot_abi::V1_CHECKSUM_OFFSET;
+const V1_RECORD_SIZE: usize = krustboot_abi::V1_RECORD_SIZE;
+const V1_RECORD_COUNT: usize = krustboot_abi::V1_RECORD_COUNT;
+const V1_PAYLOAD_OFFSET: usize = krustboot_abi::V1_PAYLOAD_OFFSET;
+const COMPACT_GRAPH_NODE_COUNT_OFFSET: usize = krustboot_abi::COMPACT_GRAPH_NODE_COUNT_OFFSET;
+const COMPACT_GRAPH_EDGE_COUNT_OFFSET: usize = krustboot_abi::COMPACT_GRAPH_EDGE_COUNT_OFFSET;
+const COMPACT_GRAPH_CHECKSUM_OFFSET: usize = krustboot_abi::COMPACT_GRAPH_CHECKSUM_OFFSET;
+const COMPACT_HEADER_SIZE: usize = krustboot_abi::COMPACT_HEADER_SIZE;
+const STRING_LEN: usize = graph_abi::STRING_LEN;
 const BOOT_MODULE_RECORD_LEN: usize = STRING_LEN * 2;
 const PROCESS_REF_LIST_LEN: usize = 2 + MAX_PROCESS_REFS * 2;
 const ENDPOINT_REQUIREMENT_LIST_LEN: usize = 2 + MAX_PROCESS_REFS * 4;
@@ -47,8 +47,8 @@ const PCI_DEVICE_RECORD_LEN: usize = STRING_LEN * 2;
 const VIRTIO_DEVICE_RECORD_LEN: usize = STRING_LEN * 2;
 const NAMESPACE_ENTRY_RECORD_LEN: usize = STRING_LEN + 8;
 const VFS_ROOT_RECORD_LEN: usize = STRING_LEN * 2;
-const GRAPH_NODE_RECORD_LEN: usize = 4 + STRING_LEN * 2;
-const GRAPH_EDGE_RECORD_LEN: usize = 8 + STRING_LEN;
+const GRAPH_NODE_RECORD_LEN: usize = graph_abi::NODE_RECORD_LEN;
+const GRAPH_EDGE_RECORD_LEN: usize = graph_abi::EDGE_RECORD_LEN;
 const MAX_BOOT_MODULES: usize = 16;
 const MAX_PROCESSES: usize = 16;
 const MAX_ENDPOINTS: usize = 16;
@@ -112,19 +112,19 @@ const RECORD_STATE_VOLUME: u16 = 6;
 const RECORD_TIMER: u16 = 7;
 const RECORD_GENERATION: u16 = 8;
 const RECORD_POLICY: u16 = 9;
-const GRAPH_NODE_GENERATION: u16 = 1;
-const GRAPH_NODE_SERVICE: u16 = 2;
-const GRAPH_NODE_ENDPOINT: u16 = 3;
-const GRAPH_NODE_STORE_OBJECT: u16 = 4;
-const GRAPH_NODE_CONFIG: u16 = 5;
-const GRAPH_NODE_STATE_VOLUME: u16 = 6;
-const GRAPH_NODE_DEVICE: u16 = 7;
-const GRAPH_NODE_NAMESPACE: u16 = 8;
-const GRAPH_NODE_VFS_ROOT: u16 = 9;
-const GRAPH_NODE_TIMER: u16 = 10;
-const GRAPH_NODE_SECRET: u16 = 11;
-const GRAPH_EDGE_ACTIVATION: u16 = 1;
-const GRAPH_EDGE_CAPABILITY: u16 = 2;
+const GRAPH_NODE_GENERATION: u16 = graph_abi::NODE_GENERATION;
+const GRAPH_NODE_SERVICE: u16 = graph_abi::NODE_SERVICE;
+const GRAPH_NODE_ENDPOINT: u16 = graph_abi::NODE_ENDPOINT;
+const GRAPH_NODE_STORE_OBJECT: u16 = graph_abi::NODE_STORE_OBJECT;
+const GRAPH_NODE_CONFIG: u16 = graph_abi::NODE_CONFIG;
+const GRAPH_NODE_STATE_VOLUME: u16 = graph_abi::NODE_STATE_VOLUME;
+const GRAPH_NODE_DEVICE: u16 = graph_abi::NODE_DEVICE;
+const GRAPH_NODE_NAMESPACE: u16 = graph_abi::NODE_NAMESPACE;
+const GRAPH_NODE_VFS_ROOT: u16 = graph_abi::NODE_VFS_ROOT;
+const GRAPH_NODE_TIMER: u16 = graph_abi::NODE_TIMER;
+const GRAPH_NODE_SECRET: u16 = graph_abi::NODE_SECRET;
+const GRAPH_EDGE_ACTIVATION: u16 = graph_abi::EDGE_ACTIVATION;
+const GRAPH_EDGE_CAPABILITY: u16 = graph_abi::EDGE_CAPABILITY;
 const RESTART_NEVER: u16 = 0;
 const RESTART_ON_FAILURE: u16 = 1;
 const RESTART_ALWAYS: u16 = 2;
@@ -1758,6 +1758,12 @@ fn native_store_candidate_paths(module_string: &str) -> Vec<PathBuf> {
         "vertex-init" => "init",
         other => other,
     };
+    paths.push(PathBuf::from(format!(
+        "user/target/x86_64-unknown-none/debug/{module_string}"
+    )));
+    paths.push(PathBuf::from(format!(
+        "kernel/krust/user/target/x86_64-unknown-none/debug/{module_string}"
+    )));
     paths.push(PathBuf::from(format!(
         "user/{crate_dir}/target/x86_64-unknown-none/debug/{module_string}"
     )));

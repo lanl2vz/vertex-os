@@ -5,23 +5,10 @@ edition = "2024"
 license = "MIT OR Apache-2.0"
 publish = false
 
-[workspace]
-
 [dependencies]
-blake3 = { version = "1.8.3", default-features = false, features = ["pure"] }
+blake3.workspace = true
+vertex-abi.workspace = true
 
 [[bin]]
 name = "vertex-store"
 path = "src/main.rs"
-
-[profile.dev]
-panic = "abort"
-
-[profile.dev.package.blake3]
-opt-level = 3
-
-[profile.release]
-panic = "abort"
-lto = true
-codegen-units = 1
-strip = "debuginfo"

@@ -7,6 +7,7 @@ use core::{
     panic::PanicInfo,
     sync::atomic::{Ordering, compiler_fence},
 };
+use vertex_abi::vertexdisk as vdisk_abi;
 
 const CAP_VERTEX_STORE_BLOCK_REQUEST: u64 = 0;
 const CAP_SERIAL_LOG: u64 = 1;
@@ -24,6 +25,8 @@ const CAP_VIRTIO_DEVICE: u64 = 12;
 const CAP_VERTEXFS_BLOCK_REQUEST: u64 = 13;
 const CAP_VERTEXFS_BLOCK_REPLY: u64 = 14;
 const CAP_VERTEXFS_FSYNC_FAULT: u64 = 15;
+const CAP_GENERATION_METADATA_BLOCK_REQUEST: u64 = 16;
+const CAP_GENERATION_METADATA_BLOCK_REPLY: u64 = 17;
 const FAULT_INJECTION_TOKEN: &[u8] = b"krust-block-driver-fault\n";
 const VERTEXFS_FSYNC_FAULT_TOKEN: &[u8] = b"krust-vertexfs-fsync-fault\n";
 
@@ -37,20 +40,21 @@ const BLOCK_OP_WRITE_SECTOR: u16 = 2;
 const BLOCK_REQUEST_LEN: usize = 16;
 const BLOCK_WRITE_ACK_LEN: usize = 16;
 const BLOCK_POLL_TIMEOUT_MS: u64 = 1;
-const BLOCK_IDLE_ROUNDS: u64 = 500;
-const SECTOR_SIZE: usize = 512;
+const BLOCK_IDLE_ROUNDS: u64 = 1000;
+const SECTOR_SIZE: usize = vdisk_abi::SECTOR_SIZE;
 const WRITEBACK_PATTERN: &[u8] = b"M43 VertexDisk journal writeback\n";
-const VERTEX_DISK_MAGIC: &[u8; 16] = b"VERTEXDISKV1\0\0\0\0";
-const VERTEX_DISK_VERSION: u16 = 3;
-const VERTEX_DISK_CHECKSUM_OFFSET: usize = 20;
-const VERTEX_DISK_TOTAL_SECTORS_OFFSET: usize = 24;
-const VERTEX_DISK_SECTION_TABLE_OFFSET: usize = 32;
-const VERTEX_DISK_SECTION_RECORD_LEN: usize = 16;
-const VERTEX_DISK_JOURNAL_SECTION: usize = 5;
-const VERTEX_DISK_VERTEXFS_SECTION: usize = 6;
-const VERTEX_DISK_GRAPH_STORE_SECTION: usize = 7;
+const VERTEX_DISK_MAGIC: &[u8; 16] = vdisk_abi::MAGIC;
+const VERTEX_DISK_VERSION: u16 = vdisk_abi::VERSION;
+const VERTEX_DISK_CHECKSUM_OFFSET: usize = vdisk_abi::CHECKSUM_OFFSET;
+const VERTEX_DISK_TOTAL_SECTORS_OFFSET: usize = vdisk_abi::TOTAL_SECTORS_OFFSET;
+const VERTEX_DISK_SECTION_TABLE_OFFSET: usize = vdisk_abi::SECTION_TABLE_OFFSET;
+const VERTEX_DISK_SECTION_RECORD_LEN: usize = vdisk_abi::SECTION_RECORD_LEN;
+const VERTEX_DISK_GENERATION_METADATA_SECTION: usize = vdisk_abi::SECTION_GENERATION_METADATA;
+const VERTEX_DISK_JOURNAL_SECTION: usize = vdisk_abi::SECTION_JOURNAL;
+const VERTEX_DISK_VERTEXFS_SECTION: usize = vdisk_abi::SECTION_VERTEXFS;
+const VERTEX_DISK_GRAPH_STORE_SECTION: usize = vdisk_abi::SECTION_GRAPH_STORE;
 const VERTEXFS_SUPERBLOCK_MAGIC: &[u8; 16] = b"VERTEXFSV1\0\0\0\0\0\0";
-const GRAPH_STORE_MAGIC: &[u8; 16] = b"VDISKGRAPHV0\0\0\0\0";
+const GRAPH_STORE_MAGIC: &[u8; 16] = vdisk_abi::GRAPH_STORE_MAGIC;
 
 const PCI_CONFIG_ADDRESS: u16 = 0x0cf8;
 const PCI_CONFIG_DATA: u16 = 0x0cfc;
@@ -544,6 +548,7 @@ fn io_write32(cap_slot: u64, port: u16, value: u32) -> Option<()> {
 
 #[derive(Clone, Copy)]
 struct VertexDiskLayout {
+    generation_metadata: Section,
     store_index: Section,
     store_data: Section,
     state_index: Section,
@@ -672,6 +677,11 @@ fn serve_block_request(device: &mut VirtioBlock, layout: &VertexDiskLayout) -> b
         layout,
         BlockClient::VertexFs,
         CAP_VERTEXFS_BLOCK_REQUEST,
+    ) || serve_client_request(
+        device,
+        layout,
+        BlockClient::GenerationMetadata,
+        CAP_GENERATION_METADATA_BLOCK_REQUEST,
     )
 }
 
@@ -718,6 +728,7 @@ enum BlockClient {
     Store,
     State,
     VertexFs,
+    GenerationMetadata,
 }
 
 #[derive(Clone, Copy)]
@@ -736,7 +747,7 @@ fn serve_read_request(device: &mut VirtioBlock, client: BlockClient, request: Bl
             device.state_read_logged = true;
             true
         }
-        BlockClient::VertexFs => false,
+        BlockClient::VertexFs | BlockClient::GenerationMetadata => false,
         _ => false,
     };
     if log_request {
@@ -772,6 +783,9 @@ fn serve_write_request(
     {
         device.vertexfs_write_logged = true;
         log(b"block-driver writes VertexFS fsync sector");
+    }
+    if let BlockClient::GenerationMetadata = client {
+        log(b"block-driver writes VertexDisk generation metadata sector");
     }
     if let BlockClient::VertexFs = client
         && device.fault_vertexfs_fsync
@@ -823,6 +837,7 @@ fn reply_cap_for_client(client: BlockClient) -> u64 {
         BlockClient::Store => CAP_VERTEX_STORE_BLOCK_REPLY,
         BlockClient::State => CAP_VERTEX_STATE_BLOCK_REPLY,
         BlockClient::VertexFs => CAP_VERTEXFS_BLOCK_REPLY,
+        BlockClient::GenerationMetadata => CAP_GENERATION_METADATA_BLOCK_REPLY,
     }
 }
 
@@ -865,6 +880,13 @@ fn request_authorized(
             BLOCK_OP_READ_SECTOR | BLOCK_OP_WRITE_SECTOR => {
                 layout.vertexfs.contains(request.sector)
             }
+            _ => false,
+        },
+        BlockClient::GenerationMetadata => match request.op {
+            BLOCK_OP_READ_SECTOR => {
+                request.sector == 0 || layout.generation_metadata.contains(request.sector)
+            }
+            BLOCK_OP_WRITE_SECTOR => layout.generation_metadata.contains(request.sector),
             _ => false,
         },
     }
@@ -911,6 +933,11 @@ fn vertexdisk_layout(sector: &[u8; SECTOR_SIZE]) -> Option<VertexDiskLayout> {
     }
 
     Some(VertexDiskLayout {
+        generation_metadata: checked_section(
+            sector,
+            VERTEX_DISK_GENERATION_METADATA_SECTION,
+            total_sectors,
+        )?,
         store_index: checked_section(sector, 1, total_sectors)?,
         store_data: checked_section(sector, 2, total_sectors)?,
         state_index: checked_section(sector, 3, total_sectors)?,

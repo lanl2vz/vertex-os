@@ -1,0 +1,39 @@
+[workspace]
+members = [
+    "block-driver",
+    "console-driver",
+    "console-shell",
+    "counter",
+    "echo",
+    "faulty",
+    "flaky",
+    "generation-manager",
+    "hog",
+    "init",
+    "logd",
+    "model-reader",
+    "netstack",
+    "serial-driver",
+    "state-reader",
+    "timer",
+    "vertex-inspect",
+    "vertex-state",
+    "vertex-store",
+]
+resolver = "3"
+
+[workspace.dependencies]
+blake3 = { version = "=1.8.3", default-features = false, features = ["pure"] }
+vertex-abi = { path = "../../../crates/vertex-abi" }
+
+[profile.dev]
+panic = "abort"
+
+[profile.dev.package.blake3]
+opt-level = 3
+
+[profile.release]
+panic = "abort"
+lto = true
+codegen-units = 1
+strip = "debuginfo"

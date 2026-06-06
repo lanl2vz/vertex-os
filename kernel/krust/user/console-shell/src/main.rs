@@ -11,16 +11,18 @@ const CAP_READINESS: u64 = 2;
 const CAP_COUNTER_REPLY: u64 = 3;
 const CAP_CONSOLE_OUTPUT: u64 = 4;
 const CAP_CONSOLE_CONTROL: u64 = 5;
-const CAP_COUNTER_REQUEST: u64 = 6;
-const CAP_STATE_CONTROL: u64 = 7;
-const CAP_INSPECT: u64 = 8;
-const CAP_UPDATE_CONTROL: u64 = 9;
+const CAP_GENERATION_MANAGER_REQUEST: u64 = 6;
+const CAP_COUNTER_REQUEST: u64 = 7;
+const CAP_STATE_CONTROL: u64 = 8;
+const CAP_INSPECT: u64 = 9;
 const PROTOCOL_HEALTH_V0: u16 = 2;
 const MESSAGE_READY: u16 = 1;
 const ENVELOPE_LEN: usize = 16;
 const REPORT_BUFFER_LEN: usize = 128 * 1024;
 const CONTROL_SHUTDOWN: &[u8] = b"shutdown";
+const GENERATION_MANAGER_SHUTDOWN: &[u8] = b"shutdown";
 const STATE_CONTROL_PATH: &[u8] = b"/state/counter/control";
+const STATE_CLIENT_DRAIN_ATTEMPTS: u64 = 4096;
 const SERVICE_NAMES: [&[u8]; 5] = [
     b"vertex-init",
     b"logd",
@@ -102,7 +104,11 @@ pub extern "C" fn _start() -> ! {
             log(b"console-shell command: install generation gen:new");
             console_write(b"install generation gen:new\n> ");
             yield_for_console_driver();
-            let status = sys::activate_generation(CAP_UPDATE_CONTROL, b"gen:console-new-0002");
+            log(b"console-shell requests generation-manager install");
+            let status = sys::ipc_send(
+                CAP_GENERATION_MANAGER_REQUEST,
+                b"install gen:console-new-0002",
+            );
             if status != sys::STATUS_OK {
                 log(b"console-shell install generation failed");
                 console_write(b"install generation failed\n> ");
@@ -117,7 +123,9 @@ pub extern "C" fn _start() -> ! {
             let value = counter_request(b"G");
             console_write_rollback(value);
             yield_for_console_driver();
-            let status = sys::rollback_generation(CAP_UPDATE_CONTROL, b"gen:console-0001");
+            log(b"console-shell requests generation-manager rollback");
+            let status =
+                sys::ipc_send(CAP_GENERATION_MANAGER_REQUEST, b"rollback gen:console-0001");
             if status != sys::STATUS_OK {
                 log(b"console-shell rollback failed");
                 console_write(b"rollback failed\n> ");
@@ -139,7 +147,9 @@ pub extern "C" fn _start() -> ! {
             log(b"console-shell command: halt");
             console_write(b"Native console shell ok\n");
             let _ = sys::ipc_send(CAP_COUNTER_REQUEST, b"H");
+            wait_for_state_clients_to_drain();
             shutdown_state_service();
+            shutdown_generation_manager();
             if sys::ipc_send(CAP_CONSOLE_CONTROL, CONTROL_SHUTDOWN) != sys::STATUS_OK {
                 log(b"console-shell shutdown send failed");
                 sys::exit(1);
@@ -284,6 +294,58 @@ fn shutdown_state_service() {
         sys::exit(1);
     }
     log(b"console-shell requested state shutdown");
+}
+
+fn wait_for_state_clients_to_drain() {
+    log(b"console-shell waits for state clients to drain");
+    let mut restart_observed = false;
+    let mut attempt = 0;
+    while attempt < STATE_CLIENT_DRAIN_ATTEMPTS {
+        let report = runtime_report();
+        if service_lifecycle_seen(report, b"echo", b"restarting") {
+            restart_observed = true;
+        }
+        if restart_observed && bytes_eq(process_state(report, b"echo"), b"exited") {
+            log(b"console-shell observed state clients drained");
+            return;
+        }
+        let _ = sys::yield_now();
+        attempt += 1;
+    }
+
+    log(b"console-shell state client drain timed out");
+    sys::exit(1);
+}
+
+fn service_lifecycle_seen(report: &[u8], service: &[u8], state: &[u8]) -> bool {
+    let needles: [&[u8]; 3] = [b"service-lifecycle[", b"service=", b"state="];
+    let mut start = 0;
+    while start <= report.len() {
+        let mut end = start;
+        while end < report.len() && report[end] != b'\n' {
+            end += 1;
+        }
+        let line = &report[start..end];
+        if contains_all(line, &needles)
+            && field_eq(line, b"service=", service)
+            && field_eq(line, b"state=", state)
+        {
+            return true;
+        }
+        if end == report.len() {
+            break;
+        }
+        start = end + 1;
+    }
+    false
+}
+
+fn shutdown_generation_manager() {
+    if sys::ipc_send(CAP_GENERATION_MANAGER_REQUEST, GENERATION_MANAGER_SHUTDOWN) != sys::STATUS_OK
+    {
+        log(b"console-shell generation-manager shutdown failed");
+        sys::exit(1);
+    }
 }
 
 fn console_write_rollback(value: &[u8]) {
