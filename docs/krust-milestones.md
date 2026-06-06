@@ -57,8 +57,8 @@ object, records graph provenance for processes and capabilities, exposes graph
 checksum/hash/object counts through runtime inspection, and rejects corrupt
 compact or disk graph-store records before activation. M83 moves generation
 installation, rollback, durable selected-generation metadata, and
-prepare/commit/rollback recovery into the native generation-manager and
-block-driver authority path.
+prepare/commit/rollback recovery into the native generation-manager,
+block-driver, and staged kernel runtime-build authority path.
 
 M74-M82 are implemented as the current VFS, open-file, directory, block-cache,
 VertexFS/mount-namespace, coordination, and security/soak substrate. The
@@ -3927,8 +3927,10 @@ done: generation-manager install verifies manifest hash and store closure
 done: generation-manager writes prepare/commit/rollback/abort generation
       metadata checkpoints through native block-driver authority, scoped to the
       VertexDisk generation metadata section
-done: generation-manager asks the kernel to verify the candidate generation
-      before committing durable selected-generation metadata
+done: generation-manager asks the kernel to verify and stage/build the
+      candidate runtime before committing durable selected-generation metadata
+done: kernel activation and rollback enter previously staged generation
+      runtimes, so runtime construction failure aborts before durable commit
 done: rollback returns to the previous known-good generation and preserves the
       counter state according to the current graph state policy
 done: activation failure records service, dependency, policy, and reason
@@ -3946,7 +3948,8 @@ Acceptance tests:
 
 ```text
 done: booted system installs a new candidate generation from native graph-store input
-done: selected generation changes atomically only after activation succeeds
+done: selected generation changes durably only after candidate verification
+      and staged runtime construction succeed
 done: failed activation restores the previous known-good generation
 done: activation failure records service, dependency, and policy error details
 done: rollback preserves state according to the current graph policy
@@ -3978,7 +3981,8 @@ Implementation notes:
   as VertexDisk metadata. The live path is native: `gen-manager` holds only
   scoped send/receive endpoint authority, `block-driver` validates the request
   against the generation metadata section, and the kernel verifies candidate
-  generation closure before the manager commits selected-generation metadata.
+  generation closure and stages a buildable runtime before the manager commits
+  selected-generation metadata.
 - M83 intentionally keeps migration policy minimal. The graph records preserve
   policy for the current counter state; richer migrate/fork/discard semantics
   are M85 work.

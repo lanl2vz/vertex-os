@@ -708,11 +708,18 @@ svc:counter has state authority from generation graph
 		generation-manager ready
 		console-shell requests generation-manager install
 		generation-manager install candidate from native graph-store: generation=gen:console-new-0002
+		generation-manager reads VertexDisk generation metadata
+		block-driver writes VertexDisk generation metadata sector
+		generation-manager writes VertexDisk generation metadata: transaction=prepare selected=gen:console-0001 previous=gen:console-0001 target=gen:console-new-0002
+		Native generation verification accepted: generation=gen:console-new-0002
 		Native update transaction verifies manifest hash: generation=gen:console-new-0002
 		Native update transaction verifies store closure: generation=gen:console-new-0002
+		Krust generation switch staged: from=gen:console-0001 to=gen:console-new-0002
+		generation-manager writes VertexDisk generation metadata: transaction=commit selected=gen:console-new-0002 previous=gen:console-0001 target=gen:console-new-0002
 		Krust generation switch accepted: from=gen:console-0001 to=gen:console-new-0002
 		Krust generation switch entering generation: gen:console-new-0002
 		Boot generation: gen:console-new-0002
+		console-shell observed state clients drained
 		Native console shell ok
 		Native service activation ok
 		'
@@ -796,9 +803,15 @@ svc:counter has state authority from generation graph
 	console-shell requests generation-manager install
 	generation-manager install candidate from native graph-store: generation=gen:console-new-0002
 	generation-manager transaction prepare: generation=gen:console-new-0002
+	generation-manager reads VertexDisk generation metadata
+	block-driver writes VertexDisk generation metadata sector
+	generation-manager writes VertexDisk generation metadata: transaction=prepare selected=gen:console-0001 previous=gen:console-0001 target=gen:console-new-0002
+	Native generation verification accepted: generation=gen:console-new-0002
 	Native generation manager journal prepare: previous=gen:console-0001 target=gen:console-new-0002
 	Native update transaction verifies manifest hash: generation=gen:console-new-0002
 	Native update transaction verifies store closure: generation=gen:console-new-0002
+	Krust generation switch staged: from=gen:console-0001 to=gen:console-new-0002
+	generation-manager writes VertexDisk generation metadata: transaction=commit selected=gen:console-new-0002 previous=gen:console-0001 target=gen:console-new-0002
 	Krust generation switch accepted: from=gen:console-0001 to=gen:console-new-0002
 	Native generation manager journal commit: selected_generation=gen:console-new-0002
 	Krust generation switch entering generation: gen:console-new-0002
@@ -809,13 +822,17 @@ svc:counter has state authority from generation graph
 	counter value: 42
 	console-shell requests generation-manager rollback
 	generation-manager transaction rollback prepare: target=gen:console-0001
+	Native generation verification accepted: generation=gen:console-0001
 	Native generation manager journal prepare: previous=gen:console-new-0002 target=gen:console-0001
+	Krust rollback generation staged: target=gen:console-0001
+	generation-manager writes VertexDisk generation metadata: transaction=rollback selected=gen:console-0001 previous=gen:console-new-0002 target=gen:console-0001
 		Krust rollback generation accepted: target=gen:console-0001
 		Native generation manager journal rollback: failed=gen:console-new-0002 selected_generation=gen:console-0001 reason=activation-failed
 		Native generation manager failure detail: service=gen:console-new-0002 dependency=service-readiness policy=known-good-rollback reason=activation-failed
 		Krust rollback entering generation: gen:console-0001
 	Boot generation: gen:console-0001
 	svc:counter has state authority from generation graph
+	console-shell observed state clients drained
 	Native console shell ok
 	Native service activation ok
 	'

@@ -298,16 +298,18 @@ fn shutdown_state_service() {
 
 fn wait_for_state_clients_to_drain() {
     log(b"console-shell waits for state clients to drain");
-    let mut restart_observed = false;
+    let mut stable_drained = false;
     let mut attempt = 0;
     while attempt < STATE_CLIENT_DRAIN_ATTEMPTS {
         let report = runtime_report();
-        if service_lifecycle_seen(report, b"echo", b"restarting") {
-            restart_observed = true;
-        }
-        if restart_observed && bytes_eq(process_state(report, b"echo"), b"exited") {
-            log(b"console-shell observed state clients drained");
-            return;
+        if state_clients_drained(report) {
+            if stable_drained {
+                log(b"console-shell observed state clients drained");
+                return;
+            }
+            stable_drained = true;
+        } else {
+            stable_drained = false;
         }
         let _ = sys::yield_now();
         attempt += 1;
@@ -317,8 +319,76 @@ fn wait_for_state_clients_to_drain() {
     sys::exit(1);
 }
 
+fn state_clients_drained(report: &[u8]) -> bool {
+    let mut start = 0;
+    while start <= report.len() {
+        let mut end = start;
+        while end < report.len() && report[end] != b'\n' {
+            end += 1;
+        }
+        let line = &report[start..end];
+        if let Some(name) = state_client_name(line)
+            && state_client_requires_drain(name)
+            && !state_client_drained(report, name)
+        {
+            return false;
+        }
+        if end == report.len() {
+            break;
+        }
+        start = end + 1;
+    }
+    true
+}
+
+fn state_client_name(line: &[u8]) -> Option<&[u8]> {
+    if state_client_cap_line(line) {
+        return field_slice(line, b"proc=");
+    }
+    if state_client_process_line(line) {
+        return field_slice(line, b"name=");
+    }
+    None
+}
+
+fn state_client_drained(report: &[u8], name: &[u8]) -> bool {
+    if !bytes_eq(process_state(report, name), b"exited") {
+        return false;
+    }
+    if bytes_eq(process_restart_policy(report, name), b"always")
+        && !service_lifecycle_seen(report, name, b"restarting")
+    {
+        return false;
+    }
+    true
+}
+
+fn state_client_process_line(line: &[u8]) -> bool {
+    if !starts_with(line, b"process[") {
+        return false;
+    }
+    let Some(root) = field_slice(line, b"mount_root=") else {
+        return false;
+    };
+    bytes_eq(root, b"/state") || starts_with(root, b"/state/")
+}
+
+fn state_client_cap_line(line: &[u8]) -> bool {
+    if !starts_with(line, b"space=initial proc=") || find_subslice(line, b"vfs-root=").is_none() {
+        return false;
+    }
+    let Some(root) = field_slice(line, b"root=") else {
+        return false;
+    };
+    bytes_eq(root, b"/state") || starts_with(root, b"/state/")
+}
+
+fn state_client_requires_drain(name: &[u8]) -> bool {
+    !bytes_eq(name, b"console-shell") && !bytes_eq(name, b"vertex-state")
+}
+
 fn service_lifecycle_seen(report: &[u8], service: &[u8], state: &[u8]) -> bool {
-    let needles: [&[u8]; 3] = [b"service-lifecycle[", b"service=", b"state="];
+    let needles: [&[u8]; 3] = [b"service-lifecycle[", b" service=", b" state="];
     let mut start = 0;
     while start <= report.len() {
         let mut end = start;
@@ -386,6 +456,30 @@ fn process_state<'a>(report: &'a [u8], name: &[u8]) -> &'a [u8] {
             && let Some(state) = field_slice(line, b"state=")
         {
             return state;
+        }
+        if end == report.len() {
+            break;
+        }
+        start = end + 1;
+    }
+
+    log(b"console-shell services query failed");
+    sys::exit(1);
+}
+
+fn process_restart_policy<'a>(report: &'a [u8], name: &[u8]) -> &'a [u8] {
+    let mut start = 0;
+    while start <= report.len() {
+        let mut end = start;
+        while end < report.len() && report[end] != b'\n' {
+            end += 1;
+        }
+        let line = &report[start..end];
+        if starts_with(line, b"process[")
+            && field_eq(line, b"name=", name)
+            && let Some(policy) = field_slice(line, b"restart_policy=")
+        {
+            return policy;
         }
         if end == report.len() {
             break;

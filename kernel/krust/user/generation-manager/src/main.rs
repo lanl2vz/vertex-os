@@ -157,6 +157,21 @@ fn install_generation(generation: &[u8]) {
         );
         return;
     }
+    if sys::stage_generation(CAP_UPDATE_CONTROL, generation) != sys::STATUS_OK {
+        let _ = metadata.write_checkpoint(
+            GENERATION_TRANSACTION_ABORT,
+            GENERATION_FAILURE_RUNTIME_BUILD_FAILED,
+            selected.as_slice(),
+            selected.as_slice(),
+            known_good.as_slice(),
+            generation,
+        );
+        log_generation(
+            b"generation-manager transaction abort: reason=stage-failed generation=",
+            generation,
+        );
+        return;
+    }
     if !metadata.write_checkpoint(
         GENERATION_TRANSACTION_COMMIT,
         GENERATION_FAILURE_NONE,
@@ -223,6 +238,21 @@ fn rollback_generation(generation: &[u8]) {
     if sys::verify_generation(CAP_UPDATE_CONTROL, generation) != sys::STATUS_OK {
         log_generation(
             b"generation-manager transaction rollback abort: reason=verification-failed target=",
+            generation,
+        );
+        return;
+    }
+    if sys::stage_rollback_generation(CAP_UPDATE_CONTROL, generation) != sys::STATUS_OK {
+        let _ = metadata.write_checkpoint(
+            GENERATION_TRANSACTION_ABORT,
+            GENERATION_FAILURE_ROLLBACK_BUILD_FAILED,
+            selected.as_slice(),
+            generation,
+            generation,
+            generation,
+        );
+        log_generation(
+            b"generation-manager transaction rollback abort: reason=stage-failed target=",
             generation,
         );
         return;

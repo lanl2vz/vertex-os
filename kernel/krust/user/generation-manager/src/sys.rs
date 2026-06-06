@@ -12,6 +12,8 @@ const SYS_LOG_WRITE: u64 = 7;
 const SYS_ACTIVATE_GENERATION: u64 = 8;
 const SYS_ROLLBACK_GENERATION: u64 = 18;
 const SYS_VERIFY_GENERATION: u64 = 72;
+const SYS_STAGE_GENERATION: u64 = 73;
+const SYS_STAGE_ROLLBACK_GENERATION: u64 = 74;
 
 pub fn ipc_send(cap_slot: u64, message: &[u8]) -> u64 {
     syscall3(
@@ -52,6 +54,24 @@ pub fn activate_generation(cap_slot: u64, generation: &[u8]) -> u64 {
 pub fn verify_generation(cap_slot: u64, generation: &[u8]) -> u64 {
     syscall3(
         SYS_VERIFY_GENERATION,
+        cap_slot,
+        generation.as_ptr() as u64,
+        generation.len() as u64,
+    )
+}
+
+pub fn stage_generation(cap_slot: u64, generation: &[u8]) -> u64 {
+    syscall3(
+        SYS_STAGE_GENERATION,
+        cap_slot,
+        generation.as_ptr() as u64,
+        generation.len() as u64,
+    )
+}
+
+pub fn stage_rollback_generation(cap_slot: u64, generation: &[u8]) -> u64 {
+    syscall3(
+        SYS_STAGE_ROLLBACK_GENERATION,
         cap_slot,
         generation.as_ptr() as u64,
         generation.len() as u64,

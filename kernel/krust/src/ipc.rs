@@ -404,6 +404,7 @@ pub struct BootProcessConfig {
     pub image_base: u64,
     pub image_length: u64,
     pub initial: bool,
+    pub restart_policy: u16,
     pub mount_root: &'static str,
     pub mounts: [Option<BootProcessMountConfig>; MAX_BOOT_PROCESS_MOUNTS],
     pub mount_count: usize,
@@ -421,6 +422,13 @@ struct RuntimeReapTarget {
     pid: ProcessId,
     name: &'static str,
     cr3: u64,
+}
+
+#[derive(Clone, Copy)]
+struct StagingBuild {
+    initial_context: ProcessContext,
+    old_contexts: [Option<RuntimeReapTarget>; MAX_PROCESSES],
+    old_context_count: usize,
 }
 
 #[derive(Clone, Copy)]
@@ -1391,6 +1399,19 @@ struct GenerationRuntime {
     config: &'static BootRuntimeConfig,
 }
 
+#[derive(Clone, Copy)]
+struct StagedGeneration {
+    generation_id: &'static str,
+    config: &'static BootRuntimeConfig,
+    previous_generation: &'static str,
+    previous_config: Option<&'static BootRuntimeConfig>,
+    old_cap_count: u64,
+    old_contexts: [Option<RuntimeReapTarget>; MAX_PROCESSES],
+    old_context_count: usize,
+    initial_context: ProcessContext,
+    rollback: bool,
+}
+
 struct GenerationRuntimeTable {
     entries: [Option<GenerationRuntime>; MAX_GENERATION_CONFIGS],
     count: usize,
@@ -1420,6 +1441,7 @@ static INSTALL_STAGING_RUNTIME: Global<RuntimeState> = Global(UnsafeCell::new(Ru
 static GENERATION_RUNTIMES: Global<GenerationRuntimeTable> =
     Global(UnsafeCell::new(GenerationRuntimeTable::new()));
 static ROLLBACK_RUNTIME: Global<Option<GenerationRuntime>> = Global(UnsafeCell::new(None));
+static STAGED_GENERATION: Global<Option<StagedGeneration>> = Global(UnsafeCell::new(None));
 static FAILED_GENERATION: Global<Option<&'static str>> = Global(UnsafeCell::new(None));
 static BOOT_MANAGER: Global<BootManagerState> = Global(UnsafeCell::new(BootManagerState::new()));
 static FRAME_ALLOCATOR: Global<Option<*mut memory::FrameAllocator>> = Global(UnsafeCell::new(None));
@@ -5735,6 +5757,15 @@ fn generation_cap_count_in_space(space: CapabilitySpace, generation_id: &'static
 }
 
 pub fn init_from_boot_config(config: &'static BootRuntimeConfig) -> Result<(), InitError> {
+    let build = stage_boot_config_runtime(config)?;
+    commit_staged_boot_config_runtime(config, build);
+
+    Ok(())
+}
+
+fn stage_boot_config_runtime(
+    config: &'static BootRuntimeConfig,
+) -> Result<StagingBuild, InitError> {
     validate_boot_config_installable(config)?;
     let initial_index = initial_process_index(config)?;
     let initial_process = config.processes[initial_index].ok_or(InitError::InvalidBootManifest)?;
@@ -5753,25 +5784,35 @@ pub fn init_from_boot_config(config: &'static BootRuntimeConfig) -> Result<(), I
     };
     if result.is_err() {
         reclaim_detached_address_space(initial_process.name, initial_context.cr3);
-        return result;
+        return result.map(|_| StagingBuild {
+            initial_context,
+            old_contexts,
+            old_context_count,
+        });
     }
 
+    Ok(StagingBuild {
+        initial_context,
+        old_contexts,
+        old_context_count,
+    })
+}
+
+fn commit_staged_boot_config_runtime(config: &'static BootRuntimeConfig, build: StagingBuild) {
     boot_manager().start_boot(config.generation_id);
     release_all_runtime_dma_mappings();
     commit_staging_runtime();
     install_runtime_interrupt_masks(config);
     print_boot_tables(runtime());
 
-    if old_context_count > 0 {
+    if build.old_context_count > 0 {
         unsafe {
-            gdt::switch_address_space(initial_context.cr3);
+            gdt::switch_address_space(build.initial_context.cr3);
         }
-        if reap_runtime_contexts(&old_contexts, old_context_count).is_err() {
+        if reap_runtime_contexts(&build.old_contexts, build.old_context_count).is_err() {
             serial::write_str("Krust old runtime address-space reap incomplete\n");
         }
     }
-
-    Ok(())
 }
 
 fn build_boot_config_runtime(
@@ -8636,16 +8677,14 @@ pub fn log_write(cap_slot: u64, source: *const u8, len: usize) -> Result<(), Ipc
     Ok(())
 }
 
-pub fn activate_generation(
+fn read_generation_request(
     cap_slot: u64,
     generation: *const u8,
     len: usize,
-    frame: &mut SyscallFrame,
-) -> Result<(), IpcError> {
+) -> Result<([u8; MAX_MESSAGE_BYTES], usize), IpcError> {
     if len > MAX_MESSAGE_BYTES {
         return Err(IpcError::MessageTooLarge);
     }
-
     let _process_control = process_control_from_cap(
         cap_slot,
         capability::RIGHT_CONTROL | capability::RIGHT_REVOKE,
@@ -8653,7 +8692,11 @@ pub fn activate_generation(
     let mut generation_id = [0u8; MAX_MESSAGE_BYTES];
     usercopy::copy_from_user(&mut generation_id, UserPtr::new(generation as u64), len)
         .map_err(|_| IpcError::InvalidUserBuffer)?;
+    Ok((generation_id, len))
+}
 
+pub fn stage_generation(cap_slot: u64, generation: *const u8, len: usize) -> Result<(), IpcError> {
+    let (generation_id, len) = read_generation_request(cap_slot, generation, len)?;
     let requested = &generation_id[..len];
     let target = match generation_runtimes().find(requested) {
         Some(target) => target,
@@ -8694,6 +8737,7 @@ pub fn activate_generation(
         return Ok(());
     }
 
+    discard_uncommitted_staged_generation();
     boot_manager().install_prepare(previous_generation, target.generation_id);
     if verify_generation_transaction(target).is_err() {
         boot_manager().install_abort(target.generation_id, "verification-failed");
@@ -8703,34 +8747,95 @@ pub fn activate_generation(
         return Err(IpcError::BadCapability);
     }
 
-    if let Some(previous_config) = previous_config {
+    let build = match stage_boot_config_runtime(target.config) {
+        Ok(build) => build,
+        Err(_) => {
+            boot_manager().install_abort(target.generation_id, "runtime-build-failed");
+            return Err(IpcError::BadCapability);
+        }
+    };
+
+    *staged_generation() = Some(StagedGeneration {
+        generation_id: target.generation_id,
+        config: target.config,
+        previous_generation,
+        previous_config,
+        old_cap_count,
+        old_contexts: build.old_contexts,
+        old_context_count: build.old_context_count,
+        initial_context: build.initial_context,
+        rollback: false,
+    });
+
+    serial::write_str("Krust generation switch staged: from=");
+    serial::write_str(previous_generation);
+    serial::write_str(" to=");
+    serial::write_str(target.generation_id);
+    serial::write_str("\n");
+    Ok(())
+}
+
+pub fn activate_generation(
+    cap_slot: u64,
+    generation: *const u8,
+    len: usize,
+    frame: &mut SyscallFrame,
+) -> Result<(), IpcError> {
+    let (generation_id, len) = read_generation_request(cap_slot, generation, len)?;
+    let requested = &generation_id[..len];
+    if runtime().generation_id.as_bytes() == requested {
+        serial::write_str("Krust generation switch already active: ");
+        serial::write_ascii_bytes(requested);
+        serial::write_str("\n");
+        return Ok(());
+    }
+    let staged_matches = (*staged_generation())
+        .map(|staged| !staged.rollback && staged.generation_id.as_bytes() == requested)
+        .unwrap_or(false);
+    if !staged_matches {
+        stage_generation(cap_slot, generation, len)?;
+    }
+    let Some(staged) = *staged_generation() else {
+        return Err(IpcError::BadCapability);
+    };
+    if staged.rollback || staged.generation_id.as_bytes() != requested {
+        serial::write_str("Krust generation switch rejected: staged generation mismatch\n");
+        return Err(IpcError::BadCapability);
+    };
+
+    if let Some(previous_config) = staged.previous_config {
         set_rollback_runtime(GenerationRuntime {
-            generation_id: previous_generation,
+            generation_id: staged.previous_generation,
             config: previous_config,
         });
     }
 
     serial::write_str("Krust generation switch accepted: from=");
-    serial::write_str(previous_generation);
+    serial::write_str(staged.previous_generation);
     serial::write_str(" to=");
-    serial::write_str(target.generation_id);
+    serial::write_str(staged.generation_id);
     serial::write_str("\n");
     serial::write_str("Krust generation switch revoked old generation authority: generation=");
-    serial::write_str(previous_generation);
+    serial::write_str(staged.previous_generation);
     serial::write_str(" caps=");
-    serial::write_u64_dec(old_cap_count);
+    serial::write_u64_dec(staged.old_cap_count);
     serial::write_str("\n");
     serial::write_str("old generation service loses old capability\n");
 
-    if init_from_boot_config(target.config).is_err() {
-        boot_manager().install_abort(target.generation_id, "runtime-build-failed");
-        return Err(IpcError::BadCapability);
-    }
+    commit_staged_boot_config_runtime(
+        staged.config,
+        StagingBuild {
+            initial_context: staged.initial_context,
+            old_contexts: staged.old_contexts,
+            old_context_count: staged.old_context_count,
+        },
+    );
     serial::write_str("Native update transaction journal commit\n");
-    boot_manager().install_selected(previous_generation, target.generation_id);
-    let context = initial_process_context().ok_or(IpcError::BadCapability)?;
+    boot_manager().install_selected(staged.previous_generation, staged.generation_id);
+    let context = staged.initial_context;
+    clear_staged_generation();
     serial::write_str("Krust generation switch entering generation: ");
-    serial::write_str(target.generation_id);
+    serial::write_str(staged.generation_id);
     serial::write_str("\n");
     serial::write_str("update commit interrupted after final pointer boots verified generation\n");
     let _ = frame;
@@ -8858,24 +8963,12 @@ fn verify_generation_store_closure(config: &BootRuntimeConfig) -> Result<(), Ipc
     Ok(())
 }
 
-pub fn rollback_generation(
+pub fn stage_rollback_generation(
     cap_slot: u64,
     generation: *const u8,
     len: usize,
-    frame: &mut SyscallFrame,
 ) -> Result<(), IpcError> {
-    if len > MAX_MESSAGE_BYTES {
-        return Err(IpcError::MessageTooLarge);
-    }
-    let _process_control = process_control_from_cap(
-        cap_slot,
-        capability::RIGHT_CONTROL | capability::RIGHT_REVOKE,
-    )?;
-
-    let mut requested = [0u8; MAX_MESSAGE_BYTES];
-    usercopy::copy_from_user(&mut requested, UserPtr::new(generation as u64), len)
-        .map_err(|_| IpcError::InvalidUserBuffer)?;
-
+    let (requested, len) = read_generation_request(cap_slot, generation, len)?;
     let rollback = match unsafe { *ROLLBACK_RUNTIME.0.get() } {
         Some(rollback) => rollback,
         None => {
@@ -8900,31 +8993,83 @@ pub fn rollback_generation(
             runtime.generation_cap_count(runtime.generation_id),
         )
     };
-    serial::write_str("Krust rollback generation accepted: target=");
+
+    discard_uncommitted_staged_generation();
+    boot_manager().install_prepare(previous_generation, rollback.generation_id);
+    let build = match stage_boot_config_runtime(rollback.config) {
+        Ok(build) => build,
+        Err(_) => {
+            boot_manager().install_abort(rollback.generation_id, "rollback-build-failed");
+            return Err(IpcError::BadCapability);
+        }
+    };
+    *staged_generation() = Some(StagedGeneration {
+        generation_id: rollback.generation_id,
+        config: rollback.config,
+        previous_generation,
+        previous_config,
+        old_cap_count,
+        old_contexts: build.old_contexts,
+        old_context_count: build.old_context_count,
+        initial_context: build.initial_context,
+        rollback: true,
+    });
+    serial::write_str("Krust rollback generation staged: target=");
     serial::write_str(rollback.generation_id);
     serial::write_str("\n");
-    serial::write_str("Krust rollback revoked failed generation authority: generation=");
-    serial::write_str(previous_generation);
-    serial::write_str(" caps=");
-    serial::write_u64_dec(old_cap_count);
-    serial::write_str("\n");
+    Ok(())
+}
 
-    boot_manager().install_prepare(previous_generation, rollback.generation_id);
-    if init_from_boot_config(rollback.config).is_err() {
-        boot_manager().install_abort(rollback.generation_id, "rollback-build-failed");
+pub fn rollback_generation(
+    cap_slot: u64,
+    generation: *const u8,
+    len: usize,
+    frame: &mut SyscallFrame,
+) -> Result<(), IpcError> {
+    let (requested, len) = read_generation_request(cap_slot, generation, len)?;
+    let staged_matches = (*staged_generation())
+        .map(|staged| staged.rollback && staged.generation_id.as_bytes() == &requested[..len])
+        .unwrap_or(false);
+    if !staged_matches {
+        stage_rollback_generation(cap_slot, generation, len)?;
+    }
+    let Some(staged) = *staged_generation() else {
+        return Err(IpcError::BadCapability);
+    };
+    if !staged.rollback || staged.generation_id.as_bytes() != &requested[..len] {
+        serial::write_str("Krust rollback rejected: staged generation mismatch\n");
         return Err(IpcError::BadCapability);
     }
-    if let Some(previous_config) = previous_config {
+
+    serial::write_str("Krust rollback generation accepted: target=");
+    serial::write_str(staged.generation_id);
+    serial::write_str("\n");
+    serial::write_str("Krust rollback revoked failed generation authority: generation=");
+    serial::write_str(staged.previous_generation);
+    serial::write_str(" caps=");
+    serial::write_u64_dec(staged.old_cap_count);
+    serial::write_str("\n");
+
+    commit_staged_boot_config_runtime(
+        staged.config,
+        StagingBuild {
+            initial_context: staged.initial_context,
+            old_contexts: staged.old_contexts,
+            old_context_count: staged.old_context_count,
+        },
+    );
+    if let Some(previous_config) = staged.previous_config {
         set_rollback_runtime(GenerationRuntime {
-            generation_id: previous_generation,
+            generation_id: staged.previous_generation,
             config: previous_config,
         });
-        set_failed_generation(previous_generation);
+        set_failed_generation(staged.previous_generation);
     }
-    boot_manager().mark_failed_and_fallback(previous_generation, rollback.generation_id);
-    let context = initial_process_context().ok_or(IpcError::BadCapability)?;
+    boot_manager().mark_failed_and_fallback(staged.previous_generation, staged.generation_id);
+    let context = staged.initial_context;
+    clear_staged_generation();
     serial::write_str("Krust rollback entering generation: ");
-    serial::write_str(rollback.generation_id);
+    serial::write_str(staged.generation_id);
     serial::write_str("\n");
     let _ = frame;
     unsafe {
@@ -15768,6 +15913,14 @@ fn find_cap_parent_in_space(space: CapabilitySpace, cap_id: u64) -> Option<u64> 
     None
 }
 
+fn restart_policy_label(policy: u16) -> &'static str {
+    match policy {
+        1 => "on-failure",
+        2 => "always",
+        _ => "none",
+    }
+}
+
 fn build_inspect_report(runtime: &RuntimeState, report: &mut InspectReport) {
     report.push_str("native-runtime-report v=1\n");
     report.push_str("generation=");
@@ -15835,6 +15988,12 @@ fn build_inspect_report(runtime: &RuntimeState, report: &mut InspectReport) {
             report.push_u64_dec(process.pid.raw());
             report.push_str(" state=");
             report.push_str(process.state.label());
+            report.push_str(" restart_policy=");
+            report.push_str(restart_policy_label(
+                process_config_for_pid(runtime, process.pid)
+                    .map(|process| process.restart_policy)
+                    .unwrap_or(0),
+            ));
             report.push_str(" mount_root=");
             report.push_bytes(process.mount_root.as_bytes());
             report.push_str(" context_reaped=");
@@ -17339,6 +17498,49 @@ fn set_rollback_runtime(runtime: GenerationRuntime) {
     unsafe {
         *ROLLBACK_RUNTIME.0.get() = Some(runtime);
     }
+}
+
+fn staged_generation() -> &'static mut Option<StagedGeneration> {
+    unsafe { &mut *STAGED_GENERATION.0.get() }
+}
+
+fn clear_staged_generation() {
+    unsafe {
+        *STAGED_GENERATION.0.get() = None;
+    }
+}
+
+fn discard_uncommitted_staged_generation() {
+    let Some(staged) = *staged_generation() else {
+        return;
+    };
+    let mut targets = [None; MAX_PROCESSES];
+    let mut count = 0;
+    {
+        let staging = staging_runtime();
+        let mut index = 0;
+        while index < staging.processes.count {
+            if let Some(process) = staging.processes.processes[index]
+                && !process.context_reaped
+                && process.context.cr3 != 0
+            {
+                targets[count] = Some(RuntimeReapTarget {
+                    pid: process.pid,
+                    name: process.name,
+                    cr3: process.context.cr3,
+                });
+                count += 1;
+            }
+            index += 1;
+        }
+    }
+    if count > 0 && reap_runtime_contexts(&targets, count).is_err() {
+        serial::write_str("Krust staged runtime discard incomplete\n");
+    }
+    serial::write_str("Krust discarded uncommitted staged generation: ");
+    serial::write_str(staged.generation_id);
+    serial::write_str("\n");
+    clear_staged_generation();
 }
 
 fn set_failed_generation(generation_id: &'static str) {

@@ -83,7 +83,7 @@ vertex-inspect reads the generation graph from runtime inspect and asks the kern
 runtime inspect exposes the active native graph-store hash, checksum, source, object counts, representative graph nodes, process graph nodes, and capability graph edges
 logd reads immutable config and secret caps, echo proves those objects stay inaccessible without explicit grants, and runtime inspection redacts secret values
 the native boot manager records selected, previous, known-good, last-failed, and boot-attempt state for generation fallback
-native update transactions verify manifest/store closure before committing selected_generation
+native update transactions verify manifest/store closure and stage a buildable runtime before committing selected_generation
 console-driver owns COM1 in the M41 generation, and console-shell prints runtime-inspect backed commands through directed console request/reply IPC
 timer-service sleeps through its own timer capability without monopolizing the scheduler
 cpu-hog proves a CPU-bound userspace loop cannot starve logd

@@ -81,6 +81,8 @@ const SYS_VFS_LINK: u64 = 69;
 const SYS_VFS_POLL: u64 = 70;
 const SYS_VFS_WATCH: u64 = 71;
 const SYS_VERIFY_GENERATION: u64 = 72;
+const SYS_STAGE_GENERATION: u64 = 73;
+const SYS_STAGE_ROLLBACK_GENERATION: u64 = 74;
 
 const STATUS_OK: u64 = 0;
 const STATUS_BAD_CAPABILITY: u64 = u64::MAX - 1;
@@ -606,6 +608,22 @@ pub extern "C" fn krust_syscall_dispatch(
         ) {
             Ok(()) => frame.rax = STATUS_OK,
             Err(error) => frame.rax = ipc_error_status("SYS_VERIFY_GENERATION", error),
+        },
+        SYS_STAGE_GENERATION => match ipc::stage_generation(
+            arg0,
+            arg1 as *const u8,
+            usize::try_from(arg2).unwrap_or(usize::MAX),
+        ) {
+            Ok(()) => frame.rax = STATUS_OK,
+            Err(error) => frame.rax = ipc_error_status("SYS_STAGE_GENERATION", error),
+        },
+        SYS_STAGE_ROLLBACK_GENERATION => match ipc::stage_rollback_generation(
+            arg0,
+            arg1 as *const u8,
+            usize::try_from(arg2).unwrap_or(usize::MAX),
+        ) {
+            Ok(()) => frame.rax = STATUS_OK,
+            Err(error) => frame.rax = ipc_error_status("SYS_STAGE_ROLLBACK_GENERATION", error),
         },
         _ => {
             serial::write_str("Unknown userspace syscall: ");

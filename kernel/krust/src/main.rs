@@ -1272,6 +1272,7 @@ fn build_boot_runtime_config(
                 image_base: store_object.bytes.as_ptr() as u64,
                 image_length: store_object.bytes.len() as u64,
                 initial: process.initial,
+                restart_policy: process.restart_policy,
                 mount_root: process.mount_root,
                 mounts,
                 mount_count: process.mount_count,
