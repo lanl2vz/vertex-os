@@ -1,6 +1,6 @@
 # Krust Kernel
 
-Krust now covers the M14-M82 native graph-activation proof path, substrate
+Krust now covers the M14-M83 native graph-activation proof path, substrate
 hardening, reproducible build environment, directed IPC ABI v1, and native
 console shell plus virtio device I/O, VertexDisk v1 persistence, native boot
 selection, verified store objects, native update transactions, and store-loaded
@@ -18,8 +18,9 @@ writeback, plus image-backed VertexFS journal checkpoint recovery and
 mount-namespace gates, including the current read-only `servicefs`
 request/reply file route, advisory byte-range locks, directory watch events,
 VFS poll readiness, bounded pipe buffering, revocation checks for live file
-authority, the current VFS security/soak gate, and the native VertexDisk
-graph-store read/provenance surface. M44-M82 are tracked in
+authority, the current VFS security/soak gate, the native VertexDisk
+graph-store read/provenance surface, and native generation-manager
+install/rollback/recovery. M44-M83 are tracked in
 `../../docs/krust-milestones.md`.
 
 The target is intentionally small:
@@ -243,7 +244,7 @@ Kernel heap arena allocation ok
 Typed endpoint arena created 32 endpoints
 Typed process arena created 32 processes
 Process table entries: 1
-Endpoint table entries: 12
+Endpoint table entries: 16
 endpoint[0] id=1 name=serial-log
 endpoint[1] id=2 name=readiness
 endpoint[2] id=3 name=serial-console
@@ -256,6 +257,10 @@ endpoint[8] id=9 name=store-hello-text-request
 endpoint[9] id=10 name=model-reader-store-reply
 endpoint[10] id=11 name=state-vfs-request
 endpoint[11] id=12 name=state-vfs-reply
+endpoint[12] id=13 name=vertexfs-device-request
+endpoint[13] id=14 name=vertexfs-device-reply
+endpoint[14] id=15 name=generation-metadata-block-request
+endpoint[15] id=16 name=generation-metadata-block-reply
 process[0] id=1 name=vertex-init state=running
 proc=vertex-init cap[0] boot-module=krustboot-manifest rights=read
 proc=vertex-init cap[1] endpoint=serial-log rights=send
@@ -424,11 +429,11 @@ make smoke
 ```
 
 The smoke test boots QEMU headlessly, captures serial output to
-`build/serial.log`, and passes when it sees the M14-M82 directed IPC, console,
+`build/serial.log`, and passes when it sees the default directed IPC, console,
 virtio-block, VertexDisk, verified store, update, store-executable, dynamic
 process, config, secret, package-boundary, appliance, virtio device, networking,
-namespace, policy, ABI-hardening, storage durability, network-boundary, and
-lifecycle, memory-lifecycle, soak, interrupt, DMA, virtio recovery, and
+namespace, policy, ABI-hardening, storage durability, network-boundary,
+lifecycle, memory-lifecycle, soak, interrupt, DMA, virtio recovery,
 device-fault, VFS coordination, filesystem security, and native graph-store
 transcripts. The same check is available from the repository root:
 
@@ -436,7 +441,7 @@ transcripts. The same check is available from the repository root:
 scripts/krust-smoke.sh
 ```
 
-## M26-M82 Substrate Gate
+## M26-M83 Substrate Gate
 
 Run the clean-clone gate from the repository root:
 
@@ -451,12 +456,13 @@ make release-gate
 ```
 
 The gate checks script executability and shell syntax, verifies Makefile recipe
-parsing, checks Rust formatting and Markdown whitespace, confirms the M14-M82
+parsing, checks Rust formatting and Markdown whitespace, confirms the M14-M83
 documentation anchors, checks the pinned M39 toolchain and Cargo lockfiles, runs
-`cargo metadata --locked --offline` and `cargo build --locked --offline`,
+`cargo metadata --locked --offline`, `cargo build --locked --offline`, and
+`cargo test --locked --offline`,
 validates `examples/hello-generation.vertex.json`, runs `make doctor`, rebuilds
 from `make clean`, runs `make smoke`, checks package/link/build import commands,
-and then runs the M14-M82 QEMU cases:
+and then runs the M14-M83 QEMU cases:
 `m14`,
 `manifest-cycle`, `bad-cap`, `readiness-timeout`, `rollback`, `store-state-services`,
 `timer`, `preemption`, `user-fault`, `restart`, `manifest-v1`, `cap-lifecycle`,
@@ -469,8 +475,10 @@ and then runs the M14-M82 QEMU cases:
 `m78-bad-superblock`, `m78-journal-replay`,
 `m78-journal-checkpoint-after-journal`, `m78-journal-checkpoint-after-data`,
 `m78-journal-checkpoint-after-inode`, `m78-post-sync-remount`,
-`m78-fsync-fault`, `m79`, `m80`, `m81`, `m82`, `manifest-graph-store-checksum`,
-`manifest-graph-store-record`, and the remaining malformed-manifest cases. If
+`m78-fsync-fault`, `m79`, `m80`, `m81`, `m82`, `m83`, `m83-hostless`,
+`m83-power-prepare`, `m83-power-commit`, `m83-power-rollback`,
+`manifest-graph-store-checksum`, `manifest-graph-store-record`, and the
+remaining malformed-manifest cases. If
 the offline build fails, the gate prints the Cargo cache or vendoring
 prerequisite explicitly.
 
@@ -526,12 +534,16 @@ Typed endpoint arena created 32 endpoints
 Typed process arena created 32 processes
 IDT initialized: #UD #GP #PF IRQ0
 Process table entries: 1
-Endpoint table entries: 12
+Endpoint table entries: 16
 endpoint[0] id=1 name=serial-log
 endpoint[1] id=2 name=readiness
 endpoint[2] id=3 name=log-sink
 endpoint[10] id=11 name=state-vfs-request
 endpoint[11] id=12 name=state-vfs-reply
+endpoint[12] id=13 name=vertexfs-device-request
+endpoint[13] id=14 name=vertexfs-device-reply
+endpoint[14] id=15 name=generation-metadata-block-request
+endpoint[15] id=16 name=generation-metadata-block-reply
 process[0] id=1 name=vertex-init state=running
 proc=vertex-init cap[0] boot-module=krustboot-manifest rights=read
 proc=vertex-init cap[1] endpoint=serial-log rights=send

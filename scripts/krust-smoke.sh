@@ -160,7 +160,7 @@ IPC FIFO regression ok
 IDT initialized: #UD #GP #PF
 Native secret object registered: secret:logd-token storage=in-memory
 Process table entries: 1
-Endpoint table entries: 14
+Endpoint table entries: 16
 endpoint[0] id=1 name=serial-log
 endpoint[1] id=2 name=readiness
 endpoint[2] id=3 name=serial-console
@@ -175,6 +175,8 @@ endpoint[10] id=11 name=state-vfs-request
 endpoint[11] id=12 name=state-vfs-reply
 endpoint[12] id=13 name=vertexfs-device-request
 endpoint[13] id=14 name=vertexfs-device-reply
+endpoint[14] id=15 name=generation-metadata-block-request
+endpoint[15] id=16 name=generation-metadata-block-reply
 process[0] id=1 name=vertex-init state=running
 process[1] id=2 name=serial-driver state=declared
 process[2] id=3 name=logd state=declared
@@ -217,6 +219,8 @@ proc=vertex-state cap[6] endpoint=state-vfs-reply rights=send
 proc=vertex-state cap[7] endpoint=state-vfs-request rights=receive
 proc=block-driver cap[13] endpoint=vertexfs-device-request rights=receive
 proc=block-driver cap[14] endpoint=vertexfs-device-reply rights=send
+proc=block-driver cap[16] endpoint=generation-metadata-block-request rights=receive
+proc=block-driver cap[17] endpoint=generation-metadata-block-reply rights=send
 proc=block-driver cap[12] virtio-device=device:virtio-blk0 transport=virtio-pci-io rights=control
 proc=vertex-store cap[0] endpoint=store-hello-text-request rights=receive
 proc=vertex-store cap[3] endpoint=vertex-store-block-reply rights=receive

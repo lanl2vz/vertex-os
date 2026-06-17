@@ -963,13 +963,16 @@ Native service activation ok
     m75|vfs-blocking)
         MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
         EXPECT_ACTIVATION_SUCCESS=1
+        QEMU_ATTEMPTS=${QEMU_M75_ATTEMPTS:-60}
         required_lines='
 KrustBoot vfs roots: 8
-Endpoint table entries: 14
+Endpoint table entries: 16
 endpoint[10] id=11 name=state-vfs-request
 endpoint[11] id=12 name=state-vfs-reply
 endpoint[12] id=13 name=vertexfs-device-request
 endpoint[13] id=14 name=vertexfs-device-reply
+endpoint[14] id=15 name=generation-metadata-block-request
+endpoint[15] id=16 name=generation-metadata-block-reply
 Native VFS state request grant: process=vertex-state endpoint=state-vfs-request rights=receive
 Native VFS state reply grant: process=vertex-state endpoint=state-vfs-reply rights=send
 Native VertexFS device request grant: process=block-driver endpoint=vertexfs-device-request rights=receive
@@ -978,6 +981,8 @@ proc=vertex-state cap[6] endpoint=state-vfs-reply rights=send
 proc=vertex-state cap[7] endpoint=state-vfs-request rights=receive
 proc=block-driver cap[13] endpoint=vertexfs-device-request rights=receive
 proc=block-driver cap[14] endpoint=vertexfs-device-reply rights=send
+proc=block-driver cap[16] endpoint=generation-metadata-block-request rights=receive
+proc=block-driver cap[17] endpoint=generation-metadata-block-reply rights=send
 proc=logd cap[4] vfs-root=cap:vfs.logd-log-stream root=/proc/log-stream rights=read|resolve
 VFS open accepted: proc=logd file=log-stream
 VFS read blocked: proc=logd

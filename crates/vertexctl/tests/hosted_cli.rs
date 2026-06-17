@@ -382,7 +382,7 @@ fn compile_boot_manifest_emits_krustboot_plan() {
 }
 
 #[test]
-fn release_profile_validates_m82_krustboot_identity() {
+fn release_profile_validates_current_krustboot_identity() {
     let dir = temp_dir("release-profile");
     let krustboot_path = dir.join("hello-generation.krustboot");
     let old_krustboot_path = dir.join("old-generation.krustboot");

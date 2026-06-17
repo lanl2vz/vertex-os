@@ -5,7 +5,7 @@ native Krust QEMU/Limine milestone. It is intentionally small and unstable. Its
 current job is to boot native `vertex-init`, create services from verified
 process templates, and enforce explicit process-local capabilities.
 
-Milestone status: ABI v1 now covers the M14-M82 native activation and substrate
+Milestone status: ABI v1 now covers the M14-M83 native activation and substrate
 proof. M25 adds the release gate. M26-M29 add Manifest v1 parsing, capability
 provenance/revocation, typed arena allocation checks, and resource quotas.
 M30-M31 add PIT-backed preemption and user page-fault containment. M32-M36 add
@@ -40,8 +40,10 @@ device endpoints, plus the current read-only `servicefs` request/reply file
 route. M80-M81 add VFS coordination and filesystem security/soak coverage. M82
 updates the compact payload identity to `KRUSTBOOTM82` version 13 and adds the
 native typed graph-store header plus graph node/edge records used for runtime
-graph provenance. The ABI is still intentionally small, but this subset is the
-current native contract.
+graph provenance. M83 adds native generation verification and staged
+install/rollback syscalls used by the generation-manager before it commits
+durable selected-generation metadata. The ABI is still intentionally small, but
+this subset is the current native contract.
 
 ## Machine ABI
 
@@ -151,6 +153,11 @@ process frame, switch CR3, and return into another userspace process through
 | 67 | `SYS_VFS_MKDIR` | `arg0 = vfs_root_cap_slot`, `arg1 = path_ptr`, `arg2 = mkdir_flags << 32 \| path_len` | status |
 | 68 | `SYS_VFS_RMDIR` | `arg0 = vfs_root_cap_slot`, `arg1 = path_ptr`, `arg2 = path_len` | status |
 | 69 | `SYS_VFS_LINK` | `arg0 = vfs_root_cap_slot`, `arg1 = link_request_ptr`, `arg2 = request_len` | status |
+| 70 | `SYS_VFS_POLL` | `arg0 = file_handle`, `arg1 = event_mask`, `arg2 = 0` | ready event mask or error status |
+| 71 | `SYS_VFS_WATCH` | `arg0 = vfs_root_cap_slot`, `arg1 = path_ptr`, `arg2 = event_mask << 32 \| path_len` | status |
+| 72 | `SYS_VERIFY_GENERATION` | `arg0 = process_control_cap_slot`, `arg1 = generation_ptr`, `arg2 = len` | status |
+| 73 | `SYS_STAGE_GENERATION` | `arg0 = process_control_cap_slot`, `arg1 = generation_ptr`, `arg2 = len` | status |
+| 74 | `SYS_STAGE_ROLLBACK_GENERATION` | `arg0 = process_control_cap_slot`, `arg1 = generation_ptr`, `arg2 = len` | status |
 
 ## Return Status Values
 
@@ -200,7 +207,7 @@ becoming uncontrolled kernel faults.
 Capabilities are process-local. A capability slot number is meaningful only in
 the current process's capability space.
 
-Current M14-M79 layout:
+Current native layout:
 
 ```text
 vertex-init:
@@ -326,12 +333,20 @@ The native activation path uses the same rule:
 ```text
 SYS_BOOT_READ requires cap[0] read rights to the manifest boot module.
 SYS_LOG_WRITE requires cap[1] send rights to the serial-log endpoint.
-SYS_ACTIVATE_GENERATION requires cap[2] control and revoke rights to process-control.
+SYS_ACTIVATE_GENERATION requires caller-supplied control and revoke rights to
+process-control. If a matching staged runtime exists, activation enters that
+runtime; otherwise the kernel stages the requested generation first.
 SYS_PROCESS_CREATE requires create rights on process-control.
 SYS_PROCESS_START requires start rights on process-control and a live pid.
 SYS_PROCESS_KILL requires kill rights on process-control and a live pid.
 SYS_PROCESS_WAIT requires wait rights on process-control and a live pid.
-SYS_ROLLBACK_GENERATION requires cap[2] control and revoke rights to process-control.
+SYS_ROLLBACK_GENERATION requires caller-supplied control and revoke rights to
+process-control and enters a staged rollback runtime, staging it first if needed.
+SYS_VERIFY_GENERATION verifies manifest hash, store closure, installability, and
+failed-generation status for a registered native generation. SYS_STAGE_GENERATION
+builds the requested runtime and records it as pending without committing durable
+selected-generation metadata. SYS_STAGE_ROLLBACK_GENERATION builds the prepared
+rollback runtime and records it as pending without entering it.
 SYS_RUNTIME_INSPECT requires inspect rights on process-control.
 SYS_CAP_TRANSFER requires a caller-supplied process-control cap slot and applies the packed rights mask.
 SYS_ENDPOINT_CREATE requires allocate rights on process-control and available endpoint quota.

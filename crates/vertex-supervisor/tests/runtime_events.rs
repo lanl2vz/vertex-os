@@ -97,6 +97,7 @@ fn write_manifest(dir: &Path) -> PathBuf {
       "executable": "exe:true",
       "args": [],
       "env": {{}},
+      "mountRoot": "/",
       "requires": [
         {{"capability": "cap:clock.monotonic", "rights": ["read"]}}
       ],
@@ -114,6 +115,7 @@ fn write_manifest(dir: &Path) -> PathBuf {
       "executable": "exe:true",
       "args": [],
       "env": {{}},
+      "mountRoot": "/",
       "requires": [
         {{"capability": "cap:clock.monotonic", "rights": ["read"]}}
       ],
@@ -222,6 +224,7 @@ fn write_negative_grant_manifest(dir: &Path) -> PathBuf {
       "executable": "exe:sh",
       "args": ["-c", "exit 0"],
       "env": {{}},
+      "mountRoot": "/",
       "requires": [
         {{"capability": "cap:clock.monotonic", "rights": ["read"]}}
       ],
@@ -239,6 +242,7 @@ fn write_negative_grant_manifest(dir: &Path) -> PathBuf {
       "executable": "exe:sh",
       "args": ["-c", "exit 0"],
       "env": {{}},
+      "mountRoot": "/",
       "requires": [
         {{"capability": "cap:clock.monotonic", "rights": ["read"]}}
       ],
@@ -256,6 +260,7 @@ fn write_negative_grant_manifest(dir: &Path) -> PathBuf {
       "executable": "exe:sh",
       "args": ["-c", "case \"$VERTEX_GRANTED_CAPS\" in *cap:log.sink*) exit 1;; *) exit 2;; esac"],
       "env": {{}},
+      "mountRoot": "/",
       "requires": [
         {{"capability": "cap:clock.monotonic", "rights": ["read"]}}
       ],
@@ -367,6 +372,7 @@ fn write_state_owner_mismatch_manifest(dir: &Path) -> PathBuf {
       "executable": "exe:sh",
       "args": ["-c", "exit 0"],
       "env": {{}},
+      "mountRoot": "/",
       "requires": [
         {{"capability": "cap:clock.monotonic", "rights": ["read"]}}
       ],
@@ -384,6 +390,7 @@ fn write_state_owner_mismatch_manifest(dir: &Path) -> PathBuf {
       "executable": "exe:sh",
       "args": ["-c", "exit 0"],
       "env": {{}},
+      "mountRoot": "/",
       "requires": [
         {{"capability": "cap:clock.monotonic", "rights": ["read"]}}
       ],
@@ -401,6 +408,7 @@ fn write_state_owner_mismatch_manifest(dir: &Path) -> PathBuf {
       "executable": "exe:sh",
       "args": ["-c", "exit 0"],
       "env": {{}},
+      "mountRoot": "/",
       "requires": [
         {{"capability": "cap:clock.monotonic", "rights": ["read"]}}
       ],
