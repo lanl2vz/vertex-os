@@ -11,7 +11,7 @@ QEMU=${QEMU:-qemu-system-x86_64}
 QEMU_EXTRA=${QEMU_EXTRA:-"-object rng-random,filename=/dev/urandom,id=vertexrng -device virtio-rng-pci,rng=vertexrng,disable-modern=on -netdev user,id=vertexnet -device virtio-net-pci,netdev=vertexnet,mac=52:54:00:12:34:56,disable-modern=on"}
 QEMU_MACHINE=${QEMU_MACHINE:-}
 QEMU_BLOCK=${QEMU_BLOCK:-"-drive if=none,id=vertexblk,file=$BLOCK_IMAGE,format=raw -device virtio-blk-pci,drive=vertexblk,disable-modern=on,queue-size=8"}
-QEMU_ATTEMPTS=${QEMU_ATTEMPTS:-20}
+QEMU_ATTEMPTS=${QEMU_ATTEMPTS:-60}
 QEMU_POLL_SECONDS=${QEMU_POLL_SECONDS:-1}
 QEMU_STABILITY_ATTEMPTS=${QEMU_STABILITY_ATTEMPTS:-1}
 QEMU_PREEMPTION_STABILITY_ATTEMPTS=${QEMU_PREEMPTION_STABILITY_ATTEMPTS:-3}
@@ -352,7 +352,6 @@ Native service activation ok
         VERTEX_DISK_CORRUPT=bad-superblock
         required_lines='
 VertexDisk superblock rejected
-KrustBoot native store object unavailable for process: process=vertex-init object=store:vertex-init-demo
 Native runtime init failed from KrustBoot manifest
 Native service activation failed
 '

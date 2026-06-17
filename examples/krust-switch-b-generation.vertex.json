@@ -1088,7 +1088,14 @@
         ],
         "stopBefore": []
       },
-      "mountRoot": "/state"
+      "mountRoot": "/state",
+      "mounts": [
+        {
+          "path": "/declared-ro",
+          "source": "/",
+          "readOnly": true
+        }
+      ]
     },
     {
       "id": "svc:model-reader",

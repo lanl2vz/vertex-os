@@ -146,16 +146,18 @@ fn build_boot_config_runtime(
             .objects
             .add_endpoint(VERTEXFS_DEVICE_REPLY_ENDPOINT_NAME)?,
     );
-    runtime.generation_metadata_block_request_endpoint = Some(
-        runtime
-            .objects
-            .add_endpoint(GENERATION_METADATA_BLOCK_REQUEST_ENDPOINT_NAME)?,
-    );
-    runtime.generation_metadata_block_reply_endpoint = Some(
-        runtime
-            .objects
-            .add_endpoint(GENERATION_METADATA_BLOCK_REPLY_ENDPOINT_NAME)?,
-    );
+    if boot_config_has_process(config, BLOCK_DRIVER_PROCESS_NAME)? {
+        runtime.generation_metadata_block_request_endpoint = Some(
+            runtime
+                .objects
+                .add_endpoint(GENERATION_METADATA_BLOCK_REQUEST_ENDPOINT_NAME)?,
+        );
+        runtime.generation_metadata_block_reply_endpoint = Some(
+            runtime
+                .objects
+                .add_endpoint(GENERATION_METADATA_BLOCK_REPLY_ENDPOINT_NAME)?,
+        );
+    }
 
     let mut store_index = 0;
     while store_index < config.store_object_count {
@@ -578,6 +580,18 @@ fn boot_graph_has_node(config: &BootRuntimeConfig, kind: u16, id: &str) -> bool 
         index += 1;
     }
     false
+}
+
+fn boot_config_has_process(config: &BootRuntimeConfig, name: &str) -> Result<bool, InitError> {
+    let mut index = 0;
+    while index < config.process_count {
+        let process = config.processes[index].ok_or(InitError::InvalidBootManifest)?;
+        if process.name == name {
+            return Ok(true);
+        }
+        index += 1;
+    }
+    Ok(false)
 }
 
 fn validate_counted_config_entries<T: Copy, const N: usize>(
