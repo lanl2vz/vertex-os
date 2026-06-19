@@ -763,6 +763,12 @@ fn native_store_bytes(module_string: &str) -> Result<Vec<u8>, String> {
 }
 
 fn native_store_candidate_paths(module_string: &str) -> Vec<PathBuf> {
+    if module_string == "package-fragment-logd" {
+        return vec![
+            PathBuf::from("assets/package-fragment-logd.txt"),
+            PathBuf::from("kernel/krust/assets/package-fragment-logd.txt"),
+        ];
+    }
     let crate_dir = if module_string == "vertex-init" {
         "init"
     } else {

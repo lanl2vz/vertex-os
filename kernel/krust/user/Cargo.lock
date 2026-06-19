@@ -120,6 +120,13 @@ name = "krust-netstack"
 version = "0.1.0"
 
 [[package]]
+name = "krust-package-import"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+]
+
+[[package]]
 name = "krust-serial-driver"
 version = "0.1.0"
 

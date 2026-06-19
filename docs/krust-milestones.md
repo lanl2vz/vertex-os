@@ -7,7 +7,7 @@ runtime layered over a host kernel.
 
 ## Status Summary
 
-Current status: M14-M83 are implemented and smoke-tested under
+Current status: M14-M84 are implemented and smoke-tested under
 `qemu-system-x86_64` with Limine. The current tree has an image-backed VertexFS
 v1 mount, a strict VertexDisk v1 section carrying the current VertexFS image,
 fixed journal replay, kernel-owned device-backed fsync transactions,
@@ -58,7 +58,11 @@ checksum/hash/object counts through runtime inspection, and rejects corrupt
 compact or disk graph-store records before activation. M83 moves generation
 installation, rollback, durable selected-generation metadata, and
 prepare/commit/rollback recovery into the native generation-manager,
-block-driver, and staged kernel runtime-build authority path.
+block-driver, and staged kernel runtime-build authority path. M84 adds a native
+package-import service that reads compact graph fragments from immutable store
+objects, verifies closure/config hashes, rejects undeclared dependencies and
+excess authority, links an idempotent candidate generation through the native
+generation-manager, and proves host/native closure-hash parity.
 
 M74-M82 are implemented as the current VFS, open-file, directory, block-cache,
 VertexFS/mount-namespace, coordination, and security/soak substrate. The
@@ -77,9 +81,10 @@ create/write/read/fsync coverage, and a model-reader service rooted at
 `/fs/app`. The release gate now covers corrupt VertexFS images, interrupted
 journals, checkpoint remount verification, fsync faults, live-handle revocation
 semantics, a 100-cycle VFS churn probe, native graph-store checksum rejection,
-and invalid graph-record rejection. General vnode page cache integration,
-broader synthetic/device filesystem breadth, and durable graph-store mutation
-remain later work.
+invalid graph-record rejection, and native package closure import through
+generation-manager activation/rollback. General vnode page cache integration,
+broader synthetic/device filesystem breadth, richer state policy, and durable
+graph-store mutation remain later work.
 
 ```sh
 make -C kernel/krust doctor
@@ -149,13 +154,14 @@ scripts/krust-test.sh m83-hostless
 scripts/krust-test.sh m83-power-prepare
 scripts/krust-test.sh m83-power-commit
 scripts/krust-test.sh m83-power-rollback
+scripts/krust-test.sh m84
 ```
 
-Next direction: move package closure import, richer state lifecycle policy,
-policy validation, the operator graph shell, appliance update loop, and the
-graph soak gate into first-class Vertex OS surfaces on top of the M82 graph
-store and M83 generation-manager substrate while keeping Krust small and
-capability-mediated.
+Next direction: move richer state lifecycle policy, policy validation, the
+operator graph shell, appliance update loop, and the graph soak gate into
+first-class Vertex OS surfaces on top of the M82 graph store, M83
+generation-manager substrate, and M84 package-import path while keeping Krust
+small and capability-mediated.
 
 ## M0: Serial Boot
 
@@ -1562,7 +1568,7 @@ done: locked Cargo dependencies for the top-level host-tool workspace, Krust ker
 done: kernel/krust/rust-toolchain.toml pins Rust 1.95.0, rustfmt, and x86_64-unknown-none
 done: make doctor checks every required tool and reports actionable fixes
 done: legacy hello/ipc userspace crates are removed instead of carried forward
-done: single release-gate script runs the clean-clone M14-M83 substrate proof with the current QEMU matrix
+done: single release-gate script runs the clean-clone M14-M84 substrate proof with the current QEMU matrix
 ```
 
 Acceptance tests:
@@ -2762,7 +2768,7 @@ Supported profile:
 ```text
 x86_64 one CPU
 Limine boot
-KrustBoot Manifest v1 / compact payload KRUSTBOOTM82 version 13
+KrustBoot Manifest v1 / compact payload KRUSTBOOTM84 version 14
 QEMU virtio-blk, virtio-rng, virtio-net, and virtio-console
 VertexDisk store/state/update layout
 no legacy transport or payload compatibility
@@ -2789,9 +2795,9 @@ Implementation notes:
 - Do not expand to SMP, USB, GPU, a full filesystem, or Linux/POSIX
   compatibility until the profile can boot, update, recover, and explain its
   authority graph repeatably.
-- The compact native payload identity is now `KRUSTBOOTM82` version 13. M79,
-  M75, M65, M61, and older compact payload identities are rejected rather than
-  retained as compatibility formats.
+- The compact native payload identity is now `KRUSTBOOTM84` version 14. M82,
+  M79, M75, M65, M61, and older compact payload identities are rejected rather
+  than retained as compatibility formats.
 - The release gate records a supported profile artifact containing the exact
   toolchain, manifest hash, KrustBoot hash, kernel hash, VertexDisk hash, and
   store closure.
@@ -3989,7 +3995,7 @@ Implementation notes:
 
 ## M84: Native Package And Closure Import
 
-Status: planned.
+Status: done.
 
 Goal: make package graph fragments and closure materialization native OS
 inputs, so packages can be imported, verified, and linked inside the running
@@ -3998,24 +4004,26 @@ system.
 Scope:
 
 ```text
-native package-import service
-package graph fragment parser for the compact typed graph format
-store-object hash verification before materialization
-closure linking against existing graph-store objects
-authority-delta report for imported services
-rejection of undeclared dependencies, excess grants, and missing store objects
+done: native package-import service
+done: KrustBoot compact payload identity is `KRUSTBOOTM84` version 14
+done: package graph fragment parser for the compact typed graph format
+done: store-object hash verification before materialization
+done: closure linking against existing graph-store objects
+done: authority-delta report for imported services
+done: rejection of undeclared dependencies, excess grants, and missing store objects
 ```
 
 Acceptance tests:
 
 ```text
-native package import adds a service graph fragment to a candidate generation
-store-object hashes are verified before executable or config use
-missing dependency rejects the package without partial graph-store writes
-package requesting undeclared authority is rejected with an explainable reason
-duplicate package import is idempotent and does not duplicate store objects
-imported package can be activated and then removed by generation rollback
-host graph-link output and native graph-link output produce the same closure hash
+done: native package import adds a service graph fragment to a candidate generation
+done: store-object hashes are verified before executable or config use
+done: missing dependency rejects the package without partial graph-store writes
+done: package requesting undeclared authority is rejected with an explainable reason
+done: duplicate package import is idempotent and does not duplicate store objects
+done: imported package can be activated and then removed by generation rollback
+done: host graph-link output and native graph-link output produce the same closure hash
+done: scripts/krust-test.sh m84
 ```
 
 Implementation notes:
@@ -4026,6 +4034,10 @@ Implementation notes:
 - Packages should carry graph fragments, not imperative install scripts.
 - The first target is deterministic closure materialization, not a public
   package ecosystem.
+- The current implementation intentionally uses a compact deterministic
+  `pkg:logd` fragment and config proof object as the native proof path. General
+  package removal, dependency solving, and persistent graph-store mutation are
+  later work.
 
 ## M85: State Objects And Migration Policy
 
@@ -4276,7 +4288,8 @@ M70-M73 add interrupt routing, DMA ownership, virtio reset/recovery, and
 device-fault isolation. M74-M81 should turn the existing special-purpose
 store/state persistence into a mature capability-mediated VFS and filesystem
 stack. M82 moves the active generation graph into a native typed graph-store
-read/provenance substrate, and M83 moves generation management into the native
-system. M84-M89 should move package closure import, policy validation, state
-lifecycle, operator shell, appliance update loop, and long-run graph soak into
-the native system before broadening the platform.
+read/provenance substrate, M83 moves generation management into the native
+system, and M84 moves package closure import onto that native path. M85-M89
+should move policy validation, state lifecycle, operator shell, appliance
+update loop, and long-run graph soak into the native system before broadening
+the platform.

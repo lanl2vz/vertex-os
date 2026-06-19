@@ -1,0 +1,1583 @@
+{
+  "schema": "vertex.ir.v0",
+  "generation": {
+    "id": "gen:package-import-new-0002",
+    "createdUtc": "2026-05-22T00:00:00Z",
+    "description": "Krust native package import activated generation",
+    "parent": "gen:package-import-0001",
+    "manifestHash": null
+  },
+  "kernel": {
+    "id": "kernel:krust-placeholder",
+    "kind": "krust-native",
+    "storeObject": "store:kernel-placeholder",
+    "abi": "krust.v0",
+    "target": "x86_64-unknown-none"
+  },
+  "init": {
+    "id": "init:vertex-init",
+    "executable": "exe:vertex-init",
+    "mode": "krust-native"
+  },
+  "store": [
+    {
+      "id": "store:kernel-placeholder",
+      "name": "kernel-placeholder",
+      "kind": "kernel-image",
+      "path": "/vertex/store/kernel-placeholder",
+      "hashAlgorithm": "blake3",
+      "hash": "demo-not-a-real-hash-kernel",
+      "sizeBytes": 0,
+      "references": []
+    },
+    {
+      "id": "store:vertex-init-demo",
+      "name": "vertex-init-demo",
+      "kind": "executable",
+      "path": "/vertex/store/demo-vertex-init",
+      "hashAlgorithm": "blake3",
+      "hash": "demo-not-a-real-hash-vertex-init",
+      "sizeBytes": 65536,
+      "references": []
+    },
+    {
+      "id": "store:console-driver-demo",
+      "name": "console-driver-demo",
+      "kind": "executable",
+      "path": "/vertex/store/demo-console-driver",
+      "hashAlgorithm": "blake3",
+      "hash": "demo-not-a-real-hash-console-driver",
+      "sizeBytes": 65536,
+      "references": []
+    },
+    {
+      "id": "store:console-shell-demo",
+      "name": "console-shell-demo",
+      "kind": "executable",
+      "path": "/vertex/store/demo-console-shell",
+      "hashAlgorithm": "blake3",
+      "hash": "demo-not-a-real-hash-console-shell",
+      "sizeBytes": 65536,
+      "references": []
+    },
+    {
+      "id": "store:generation-manager-demo",
+      "name": "generation-manager-demo",
+      "kind": "executable",
+      "path": "/vertex/store/demo-generation-manager",
+      "hashAlgorithm": "blake3",
+      "hash": "demo-not-a-real-hash-generation-manager",
+      "sizeBytes": 65536,
+      "references": []
+    },
+    {
+      "id": "store:package-fragment-logd",
+      "name": "package-fragment-logd",
+      "kind": "data",
+      "path": "/vertex/store/package-fragment-logd",
+      "hashAlgorithm": "blake3",
+      "hash": "e71ab4a0467c87f678ab3d5fe32609b9be23a95f37121e76547058845d2b93c9",
+      "sizeBytes": 582,
+      "references": [
+        "config:logd"
+      ]
+    },
+    {
+      "id": "store:package-import-demo",
+      "name": "package-import-demo",
+      "kind": "executable",
+      "path": "/vertex/store/demo-package-import",
+      "hashAlgorithm": "blake3",
+      "hash": "demo-not-a-real-hash-package-import",
+      "sizeBytes": 65536,
+      "references": []
+    },
+    {
+      "id": "store:logd-demo",
+      "name": "logd-demo",
+      "kind": "executable",
+      "path": "/vertex/store/demo-logd",
+      "hashAlgorithm": "blake3",
+      "hash": "demo-not-a-real-hash-logd",
+      "sizeBytes": 65536,
+      "references": []
+    },
+    {
+      "id": "store:netstack-demo",
+      "name": "netstack-demo",
+      "kind": "executable",
+      "path": "/vertex/store/demo-netstack",
+      "hashAlgorithm": "blake3",
+      "hash": "demo-not-a-real-hash-netstack",
+      "sizeBytes": 131072,
+      "references": []
+    },
+    {
+      "id": "store:block-driver-demo",
+      "name": "block-driver-demo",
+      "kind": "executable",
+      "path": "/vertex/store/demo-block-driver",
+      "hashAlgorithm": "blake3",
+      "hash": "demo-not-a-real-hash-block-driver",
+      "sizeBytes": 65536,
+      "references": []
+    },
+    {
+      "id": "store:vertex-store-demo",
+      "name": "vertex-store-demo",
+      "kind": "executable",
+      "path": "/vertex/store/demo-vertex-store",
+      "hashAlgorithm": "blake3",
+      "hash": "demo-not-a-real-hash-vertex-store",
+      "sizeBytes": 65536,
+      "references": []
+    },
+    {
+      "id": "store:vertex-state-demo",
+      "name": "vertex-state-demo",
+      "kind": "executable",
+      "path": "/vertex/store/demo-vertex-state",
+      "hashAlgorithm": "blake3",
+      "hash": "demo-not-a-real-hash-vertex-state",
+      "sizeBytes": 65536,
+      "references": []
+    },
+    {
+      "id": "store:vertex-inspect-demo",
+      "name": "vertex-inspect-demo",
+      "kind": "executable",
+      "path": "/vertex/store/demo-vertex-inspect",
+      "hashAlgorithm": "blake3",
+      "hash": "demo-not-a-real-hash-vertex-inspect",
+      "sizeBytes": 65536,
+      "references": []
+    },
+    {
+      "id": "store:echo-server-demo",
+      "name": "echo-server-demo",
+      "kind": "executable",
+      "path": "/vertex/store/demo-echo-server",
+      "hashAlgorithm": "blake3",
+      "hash": "demo-not-a-real-hash-echo-server",
+      "sizeBytes": 65536,
+      "references": []
+    },
+    {
+      "id": "store:model-reader-demo",
+      "name": "model-reader-demo",
+      "kind": "executable",
+      "path": "/vertex/store/demo-model-reader",
+      "hashAlgorithm": "blake3",
+      "hash": "demo-not-a-real-hash-model-reader",
+      "sizeBytes": 65536,
+      "references": []
+    },
+    {
+      "id": "store:counter-demo",
+      "name": "counter-demo",
+      "kind": "executable",
+      "path": "/vertex/store/demo-counter",
+      "hashAlgorithm": "blake3",
+      "hash": "demo-not-a-real-hash-counter",
+      "sizeBytes": 65536,
+      "references": []
+    },
+    {
+      "id": "store:timer-demo",
+      "name": "timer-demo",
+      "kind": "executable",
+      "path": "/vertex/store/demo-timer",
+      "hashAlgorithm": "blake3",
+      "hash": "demo-not-a-real-hash-timer",
+      "sizeBytes": 65536,
+      "references": []
+    },
+    {
+      "id": "store:flaky-demo",
+      "name": "flaky-demo",
+      "kind": "executable",
+      "path": "/vertex/store/demo-flaky",
+      "hashAlgorithm": "blake3",
+      "hash": "demo-not-a-real-hash-flaky",
+      "sizeBytes": 65536,
+      "references": []
+    },
+    {
+      "id": "store:hello-text",
+      "name": "store-hello-text",
+      "kind": "data",
+      "path": "/vertex/store/demo-hello-text",
+      "hashAlgorithm": "blake3",
+      "hash": "demo-not-a-real-hash-hello-text",
+      "sizeBytes": 22,
+      "references": []
+    },
+    {
+      "id": "config:logd",
+      "name": "config-logd-v0",
+      "kind": "config",
+      "path": "/vertex/store/config-logd-v0",
+      "hashAlgorithm": "blake3",
+      "hash": "native-logd-config-v0",
+      "sizeBytes": 33,
+      "references": []
+    }
+  ],
+  "executables": [
+    {
+      "id": "exe:vertex-init",
+      "storeObject": "store:vertex-init-demo",
+      "entrypoint": "bin/vertex-init",
+      "abi": "krust-native-process.v0",
+      "argsDefault": []
+    },
+    {
+      "id": "exe:console-driver",
+      "storeObject": "store:console-driver-demo",
+      "entrypoint": "bin/console-driver",
+      "abi": "krust-native-process.v0",
+      "argsDefault": []
+    },
+    {
+      "id": "exe:console-shell",
+      "storeObject": "store:console-shell-demo",
+      "entrypoint": "bin/console-shell",
+      "abi": "krust-native-process.v0",
+      "argsDefault": []
+    },
+    {
+      "id": "exe:generation-manager",
+      "storeObject": "store:generation-manager-demo",
+      "entrypoint": "bin/generation-manager",
+      "abi": "krust-native-process.v0",
+      "argsDefault": []
+    },
+    {
+      "id": "exe:package-import",
+      "storeObject": "store:package-import-demo",
+      "entrypoint": "bin/package-import",
+      "abi": "krust-native-process.v0",
+      "argsDefault": []
+    },
+    {
+      "id": "exe:logd",
+      "storeObject": "store:logd-demo",
+      "entrypoint": "bin/logd",
+      "abi": "krust-native-process.v0",
+      "argsDefault": []
+    },
+    {
+      "id": "exe:block-driver",
+      "storeObject": "store:block-driver-demo",
+      "entrypoint": "bin/block-driver",
+      "abi": "krust-native-process.v0",
+      "argsDefault": []
+    },
+    {
+      "id": "exe:vertex-store",
+      "storeObject": "store:vertex-store-demo",
+      "entrypoint": "bin/vertex-store",
+      "abi": "krust-native-process.v0",
+      "argsDefault": []
+    },
+    {
+      "id": "exe:vertex-state",
+      "storeObject": "store:vertex-state-demo",
+      "entrypoint": "bin/vertex-state",
+      "abi": "krust-native-process.v0",
+      "argsDefault": []
+    },
+    {
+      "id": "exe:vertex-inspect",
+      "storeObject": "store:vertex-inspect-demo",
+      "entrypoint": "bin/vertex-inspect",
+      "abi": "krust-native-process.v0",
+      "argsDefault": []
+    },
+    {
+      "id": "exe:netstack",
+      "storeObject": "store:netstack-demo",
+      "entrypoint": "bin/netstack",
+      "abi": "krust-native-process.v0",
+      "argsDefault": []
+    },
+    {
+      "id": "exe:echo-server",
+      "storeObject": "store:echo-server-demo",
+      "entrypoint": "bin/echo",
+      "abi": "krust-native-process.v0",
+      "argsDefault": []
+    },
+    {
+      "id": "exe:model-reader",
+      "storeObject": "store:model-reader-demo",
+      "entrypoint": "bin/model-reader",
+      "abi": "krust-native-process.v0",
+      "argsDefault": []
+    },
+    {
+      "id": "exe:counter",
+      "storeObject": "store:counter-demo",
+      "entrypoint": "bin/counter",
+      "abi": "krust-native-process.v0",
+      "argsDefault": []
+    },
+    {
+      "id": "exe:timer",
+      "storeObject": "store:timer-demo",
+      "entrypoint": "bin/timer",
+      "abi": "krust-native-process.v0",
+      "argsDefault": []
+    },
+    {
+      "id": "exe:flaky",
+      "storeObject": "store:flaky-demo",
+      "entrypoint": "bin/flaky",
+      "abi": "krust-native-process.v0",
+      "argsDefault": []
+    }
+  ],
+  "devices": [
+    {
+      "id": "device:serial-com1",
+      "kind": "io-port-range",
+      "selector": {
+        "base": "0x3f8",
+        "length": 8
+      },
+      "driver": "svc:console-driver",
+      "properties": {
+        "model": "ns16550a"
+      }
+    },
+    {
+      "id": "device:virtio-blk0",
+      "kind": "virtio-blk-pci",
+      "selector": {
+        "base": "0xc000",
+        "length": 4096,
+        "irq": 11
+      },
+      "driver": "svc:block-driver",
+      "properties": {
+        "transport": "virtio-pci-io"
+      }
+    },
+    {
+      "id": "device:virtio-rng0",
+      "kind": "virtio-rng-pci",
+      "selector": {
+        "source": "qemu-rng"
+      },
+      "driver": "svc:netstack",
+      "properties": {
+        "transport": "virtio-pci-io"
+      }
+    },
+    {
+      "id": "device:virtio-net0",
+      "kind": "virtio-net-pci",
+      "selector": {
+        "netdev": "user"
+      },
+      "driver": "svc:netstack",
+      "properties": {
+        "transport": "virtio-pci-io"
+      }
+    }
+  ],
+  "stateVolumes": [
+    {
+      "id": "state:counter",
+      "name": "counter",
+      "kind": "vertexdisk-v1",
+      "owner": "svc:echo-server",
+      "mountIntent": "read-write",
+      "snapshotPolicy": {
+        "mode": "explicit"
+      },
+      "backupPolicy": {
+        "mode": "none"
+      }
+    }
+  ],
+  "secrets": [],
+  "capabilities": [
+    {
+      "id": "cap:clock.monotonic",
+      "kind": "clock",
+      "provider": "kernel:krust-placeholder",
+      "rights": [
+        "read"
+      ],
+      "properties": {
+        "clock": "monotonic"
+      }
+    },
+    {
+      "id": "cap:io.com1",
+      "kind": "io-port",
+      "provider": "device:serial-com1",
+      "rights": [
+        "read",
+        "write"
+      ],
+      "properties": {
+        "base": "0x3f8",
+        "length": 8
+      }
+    },
+    {
+      "id": "cap:console.output",
+      "kind": "ipc-endpoint",
+      "provider": "svc:console-driver",
+      "rights": [
+        "send"
+      ],
+      "properties": {
+        "protocol": "vertex.console.output.v1",
+        "role": "output"
+      }
+    },
+    {
+      "id": "cap:console-shell.request",
+      "kind": "ipc-endpoint",
+      "provider": "svc:console-shell",
+      "rights": [
+        "send"
+      ],
+      "properties": {
+        "protocol": "vertex.console.shell.v1",
+        "role": "request",
+        "client": "svc:console-driver",
+        "startAfterProvider": false
+      }
+    },
+    {
+      "id": "cap:console-shell.counter.reply",
+      "kind": "ipc-endpoint",
+      "provider": "svc:console-shell",
+      "rights": [
+        "send"
+      ],
+      "properties": {
+        "protocol": "vertex.counter.v1",
+        "role": "reply",
+        "client": "svc:console-shell"
+      }
+    },
+    {
+      "id": "cap:console-driver.control",
+      "kind": "ipc-endpoint",
+      "provider": "svc:console-driver",
+      "rights": [
+        "send"
+      ],
+      "properties": {
+        "protocol": "vertex.console.control.v1",
+        "role": "control",
+        "client": "svc:console-shell"
+      }
+    },
+    {
+      "id": "cap:generation-manager.request",
+      "kind": "ipc-endpoint",
+      "provider": "svc:generation-manager",
+      "rights": [
+        "send"
+      ],
+      "properties": {
+        "protocol": "vertex.generation-manager.v1",
+        "role": "request",
+        "client": "svc:console-shell"
+      }
+    },
+    {
+      "id": "cap:log.sink",
+      "kind": "ipc-endpoint",
+      "provider": "svc:logd",
+      "rights": [
+        "send"
+      ],
+      "properties": {
+        "protocol": "vertex.log.v1"
+      }
+    },
+    {
+      "id": "cap:net.udp.9000",
+      "kind": "network-port",
+      "provider": "svc:netstack",
+      "rights": [
+        "listen",
+        "bind"
+      ],
+      "properties": {
+        "protocol": "udp",
+        "port": 9000
+      }
+    },
+    {
+      "id": "cap:namespace.echo",
+      "kind": "namespace",
+      "provider": "svc:vertex-supervisor",
+      "rights": [
+        "resolve"
+      ],
+      "properties": {
+        "entries": [
+          {
+            "path": "/state/a",
+            "capability": "cap:store.hello-text.request",
+            "rights": [
+              "send"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "cap:vfs.echo-state-a",
+      "kind": "vfs-root",
+      "provider": "svc:vertex-supervisor",
+      "rights": [
+        "resolve",
+        "read"
+      ],
+      "properties": {
+        "root": "/state/a"
+      }
+    },
+    {
+      "id": "cap:vfs.echo-state-writer",
+      "kind": "vfs-root",
+      "provider": "svc:vertex-supervisor",
+      "rights": [
+        "resolve",
+        "read",
+        "write",
+        "create",
+        "unlink",
+        "rename",
+        "mount"
+      ],
+      "properties": {
+        "root": "/state"
+      }
+    },
+    {
+      "id": "cap:vfs.block-dev-blk0",
+      "kind": "vfs-root",
+      "provider": "svc:vertex-supervisor",
+      "rights": [
+        "resolve",
+        "read"
+      ],
+      "properties": {
+        "root": "/dev/device:virtio-blk0"
+      }
+    },
+    {
+      "id": "cap:echo.api",
+      "kind": "ipc-endpoint",
+      "provider": "svc:echo-server",
+      "rights": [
+        "send"
+      ],
+      "properties": {
+        "protocol": "vertex.echo.v1"
+      }
+    },
+    {
+      "id": "cap:io.pci-config",
+      "kind": "io-port",
+      "provider": "device:virtio-blk0",
+      "rights": [
+        "read",
+        "write"
+      ],
+      "properties": {
+        "base": "0xcf8",
+        "length": 8
+      }
+    },
+    {
+      "id": "cap:io.virtio-blk0",
+      "kind": "io-port",
+      "provider": "device:virtio-blk0",
+      "rights": [
+        "read",
+        "write"
+      ],
+      "properties": {
+        "base": "0xc000",
+        "length": 4096
+      }
+    },
+    {
+      "id": "cap:irq.virtio-blk0",
+      "kind": "interrupt-line",
+      "provider": "device:virtio-blk0",
+      "rights": [
+        "listen"
+      ],
+      "properties": {
+        "irq": 11
+      }
+    },
+    {
+      "id": "cap:dma.virtio-blk0",
+      "kind": "dma-region",
+      "provider": "device:virtio-blk0",
+      "rights": [
+        "read",
+        "write",
+        "map"
+      ],
+      "properties": {
+        "allocation": "kernel-dma",
+        "length": 16384
+      }
+    },
+    {
+      "id": "cap:vertex-store.block.request",
+      "kind": "ipc-endpoint",
+      "provider": "svc:block-driver",
+      "rights": [
+        "send"
+      ],
+      "properties": {
+        "protocol": "vertex.block.v1",
+        "role": "request",
+        "client": "svc:vertex-store",
+        "operations": [
+          "read"
+        ]
+      }
+    },
+    {
+      "id": "cap:vertex-state.block.request",
+      "kind": "ipc-endpoint",
+      "provider": "svc:block-driver",
+      "rights": [
+        "send"
+      ],
+      "properties": {
+        "protocol": "vertex.block.v1",
+        "role": "request",
+        "client": "svc:vertex-state",
+        "operations": [
+          "read",
+          "write"
+        ]
+      }
+    },
+    {
+      "id": "cap:vertex-store.block.reply",
+      "kind": "ipc-endpoint",
+      "provider": "svc:vertex-store",
+      "rights": [
+        "send"
+      ],
+      "properties": {
+        "protocol": "vertex.block.v1",
+        "role": "reply",
+        "client": "svc:vertex-store"
+      }
+    },
+    {
+      "id": "cap:vertex-state.block.reply",
+      "kind": "ipc-endpoint",
+      "provider": "svc:vertex-state",
+      "rights": [
+        "send"
+      ],
+      "properties": {
+        "protocol": "vertex.block.v1",
+        "role": "reply",
+        "client": "svc:vertex-state"
+      }
+    },
+    {
+      "id": "cap:store.hello-text.request",
+      "kind": "ipc-endpoint",
+      "provider": "svc:vertex-store",
+      "rights": [
+        "send"
+      ],
+      "properties": {
+        "protocol": "vertex.store.v1",
+        "role": "request",
+        "object": "store:hello-text"
+      }
+    },
+    {
+      "id": "cap:model-reader.store.reply",
+      "kind": "ipc-endpoint",
+      "provider": "svc:model-reader",
+      "rights": [
+        "send"
+      ],
+      "properties": {
+        "protocol": "vertex.store.v1",
+        "role": "reply",
+        "client": "svc:model-reader"
+      }
+    },
+    {
+      "id": "cap:counter.request",
+      "kind": "ipc-endpoint",
+      "provider": "svc:counter-service",
+      "rights": [
+        "send"
+      ],
+      "properties": {
+        "protocol": "vertex.counter.v1",
+        "role": "request",
+        "client": "svc:console-shell"
+      }
+    },
+    {
+      "id": "cap:package-import.request",
+      "kind": "ipc-endpoint",
+      "provider": "svc:package-import",
+      "rights": [
+        "send"
+      ],
+      "properties": {
+        "protocol": "vertex.package-import.v0",
+        "role": "request"
+      }
+    },
+    {
+      "id": "cap:package-fragment.logd",
+      "kind": "store-object",
+      "provider": "store:package-fragment-logd",
+      "rights": [
+        "read"
+      ],
+      "properties": {
+        "object": "store:package-fragment-logd"
+      }
+    },
+    {
+      "id": "cap:package-import.config-proof",
+      "kind": "store-object",
+      "provider": "config:logd",
+      "rights": [
+        "read"
+      ],
+      "properties": {
+        "object": "config:logd"
+      }
+    },
+    {
+      "id": "cap:timer.sleep",
+      "kind": "timer",
+      "provider": "kernel:krust-placeholder",
+      "rights": [
+        "control"
+      ],
+      "properties": {
+        "clock": "monotonic"
+      }
+    },
+    {
+      "id": "cap:vfs.logd-log-stream",
+      "kind": "vfs-root",
+      "provider": "svc:vertex-supervisor",
+      "rights": [
+        "resolve",
+        "read"
+      ],
+      "properties": {
+        "root": "/proc/log-stream"
+      }
+    },
+    {
+      "id": "cap:vfs.counter-state",
+      "kind": "vfs-root",
+      "provider": "svc:vertex-supervisor",
+      "rights": [
+        "resolve",
+        "read",
+        "write"
+      ],
+      "properties": {
+        "root": "/state/counter"
+      }
+    },
+    {
+      "id": "cap:vfs.console-state-control",
+      "kind": "vfs-root",
+      "provider": "svc:vertex-supervisor",
+      "rights": [
+        "resolve",
+        "control"
+      ],
+      "properties": {
+        "root": "/state/counter/control"
+      }
+    },
+    {
+      "id": "cap:vfs.model-reader-vertexfs",
+      "kind": "vfs-root",
+      "provider": "svc:vertex-supervisor",
+      "rights": [
+        "resolve",
+        "read",
+        "write",
+        "create"
+      ],
+      "properties": {
+        "root": "/fs/app"
+      }
+    }
+  ],
+  "services": [
+    {
+      "id": "svc:vertex-supervisor",
+      "name": "vertex-supervisor",
+      "executable": "exe:vertex-init",
+      "args": [
+        "--supervisor-mode"
+      ],
+      "env": {},
+      "requires": [
+        {
+          "capability": "cap:clock.monotonic",
+          "rights": [
+            "read"
+          ]
+        }
+      ],
+      "provides": [],
+      "state": [],
+      "secrets": [],
+      "restart": "never",
+      "resources": {
+        "memoryMaxBytes": 134217728,
+        "cpuShares": 100
+      },
+      "health": null,
+      "lifecycle": {
+        "startAfter": [],
+        "stopBefore": []
+      },
+      "mountRoot": "/"
+    },
+    {
+      "id": "svc:console-driver",
+      "name": "console-driver",
+      "executable": "exe:console-driver",
+      "args": [],
+      "env": {},
+      "requires": [
+        {
+          "capability": "cap:console-shell.request",
+          "rights": [
+            "send"
+          ]
+        },
+        {
+          "capability": "cap:io.com1",
+          "rights": [
+            "read",
+            "write"
+          ]
+        }
+      ],
+      "provides": [
+        "cap:console.output",
+        "cap:console-driver.control"
+      ],
+      "state": [],
+      "secrets": [],
+      "restart": "never",
+      "resources": {
+        "memoryMaxBytes": 33554432,
+        "cpuShares": 25
+      },
+      "health": {
+        "kind": "ipc-ping",
+        "target": "cap:console.output"
+      },
+      "lifecycle": {
+        "startAfter": [],
+        "stopBefore": []
+      },
+      "mountRoot": "/"
+    },
+    {
+      "id": "svc:logd",
+      "name": "logd",
+      "executable": "exe:logd",
+      "args": [],
+      "env": {},
+      "requires": [
+        {
+          "capability": "cap:clock.monotonic",
+          "rights": [
+            "read"
+          ]
+        },
+        {
+          "capability": "cap:console.output",
+          "rights": [
+            "send"
+          ]
+        },
+        {
+          "capability": "cap:vfs.logd-log-stream",
+          "rights": [
+            "resolve",
+            "read"
+          ]
+        }
+      ],
+      "provides": [
+        "cap:log.sink"
+      ],
+      "state": [],
+      "secrets": [],
+      "restart": "on-failure",
+      "resources": {
+        "memoryMaxBytes": 33554432,
+        "cpuShares": 50
+      },
+      "health": {
+        "kind": "ipc-ping",
+        "target": "cap:log.sink"
+      },
+      "lifecycle": {
+        "startAfter": [
+          "svc:console-driver"
+        ],
+        "stopBefore": []
+      },
+      "configs": [
+        "config:logd"
+      ],
+      "mountRoot": "/"
+    },
+    {
+      "id": "svc:netstack",
+      "name": "netstack",
+      "executable": "exe:netstack",
+      "args": [],
+      "env": {},
+      "requires": [
+        {
+          "capability": "cap:clock.monotonic",
+          "rights": [
+            "read"
+          ]
+        }
+      ],
+      "provides": [
+        "cap:net.udp.9000"
+      ],
+      "state": [],
+      "secrets": [],
+      "restart": "on-failure",
+      "resources": {
+        "memoryMaxBytes": 67108864,
+        "cpuShares": 100
+      },
+      "health": {
+        "kind": "ipc-ping",
+        "target": "cap:net.udp.9000"
+      },
+      "lifecycle": {
+        "startAfter": [
+          "svc:vertex-supervisor"
+        ],
+        "stopBefore": []
+      },
+      "mountRoot": "/"
+    },
+    {
+      "id": "svc:block-driver",
+      "name": "block-driver",
+      "executable": "exe:block-driver",
+      "args": [],
+      "env": {},
+      "requires": [
+        {
+          "capability": "cap:vertex-store.block.reply",
+          "rights": [
+            "send"
+          ]
+        },
+        {
+          "capability": "cap:vertex-state.block.reply",
+          "rights": [
+            "send"
+          ]
+        },
+        {
+          "capability": "cap:io.pci-config",
+          "rights": [
+            "read",
+            "write"
+          ]
+        },
+        {
+          "capability": "cap:irq.virtio-blk0",
+          "rights": [
+            "listen"
+          ]
+        },
+        {
+          "capability": "cap:dma.virtio-blk0",
+          "rights": [
+            "read",
+            "write",
+            "map"
+          ]
+        },
+        {
+          "capability": "cap:io.virtio-blk0",
+          "rights": [
+            "read",
+            "write"
+          ]
+        },
+        {
+          "capability": "cap:vfs.block-dev-blk0",
+          "rights": [
+            "resolve",
+            "read"
+          ]
+        }
+      ],
+      "provides": [
+        "cap:vertex-store.block.request",
+        "cap:vertex-state.block.request"
+      ],
+      "state": [],
+      "secrets": [],
+      "restart": "never",
+      "resources": {
+        "memoryMaxBytes": 33554432,
+        "cpuShares": 25
+      },
+      "health": {
+        "kind": "ipc-ping",
+        "target": "cap:vertex-store.block.request"
+      },
+      "lifecycle": {
+        "startAfter": [
+          "svc:vertex-supervisor"
+        ],
+        "stopBefore": []
+      },
+      "mountRoot": "/"
+    },
+    {
+      "id": "svc:vertex-store",
+      "name": "vertex-store",
+      "executable": "exe:vertex-store",
+      "args": [],
+      "env": {},
+      "requires": [
+        {
+          "capability": "cap:vertex-store.block.request",
+          "rights": [
+            "send"
+          ]
+        },
+        {
+          "capability": "cap:model-reader.store.reply",
+          "rights": [
+            "send"
+          ]
+        }
+      ],
+      "provides": [
+        "cap:store.hello-text.request",
+        "cap:vertex-store.block.reply"
+      ],
+      "state": [],
+      "secrets": [],
+      "restart": "never",
+      "resources": {
+        "memoryMaxBytes": 33554432,
+        "cpuShares": 25
+      },
+      "health": {
+        "kind": "ipc-ping",
+        "target": "cap:store.hello-text.request"
+      },
+      "lifecycle": {
+        "startAfter": [
+          "svc:block-driver"
+        ],
+        "stopBefore": []
+      },
+      "mountRoot": "/"
+    },
+    {
+      "id": "svc:vertex-state",
+      "name": "vertex-state",
+      "executable": "exe:vertex-state",
+      "args": [],
+      "env": {},
+      "requires": [
+        {
+          "capability": "cap:vertex-state.block.request",
+          "rights": [
+            "send"
+          ]
+        }
+      ],
+      "provides": [
+        "cap:vertex-state.block.reply"
+      ],
+      "state": [
+        "state:counter"
+      ],
+      "secrets": [],
+      "restart": "never",
+      "resources": {
+        "memoryMaxBytes": 33554432,
+        "cpuShares": 25
+      },
+      "health": {
+        "kind": "ipc-ping",
+        "target": "cap:vertex-state.block.reply"
+      },
+      "lifecycle": {
+        "startAfter": [
+          "svc:vertex-supervisor"
+        ],
+        "stopBefore": []
+      },
+      "mountRoot": "/"
+    },
+    {
+      "id": "svc:echo-server",
+      "name": "echo",
+      "executable": "exe:echo-server",
+      "args": [
+        "--listen",
+        "cap:net.udp.9000"
+      ],
+      "env": {},
+      "requires": [
+        {
+          "capability": "cap:clock.monotonic",
+          "rights": [
+            "read"
+          ]
+        },
+        {
+          "capability": "cap:log.sink",
+          "rights": [
+            "send"
+          ]
+        },
+        {
+          "capability": "cap:net.udp.9000",
+          "rights": [
+            "listen",
+            "bind"
+          ]
+        },
+        {
+          "capability": "cap:namespace.echo",
+          "rights": [
+            "resolve"
+          ]
+        },
+        {
+          "capability": "cap:vfs.echo-state-a",
+          "rights": [
+            "resolve",
+            "read"
+          ]
+        },
+        {
+          "capability": "cap:vfs.echo-state-writer",
+          "rights": [
+            "resolve",
+            "read",
+            "write",
+            "create",
+            "unlink",
+            "rename",
+            "mount"
+          ]
+        }
+      ],
+      "provides": [
+        "cap:echo.api"
+      ],
+      "state": [],
+      "secrets": [],
+      "restart": "always",
+      "resources": {
+        "memoryMaxBytes": 67108864,
+        "cpuShares": 100
+      },
+      "health": null,
+      "lifecycle": {
+        "startAfter": [
+          "svc:logd",
+          "svc:netstack"
+        ],
+        "stopBefore": []
+      },
+      "mountRoot": "/state",
+      "mounts": [
+        {
+          "path": "/declared-ro",
+          "source": "/",
+          "readOnly": true
+        }
+      ]
+    },
+    {
+      "id": "svc:model-reader",
+      "name": "model-reader",
+      "executable": "exe:model-reader",
+      "args": [],
+      "env": {},
+      "requires": [
+        {
+          "capability": "cap:store.hello-text.request",
+          "rights": [
+            "send"
+          ]
+        },
+        {
+          "capability": "cap:vfs.model-reader-vertexfs",
+          "rights": [
+            "resolve",
+            "read",
+            "write",
+            "create"
+          ]
+        }
+      ],
+      "provides": [
+        "cap:model-reader.store.reply"
+      ],
+      "state": [],
+      "secrets": [],
+      "restart": "never",
+      "resources": {
+        "memoryMaxBytes": 33554432,
+        "cpuShares": 25
+      },
+      "health": null,
+      "lifecycle": {
+        "startAfter": [
+          "svc:vertex-store"
+        ],
+        "stopBefore": []
+      },
+      "mountRoot": "/fs/app"
+    },
+    {
+      "id": "svc:counter-service",
+      "name": "counter-service",
+      "executable": "exe:counter",
+      "args": [],
+      "env": {},
+      "requires": [
+        {
+          "capability": "cap:console-shell.counter.reply",
+          "rights": [
+            "send"
+          ]
+        },
+        {
+          "capability": "cap:vfs.counter-state",
+          "rights": [
+            "resolve",
+            "read",
+            "write"
+          ]
+        }
+      ],
+      "provides": [
+        "cap:counter.request"
+      ],
+      "state": [
+        "state:counter"
+      ],
+      "secrets": [],
+      "restart": "never",
+      "resources": {
+        "memoryMaxBytes": 33554432,
+        "cpuShares": 25
+      },
+      "health": null,
+      "lifecycle": {
+        "startAfter": [
+          "svc:vertex-state"
+        ],
+        "stopBefore": []
+      },
+      "mountRoot": "/"
+    },
+    {
+      "id": "svc:vertex-inspect",
+      "name": "vertex-inspect",
+      "executable": "exe:vertex-inspect",
+      "args": [],
+      "env": {},
+      "requires": [],
+      "provides": [],
+      "state": [],
+      "secrets": [],
+      "restart": "never",
+      "resources": {
+        "memoryMaxBytes": 33554432,
+        "cpuShares": 25
+      },
+      "health": null,
+      "lifecycle": {
+        "startAfter": [
+          "svc:echo-server"
+        ],
+        "stopBefore": []
+      },
+      "mountRoot": "/"
+    },
+    {
+      "id": "svc:generation-manager",
+      "name": "gen-manager",
+      "executable": "exe:generation-manager",
+      "args": [],
+      "env": {},
+      "requires": [],
+      "provides": [
+        "cap:generation-manager.request"
+      ],
+      "state": [],
+      "secrets": [],
+      "restart": "never",
+      "resources": {
+        "memoryMaxBytes": 33554432,
+        "cpuShares": 25
+      },
+      "health": {
+        "kind": "ipc-ping",
+        "target": "cap:generation-manager.request"
+      },
+      "lifecycle": {
+        "startAfter": [
+          "svc:vertex-inspect"
+        ],
+        "stopBefore": []
+      },
+      "mountRoot": "/"
+    },
+    {
+      "id": "svc:package-import",
+      "name": "package-import",
+      "executable": "exe:package-import",
+      "args": [],
+      "env": {},
+      "requires": [
+        {
+          "capability": "cap:generation-manager.request",
+          "rights": [
+            "send"
+          ]
+        },
+        {
+          "capability": "cap:package-fragment.logd",
+          "rights": [
+            "read"
+          ]
+        },
+        {
+          "capability": "cap:package-import.config-proof",
+          "rights": [
+            "read"
+          ]
+        }
+      ],
+      "provides": [
+        "cap:package-import.request"
+      ],
+      "state": [],
+      "secrets": [],
+      "restart": "never",
+      "resources": {
+        "memoryMaxBytes": 33554432,
+        "cpuShares": 25
+      },
+      "health": {
+        "kind": "ipc-ping",
+        "target": "cap:package-import.request"
+      },
+      "lifecycle": {
+        "startAfter": [
+          "svc:generation-manager"
+        ],
+        "stopBefore": []
+      },
+      "mountRoot": "/"
+    },
+    {
+      "id": "svc:console-shell",
+      "name": "console-shell",
+      "executable": "exe:console-shell",
+      "args": [],
+      "env": {},
+      "requires": [
+        {
+          "capability": "cap:console.output",
+          "rights": [
+            "send"
+          ]
+        },
+        {
+          "capability": "cap:console-driver.control",
+          "rights": [
+            "send"
+          ]
+        },
+        {
+          "capability": "cap:counter.request",
+          "rights": [
+            "send"
+          ]
+        },
+        {
+          "capability": "cap:vfs.console-state-control",
+          "rights": [
+            "resolve",
+            "control"
+          ]
+        },
+        {
+          "capability": "cap:generation-manager.request",
+          "rights": [
+            "send"
+          ]
+        },
+        {
+          "capability": "cap:package-import.request",
+          "rights": [
+            "send"
+          ]
+        }
+      ],
+      "provides": [
+        "cap:console-shell.request",
+        "cap:console-shell.counter.reply"
+      ],
+      "state": [],
+      "secrets": [],
+      "restart": "never",
+      "resources": {
+        "memoryMaxBytes": 33554432,
+        "cpuShares": 25
+      },
+      "health": {
+        "kind": "ipc-ping",
+        "target": "cap:console-shell.request"
+      },
+      "lifecycle": {
+        "startAfter": [
+          "svc:generation-manager"
+        ],
+        "stopBefore": []
+      },
+      "mountRoot": "/"
+    },
+    {
+      "id": "svc:timer-service",
+      "name": "timer-service",
+      "executable": "exe:timer",
+      "args": [],
+      "env": {},
+      "requires": [
+        {
+          "capability": "cap:timer.sleep",
+          "rights": [
+            "control"
+          ]
+        }
+      ],
+      "provides": [],
+      "state": [],
+      "secrets": [],
+      "restart": "never",
+      "resources": {
+        "memoryMaxBytes": 33554432,
+        "cpuShares": 25
+      },
+      "health": null,
+      "lifecycle": {
+        "startAfter": [
+          "svc:vertex-supervisor"
+        ],
+        "stopBefore": []
+      },
+      "mountRoot": "/"
+    },
+    {
+      "id": "svc:flaky-service",
+      "name": "flaky-service",
+      "executable": "exe:flaky",
+      "args": [],
+      "env": {},
+      "requires": [],
+      "provides": [],
+      "state": [],
+      "secrets": [],
+      "restart": "on-failure",
+      "resources": {
+        "memoryMaxBytes": 33554432,
+        "cpuShares": 25
+      },
+      "health": null,
+      "lifecycle": {
+        "startAfter": [
+          "svc:vertex-supervisor"
+        ],
+        "stopBefore": []
+      },
+      "mountRoot": "/"
+    }
+  ],
+  "activation": {
+    "rootService": "svc:vertex-supervisor",
+    "startOrder": [
+      "svc:vertex-supervisor",
+      "svc:console-driver",
+      "svc:logd",
+      "svc:netstack",
+      "svc:block-driver",
+      "svc:vertex-store",
+      "svc:vertex-state",
+      "svc:echo-server",
+      "svc:model-reader",
+      "svc:counter-service",
+      "svc:vertex-inspect",
+      "svc:generation-manager",
+      "svc:package-import",
+      "svc:console-shell",
+      "svc:timer-service",
+      "svc:flaky-service"
+    ],
+    "rollbackPolicy": {
+      "default": "system-only",
+      "state": "preserve-unless-explicit"
+    },
+    "onFailure": "stop-activation"
+  },
+  "policies": {
+    "defaultAuthority": "deny",
+    "allowAmbientFilesystem": false,
+    "allowAmbientNetwork": false,
+    "allowAmbientDevices": false,
+    "capabilityDelegation": "explicit-only",
+    "unknownReferences": "reject"
+  }
+}

@@ -67,7 +67,7 @@ const MAX_VFS_ROOTS: usize = 8;
 const MAX_GRAPH_NODES: usize = 128;
 const MAX_GRAPH_EDGES: usize = 224;
 const MAX_NAMESPACE_ENTRIES: usize = 4;
-const MAX_PROCESS_REFS: usize = 4;
+const MAX_PROCESS_REFS: usize = 5;
 const MAX_PROCESS_MOUNTS: usize = 4;
 const PAGE_SIZE: u64 = 4096;
 const MAX_DEVICE_MAPPING_LENGTH: u64 = 1 << 30;
@@ -158,7 +158,7 @@ pub struct GraphStoreImage {
 impl KrustBootIdentity {
     pub fn release_profile_label(&self) -> String {
         format!(
-            "Manifest v1 compact KRUSTBOOTM82 version {}",
+            "Manifest v1 compact KRUSTBOOTM84 version {}",
             self.compact_version
         )
     }
@@ -504,7 +504,7 @@ pub fn validate_release_artifact(bytes: &[u8]) -> Result<KrustBootIdentity, Stri
 
     let payload = V1_PAYLOAD_OFFSET;
     if &bytes[payload..payload + COMPACT_MAGIC.len()] != COMPACT_MAGIC {
-        return Err("unsupported KrustBoot compact magic; expected KRUSTBOOTM82".to_owned());
+        return Err("unsupported KrustBoot compact magic; expected KRUSTBOOTM84".to_owned());
     }
     let compact_version = read_u16_at(bytes, payload + COMPACT_MAGIC.len())?;
     if compact_version != COMPACT_VERSION {
@@ -1750,6 +1750,13 @@ fn native_store_candidate_paths(module_string: &str) -> Vec<PathBuf> {
         paths.push(PathBuf::from("assets/vertexfs-fsync-fault-token.txt"));
         paths.push(PathBuf::from(
             "kernel/krust/assets/vertexfs-fsync-fault-token.txt",
+        ));
+        return paths;
+    }
+    if module_string == "package-fragment-logd" {
+        paths.push(PathBuf::from("assets/package-fragment-logd.txt"));
+        paths.push(PathBuf::from(
+            "kernel/krust/assets/package-fragment-logd.txt",
         ));
         return paths;
     }

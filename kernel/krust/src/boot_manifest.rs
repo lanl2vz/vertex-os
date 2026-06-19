@@ -40,7 +40,7 @@ const DMA_KERNEL_ALLOCATED_BASE: u64 = u64::MAX;
 const MAX_DEVICE_MAPPING_LENGTH: u64 = 1 << 30;
 const MAX_LEGACY_IRQ_LINE: u64 = 15;
 pub const MAX_NAMESPACE_ENTRIES: usize = 4;
-pub const MAX_PROCESS_REFS: usize = 4;
+pub const MAX_PROCESS_REFS: usize = 5;
 pub const MAX_PROCESS_MOUNTS: usize = 4;
 
 pub const GRAPH_NODE_GENERATION: u16 = graph_abi::NODE_GENERATION;
@@ -365,6 +365,52 @@ impl<'a> Manifest<'a> {
             graph_edges: [None; MAX_GRAPH_EDGES],
             graph_edge_count: 0,
         }
+    }
+
+    fn reset(&mut self) {
+        self.generation_id = "";
+        self.parent_generation_id = "";
+        self.source_base = 0;
+        self.source_len = 0;
+        self.graph_store_base = 0;
+        self.graph_store_len = 0;
+        self.graph_store_checksum = 0;
+        self.layout_version = 0;
+        self.record_count = 0;
+        self.boot_modules.fill(None);
+        self.boot_module_count = 0;
+        self.processes.fill(None);
+        self.process_count = 0;
+        self.endpoints.fill(None);
+        self.endpoint_count = 0;
+        self.grants.fill(None);
+        self.grant_count = 0;
+        self.store_objects.fill(None);
+        self.store_object_count = 0;
+        self.state_volumes.fill(None);
+        self.state_volume_count = 0;
+        self.network_ports.fill(None);
+        self.network_port_count = 0;
+        self.io_ports.fill(None);
+        self.io_port_count = 0;
+        self.mmio_regions.fill(None);
+        self.mmio_region_count = 0;
+        self.interrupt_lines.fill(None);
+        self.interrupt_line_count = 0;
+        self.dma_regions.fill(None);
+        self.dma_region_count = 0;
+        self.pci_devices.fill(None);
+        self.pci_device_count = 0;
+        self.virtio_devices.fill(None);
+        self.virtio_device_count = 0;
+        self.namespaces.fill(None);
+        self.namespace_count = 0;
+        self.vfs_roots.fill(None);
+        self.vfs_root_count = 0;
+        self.graph_nodes.fill(None);
+        self.graph_node_count = 0;
+        self.graph_edges.fill(None);
+        self.graph_edge_count = 0;
     }
 
     pub fn generation_id(&self) -> &'a str {
@@ -761,7 +807,7 @@ fn parse_compact_into(
     let graph_edge_count = reader.read_count(MAX_GRAPH_EDGES, ParseError::TooManyGraphEdges)?;
     let graph_store_checksum = reader.read_u32()?;
 
-    *manifest = Manifest::empty();
+    manifest.reset();
     manifest.generation_id = generation_id;
     manifest.parent_generation_id = parent_generation_id;
     manifest.source_base = bytes.as_ptr() as u64;

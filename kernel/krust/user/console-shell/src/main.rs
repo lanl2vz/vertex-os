@@ -15,6 +15,9 @@ const CAP_GENERATION_MANAGER_REQUEST: u64 = 6;
 const CAP_COUNTER_REQUEST: u64 = 7;
 const CAP_STATE_CONTROL: u64 = 8;
 const CAP_INSPECT: u64 = 9;
+const CAP_PACKAGE_IMPORT_REQUEST: u64 = 8;
+const CAP_STATE_CONTROL_AFTER_PACKAGE_IMPORT: u64 = 9;
+const CAP_INSPECT_AFTER_PACKAGE_IMPORT: u64 = 10;
 const PROTOCOL_HEALTH_V0: u16 = 2;
 const MESSAGE_READY: u16 = 1;
 const ENVELOPE_LEN: usize = 16;
@@ -118,6 +121,21 @@ pub extern "C" fn _start() -> ! {
                 sys::pause();
             }
         }
+        if bytes_eq(command, b"import package pkg:logd") {
+            log(b"console-shell command: import package pkg:logd");
+            console_write(b"import package pkg:logd\n> ");
+            yield_for_console_driver();
+            log(b"console-shell requests package-import import");
+            let status = sys::ipc_send(CAP_PACKAGE_IMPORT_REQUEST, b"import pkg:logd");
+            if status != sys::STATUS_OK {
+                log(b"console-shell package import failed");
+                console_write(b"package import failed\n> ");
+                continue;
+            }
+            loop {
+                sys::pause();
+            }
+        }
         if bytes_eq(command, b"rollback to gen:old") {
             log(b"console-shell command: rollback to gen:old");
             let value = counter_request(b"G");
@@ -126,6 +144,24 @@ pub extern "C" fn _start() -> ! {
             log(b"console-shell requests generation-manager rollback");
             let status =
                 sys::ipc_send(CAP_GENERATION_MANAGER_REQUEST, b"rollback gen:console-0001");
+            if status != sys::STATUS_OK {
+                log(b"console-shell rollback failed");
+                console_write(b"rollback failed\n> ");
+                continue;
+            }
+            loop {
+                sys::pause();
+            }
+        }
+        if bytes_eq(command, b"rollback imported package") {
+            log(b"console-shell command: rollback imported package");
+            console_write(b"rollback imported package\n> ");
+            yield_for_console_driver();
+            log(b"console-shell requests generation-manager rollback");
+            let status = sys::ipc_send(
+                CAP_GENERATION_MANAGER_REQUEST,
+                b"rollback gen:package-import-0001",
+            );
             if status != sys::STATUS_OK {
                 log(b"console-shell rollback failed");
                 console_write(b"rollback failed\n> ");
@@ -147,6 +183,7 @@ pub extern "C" fn _start() -> ! {
             log(b"console-shell command: halt");
             console_write(b"Native console shell ok\n");
             let _ = sys::ipc_send(CAP_COUNTER_REQUEST, b"H");
+            let _ = sys::ipc_send(CAP_PACKAGE_IMPORT_REQUEST, b"shutdown");
             wait_for_state_clients_to_drain();
             shutdown_state_service();
             shutdown_generation_manager();
@@ -164,7 +201,10 @@ pub extern "C" fn _start() -> ! {
 
 fn runtime_report() -> &'static [u8] {
     let report = report_buffer();
-    let report_len = sys::runtime_inspect(CAP_INSPECT, report);
+    let mut report_len = sys::runtime_inspect(CAP_INSPECT, report);
+    if report_len == sys::STATUS_BAD_CAPABILITY {
+        report_len = sys::runtime_inspect(CAP_INSPECT_AFTER_PACKAGE_IMPORT, report);
+    }
     if report_len == sys::STATUS_BAD_CAPABILITY
         || report_len == sys::STATUS_BAD_BUFFER
         || report_len == sys::STATUS_TOO_LARGE
@@ -285,7 +325,11 @@ fn console_write_counter(prefix: &[u8], value: &[u8]) {
 }
 
 fn shutdown_state_service() {
-    let control = sys::vfs_open_path_write(CAP_STATE_CONTROL, STATE_CONTROL_PATH);
+    let mut control = sys::vfs_open_path_write(CAP_STATE_CONTROL, STATE_CONTROL_PATH);
+    if status_is_error(control) {
+        control =
+            sys::vfs_open_path_write(CAP_STATE_CONTROL_AFTER_PACKAGE_IMPORT, STATE_CONTROL_PATH);
+    }
     if status_is_error(control)
         || sys::vfs_write(control, b"Q") != 1
         || sys::vfs_close(control) != sys::STATUS_OK

@@ -836,6 +836,59 @@ svc:counter has state authority from generation graph
 	Native service activation ok
 	'
 	        ;;
+	    m84|package-import)
+		        MANIFEST="$ROOT_DIR/examples/krust-package-import-generation.vertex.json"
+		        FALLBACK_MANIFEST="$ROOT_DIR/examples/krust-package-import-new-generation.vertex.json"
+		        HOSTLESS_BOOT_GENERATIONS=1
+	        EXPECT_ACTIVATION_SUCCESS=1
+	        USE_SERIAL_PIPE=1
+	        SERIAL_INPUT_DELAYED=1
+	        SERIAL_INPUT_DELAY_SECONDS=6
+	        QEMU_ATTEMPTS=${QEMU_M84_ATTEMPTS:-60}
+	        M84_GRAPH_LINK_DIR="$BUILD_DIR/m84-graph-link"
+	        cargo run --locked --offline --quiet --manifest-path "$ROOT_DIR/crates/vertexctl/Cargo.toml" -- graph-link "$M84_GRAPH_LINK_DIR" "$ROOT_DIR/examples/packages/serial-driver.vertexpkg" "$ROOT_DIR/examples/packages/logd.vertexpkg"
+	        if ! grep -Fq '"closureHash": "647d2d8acfb4699421bffb1b0767f8c52826b43c65f95667f23161a01fab0041"' "$M84_GRAPH_LINK_DIR/store-closure.json"; then
+	            echo "M84 host graph-link closure hash mismatch" >&2
+	            exit 1
+	        fi
+	        SERIAL_INPUT='import package pkg:logd
+	rollback imported package
+	halt
+	'
+	        required_lines='
+	Boot generation: gen:package-import-0001
+	VertexDisk native generation ready: gen:package-import-new-0002
+	package-import ready
+	vertex-init observed ready: package-import
+	console-driver forwarded serial command: import package pkg:logd
+	console-shell requests package-import import
+	native package-import service reads compact graph fragment
+	package-import parsed compact typed graph fragment: package=pkg:logd
+	package-import verified store-object hash: object=config:logd
+	native package import adds service graph fragment to candidate generation: service=svc:logd generation=gen:package-import-new-0002
+	package-import authority delta: service=svc:logd grants=cap:serial.console/send,config:logd/read
+	package-import rejected missing dependency: capability=cap:missing.database reason=no-provider no partial graph-store writes
+	package-import rejected excess authority: capability=cap:io.com1/write reason=undeclared
+	package-import duplicate import idempotent: package=pkg:logd store_objects_unchanged=1
+	native graph-link closure hash: 647d2d8acfb4699421bffb1b0767f8c52826b43c65f95667f23161a01fab0041
+	host graph-link closure hash matches native closure hash
+	package-import queues candidate generation for activation
+	generation-manager install candidate from native graph-store: generation=gen:package-import-new-0002
+	Native update transaction verifies store closure: generation=gen:package-import-new-0002
+	Krust generation switch accepted: from=gen:package-import-0001 to=gen:package-import-new-0002
+	Krust generation switch entering generation: gen:package-import-new-0002
+	Boot generation: gen:package-import-new-0002
+	console-driver forwarded serial command: rollback imported package
+	console-shell requests generation-manager rollback
+	Native generation verification accepted: generation=gen:package-import-0001
+	Krust rollback generation accepted: target=gen:package-import-0001
+	Krust rollback entering generation: gen:package-import-0001
+	Boot generation: gen:package-import-0001
+	console-driver forwarded serial command: halt
+	Native console shell ok
+	Native service activation ok
+	'
+	        ;;
 	    m55|driver-framework)
         MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
         EXPECT_ACTIVATION_SUCCESS=1
@@ -1590,7 +1643,7 @@ activation failed
 '
         ;;
     *)
-        echo "usage: scripts/krust-test.sh <m13|m14|valid-activation|manifest-cycle|bad-cap|readiness|readiness-timeout|rollback|store-state-services|timer|preemption|m30|user-fault|m31|restart|manifest-v1|cap-lifecycle|typed-arenas|quotas|m32|io-substrate|m33|serial-driver|m34|block-driver|m35|store-service|m36|state-service|m37|generation-switch|m38|introspection|m40|directed-ipc|m41|console-shell|m42|virtio-block|m42-driver-fault|block-driver-fault|m43|vertexdisk|m43-bad-superblock|vertexdisk-bad-superblock|m44|boot-manager|m45|store-verification|m46|native-update|m47|store-executables|m47-corrupt-executable|store-executable-corruption|m48|dynamic-process|m49|config-objects|m49-config-corrupt|config-hash-mismatch|m50|secrets|m54|appliance|m55|driver-framework|m56|virtio-device-stack|m57|networking-v0|m59|namespace-service|m60|policy-typed|m61|abi-authority-hardening|m62|storage-durability|m62-journal-replay|storage-journal-replay|m62-corrupt-journal|storage-corrupt-journal|m63|network-boundary|m64|supervisor-lifecycle|m66|memory-lifecycle|m67|address-space-teardown|m68|failure-atomicity|m69|memory-pressure|m70|interrupt-routing|m71|dma-ownership|m72|virtio-recovery|m73|device-fault-gate|m75|vfs-blocking|m76|directory-metadata|m77|cache-writeback|m78|vertexfs-v1|m78-bad-superblock|vertexfs-bad-superblock|m78-journal-replay|vertexfs-journal-replay|m78-journal-checkpoint-after-journal|vertexfs-journal-checkpoint-after-journal|m78-journal-checkpoint-after-data|vertexfs-journal-checkpoint-after-data|m78-journal-checkpoint-after-inode|vertexfs-journal-checkpoint-after-inode|m78-post-sync-remount|vertexfs-post-sync-remount|m78-fsync-fault|vertexfs-fsync-fault|m79|mount-namespaces|m80|vfs-coordination|m81|vfs-crash-security-soak|m82|native-graph-store|m82-vertexdisk-graph-corrupt|vertexdisk-graph-store-corrupt|m83|generation-manager|m83-hostless|generation-manager-hostless|m83-power-prepare|m83-power-commit|m83-power-rollback|manifest-truncated|manifest-bad-magic|manifest-raw-compact|manifest-old-compact-magic|manifest-graph-store-checksum|manifest-graph-store-record|manifest-unsupported-version|manifest-oob-record|manifest-missing-provider>" >&2
+        echo "usage: scripts/krust-test.sh <m13|m14|valid-activation|manifest-cycle|bad-cap|readiness|readiness-timeout|rollback|store-state-services|timer|preemption|m30|user-fault|m31|restart|manifest-v1|cap-lifecycle|typed-arenas|quotas|m32|io-substrate|m33|serial-driver|m34|block-driver|m35|store-service|m36|state-service|m37|generation-switch|m38|introspection|m40|directed-ipc|m41|console-shell|m42|virtio-block|m42-driver-fault|block-driver-fault|m43|vertexdisk|m43-bad-superblock|vertexdisk-bad-superblock|m44|boot-manager|m45|store-verification|m46|native-update|m47|store-executables|m47-corrupt-executable|store-executable-corruption|m48|dynamic-process|m49|config-objects|m49-config-corrupt|config-hash-mismatch|m50|secrets|m54|appliance|m55|driver-framework|m56|virtio-device-stack|m57|networking-v0|m59|namespace-service|m60|policy-typed|m61|abi-authority-hardening|m62|storage-durability|m62-journal-replay|storage-journal-replay|m62-corrupt-journal|storage-corrupt-journal|m63|network-boundary|m64|supervisor-lifecycle|m66|memory-lifecycle|m67|address-space-teardown|m68|failure-atomicity|m69|memory-pressure|m70|interrupt-routing|m71|dma-ownership|m72|virtio-recovery|m73|device-fault-gate|m75|vfs-blocking|m76|directory-metadata|m77|cache-writeback|m78|vertexfs-v1|m78-bad-superblock|vertexfs-bad-superblock|m78-journal-replay|vertexfs-journal-replay|m78-journal-checkpoint-after-journal|vertexfs-journal-checkpoint-after-journal|m78-journal-checkpoint-after-data|vertexfs-journal-checkpoint-after-data|m78-journal-checkpoint-after-inode|vertexfs-journal-checkpoint-after-inode|m78-post-sync-remount|vertexfs-post-sync-remount|m78-fsync-fault|vertexfs-fsync-fault|m79|mount-namespaces|m80|vfs-coordination|m81|vfs-crash-security-soak|m82|native-graph-store|m82-vertexdisk-graph-corrupt|vertexdisk-graph-store-corrupt|m83|generation-manager|m83-hostless|generation-manager-hostless|m83-power-prepare|m83-power-commit|m83-power-rollback|m84|package-import|manifest-truncated|manifest-bad-magic|manifest-raw-compact|manifest-old-compact-magic|manifest-graph-store-checksum|manifest-graph-store-record|manifest-unsupported-version|manifest-oob-record|manifest-missing-provider>" >&2
         exit 2
         ;;
 esac

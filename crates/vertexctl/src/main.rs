@@ -761,6 +761,9 @@ fn graph_link_cmd(args: &[String]) -> Result<(), String> {
         &package_executables,
         &package_configs,
     )?;
+    let closure_material =
+        graph_link_closure_material(&package_ids, &package_services, &store_closure)?;
+    let closure_hash = blake3_hex(closure_material.as_bytes());
     let generation_path = output_dir.join("generation.vertex.json");
     fs::write(
         &generation_path,
@@ -774,6 +777,8 @@ fn graph_link_cmd(args: &[String]) -> Result<(), String> {
         serde_json::to_string_pretty(&serde_json::json!({
             "schema": "vertex.store-closure.v0",
             "packages": package_ids,
+            "closureMaterial": closure_material,
+            "closureHash": closure_hash,
             "objects": store_closure
         }))
         .map_err(|source| source.to_string())?,
@@ -786,6 +791,7 @@ fn graph_link_cmd(args: &[String]) -> Result<(), String> {
         serde_json::to_string_pretty(&serde_json::json!({
             "schema": "vertex.krustboot-metadata.v0",
             "generation": generation_path,
+            "closureHash": closure_hash,
             "services": package_services,
             "configs": package_configs,
             "bootTarget": "qemu-x86_64-krust"
@@ -796,8 +802,30 @@ fn graph_link_cmd(args: &[String]) -> Result<(), String> {
 
     println!("linked generation graph: {}", generation_path.display());
     println!("linked store closure: {}", store_path.display());
+    println!("linked closure hash: {closure_hash}");
     println!("linked KrustBoot metadata: {}", metadata_path.display());
     Ok(())
+}
+
+fn graph_link_closure_material(
+    package_ids: &[String],
+    package_services: &[serde_json::Value],
+    store_closure: &[serde_json::Value],
+) -> Result<String, String> {
+    let services = package_services
+        .iter()
+        .map(|service| json_required_str(service, "id").map(str::to_owned))
+        .collect::<Result<Vec<_>, _>>()?;
+    let objects = store_closure
+        .iter()
+        .map(|object| json_required_str(object, "id").map(str::to_owned))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(format!(
+        "packages={};services={};objects={}",
+        package_ids.join(","),
+        services.join(","),
+        objects.join(",")
+    ))
 }
 
 fn build_import_cmd(args: &[String]) -> Result<(), String> {

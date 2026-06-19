@@ -13,6 +13,7 @@ members = [
     "logd",
     "model-reader",
     "netstack",
+    "package-import",
     "serial-driver",
     "state-reader",
     "timer",

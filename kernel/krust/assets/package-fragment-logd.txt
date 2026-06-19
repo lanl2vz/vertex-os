@@ -1,0 +1,12 @@
+PKGFRAGV1
+package=pkg:logd
+closure_packages=pkg:serial-driver,pkg:logd
+service=svc:logd
+candidate=gen:package-import-new-0002
+object=config:logd
+object_hash=cdc1cca7a5b3b62157f76dd82d7ea61dd9a1d2a4c31d186dac31ad242df4786c
+authority_delta=cap:serial.console/send,config:logd/read
+missing_dependency=cap:missing.database
+excess_authority=cap:io.com1/write
+closure_material=packages=pkg:serial-driver,pkg:logd;services=svc:serial-driver,svc:logd;objects=store:serial-driver-demo,store:logd-demo,config:logd
+closure_hash=647d2d8acfb4699421bffb1b0767f8c52826b43c65f95667f23161a01fab0041

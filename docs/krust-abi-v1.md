@@ -5,7 +5,7 @@ native Krust QEMU/Limine milestone. It is intentionally small and unstable. Its
 current job is to boot native `vertex-init`, create services from verified
 process templates, and enforce explicit process-local capabilities.
 
-Milestone status: ABI v1 now covers the M14-M83 native activation and substrate
+Milestone status: ABI v1 now covers the M14-M84 native activation and substrate
 proof. M25 adds the release gate. M26-M29 add Manifest v1 parsing, capability
 provenance/revocation, typed arena allocation checks, and resource quotas.
 M30-M31 add PIT-backed preemption and user page-fault containment. M32-M36 add
@@ -42,8 +42,10 @@ updates the compact payload identity to `KRUSTBOOTM82` version 13 and adds the
 native typed graph-store header plus graph node/edge records used for runtime
 graph provenance. M83 adds native generation verification and staged
 install/rollback syscalls used by the generation-manager before it commits
-durable selected-generation metadata. The ABI is still intentionally small, but
-this subset is the current native contract.
+durable selected-generation metadata. M84 updates the compact payload identity
+to `KRUSTBOOTM84` version 14 so process records can carry the fifth endpoint
+reference needed by native package import. The ABI is still intentionally
+small, but this subset is the current native contract.
 
 ## Machine ABI
 
@@ -822,9 +824,9 @@ graph_nodes
 graph_edges
 ```
 
-The compact payload identity is `KRUSTBOOTM82` version 13. Older compact
-payload identities, including M79, M75, and M61, are rejected instead of being
-retained as compatibility formats.
+The compact payload identity is `KRUSTBOOTM84` version 14. Older compact
+payload identities, including M82, M79, M75, and M61, are rejected instead of
+being retained as compatibility formats.
 
 Manifest v1 adds a fixed header, record table, checksum, and record bounds
 validation. The current record kinds are boot modules, process templates,

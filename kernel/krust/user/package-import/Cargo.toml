@@ -1,0 +1,13 @@
+[package]
+name = "krust-package-import"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[dependencies]
+blake3.workspace = true
+
+[[bin]]
+name = "package-import"
+path = "src/main.rs"

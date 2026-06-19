@@ -404,7 +404,7 @@ fn release_profile_validates_current_krustboot_identity() {
         &kernel_path.to_string_lossy(),
         &vertexdisk_path.to_string_lossy(),
     ]));
-    assert!(profile.contains("krustboot=Manifest v1 compact KRUSTBOOTM82 version 13"));
+    assert!(profile.contains("krustboot=Manifest v1 compact KRUSTBOOTM84 version 14"));
 
     assert_success(run(&[
         "corrupt-boot-manifest",
@@ -421,7 +421,7 @@ fn release_profile_validates_current_krustboot_identity() {
         &vertexdisk_path.to_string_lossy(),
     ]));
     assert!(stderr.contains("unsupported KrustBoot compact magic"));
-    assert!(stderr.contains("expected KRUSTBOOTM82"));
+    assert!(stderr.contains("expected KRUSTBOOTM84"));
 }
 
 #[test]

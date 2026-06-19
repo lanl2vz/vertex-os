@@ -30,12 +30,12 @@ vertex-os/
     netstack/            Demo network capability provider
     echo-server/         Demo service consuming log and network capabilities
   kernel/
-    krust/               Bootable Krust kernel prototype, currently covering M14-M83 native graph activation, substrate hardening, pinned tooling, ABI v1 IPC, console shell, virtio device I/O, VertexDisk v1 durability, native boot selection, verified store objects, native updates, store-loaded executables, dynamic process creation, native config/secrets, package/link/build import, the first appliance transcript, native user-space driver objects, netstack boundaries, capability namespaces, policy compilation, lifecycle supervision, a supported standalone appliance profile, owned frame reclamation, address-space teardown, failure-atomic kernel object creation, memory lifecycle soak gates, interrupt routing, DMA ownership, virtio recovery, device-fault isolation, VFS root authority, open-file handles, directory metadata operations, bounded block-cache writeback, image-backed VertexFS/mount-namespace gates, VFS coordination primitives, filesystem security/soak gates, the native VertexDisk graph-store read/provenance surface, and native generation-manager install/rollback/recovery
+    krust/               Bootable Krust kernel prototype, currently covering M14-M84 native graph activation, substrate hardening, pinned tooling, ABI v1 IPC, console shell, virtio device I/O, VertexDisk v1 durability, native boot selection, verified store objects, native updates, store-loaded executables, dynamic process creation, native config/secrets, package/link/build import, the first appliance transcript, native user-space driver objects, netstack boundaries, capability namespaces, policy compilation, lifecycle supervision, a supported standalone appliance profile, owned frame reclamation, address-space teardown, failure-atomic kernel object creation, memory lifecycle soak gates, interrupt routing, DMA ownership, virtio recovery, device-fault isolation, VFS root authority, open-file handles, directory metadata operations, bounded block-cache writeback, image-backed VertexFS/mount-namespace gates, VFS coordination primitives, filesystem security/soak gates, the native VertexDisk graph-store read/provenance surface, native generation-manager install/rollback/recovery, and native package closure import
   lang/
     vertex-lang/         Planned typed system-definition language
 ```
 
-## Krust M14-M83
+## Krust M14-M84
 
 The current native activation path lives in `kernel/krust`. It is isolated
 from the host-side Cargo workspace and boots a Limine ISO under QEMU. The ISO
@@ -86,7 +86,11 @@ provenance in runtime inspect, and rejects malformed compact or disk
 graph-store records before activation. M83 moves generation installation,
 rollback, durable selected-generation metadata, and prepare/commit/rollback
 recovery into the native generation-manager, block-driver, and staged kernel
-runtime-build authority path.
+runtime-build authority path. M84 adds native package closure import, including
+the `KRUSTBOOTM84` version 14 compact payload identity, compact graph-fragment
+parsing, store/config hash verification, authority-delta reporting, rejection
+of undeclared dependencies and excess grants, idempotent candidate-generation
+linking, host/native closure-hash parity, activation, and rollback.
 
 ```sh
 scripts/krust-smoke.sh
@@ -94,13 +98,13 @@ scripts/krust-smoke.sh
 
 The clean-clone release gate validates the host-side build and tests, checks
 the Krust toolchain, rebuilds the standalone ISO from clean kernel artifacts,
-and runs the M14-M83 substrate gate with the M14-M83 QEMU test matrix:
+and runs the M14-M84 substrate gate with the M14-M84 QEMU test matrix:
 
 ```sh
 scripts/krust-release-gate.sh
 ```
 
-See [docs/krust-milestones.md](docs/krust-milestones.md) for M0 through M83
+See [docs/krust-milestones.md](docs/krust-milestones.md) for M0 through M84
 current status and the appliance OS MVP profile,
 [docs/krust-toolchain.md](docs/krust-toolchain.md) for the pinned M39 toolchain,
 and [docs/krust-abi-v1.md](docs/krust-abi-v1.md) for the current syscall,
