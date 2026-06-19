@@ -479,14 +479,26 @@ fn explain_krustboot_cmd(args: &[String]) -> Result<(), String> {
 
 fn create_vertex_disk_cmd(args: &[String]) -> Result<(), String> {
     let Some((output_path, manifest_paths)) = args.split_first() else {
-        return Err("usage: vertexctl create-vertex-disk <output> <manifest>...".to_owned());
+        return Err(
+            "usage: vertexctl create-vertex-disk <output> <manifest>... [--graph-store-only <manifest>...]"
+                .to_owned(),
+        );
     };
     if manifest_paths.is_empty() {
-        return Err("usage: vertexctl create-vertex-disk <output> <manifest>...".to_owned());
+        return Err(
+            "usage: vertexctl create-vertex-disk <output> <manifest>... [--graph-store-only <manifest>...]"
+                .to_owned(),
+        );
     }
 
     let mut manifests = Vec::new();
+    let mut graph_only_manifests = Vec::new();
+    let mut graph_only = false;
     for manifest_path in manifest_paths {
+        if manifest_path == "--graph-store-only" {
+            graph_only = true;
+            continue;
+        }
         let manifest = load_manifest(manifest_path).map_err(|error| error.to_string())?;
         let report = validate_manifest(&manifest);
         if !report.is_valid() {
@@ -496,10 +508,20 @@ fn create_vertex_disk_cmd(args: &[String]) -> Result<(), String> {
                 manifest.generation.id
             ));
         }
-        manifests.push(manifest);
+        if graph_only {
+            graph_only_manifests.push(manifest);
+        } else {
+            manifests.push(manifest);
+        }
+    }
+    if manifests.is_empty() {
+        return Err(
+            "usage: vertexctl create-vertex-disk <output> <manifest>... [--graph-store-only <manifest>...]"
+                .to_owned(),
+        );
     }
 
-    let image = vertexdisk::create_image(&manifests)?;
+    let image = vertexdisk::create_image_with_graph_only(&manifests, &graph_only_manifests)?;
     fs::write(output_path, &image)
         .map_err(|source| format!("failed to write {output_path}: {source}"))?;
     println!(
@@ -812,17 +834,24 @@ fn graph_link_closure_material(
     package_services: &[serde_json::Value],
     store_closure: &[serde_json::Value],
 ) -> Result<String, String> {
-    let services = package_services
+    let mut packages = package_ids.to_vec();
+    packages.sort();
+    packages.dedup();
+    let mut services = package_services
         .iter()
         .map(|service| json_required_str(service, "id").map(str::to_owned))
         .collect::<Result<Vec<_>, _>>()?;
-    let objects = store_closure
+    services.sort();
+    services.dedup();
+    let mut objects = store_closure
         .iter()
         .map(|object| json_required_str(object, "id").map(str::to_owned))
         .collect::<Result<Vec<_>, _>>()?;
+    objects.sort();
+    objects.dedup();
     Ok(format!(
         "packages={};services={};objects={}",
-        package_ids.join(","),
+        packages.join(","),
         services.join(","),
         objects.join(",")
     ))
@@ -1750,7 +1779,7 @@ fn print_usage() {
            vertexctl compile-typed <system.vertex> <output>\n\
            vertexctl compile-boot-manifest <manifest> <output>\n\
            vertexctl explain-krustboot <manifest>\n\
-           vertexctl create-vertex-disk <output> <manifest>...\n\
+           vertexctl create-vertex-disk <output> <manifest>... [--graph-store-only <manifest>...]\n\
            vertexctl corrupt-vertex-disk <mode> <input> <output>\n\
            vertexctl create-vertexfs <output> <manifest>\n\
            vertexctl inspect-vertexfs <image>\n\

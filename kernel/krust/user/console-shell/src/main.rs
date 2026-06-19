@@ -136,6 +136,31 @@ pub extern "C" fn _start() -> ! {
                 sys::pause();
             }
         }
+        if bytes_eq(command, b"import package pkg:missing-dependency") {
+            log(b"console-shell command: import package pkg:missing-dependency");
+            console_write(b"import package pkg:missing-dependency\n> ");
+            yield_for_console_driver();
+            log(b"console-shell requests package-import missing-dependency validation");
+            let status =
+                sys::ipc_send(CAP_PACKAGE_IMPORT_REQUEST, b"import pkg:missing-dependency");
+            if status != sys::STATUS_OK {
+                log(b"console-shell missing-dependency validation failed");
+                console_write(b"package import validation failed\n> ");
+            }
+            continue;
+        }
+        if bytes_eq(command, b"import package pkg:excess-authority") {
+            log(b"console-shell command: import package pkg:excess-authority");
+            console_write(b"import package pkg:excess-authority\n> ");
+            yield_for_console_driver();
+            log(b"console-shell requests package-import excess-authority validation");
+            let status = sys::ipc_send(CAP_PACKAGE_IMPORT_REQUEST, b"import pkg:excess-authority");
+            if status != sys::STATUS_OK {
+                log(b"console-shell excess-authority validation failed");
+                console_write(b"package import validation failed\n> ");
+            }
+            continue;
+        }
         if bytes_eq(command, b"rollback to gen:old") {
             log(b"console-shell command: rollback to gen:old");
             let value = counter_request(b"G");

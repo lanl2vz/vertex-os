@@ -1760,6 +1760,24 @@ fn native_store_candidate_paths(module_string: &str) -> Vec<PathBuf> {
         ));
         return paths;
     }
+    if module_string == "package-fragment-missing-dependency" {
+        paths.push(PathBuf::from(
+            "assets/package-fragment-missing-dependency.txt",
+        ));
+        paths.push(PathBuf::from(
+            "kernel/krust/assets/package-fragment-missing-dependency.txt",
+        ));
+        return paths;
+    }
+    if module_string == "package-fragment-excess-authority" {
+        paths.push(PathBuf::from(
+            "assets/package-fragment-excess-authority.txt",
+        ));
+        paths.push(PathBuf::from(
+            "kernel/krust/assets/package-fragment-excess-authority.txt",
+        ));
+        return paths;
+    }
 
     let crate_dir = match module_string {
         "vertex-init" => "init",

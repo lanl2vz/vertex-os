@@ -20,6 +20,7 @@ FALLBACK_MANIFEST=
 BAD_GENERATION_MANIFEST=
 BOOT_FALLBACK_MANIFEST=
 BOOT_BAD_GENERATION_MANIFEST=
+VERTEX_DISK_GRAPH_ONLY_MANIFESTS=
 HOSTLESS_BOOT_GENERATIONS=0
 KRUSTBOOT_CORRUPT=
 VERTEX_DISK_CORRUPT=
@@ -838,46 +839,63 @@ svc:counter has state authority from generation graph
 	        ;;
 	    m84|package-import)
 		        MANIFEST="$ROOT_DIR/examples/krust-package-import-generation.vertex.json"
-		        FALLBACK_MANIFEST="$ROOT_DIR/examples/krust-package-import-new-generation.vertex.json"
+		        BOOT_FALLBACK_MANIFEST="$ROOT_DIR/examples/krust-package-import-new-generation.vertex.json"
+		        VERTEX_DISK_GRAPH_ONLY_MANIFESTS="$ROOT_DIR/examples/krust-package-import-new-generation.vertex.json"
 		        HOSTLESS_BOOT_GENERATIONS=1
 	        EXPECT_ACTIVATION_SUCCESS=1
 	        USE_SERIAL_PIPE=1
 	        SERIAL_INPUT_DELAYED=1
-	        SERIAL_INPUT_DELAY_SECONDS=6
-	        QEMU_ATTEMPTS=${QEMU_M84_ATTEMPTS:-60}
+	        SERIAL_INPUT_DELAY_SECONDS=15
+	        QEMU_ATTEMPTS=${QEMU_M84_ATTEMPTS:-100}
 	        M84_GRAPH_LINK_DIR="$BUILD_DIR/m84-graph-link"
 	        cargo run --locked --offline --quiet --manifest-path "$ROOT_DIR/crates/vertexctl/Cargo.toml" -- graph-link "$M84_GRAPH_LINK_DIR" "$ROOT_DIR/examples/packages/serial-driver.vertexpkg" "$ROOT_DIR/examples/packages/logd.vertexpkg"
-	        if ! grep -Fq '"closureHash": "647d2d8acfb4699421bffb1b0767f8c52826b43c65f95667f23161a01fab0041"' "$M84_GRAPH_LINK_DIR/store-closure.json"; then
+	        if ! grep -Fq '"closureHash": "9ea0d17ec97f6c5f358d9d77df8bc89ddae6541cfa3d2bb07bae7e81ff099dc6"' "$M84_GRAPH_LINK_DIR/store-closure.json"; then
 	            echo "M84 host graph-link closure hash mismatch" >&2
 	            exit 1
 	        fi
-	        SERIAL_INPUT='import package pkg:logd
+	        SERIAL_INPUT='import package pkg:missing-dependency
+	import package pkg:excess-authority
+	import package pkg:logd
 	rollback imported package
 	halt
 	'
 	        required_lines='
 	Boot generation: gen:package-import-0001
-	VertexDisk native generation ready: gen:package-import-new-0002
+	KrustBoot fallback generation ready: gen:package-import-new-0002
 	package-import ready
 	vertex-init observed ready: package-import
+	console-driver forwarded serial command: import package pkg:missing-dependency
+	console-shell requests package-import missing-dependency validation
+	package-import validates missing-dependency fragment before materialization
+	package-import rejected missing dependency: capability=cap:missing.database reason=no-provider no candidate install
+	package-import negative missing-dependency import aborted before materialization
+	console-driver forwarded serial command: import package pkg:excess-authority
+	console-shell requests package-import excess-authority validation
+	package-import validates excess-authority fragment before materialization
+	package-import rejected excess authority: capability=cap:io.com1/write reason=undeclared no candidate install
+	package-import negative excess-authority import aborted before materialization
 	console-driver forwarded serial command: import package pkg:logd
 	console-shell requests package-import import
 	native package-import service reads compact graph fragment
 	package-import parsed compact typed graph fragment: package=pkg:logd
-	package-import verified store-object hash: object=config:logd
-	native package import adds service graph fragment to candidate generation: service=svc:logd generation=gen:package-import-new-0002
-	package-import authority delta: service=svc:logd grants=cap:serial.console/send,config:logd/read
-	package-import rejected missing dependency: capability=cap:missing.database reason=no-provider no partial graph-store writes
-	package-import rejected excess authority: capability=cap:io.com1/write reason=undeclared
-	package-import duplicate import idempotent: package=pkg:logd store_objects_unchanged=1
-	native graph-link closure hash: 647d2d8acfb4699421bffb1b0767f8c52826b43c65f95667f23161a01fab0041
-	host graph-link closure hash matches native closure hash
+	package-import verified store-object hash: object=config:logd size=33
+	native package import materializes graph delta: add_service=svc:logd add_capability=cap:log.sink
+	native package import activates closure service: svc:echo-server
+	package-import authority delta accepted: cap:console.output/send,cap:vfs.logd-log-stream/resolve+read,cap:net.udp.9000/listen+bind,cap:log.sink/send,config:logd/read
+	native graph-link closure hash: 95afed4d3a94068eade714c3e8ccc7b7b3dac4ed4e847d74d14e00e1f7d62799
+	package-import verified canonical closure hash
+	package-import registers native graph generation before activation: gen:package-import-new-0002
+	generation-manager registers imported graph generation: generation=gen:package-import-new-0002
+	generation-manager writes VertexDisk generation metadata: register generation=gen:package-import-new-0002 count=2
+	generation-manager imported graph generation registered: generation=gen:package-import-new-0002
 	package-import queues candidate generation for activation
 	generation-manager install candidate from native graph-store: generation=gen:package-import-new-0002
 	Native update transaction verifies store closure: generation=gen:package-import-new-0002
 	Krust generation switch accepted: from=gen:package-import-0001 to=gen:package-import-new-0002
 	Krust generation switch entering generation: gen:package-import-new-0002
 	Boot generation: gen:package-import-new-0002
+	vertex-init observed ready: logd
+	logd received: hello from echo
 	console-driver forwarded serial command: rollback imported package
 	console-shell requests generation-manager rollback
 	Native generation verification accepted: generation=gen:package-import-0001
@@ -886,7 +904,13 @@ svc:counter has state authority from generation graph
 	Boot generation: gen:package-import-0001
 	console-driver forwarded serial command: halt
 	Native console shell ok
-	Native service activation ok
+	'
+	        case_forbidden_lines='
+	generation-manager registers imported graph generation: generation=gen:reject-missing-dependency
+	generation-manager registers imported graph generation: generation=gen:reject-excess-authority
+	generation-manager install candidate from native graph-store: generation=gen:reject-missing-dependency
+	generation-manager install candidate from native graph-store: generation=gen:reject-excess-authority
+	generation-manager transaction abort: reason=unknown-generation generation=gen:package-import-new-0002
 	'
 	        ;;
 	    m55|driver-framework)
@@ -1731,7 +1755,7 @@ if [ "$HOSTLESS_BOOT_GENERATIONS" -eq 0 ]; then
     fi
 fi
 
-(cd "$KRUST_DIR" && make iso VERTEX_MANIFEST="$MANIFEST" FALLBACK_MANIFEST="$FALLBACK_MANIFEST" BAD_GENERATION_MANIFEST="$BAD_GENERATION_MANIFEST" BOOT_FALLBACK_MANIFEST="$BOOT_FALLBACK_MANIFEST" BOOT_BAD_GENERATION_MANIFEST="$BOOT_BAD_GENERATION_MANIFEST" KRUSTBOOT_CORRUPT="$KRUSTBOOT_CORRUPT" VERTEX_DISK_CORRUPT="$VERTEX_DISK_CORRUPT" VERTEXFS_CORRUPT="$VERTEXFS_CORRUPT" VERTEXFS_UPDATE_APP_A_PAYLOAD="$VERTEXFS_UPDATE_APP_A_PAYLOAD")
+(cd "$KRUST_DIR" && make iso VERTEX_MANIFEST="$MANIFEST" FALLBACK_MANIFEST="$FALLBACK_MANIFEST" BAD_GENERATION_MANIFEST="$BAD_GENERATION_MANIFEST" BOOT_FALLBACK_MANIFEST="$BOOT_FALLBACK_MANIFEST" BOOT_BAD_GENERATION_MANIFEST="$BOOT_BAD_GENERATION_MANIFEST" VERTEX_DISK_GRAPH_ONLY_MANIFESTS="$VERTEX_DISK_GRAPH_ONLY_MANIFESTS" KRUSTBOOT_CORRUPT="$KRUSTBOOT_CORRUPT" VERTEX_DISK_CORRUPT="$VERTEX_DISK_CORRUPT" VERTEXFS_CORRUPT="$VERTEXFS_CORRUPT" VERTEXFS_UPDATE_APP_A_PAYLOAD="$VERTEXFS_UPDATE_APP_A_PAYLOAD")
 
 mkdir -p "$(dirname "$SERIAL_LOG")"
 rm -f "$SERIAL_LOG"

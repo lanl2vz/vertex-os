@@ -3,6 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::time::{SystemTime, UNIX_EPOCH};
+use vertex_abi::vertexdisk as vdisk_abi;
 
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
@@ -722,6 +723,66 @@ fn create_vertex_disk_embeds_strict_vertexfs_and_graph_sections() {
 }
 
 #[test]
+fn create_vertex_disk_graph_store_only_manifest_is_not_installable_metadata() {
+    let dir = temp_dir("vertexdisk-graph-only");
+    let base_path = repo_root().join("examples/krust-package-import-generation.vertex.json");
+    let candidate_path =
+        repo_root().join("examples/krust-package-import-new-generation.vertex.json");
+    let output_path = dir.join("package-import.img");
+    let base_arg = base_path.to_string_lossy().to_string();
+    let candidate_arg = candidate_path.to_string_lossy().to_string();
+    let output_arg = output_path.to_string_lossy().to_string();
+
+    assert_success(run(&[
+        "create-vertex-disk",
+        output_arg.as_str(),
+        base_arg.as_str(),
+        "--graph-store-only",
+        candidate_arg.as_str(),
+    ]));
+
+    let bytes = fs::read(&output_path).expect("read VertexDisk image");
+    let metadata_start = section_start_sector(&bytes, vdisk_abi::SECTION_GENERATION_METADATA) * 512;
+    let metadata_count = u16::from_le_bytes([
+        bytes[metadata_start + vdisk_abi::GENERATION_METADATA_COUNT_OFFSET],
+        bytes[metadata_start + vdisk_abi::GENERATION_METADATA_COUNT_OFFSET + 1],
+    ]);
+    assert_eq!(metadata_count, 1);
+    assert_eq!(
+        fixed_string(
+            &bytes[metadata_start + vdisk_abi::GENERATION_METADATA_ENTRY_OFFSET
+                ..metadata_start
+                    + vdisk_abi::GENERATION_METADATA_ENTRY_OFFSET
+                    + vdisk_abi::GENERATION_METADATA_ENTRY_LEN]
+        ),
+        "gen:package-import-0001"
+    );
+
+    let graph_start = section_start_sector(&bytes, vdisk_abi::SECTION_GRAPH_STORE);
+    let graph_offset = graph_start * 512;
+    assert_eq!(
+        fixed_string(&bytes[graph_offset + vdisk_abi::GRAPH_GENERATION_OFFSET..graph_offset + 96]),
+        "gen:package-import-0001"
+    );
+    let first_data_sector =
+        read_u64_le(&bytes, graph_offset + vdisk_abi::GRAPH_DATA_SECTOR_OFFSET) as usize;
+    let first_byte_len = u32::from_le_bytes(
+        bytes[graph_offset + vdisk_abi::GRAPH_BYTE_LEN_OFFSET
+            ..graph_offset + vdisk_abi::GRAPH_BYTE_LEN_OFFSET + 4]
+            .try_into()
+            .expect("graph byte len"),
+    ) as usize;
+    let second_graph_offset = (first_data_sector + first_byte_len.div_ceil(512)) * 512;
+    assert_eq!(
+        fixed_string(
+            &bytes[second_graph_offset + vdisk_abi::GRAPH_GENERATION_OFFSET
+                ..second_graph_offset + 96]
+        ),
+        "gen:package-import-new-0002"
+    );
+}
+
+#[test]
 fn vertexfs_build_inspect_verify_and_rejects_corruption() {
     let dir = temp_dir("vertexfs-v1");
     let manifest_path = repo_root().join("examples/hello-generation.vertex.json");
@@ -1429,6 +1490,41 @@ fn graph_link_resolves_package_service_closure() {
 }
 
 #[test]
+fn graph_link_closure_hash_is_package_order_stable() {
+    let first = temp_dir("graph-link-order-first");
+    let first_arg = first.to_string_lossy().to_string();
+    assert_success(run(&[
+        "graph-link",
+        &first_arg,
+        "examples/packages/serial-driver.vertexpkg",
+        "examples/packages/logd.vertexpkg",
+    ]));
+
+    let second = temp_dir("graph-link-order-second");
+    let second_arg = second.to_string_lossy().to_string();
+    assert_success(run(&[
+        "graph-link",
+        &second_arg,
+        "examples/packages/logd.vertexpkg",
+        "examples/packages/serial-driver.vertexpkg",
+    ]));
+
+    let first_closure: Value = serde_json::from_str(
+        &fs::read_to_string(first.join("store-closure.json")).expect("read first closure"),
+    )
+    .expect("first closure should be json");
+    let second_closure: Value = serde_json::from_str(
+        &fs::read_to_string(second.join("store-closure.json")).expect("read second closure"),
+    )
+    .expect("second closure should be json");
+    assert_eq!(first_closure["closureHash"], second_closure["closureHash"]);
+    assert_eq!(
+        first_closure["closureMaterial"],
+        second_closure["closureMaterial"]
+    );
+}
+
+#[test]
 fn build_import_rejects_missing_kernel_and_artifact_paths() {
     let dir = temp_dir("build-import-rejects");
     let missing_kernel = dir.join("missing-kernel.json");
@@ -1535,6 +1631,21 @@ fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
     haystack
         .windows(needle.len())
         .any(|window| window == needle)
+}
+
+fn section_start_sector(bytes: &[u8], section: usize) -> usize {
+    read_u64_le(
+        bytes,
+        vdisk_abi::SECTION_TABLE_OFFSET + section * vdisk_abi::SECTION_RECORD_LEN,
+    ) as usize
+}
+
+fn read_u64_le(bytes: &[u8], offset: usize) -> u64 {
+    u64::from_le_bytes(
+        bytes[offset..offset + 8]
+            .try_into()
+            .expect("u64 field is present"),
+    )
 }
 
 fn fixed_string(bytes: &[u8]) -> &str {

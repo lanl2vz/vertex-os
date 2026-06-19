@@ -88,9 +88,11 @@ rollback, durable selected-generation metadata, and prepare/commit/rollback
 recovery into the native generation-manager, block-driver, and staged kernel
 runtime-build authority path. M84 adds native package closure import, including
 the `KRUSTBOOTM84` version 14 compact payload identity, compact graph-fragment
-parsing, store/config hash verification, authority-delta reporting, rejection
-of undeclared dependencies and excess grants, idempotent candidate-generation
-linking, host/native closure-hash parity, activation, and rollback.
+parsing, store/config hash verification, authority-delta reporting, separate
+negative import commands for undeclared dependencies and excess grants, a
+graph-store-only candidate that is not installable until package-import writes
+native generation metadata, an active graph delta from base to candidate
+generation, canonical closure hashing, activation, and rollback.
 
 ```sh
 scripts/krust-smoke.sh

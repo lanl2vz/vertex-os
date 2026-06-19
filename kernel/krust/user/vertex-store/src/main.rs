@@ -248,7 +248,14 @@ fn verify_store_object(entry: StoreEntry, cap_slot: u64, object_id: &[u8], name:
 
     let buffer = executable_object_buffer();
     let handle = sys::vfs_open_read(cap_slot);
-    if handle == sys::STATUS_BAD_CAPABILITY {
+    if handle == sys::STATUS_BAD_CAPABILITY || handle == sys::STATUS_VFS_PERMISSION {
+        log_prefix(
+            b"vertex-store staged executable has no active verifier cap: ",
+            object_id,
+        );
+        return;
+    }
+    if status_is_error(handle) {
         log_prefix(b"vertex-store executable VFS open failed: ", object_id);
         sys::exit(1);
     }
@@ -570,6 +577,10 @@ fn bytes_eq(left: &[u8], right: &[u8]) -> bool {
         index += 1;
     }
     true
+}
+
+fn status_is_error(value: u64) -> bool {
+    value >= u64::MAX - 64
 }
 
 #[panic_handler]

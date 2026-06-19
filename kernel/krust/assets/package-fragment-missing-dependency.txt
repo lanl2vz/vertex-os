@@ -1,0 +1,7 @@
+PKGFRAGV1
+kind=negative-missing-dependency
+package=pkg:db-client
+candidate=gen:reject-missing-dependency
+add_service=svc:db-client
+require=cap:missing.database
+authority_delta=cap:missing.database/send

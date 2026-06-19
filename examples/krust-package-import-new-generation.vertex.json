@@ -76,8 +76,8 @@
       "kind": "data",
       "path": "/vertex/store/package-fragment-logd",
       "hashAlgorithm": "blake3",
-      "hash": "e71ab4a0467c87f678ab3d5fe32609b9be23a95f37121e76547058845d2b93c9",
-      "sizeBytes": 582,
+      "hash": "e45785e4c7a210b1b3ee9870936812532e251c8918ee7fec91b931735109a166",
+      "sizeBytes": 720,
       "references": [
         "config:logd"
       ]
@@ -220,6 +220,26 @@
       "hashAlgorithm": "blake3",
       "hash": "native-logd-config-v0",
       "sizeBytes": 33,
+      "references": []
+    },
+    {
+      "id": "store:package-fragment-missing-dependency",
+      "name": "package-fragment-missing-dependency",
+      "kind": "data",
+      "path": "/vertex/store/package-fragment-missing-dependency",
+      "hashAlgorithm": "blake3",
+      "hash": "0b3f07b8701ada19c1b155a7cf074f5a8fa9229f1c38ab3c8dc84d36d6bae36b",
+      "sizeBytes": 202,
+      "references": []
+    },
+    {
+      "id": "store:package-fragment-excess-authority",
+      "name": "package-fragment-excess-authority",
+      "kind": "data",
+      "path": "/vertex/store/package-fragment-excess-authority",
+      "hashAlgorithm": "blake3",
+      "hash": "fc2e3403c97612025eb91399ef0de0676084f8b27d0ac46ce4bd50460f443428",
+      "sizeBytes": 175,
       "references": []
     }
   ],
@@ -831,6 +851,28 @@
       "properties": {
         "root": "/fs/app"
       }
+    },
+    {
+      "id": "cap:package-fragment.missing-dependency",
+      "kind": "store-object",
+      "provider": "store:package-fragment-missing-dependency",
+      "rights": [
+        "read"
+      ],
+      "properties": {
+        "object": "store:package-fragment-missing-dependency"
+      }
+    },
+    {
+      "id": "cap:package-fragment.excess-authority",
+      "kind": "store-object",
+      "provider": "store:package-fragment-excess-authority",
+      "rights": [
+        "read"
+      ],
+      "properties": {
+        "object": "store:package-fragment-excess-authority"
+      }
     }
   ],
   "services": [
@@ -1389,6 +1431,18 @@
         },
         {
           "capability": "cap:package-fragment.logd",
+          "rights": [
+            "read"
+          ]
+        },
+        {
+          "capability": "cap:package-fragment.missing-dependency",
+          "rights": [
+            "read"
+          ]
+        },
+        {
+          "capability": "cap:package-fragment.excess-authority",
           "rights": [
             "read"
           ]

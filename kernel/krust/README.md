@@ -20,8 +20,10 @@ request/reply file route, advisory byte-range locks, directory watch events,
 VFS poll readiness, bounded pipe buffering, revocation checks for live file
 authority, the current VFS security/soak gate, the native VertexDisk
 graph-store read/provenance surface, native generation-manager
-install/rollback/recovery, and native package closure import. M44-M84 are tracked in
-`../../docs/krust-milestones.md`.
+install/rollback/recovery, and native package closure import with separate
+negative import validation, native metadata registration for a graph-store-only
+candidate, and an actual base-to-candidate active graph delta. M44-M84 are
+tracked in `../../docs/krust-milestones.md`.
 
 The target is intentionally small:
 

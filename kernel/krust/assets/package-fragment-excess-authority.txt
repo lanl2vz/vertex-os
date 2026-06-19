@@ -1,0 +1,7 @@
+PKGFRAGV1
+kind=negative-excess-authority
+package=pkg:logd
+candidate=gen:reject-excess-authority
+add_service=svc:logd
+grant=cap:io.com1/write
+authority_delta=cap:io.com1/write

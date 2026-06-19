@@ -69,14 +69,24 @@ const LOGD_CONFIG_MODULE: &str = "config-logd-v0";
 const LOGD_CONFIG_BYTES: &[u8] = b"{\"level\":\"info\",\"sink\":\"serial\"}\n";
 
 pub fn create_image(manifests: &[GenerationManifest]) -> Result<Vec<u8>, String> {
+    create_image_with_graph_only(manifests, &[])
+}
+
+pub fn create_image_with_graph_only(
+    manifests: &[GenerationManifest],
+    graph_only_manifests: &[GenerationManifest],
+) -> Result<Vec<u8>, String> {
     if manifests.is_empty() {
         return Err("usage: vertexctl create-vertex-disk <output> <manifest>...".to_owned());
     }
 
+    let mut disk_manifests = manifests.to_vec();
+    disk_manifests.extend_from_slice(graph_only_manifests);
+
     let mut image = vec![0u8; SECTOR_SIZE * SECTORS];
-    let states = state_entries(manifests)?;
-    let mut objects = store_payloads(manifests)?;
-    let graph_stores = manifests
+    let states = state_entries(&disk_manifests)?;
+    let mut objects = store_payloads(&disk_manifests)?;
+    let graph_stores = disk_manifests
         .iter()
         .map(krustboot::graph_store_image)
         .collect::<Result<Vec<_>, _>>()?;
@@ -767,6 +777,18 @@ fn native_store_candidate_paths(module_string: &str) -> Vec<PathBuf> {
         return vec![
             PathBuf::from("assets/package-fragment-logd.txt"),
             PathBuf::from("kernel/krust/assets/package-fragment-logd.txt"),
+        ];
+    }
+    if module_string == "package-fragment-missing-dependency" {
+        return vec![
+            PathBuf::from("assets/package-fragment-missing-dependency.txt"),
+            PathBuf::from("kernel/krust/assets/package-fragment-missing-dependency.txt"),
+        ];
+    }
+    if module_string == "package-fragment-excess-authority" {
+        return vec![
+            PathBuf::from("assets/package-fragment-excess-authority.txt"),
+            PathBuf::from("kernel/krust/assets/package-fragment-excess-authority.txt"),
         ];
     }
     let crate_dir = if module_string == "vertex-init" {

@@ -117,6 +117,7 @@ pub extern "C" fn _start() -> ! {
     send_ready();
 
     let mut idle_rounds = 0;
+    let mut idle_logged = false;
     loop {
         if serve_block_request(&mut device, &layout) {
             idle_rounds = 0;
@@ -124,11 +125,13 @@ pub extern "C" fn _start() -> ! {
         }
         idle_rounds += 1;
         if idle_rounds >= BLOCK_IDLE_ROUNDS {
-            break;
+            if !idle_logged {
+                log(b"block-driver keeps VertexDisk service available after idle");
+                idle_logged = true;
+            }
+            idle_rounds = 0;
         }
     }
-    log(b"block-driver completed VertexDisk requests");
-    sys::exit(0)
 }
 
 fn maybe_trigger_fault_injection() {

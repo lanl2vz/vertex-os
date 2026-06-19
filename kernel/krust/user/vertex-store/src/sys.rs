@@ -2,6 +2,7 @@ use core::arch::asm;
 
 pub const STATUS_OK: u64 = 0;
 pub const STATUS_BAD_CAPABILITY: u64 = u64::MAX - 1;
+pub const STATUS_VFS_PERMISSION: u64 = u64::MAX - 32;
 
 const SYS_EXIT: u64 = 2;
 const SYS_IPC_SEND: u64 = 3;

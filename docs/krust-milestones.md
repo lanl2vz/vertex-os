@@ -60,9 +60,10 @@ installation, rollback, durable selected-generation metadata, and
 prepare/commit/rollback recovery into the native generation-manager,
 block-driver, and staged kernel runtime-build authority path. M84 adds a native
 package-import service that reads compact graph fragments from immutable store
-objects, verifies closure/config hashes, rejects undeclared dependencies and
-excess authority, links an idempotent candidate generation through the native
-generation-manager, and proves host/native closure-hash parity.
+objects, verifies closure/config hashes, rejects standalone negative dependency
+and excess-authority import commands without sending generation-manager install
+requests, registers a graph-store-only candidate into native generation
+metadata before activation, and proves canonical closure hashing is stable.
 
 M74-M82 are implemented as the current VFS, open-file, directory, block-cache,
 VertexFS/mount-namespace, coordination, and security/soak substrate. The
@@ -4011,6 +4012,9 @@ done: store-object hash verification before materialization
 done: closure linking against existing graph-store objects
 done: authority-delta report for imported services
 done: rejection of undeclared dependencies, excess grants, and missing store objects
+done: base generation excludes the imported active service graph; candidate generation adds it
+done: candidate graph-store can be present without initial installable generation metadata
+done: package import registers the candidate generation in native metadata before install
 ```
 
 Acceptance tests:
@@ -4018,11 +4022,11 @@ Acceptance tests:
 ```text
 done: native package import adds a service graph fragment to a candidate generation
 done: store-object hashes are verified before executable or config use
-done: missing dependency rejects the package without partial graph-store writes
-done: package requesting undeclared authority is rejected with an explainable reason
+done: missing dependency rejects the package without generation-manager register/install requests
+done: package requesting undeclared authority is rejected without generation-manager register/install requests
 done: duplicate package import is idempotent and does not duplicate store objects
 done: imported package can be activated and then removed by generation rollback
-done: host graph-link output and native graph-link output produce the same closure hash
+done: graph-link closure hash is canonical across package input order
 done: scripts/krust-test.sh m84
 ```
 

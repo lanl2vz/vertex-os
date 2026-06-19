@@ -14,6 +14,7 @@ const CAP_BLOCK_REQUEST: u64 = 4;
 const CAP_BLOCK_REPLY: u64 = 5;
 const COMMAND_BUFFER_LEN: usize = 96;
 const INSTALL_PREFIX: &[u8] = b"install ";
+const REGISTER_IMPORT_PREFIX: &[u8] = b"register-import ";
 const ROLLBACK_PREFIX: &[u8] = b"rollback ";
 const SHUTDOWN_COMMAND: &[u8] = b"shutdown";
 const PROTOCOL_HEALTH_V0: u16 = 2;
@@ -79,6 +80,10 @@ pub extern "C" fn _start() -> ! {
         }
 
         let command = &command[..received as usize];
+        if let Some(generation) = strip_prefix(command, REGISTER_IMPORT_PREFIX) {
+            register_import_generation(generation);
+            continue;
+        }
         if let Some(generation) = strip_prefix(command, INSTALL_PREFIX) {
             install_generation(generation);
             continue;
@@ -94,6 +99,45 @@ pub extern "C" fn _start() -> ! {
 
         log(b"generation-manager rejected unknown command");
     }
+}
+
+fn register_import_generation(generation: &[u8]) {
+    log_generation(
+        b"generation-manager registers imported graph generation: generation=",
+        generation,
+    );
+    let Some(mut metadata) = load_generation_metadata() else {
+        log_generation(
+            b"generation-manager register import abort: reason=metadata-unavailable generation=",
+            generation,
+        );
+        return;
+    };
+    if metadata.contains_generation(generation) {
+        log_generation(
+            b"generation-manager imported graph generation already registered: generation=",
+            generation,
+        );
+        return;
+    }
+    if sys::verify_generation(CAP_UPDATE_CONTROL, generation) != sys::STATUS_OK {
+        log_generation(
+            b"generation-manager register import abort: reason=verification-failed generation=",
+            generation,
+        );
+        return;
+    }
+    if !metadata.append_generation(generation) {
+        log_generation(
+            b"generation-manager register import abort: reason=metadata-write-failed generation=",
+            generation,
+        );
+        return;
+    }
+    log_generation(
+        b"generation-manager imported graph generation registered: generation=",
+        generation,
+    );
 }
 
 fn install_generation(generation: &[u8]) {
@@ -348,6 +392,30 @@ impl GenerationMetadata {
             index += 1;
         }
         false
+    }
+
+    fn append_generation(&mut self, generation: &[u8]) -> bool {
+        let count = read_u16(&self.sector, GENERATION_METADATA_COUNT_OFFSET) as usize;
+        let capacity =
+            (SECTOR_SIZE - GENERATION_METADATA_ENTRY_OFFSET) / GENERATION_METADATA_ENTRY_LEN;
+        if count >= capacity || count >= u16::MAX as usize {
+            return false;
+        }
+        let offset = GENERATION_METADATA_ENTRY_OFFSET + count * GENERATION_METADATA_ENTRY_LEN;
+        if write_fixed_string(&mut self.sector, offset, generation).is_none() {
+            return false;
+        }
+        write_u16(
+            &mut self.sector,
+            GENERATION_METADATA_COUNT_OFFSET,
+            (count + 1) as u16,
+        );
+        write_metadata_checksum(&mut self.sector);
+        if !write_block_sector(self.sector_number, &self.sector) {
+            return false;
+        }
+        log_registration(generation, count + 1);
+        true
     }
 
     fn write_checkpoint(
@@ -627,6 +695,19 @@ fn log_checkpoint(transaction_state: u16, selected: &[u8], previous: &[u8], targ
     log(&line[..len]);
 }
 
+fn log_registration(generation: &[u8], count: usize) {
+    let mut line = [0u8; 160];
+    let mut len = append(
+        &mut line,
+        0,
+        b"generation-manager writes VertexDisk generation metadata: register generation=",
+    );
+    len = append(&mut line, len, generation);
+    len = append(&mut line, len, b" count=");
+    len = append_decimal(&mut line, len, count as u64);
+    log(&line[..len]);
+}
+
 fn transaction_label(transaction_state: u16) -> &'static [u8] {
     match transaction_state {
         GENERATION_TRANSACTION_PREPARE => b"prepare",
@@ -678,6 +759,29 @@ fn append(buffer: &mut [u8], offset: usize, value: &[u8]) -> usize {
     let len = value.len().min(buffer.len().saturating_sub(offset));
     buffer[offset..offset + len].copy_from_slice(&value[..len]);
     offset + len
+}
+
+fn append_decimal(buffer: &mut [u8], offset: usize, mut value: u64) -> usize {
+    let mut digits = [0u8; 20];
+    let mut digit_len = 0;
+    if value == 0 {
+        digits[0] = b'0';
+        digit_len = 1;
+    } else {
+        while value > 0 && digit_len < digits.len() {
+            digits[digit_len] = b'0' + (value % 10) as u8;
+            value /= 10;
+            digit_len += 1;
+        }
+    }
+
+    let mut out = offset;
+    while digit_len > 0 && out < buffer.len() {
+        digit_len -= 1;
+        buffer[out] = digits[digit_len];
+        out += 1;
+    }
+    out
 }
 
 fn send_ready() {
