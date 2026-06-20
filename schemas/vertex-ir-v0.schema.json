@@ -396,7 +396,20 @@
     },
     "stateVolume": {
       "type": "object",
-      "required": ["id", "name", "kind", "owner", "mountIntent", "snapshotPolicy", "backupPolicy"],
+      "required": [
+        "id",
+        "name",
+        "kind",
+        "owner",
+        "mountIntent",
+        "schemaVersion",
+        "storageClass",
+        "snapshotPolicy",
+        "backupPolicy",
+        "migrationPolicy",
+        "retentionPolicy",
+        "sharingPolicy"
+      ],
       "additionalProperties": true,
       "properties": {
         "id": { "$ref": "#/$defs/id" },
@@ -404,8 +417,51 @@
         "kind": { "type": "string" },
         "owner": { "$ref": "#/$defs/id" },
         "mountIntent": { "type": "string" },
+        "schemaVersion": { "type": "string" },
+        "storageClass": {
+          "enum": ["vertexdisk-v1", "hosted-local-directory"]
+        },
         "snapshotPolicy": { "type": "object" },
-        "backupPolicy": { "type": "object" }
+        "backupPolicy": { "type": "object" },
+        "migrationPolicy": {
+          "type": "object",
+          "required": ["mode"],
+          "properties": {
+            "mode": { "enum": ["preserve", "migrate", "fork", "discard"] }
+          }
+        },
+        "retentionPolicy": {
+          "type": "object",
+          "required": ["mode"],
+          "properties": {
+            "mode": {
+              "enum": [
+                "retain-while-referenced",
+                "retain-forever",
+                "delete-when-unreferenced"
+              ]
+            }
+          }
+        },
+        "sharingPolicy": {
+          "type": "object",
+          "required": ["mode"],
+          "properties": {
+            "mode": { "enum": ["owner-only", "explicit"] },
+            "readers": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/id" }
+            },
+            "writers": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/id" }
+            },
+            "controllers": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/id" }
+            }
+          }
+        }
       }
     },
     "secret": {

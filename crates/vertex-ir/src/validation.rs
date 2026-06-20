@@ -326,10 +326,17 @@ fn validate_services(manifest: &GenerationManifest, report: &mut ValidationRepor
         }
 
         for state in &service.state {
-            if manifest.state_volume(state).is_none() {
+            let Some(volume) = manifest.state_volume(state) else {
                 report.error(format!(
                     "service {} references unknown state volume {}",
                     service.id, state
+                ));
+                continue;
+            };
+            if volume.owner != service.id && !state_sharing_policy_allows(volume, &service.id) {
+                report.error(format!(
+                    "service {} references state volume {} owned by {} without explicit sharing policy",
+                    service.id, volume.id, volume.owner
                 ));
             }
         }
@@ -455,7 +462,206 @@ fn validate_state_volumes(
                 state.id, state.owner
             ));
         }
+        if state.schema_version.is_empty() {
+            report.error(format!(
+                "state volume {} must declare schemaVersion",
+                state.id
+            ));
+        } else {
+            validate_compact_ascii_field(
+                &format!("state volume {} schemaVersion", state.id),
+                &state.schema_version,
+                report,
+            );
+        }
+        if state.storage_class.is_empty() {
+            report.error(format!(
+                "state volume {} must declare storageClass",
+                state.id
+            ));
+        } else if !matches!(
+            state.storage_class.as_str(),
+            "vertexdisk-v1" | "hosted-local-directory"
+        ) {
+            report.error(format!(
+                "state volume {} has unsupported storageClass {}",
+                state.id, state.storage_class
+            ));
+        } else {
+            validate_compact_ascii_field(
+                &format!("state volume {} storageClass", state.id),
+                &state.storage_class,
+                report,
+            );
+        }
+        if !matches!(
+            state.kind.as_str(),
+            "vertexdisk-v1" | "hosted-local-directory"
+        ) {
+            report.error(format!(
+                "state volume {} has unsupported kind {}",
+                state.id, state.kind
+            ));
+        }
+        let migration_mode = required_policy_mode(
+            &state.migration_policy,
+            &format!("state volume {} migrationPolicy", state.id),
+            &["preserve", "migrate", "fork", "discard"],
+            report,
+        );
+        let retention_mode = required_policy_mode(
+            &state.retention_policy,
+            &format!("state volume {} retentionPolicy", state.id),
+            &[
+                "retain-while-referenced",
+                "retain-forever",
+                "delete-when-unreferenced",
+            ],
+            report,
+        );
+        let sharing_mode = required_policy_mode(
+            &state.sharing_policy,
+            &format!("state volume {} sharingPolicy", state.id),
+            &["owner-only", "explicit"],
+            report,
+        );
+        if let Some(mode) = migration_mode {
+            validate_compact_ascii_field(
+                &format!("state volume {} migrationPolicy.mode", state.id),
+                mode,
+                report,
+            );
+        }
+        if let Some(mode) = retention_mode {
+            validate_compact_ascii_field(
+                &format!("state volume {} retentionPolicy.mode", state.id),
+                mode,
+                report,
+            );
+        }
+        if let Some(mode) = sharing_mode {
+            validate_compact_ascii_field(
+                &format!("state volume {} sharingPolicy.mode", state.id),
+                mode,
+                report,
+            );
+        }
+        validate_state_sharing_policy(state, manifest, report);
     }
+}
+
+fn required_policy_mode<'a>(
+    value: &'a Value,
+    context: &str,
+    allowed: &[&str],
+    report: &mut ValidationReport,
+) -> Option<&'a str> {
+    let Some(object) = value.as_object() else {
+        report.error(format!("{context} must be an object with mode"));
+        return None;
+    };
+    let Some(mode) = object.get("mode").and_then(Value::as_str) else {
+        report.error(format!("{context} must declare mode"));
+        return None;
+    };
+    if !allowed.iter().any(|allowed| *allowed == mode) {
+        report.error(format!(
+            "{context} mode {mode} is unsupported; expected one of [{}]",
+            allowed.join(", ")
+        ));
+    }
+    Some(mode)
+}
+
+fn validate_compact_ascii_field(context: &str, value: &str, report: &mut ValidationReport) {
+    if value.is_empty() || value.len() > 64 || !value.is_ascii() {
+        report.error(format!(
+            "{context} must be non-empty ASCII and fit in a compact graph string"
+        ));
+    }
+}
+
+fn validate_state_sharing_policy(
+    state: &StateVolume,
+    manifest: &GenerationManifest,
+    report: &mut ValidationReport,
+) {
+    let Some(mode) = state
+        .sharing_policy
+        .as_object()
+        .and_then(|object| object.get("mode"))
+        .and_then(Value::as_str)
+    else {
+        return;
+    };
+    if mode == "owner-only" {
+        for field in ["readers", "writers", "controllers"] {
+            if state
+                .sharing_policy
+                .as_object()
+                .and_then(|object| object.get(field))
+                .is_some()
+            {
+                report.error(format!(
+                    "state volume {} sharingPolicy owner-only must not declare {field}",
+                    state.id
+                ));
+            }
+        }
+        return;
+    }
+
+    for field in ["readers", "writers", "controllers"] {
+        let Some(value) = state
+            .sharing_policy
+            .as_object()
+            .and_then(|object| object.get(field))
+        else {
+            continue;
+        };
+        let Some(services) = value.as_array() else {
+            report.error(format!(
+                "state volume {} sharingPolicy {field} must be an array",
+                state.id
+            ));
+            continue;
+        };
+        for service in services {
+            let Some(service_id) = service.as_str() else {
+                report.error(format!(
+                    "state volume {} sharingPolicy {field} entries must be service ids",
+                    state.id
+                ));
+                continue;
+            };
+            if manifest.service(service_id).is_none() {
+                report.error(format!(
+                    "state volume {} sharingPolicy {field} references unknown service {}",
+                    state.id, service_id
+                ));
+            }
+        }
+    }
+}
+
+fn state_sharing_policy_allows(state: &StateVolume, service_id: &str) -> bool {
+    let Some(object) = state.sharing_policy.as_object() else {
+        return false;
+    };
+    if object.get("mode").and_then(Value::as_str) != Some("explicit") {
+        return false;
+    }
+    ["readers", "writers", "controllers"].iter().any(|field| {
+        object
+            .get(*field)
+            .and_then(Value::as_array)
+            .map(|entries| {
+                entries
+                    .iter()
+                    .any(|entry| entry.as_str() == Some(service_id))
+            })
+            .unwrap_or(false)
+    })
 }
 
 fn validate_devices(manifest: &GenerationManifest, report: &mut ValidationReport) {

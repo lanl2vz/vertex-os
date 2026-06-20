@@ -71,6 +71,12 @@ pub struct BootStoreObjectConfig {
 #[derive(Clone, Copy)]
 pub struct BootStateVolumeConfig {
     pub id: &'static str,
+    pub owner: &'static str,
+    pub schema_version: &'static str,
+    pub storage_class: &'static str,
+    pub migration_policy: &'static str,
+    pub retention_policy: &'static str,
+    pub sharing_policy: &'static str,
 }
 
 #[derive(Clone, Copy)]

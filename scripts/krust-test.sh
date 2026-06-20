@@ -566,7 +566,7 @@ halt
 console-driver wrote console output
 Vertex shell ready
 console-driver forwarded serial command: help
-commands: generation services devices counter increment install rollback why halt
+commands: generation services devices counter increment state-health install rollback why halt
 console-driver forwarded serial command: generation
 current generation: gen:console-0001
 console-driver forwarded serial command: services
@@ -579,7 +579,7 @@ console-driver forwarded serial command: why svc:echo cap:log.sink
 console-shell why result: svc:echo cap:log.sink send slot 0
 console-driver forwarded serial command: halt
 Native console shell ok
-Native service activation ok
+console-shell observed state clients drained
 '
         ;;
     m48|dynamic-process)
@@ -687,7 +687,6 @@ console-driver forwarded serial command: rollback to gen:old
 	why svc:counter state:counter
 svc:counter has state authority from generation graph
 	        Native console shell ok
-	        Native service activation ok
 		'
 		        ;;
 		    m83-hostless|generation-manager-hostless)
@@ -721,7 +720,6 @@ svc:counter has state authority from generation graph
 		Boot generation: gen:console-new-0002
 		console-shell observed state clients drained
 		Native console shell ok
-		Native service activation ok
 		'
 		        ;;
 		    m83-power-prepare|generation-manager-power-prepare)
@@ -834,7 +832,6 @@ svc:counter has state authority from generation graph
 	svc:counter has state authority from generation graph
 	console-shell observed state clients drained
 	Native console shell ok
-	Native service activation ok
 	'
 	        ;;
 	    m84|package-import)
@@ -911,6 +908,83 @@ svc:counter has state authority from generation graph
 	generation-manager install candidate from native graph-store: generation=gen:reject-missing-dependency
 	generation-manager install candidate from native graph-store: generation=gen:reject-excess-authority
 	generation-manager transaction abort: reason=unknown-generation generation=gen:package-import-new-0002
+	'
+	        ;;
+	    m85|state-migration)
+		        MANIFEST="$ROOT_DIR/examples/krust-state-migration-generation.vertex.json"
+		        FALLBACK_MANIFEST="$ROOT_DIR/examples/krust-state-migration-new-generation.vertex.json"
+		        BAD_GENERATION_MANIFEST="$ROOT_DIR/examples/krust-state-migration-bad-generation.vertex.json"
+	        EXPECT_ACTIVATION_SUCCESS=1
+	        USE_SERIAL_PIPE=1
+	        SERIAL_INPUT_DELAYED=1
+	        SERIAL_INPUT_DELAY_SECONDS=8
+	        QEMU_ATTEMPTS=${QEMU_M85_ATTEMPTS:-120}
+	        SERIAL_INPUT='state-health
+	install generation gen:state-bad
+	state-health
+	install generation gen:state-new
+	state-health
+	rollback state migration
+	state-health
+	halt
+	'
+	        required_lines='
+	Boot generation: gen:state-migration-0001
+	KrustBoot fallback generation ready: gen:state-migration-new-0002
+	KrustBoot bad generation ready: gen:state-migration-bad-0003
+	console-driver forwarded serial command: state-health
+	state-health state:counter owner=svc:echo-server schema=counter.v1 generation=gen:state-migration-0001 migration_status=clean last_error=none
+	state-policy state:counter storage=vertexdisk-v1 migration=preserve retention=retain-while-referenced sharing=explicit
+	state health reports owner schema generation migration status and last error
+	console-driver forwarded serial command: install generation gen:state-bad
+	console-shell requests generation-manager bad state migration install
+	generation-manager install candidate from native graph-store: generation=gen:state-migration-bad-0003
+	generation-manager transaction prepare: generation=gen:state-migration-bad-0003
+	Native generation manager journal prepare: previous=gen:state-migration-0001 target=gen:state-migration-bad-0003
+	Native update transaction verifies manifest hash: generation=gen:state-migration-bad-0003
+	Native update transaction verifies store closure: generation=gen:state-migration-bad-0003
+	State migration failed: state=state:counter from=counter.v1 to=counter.v3 reason=missing-migrate-policy
+	State migration rollback leaves old state readable: state=state:counter
+	Native generation manager journal abort: generation=gen:state-migration-bad-0003 reason=state-migration-failed
+	Native generation manager failure detail: service=gen:state-migration-bad-0003 dependency=state-schema policy=state-migration reason=state-migration-failed
+	Native update transaction selected_generation unchanged: gen:state-migration-0001
+	generation-manager transaction abort: reason=stage-failed generation=gen:state-migration-bad-0003
+	state-health state:counter owner=svc:echo-server schema=counter.v1 generation=gen:state-migration-0001 migration_status=clean last_error=none
+	console-driver forwarded serial command: install generation gen:state-new
+	console-shell requests generation-manager state migration install
+	generation-manager install candidate from native graph-store: generation=gen:state-migration-new-0002
+	generation-manager transaction prepare: generation=gen:state-migration-new-0002
+	Native generation manager journal prepare: previous=gen:state-migration-0001 target=gen:state-migration-new-0002
+	Native update transaction verifies manifest hash: generation=gen:state-migration-new-0002
+	Native update transaction verifies store closure: generation=gen:state-migration-new-0002
+	State migration plan accepted: state=state:counter from=counter.v1 to=counter.v2 mode=migrate
+	State migration journal record: state=state:counter from=counter.v1 to=counter.v2 status=applied-once
+	State garbage collection deferred: state=state:scratch retention=retain-while-referenced
+	Krust generation switch staged: from=gen:state-migration-0001 to=gen:state-migration-new-0002
+	Krust generation switch accepted: from=gen:state-migration-0001 to=gen:state-migration-new-0002
+	Native generation manager journal commit: selected_generation=gen:state-migration-new-0002
+	Krust generation switch entering generation: gen:state-migration-new-0002
+	Boot generation: gen:state-migration-new-0002
+	state-health state:counter owner=svc:echo-server schema=counter.v2 generation=gen:state-migration-new-0002 migration_status=clean last_error=none
+	state-policy state:counter storage=vertexdisk-v1 migration=migrate retention=retain-while-referenced sharing=explicit
+	console-driver forwarded serial command: rollback state migration
+	console-shell requests generation-manager rollback
+	generation-manager transaction rollback prepare: target=gen:state-migration-0001
+	Native generation manager journal prepare: previous=gen:state-migration-new-0002 target=gen:state-migration-0001
+	Krust state rollback policy: state=state:counter mode=preserve action=preserve-current from=counter.v2 to=counter.v1
+	State rollback journal record: state=state:counter from=counter.v2 to=counter.v1 status=policy-applied
+	Krust rollback generation staged: target=gen:state-migration-0001
+	Krust rollback generation accepted: target=gen:state-migration-0001
+	Krust rollback entering generation: gen:state-migration-0001
+	Boot generation: gen:state-migration-0001
+	state-health state:counter owner=svc:echo-server schema=counter.v1 generation=gen:state-migration-0001 migration_status=clean last_error=none
+	console-driver forwarded serial command: halt
+	Native console shell ok
+	console-shell observed state clients drained
+	'
+	        case_forbidden_lines='
+	Krust generation switch entering generation: gen:state-migration-bad-0003
+	State garbage collection removed unreferenced state: state=state:scratch
 	'
 	        ;;
 	    m55|driver-framework)
@@ -1667,7 +1741,7 @@ activation failed
 '
         ;;
     *)
-        echo "usage: scripts/krust-test.sh <m13|m14|valid-activation|manifest-cycle|bad-cap|readiness|readiness-timeout|rollback|store-state-services|timer|preemption|m30|user-fault|m31|restart|manifest-v1|cap-lifecycle|typed-arenas|quotas|m32|io-substrate|m33|serial-driver|m34|block-driver|m35|store-service|m36|state-service|m37|generation-switch|m38|introspection|m40|directed-ipc|m41|console-shell|m42|virtio-block|m42-driver-fault|block-driver-fault|m43|vertexdisk|m43-bad-superblock|vertexdisk-bad-superblock|m44|boot-manager|m45|store-verification|m46|native-update|m47|store-executables|m47-corrupt-executable|store-executable-corruption|m48|dynamic-process|m49|config-objects|m49-config-corrupt|config-hash-mismatch|m50|secrets|m54|appliance|m55|driver-framework|m56|virtio-device-stack|m57|networking-v0|m59|namespace-service|m60|policy-typed|m61|abi-authority-hardening|m62|storage-durability|m62-journal-replay|storage-journal-replay|m62-corrupt-journal|storage-corrupt-journal|m63|network-boundary|m64|supervisor-lifecycle|m66|memory-lifecycle|m67|address-space-teardown|m68|failure-atomicity|m69|memory-pressure|m70|interrupt-routing|m71|dma-ownership|m72|virtio-recovery|m73|device-fault-gate|m75|vfs-blocking|m76|directory-metadata|m77|cache-writeback|m78|vertexfs-v1|m78-bad-superblock|vertexfs-bad-superblock|m78-journal-replay|vertexfs-journal-replay|m78-journal-checkpoint-after-journal|vertexfs-journal-checkpoint-after-journal|m78-journal-checkpoint-after-data|vertexfs-journal-checkpoint-after-data|m78-journal-checkpoint-after-inode|vertexfs-journal-checkpoint-after-inode|m78-post-sync-remount|vertexfs-post-sync-remount|m78-fsync-fault|vertexfs-fsync-fault|m79|mount-namespaces|m80|vfs-coordination|m81|vfs-crash-security-soak|m82|native-graph-store|m82-vertexdisk-graph-corrupt|vertexdisk-graph-store-corrupt|m83|generation-manager|m83-hostless|generation-manager-hostless|m83-power-prepare|m83-power-commit|m83-power-rollback|m84|package-import|manifest-truncated|manifest-bad-magic|manifest-raw-compact|manifest-old-compact-magic|manifest-graph-store-checksum|manifest-graph-store-record|manifest-unsupported-version|manifest-oob-record|manifest-missing-provider>" >&2
+        echo "usage: scripts/krust-test.sh <m13|m14|valid-activation|manifest-cycle|bad-cap|readiness|readiness-timeout|rollback|store-state-services|timer|preemption|m30|user-fault|m31|restart|manifest-v1|cap-lifecycle|typed-arenas|quotas|m32|io-substrate|m33|serial-driver|m34|block-driver|m35|store-service|m36|state-service|m37|generation-switch|m38|introspection|m40|directed-ipc|m41|console-shell|m42|virtio-block|m42-driver-fault|block-driver-fault|m43|vertexdisk|m43-bad-superblock|vertexdisk-bad-superblock|m44|boot-manager|m45|store-verification|m46|native-update|m47|store-executables|m47-corrupt-executable|store-executable-corruption|m48|dynamic-process|m49|config-objects|m49-config-corrupt|config-hash-mismatch|m50|secrets|m54|appliance|m55|driver-framework|m56|virtio-device-stack|m57|networking-v0|m59|namespace-service|m60|policy-typed|m61|abi-authority-hardening|m62|storage-durability|m62-journal-replay|storage-journal-replay|m62-corrupt-journal|storage-corrupt-journal|m63|network-boundary|m64|supervisor-lifecycle|m66|memory-lifecycle|m67|address-space-teardown|m68|failure-atomicity|m69|memory-pressure|m70|interrupt-routing|m71|dma-ownership|m72|virtio-recovery|m73|device-fault-gate|m75|vfs-blocking|m76|directory-metadata|m77|cache-writeback|m78|vertexfs-v1|m78-bad-superblock|vertexfs-bad-superblock|m78-journal-replay|vertexfs-journal-replay|m78-journal-checkpoint-after-journal|vertexfs-journal-checkpoint-after-journal|m78-journal-checkpoint-after-data|vertexfs-journal-checkpoint-after-data|m78-journal-checkpoint-after-inode|vertexfs-journal-checkpoint-after-inode|m78-post-sync-remount|vertexfs-post-sync-remount|m78-fsync-fault|vertexfs-fsync-fault|m79|mount-namespaces|m80|vfs-coordination|m81|vfs-crash-security-soak|m82|native-graph-store|m82-vertexdisk-graph-corrupt|vertexdisk-graph-store-corrupt|m83|generation-manager|m83-hostless|generation-manager-hostless|m83-power-prepare|m83-power-commit|m83-power-rollback|m84|package-import|m85|state-migration|manifest-truncated|manifest-bad-magic|manifest-raw-compact|manifest-old-compact-magic|manifest-graph-store-checksum|manifest-graph-store-record|manifest-unsupported-version|manifest-oob-record|manifest-missing-provider>" >&2
         exit 2
         ;;
 esac

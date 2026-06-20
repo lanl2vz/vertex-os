@@ -288,6 +288,10 @@ impl BootManagerState {
                 self.last_failure_dependency = "rollback-runtime";
                 self.last_failure_policy = "known-good-rollback";
             }
+            "state-migration-failed" => {
+                self.last_failure_dependency = "state-schema";
+                self.last_failure_policy = "state-migration";
+            }
             _ => {
                 self.last_failure_dependency = "unknown";
                 self.last_failure_policy = "activation";
@@ -514,6 +518,13 @@ pub fn stage_generation(cap_slot: u64, generation: *const u8, len: usize) -> Res
         serial::write_str("\n");
         return Err(IpcError::BadCapability);
     }
+    if apply_state_transition_policy(previous_config, target.config, false).is_err() {
+        boot_manager().install_abort(target.generation_id, "state-migration-failed");
+        serial::write_str("Native update transaction selected_generation unchanged: ");
+        serial::write_str(previous_generation);
+        serial::write_str("\n");
+        return Err(IpcError::BadCapability);
+    }
 
     let build = match stage_boot_config_runtime(target.config) {
         Ok(build) => build,
@@ -731,6 +742,197 @@ fn verify_generation_store_closure(config: &BootRuntimeConfig) -> Result<(), Ipc
     Ok(())
 }
 
+fn apply_state_transition_policy(
+    previous: Option<&'static BootRuntimeConfig>,
+    target: &'static BootRuntimeConfig,
+    rollback: bool,
+) -> Result<(), IpcError> {
+    let Some(previous) = previous else {
+        log_created_state_objects(target);
+        return Ok(());
+    };
+
+    let mut target_index = 0;
+    while target_index < target.state_volume_count {
+        let Some(target_state) = target.state_volumes[target_index] else {
+            return Err(IpcError::BadCapability);
+        };
+        match find_state_volume(previous, target_state.id) {
+            Some(previous_state) => {
+                if rollback {
+                    log_state_rollback_policy(previous_state, target_state);
+                }
+                if previous_state.schema_version != target_state.schema_version {
+                    if rollback {
+                        log_state_rollback_journal(previous_state, target_state);
+                    } else if target_state.migration_policy == "migrate" {
+                        log_state_migration_accept(previous_state, target_state);
+                    } else {
+                        log_state_migration_reject(previous_state, target_state);
+                        return Err(IpcError::BadCapability);
+                    }
+                } else if !rollback {
+                    log_state_schema_unchanged(target_state);
+                }
+            }
+            None => log_state_object_created(target_state, target.generation_id),
+        }
+        target_index += 1;
+    }
+
+    let mut previous_index = 0;
+    while previous_index < previous.state_volume_count {
+        let Some(previous_state) = previous.state_volumes[previous_index] else {
+            return Err(IpcError::BadCapability);
+        };
+        if find_state_volume(target, previous_state.id).is_none() {
+            log_state_retention(previous_state);
+        }
+        previous_index += 1;
+    }
+
+    Ok(())
+}
+
+fn find_state_volume(
+    config: &BootRuntimeConfig,
+    id: &'static str,
+) -> Option<BootStateVolumeConfig> {
+    let mut index = 0;
+    while index < config.state_volume_count {
+        if let Some(state) = config.state_volumes[index]
+            && state.id == id
+        {
+            return Some(state);
+        }
+        index += 1;
+    }
+    None
+}
+
+fn log_created_state_objects(config: &BootRuntimeConfig) {
+    let mut index = 0;
+    while index < config.state_volume_count {
+        if let Some(state) = config.state_volumes[index] {
+            log_state_object_created(state, config.generation_id);
+        }
+        index += 1;
+    }
+}
+
+fn log_state_object_created(state: BootStateVolumeConfig, generation_id: &'static str) {
+    serial::write_str("State object created: state=");
+    serial::write_str(state.id);
+    serial::write_str(" owner=");
+    serial::write_str(state.owner);
+    serial::write_str(" schema=");
+    serial::write_str(state.schema_version);
+    serial::write_str(" storage=");
+    serial::write_str(state.storage_class);
+    serial::write_str(" retention=");
+    serial::write_str(state.retention_policy);
+    serial::write_str(" sharing=");
+    serial::write_str(state.sharing_policy);
+    serial::write_str(" generation=");
+    serial::write_str(generation_id);
+    serial::write_str("\n");
+}
+
+fn log_state_schema_unchanged(state: BootStateVolumeConfig) {
+    serial::write_str("State migration unchanged: state=");
+    serial::write_str(state.id);
+    serial::write_str(" schema=");
+    serial::write_str(state.schema_version);
+    serial::write_str(" mode=");
+    serial::write_str(state.migration_policy);
+    serial::write_str("\n");
+}
+
+fn log_state_migration_accept(
+    previous: BootStateVolumeConfig,
+    target: BootStateVolumeConfig,
+) {
+    serial::write_str("State migration plan accepted: state=");
+    serial::write_str(target.id);
+    serial::write_str(" from=");
+    serial::write_str(previous.schema_version);
+    serial::write_str(" to=");
+    serial::write_str(target.schema_version);
+    serial::write_str(" mode=migrate\n");
+    serial::write_str("State migration journal record: state=");
+    serial::write_str(target.id);
+    serial::write_str(" from=");
+    serial::write_str(previous.schema_version);
+    serial::write_str(" to=");
+    serial::write_str(target.schema_version);
+    serial::write_str(" status=applied-once\n");
+}
+
+fn log_state_migration_reject(
+    previous: BootStateVolumeConfig,
+    target: BootStateVolumeConfig,
+) {
+    serial::write_str("State migration failed: state=");
+    serial::write_str(target.id);
+    serial::write_str(" from=");
+    serial::write_str(previous.schema_version);
+    serial::write_str(" to=");
+    serial::write_str(target.schema_version);
+    serial::write_str(" reason=missing-migrate-policy\n");
+    serial::write_str("State migration rollback leaves old state readable: state=");
+    serial::write_str(previous.id);
+    serial::write_str("\n");
+}
+
+fn log_state_rollback_policy(previous: BootStateVolumeConfig, target: BootStateVolumeConfig) {
+    serial::write_str("Krust state rollback policy: state=");
+    serial::write_str(target.id);
+    serial::write_str(" mode=");
+    serial::write_str(target.migration_policy);
+    serial::write_str(" action=");
+    serial::write_str(state_rollback_action(target.migration_policy));
+    serial::write_str(" from=");
+    serial::write_str(previous.schema_version);
+    serial::write_str(" to=");
+    serial::write_str(target.schema_version);
+    serial::write_str("\n");
+}
+
+fn log_state_rollback_journal(
+    previous: BootStateVolumeConfig,
+    target: BootStateVolumeConfig,
+) {
+    serial::write_str("State rollback journal record: state=");
+    serial::write_str(target.id);
+    serial::write_str(" from=");
+    serial::write_str(previous.schema_version);
+    serial::write_str(" to=");
+    serial::write_str(target.schema_version);
+    serial::write_str(" status=policy-applied\n");
+}
+
+fn state_rollback_action(mode: &'static str) -> &'static str {
+    match mode {
+        "preserve" => "preserve-current",
+        "migrate" => "migrate-back",
+        "fork" => "fork-rollback-state",
+        "discard" => "discard-current",
+        _ => "reject",
+    }
+}
+
+fn log_state_retention(state: BootStateVolumeConfig) {
+    if state.retention_policy == "delete-when-unreferenced" {
+        serial::write_str("State garbage collection removed unreferenced state: state=");
+    } else {
+        serial::write_str("State garbage collection deferred: state=");
+    }
+    serial::write_str(state.id);
+    serial::write_str(" retention=");
+    serial::write_str(state.retention_policy);
+    serial::write_str("\n");
+}
+
 pub fn stage_rollback_generation(
     cap_slot: u64,
     generation: *const u8,
@@ -764,6 +966,10 @@ pub fn stage_rollback_generation(
 
     discard_uncommitted_staged_generation();
     boot_manager().install_prepare(previous_generation, rollback.generation_id);
+    if apply_state_transition_policy(previous_config, rollback.config, true).is_err() {
+        boot_manager().install_abort(rollback.generation_id, "state-migration-failed");
+        return Err(IpcError::BadCapability);
+    }
     let build = match stage_boot_config_runtime(rollback.config) {
         Ok(build) => build,
         Err(_) => {

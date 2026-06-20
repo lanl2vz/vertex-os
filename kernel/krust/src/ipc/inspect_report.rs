@@ -7,6 +7,7 @@ pub(super) fn build_inspect_report(runtime: &RuntimeState, report: &mut InspectR
     report.push_byte(b'\n');
     write_generation_manager_report(report);
     write_graph_store_report(runtime, report);
+    write_state_policy_report(runtime, report);
     report.push_str("processes=");
     report.push_u64_dec(runtime.processes.count as u64);
     report.push_byte(b'\n');
@@ -552,6 +553,51 @@ fn runtime_cap_count(runtime: &RuntimeState) -> u64 {
         process_index += 1;
     }
     count
+}
+
+fn write_state_policy_report(runtime: &RuntimeState, report: &mut InspectReport) {
+    let Some(config) = runtime.active_config else {
+        report.push_str("state-policy v=1 status=unavailable\n");
+        return;
+    };
+    let mut index = 0;
+    while index < config.state_volume_count {
+        if let Some(state) = config.state_volumes[index] {
+            report.push_str("state-policy[");
+            report.push_u64_dec(index as u64);
+            report.push_str("] id=");
+            report.push_str(state.id);
+            report.push_str(" owner=");
+            report.push_str(state.owner);
+            report.push_str(" schema=");
+            report.push_str(state.schema_version);
+            report.push_str(" storage=");
+            report.push_str(state.storage_class);
+            report.push_str(" migration=");
+            report.push_str(state.migration_policy);
+            report.push_str(" retention=");
+            report.push_str(state.retention_policy);
+            report.push_str(" sharing=");
+            report.push_str(state.sharing_policy);
+            report.push_str(" generation=");
+            report.push_str(config.generation_id);
+            report.push_byte(b'\n');
+            report.push_str("state-health[");
+            report.push_u64_dec(index as u64);
+            report.push_str("] id=");
+            report.push_str(state.id);
+            report.push_str(" owner=");
+            report.push_str(state.owner);
+            report.push_str(" schema=");
+            report.push_str(state.schema_version);
+            report.push_str(" generation=");
+            report.push_str(config.generation_id);
+            report.push_str(" migration_status=clean last_error=none retention=");
+            report.push_str(state.retention_policy);
+            report.push_byte(b'\n');
+        }
+        index += 1;
+    }
 }
 
 fn runtime_file_handle_count(runtime: &RuntimeState) -> u64 {

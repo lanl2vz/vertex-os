@@ -622,6 +622,25 @@ fn validate_boot_config_state_volumes(config: &BootRuntimeConfig) -> Result<(), 
     while index < config.state_volume_count {
         let state = config.state_volumes[index].ok_or(InitError::InvalidBootManifest)?;
         let component = state_volume_mount_component(state.id)?;
+        if state.owner.is_empty()
+            || state.schema_version.is_empty()
+            || state.storage_class.is_empty()
+            || state.migration_policy.is_empty()
+            || state.retention_policy.is_empty()
+            || state.sharing_policy.is_empty()
+            || !matches!(state.storage_class, "vertexdisk-v1" | "hosted-local-directory")
+            || !matches!(
+                state.migration_policy,
+                "preserve" | "migrate" | "fork" | "discard"
+            )
+            || !matches!(
+                state.retention_policy,
+                "retain-while-referenced" | "retain-forever" | "delete-when-unreferenced"
+            )
+            || !matches!(state.sharing_policy, "owner-only" | "explicit")
+        {
+            return Err(InitError::InvalidBootManifest);
+        }
         let mut previous = 0;
         while previous < index {
             let prior = config.state_volumes[previous].ok_or(InitError::InvalidBootManifest)?;

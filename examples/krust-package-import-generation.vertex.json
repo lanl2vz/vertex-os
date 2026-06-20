@@ -418,6 +418,26 @@
       },
       "backupPolicy": {
         "mode": "none"
+      },
+      "schemaVersion": "counter.v1",
+      "storageClass": "vertexdisk-v1",
+      "migrationPolicy": {
+        "mode": "preserve"
+      },
+      "retentionPolicy": {
+        "mode": "retain-while-referenced"
+      },
+      "sharingPolicy": {
+        "mode": "explicit",
+        "readers": [
+          "svc:vertex-state"
+        ],
+        "writers": [
+          "svc:vertex-state"
+        ],
+        "controllers": [
+          "svc:console-shell"
+        ]
       }
     }
   ],

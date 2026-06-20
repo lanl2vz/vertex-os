@@ -1334,7 +1334,15 @@ fn build_boot_runtime_config(
     while index < boot_manifest.state_volume_count() {
         let state = boot_manifest.state_volume(index)?;
         if config
-            .add_state_volume(ipc::BootStateVolumeConfig { id: state.id })
+            .add_state_volume(ipc::BootStateVolumeConfig {
+                id: state.id,
+                owner: state.owner,
+                schema_version: state.schema_version,
+                storage_class: state.storage_class,
+                migration_policy: state.migration_policy,
+                retention_policy: state.retention_policy,
+                sharing_policy: state.sharing_policy,
+            })
             .is_err()
         {
             serial::write_str("KrustBoot runtime plan failed: state volume table\n");
@@ -2492,6 +2500,18 @@ fn print_boot_manifest(manifest: &boot_manifest::Manifest<'static>) {
             serial::write_u64_dec(index as u64);
             serial::write_str("] id=");
             serial::write_str(state.id);
+            serial::write_str(" owner=");
+            serial::write_str(state.owner);
+            serial::write_str(" schema=");
+            serial::write_str(state.schema_version);
+            serial::write_str(" storage=");
+            serial::write_str(state.storage_class);
+            serial::write_str(" migration=");
+            serial::write_str(state.migration_policy);
+            serial::write_str(" retention=");
+            serial::write_str(state.retention_policy);
+            serial::write_str(" sharing=");
+            serial::write_str(state.sharing_policy);
             serial::write_str("\n");
         }
         index += 1;

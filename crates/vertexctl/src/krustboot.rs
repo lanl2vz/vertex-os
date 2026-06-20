@@ -37,7 +37,7 @@ const PROCESS_PROVIDES_COUNT_OFFSET: usize = STRING_LEN * 5
 const ENDPOINT_RECORD_LEN: usize = STRING_LEN;
 const GRANT_RECORD_LEN: usize = 12;
 const STORE_OBJECT_RECORD_LEN: usize = STRING_LEN * 3 + 8;
-const STATE_VOLUME_RECORD_LEN: usize = STRING_LEN;
+const STATE_VOLUME_RECORD_LEN: usize = STRING_LEN * 7;
 const NETWORK_PORT_RECORD_LEN: usize = STRING_LEN;
 const IO_PORT_RECORD_LEN: usize = STRING_LEN + 16;
 const MMIO_REGION_RECORD_LEN: usize = STRING_LEN + 16;
@@ -158,7 +158,7 @@ pub struct GraphStoreImage {
 impl KrustBootIdentity {
     pub fn release_profile_label(&self) -> String {
         format!(
-            "Manifest v1 compact KRUSTBOOTM84 version {}",
+            "Manifest v1 compact KRUSTBOOTM85 version {}",
             self.compact_version
         )
     }
@@ -254,6 +254,12 @@ pub fn compile(manifest: &GenerationManifest) -> Result<Vec<u8>, String> {
 
     for state in &plan.state_volumes {
         push_fixed_str(&mut body, &state.id)?;
+        push_fixed_str(&mut body, &state.owner)?;
+        push_fixed_str(&mut body, &state.schema_version)?;
+        push_fixed_str(&mut body, &state.storage_class)?;
+        push_fixed_str(&mut body, &state.migration_policy)?;
+        push_fixed_str(&mut body, &state.retention_policy)?;
+        push_fixed_str(&mut body, &state.sharing_policy)?;
     }
 
     for port in &plan.network_ports {
@@ -504,7 +510,7 @@ pub fn validate_release_artifact(bytes: &[u8]) -> Result<KrustBootIdentity, Stri
 
     let payload = V1_PAYLOAD_OFFSET;
     if &bytes[payload..payload + COMPACT_MAGIC.len()] != COMPACT_MAGIC {
-        return Err("unsupported KrustBoot compact magic; expected KRUSTBOOTM84".to_owned());
+        return Err("unsupported KrustBoot compact magic; expected KRUSTBOOTM85".to_owned());
     }
     let compact_version = read_u16_at(bytes, payload + COMPACT_MAGIC.len())?;
     if compact_version != COMPACT_VERSION {
@@ -652,6 +658,12 @@ struct StoreObject {
 #[derive(Debug, Clone)]
 struct StateVolume {
     id: String,
+    owner: String,
+    schema_version: String,
+    storage_class: String,
+    migration_policy: String,
+    retention_policy: String,
+    sharing_policy: String,
 }
 
 #[derive(Debug, Clone)]
@@ -977,10 +989,26 @@ fn derive_plan(manifest: &GenerationManifest) -> Result<BootPlan, String> {
     let state_volumes = manifest
         .state_volumes
         .iter()
-        .map(|state| StateVolume {
-            id: state.id.clone(),
+        .map(|state| {
+            Ok(StateVolume {
+                id: state.id.clone(),
+                owner: state.owner.clone(),
+                schema_version: compact_state_field(state, "schemaVersion", &state.schema_version)?,
+                storage_class: compact_state_field(state, "storageClass", &state.storage_class)?,
+                migration_policy: compact_policy_mode(
+                    state,
+                    "migrationPolicy",
+                    &state.migration_policy,
+                )?,
+                retention_policy: compact_policy_mode(
+                    state,
+                    "retentionPolicy",
+                    &state.retention_policy,
+                )?,
+                sharing_policy: compact_policy_mode(state, "sharingPolicy", &state.sharing_policy)?,
+            })
         })
-        .collect::<Vec<_>>();
+        .collect::<Result<Vec<_>, String>>()?;
     let mut network_ports = Vec::new();
     let mut io_ports = Vec::new();
     let mut mmio_regions = Vec::new();
@@ -1084,16 +1112,15 @@ fn derive_plan(manifest: &GenerationManifest) -> Result<BootPlan, String> {
                 }
                 "vfs-root" => {
                     push_unique_vfs_root(&mut vfs_roots, capability)?;
+                    let rights =
+                        rights_mask(&requirement.rights, &capability.rights, &capability.id)?;
+                    validate_state_vfs_grant_policy(manifest, service, capability, rights)?;
                     grants.push(Grant {
                         process: process_name.clone(),
                         object_kind: OBJECT_VFS_ROOT,
                         object_name: capability.id.clone(),
                         cap_slot: next_object_cap_slot(&mut next_object_slots, &process_name)?,
-                        rights: rights_mask(
-                            &requirement.rights,
-                            &capability.rights,
-                            &capability.id,
-                        )?,
+                        rights,
                     });
                 }
                 "io-port" => {
@@ -1298,7 +1325,7 @@ fn derive_graph_store(manifest: &GenerationManifest, plan: &mut BootPlan) -> Res
             GRAPH_NODE_STATE_VOLUME,
             OBJECT_STATE,
             state.id.clone(),
-            state.id.clone(),
+            state_policy_label(state),
         )?;
     }
 
@@ -1546,6 +1573,50 @@ fn process_graph_node_id(process: &NativeProcess) -> String {
     } else {
         process.service_id.clone()
     }
+}
+
+fn compact_state_field(
+    state: &vertex_ir::StateVolume,
+    field: &str,
+    value: &str,
+) -> Result<String, String> {
+    if value.is_empty() || value.len() > STRING_LEN || !value.is_ascii() {
+        return Err(format!(
+            "state volume {} {field} must be non-empty ASCII and fit in the compact record",
+            state.id
+        ));
+    }
+    Ok(value.to_owned())
+}
+
+fn compact_policy_mode(
+    state: &vertex_ir::StateVolume,
+    field: &str,
+    value: &Value,
+) -> Result<String, String> {
+    let mode = value
+        .as_object()
+        .and_then(|object| object.get("mode"))
+        .and_then(Value::as_str)
+        .ok_or_else(|| format!("state volume {} {field} must declare mode", state.id))?;
+    compact_state_field(state, field, mode)
+}
+
+fn state_policy_label(state: &StateVolume) -> String {
+    let mut label = format!(
+        "owner={} schema={} storage={}",
+        compact_service_label(&state.owner),
+        state.schema_version,
+        state.storage_class
+    );
+    if label.len() > STRING_LEN {
+        label.truncate(STRING_LEN);
+    }
+    label
+}
+
+fn compact_service_label(service: &str) -> &str {
+    service.strip_prefix("svc:").unwrap_or(service)
 }
 
 fn graph_target_id_for_grant(grant: &Grant) -> String {
@@ -1942,6 +2013,88 @@ fn push_unique_vfs_root(
         root_path: root_path.to_owned(),
     });
     Ok(())
+}
+
+fn validate_state_vfs_grant_policy(
+    manifest: &GenerationManifest,
+    service: &Service,
+    capability: &vertex_ir::Capability,
+    rights: u16,
+) -> Result<(), String> {
+    let Some(root) = capability.properties.get("root").and_then(Value::as_str) else {
+        return Ok(());
+    };
+    let covered = state_volumes_covered_by_root(manifest, root)?;
+    for state in covered {
+        if state.owner == service.id {
+            continue;
+        }
+        if !state_sharing_allows_vfs_rights(state, &service.id, rights, root) {
+            return Err(format!(
+                "service {} receives VFS root {} over state volume {} owned by {} without matching sharingPolicy",
+                service.id, capability.id, state.id, state.owner
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn state_volumes_covered_by_root<'a>(
+    manifest: &'a GenerationManifest,
+    root: &str,
+) -> Result<Vec<&'a vertex_ir::StateVolume>, String> {
+    if root == "/state" {
+        return Ok(manifest.state_volumes.iter().collect());
+    }
+    let Some(rest) = root.strip_prefix("/state/") else {
+        return Ok(Vec::new());
+    };
+    let component = rest.split('/').next().unwrap_or_default();
+    if component.is_empty() {
+        return Err(format!("state VFS root {root} has empty state component"));
+    }
+    Ok(manifest
+        .state_volumes
+        .iter()
+        .filter(|state| state_mount_component(&state.id) == component)
+        .collect())
+}
+
+fn state_mount_component(state_id: &str) -> &str {
+    state_id.strip_prefix("state:").unwrap_or(state_id)
+}
+
+fn state_sharing_allows_vfs_rights(
+    state: &vertex_ir::StateVolume,
+    service_id: &str,
+    rights: u16,
+    root: &str,
+) -> bool {
+    let Some(policy) = state.sharing_policy.as_object() else {
+        return false;
+    };
+    if policy.get("mode").and_then(Value::as_str) != Some("explicit") {
+        return false;
+    }
+    let needs_control = rights & RIGHT_CONTROL != 0 || root.ends_with("/control");
+    let needs_write =
+        rights & (RIGHT_WRITE | RIGHT_CREATE | RIGHT_UNLINK | RIGHT_RENAME | RIGHT_MOUNT) != 0;
+    let field = if needs_control {
+        "controllers"
+    } else if needs_write {
+        "writers"
+    } else {
+        "readers"
+    };
+    policy
+        .get(field)
+        .and_then(Value::as_array)
+        .map(|entries| {
+            entries
+                .iter()
+                .any(|entry| entry.as_str() == Some(service_id))
+        })
+        .unwrap_or(false)
 }
 
 fn validate_manifest_vfs_path(context: &str, path: &str) -> Result<(), String> {

@@ -142,6 +142,12 @@ pub struct StoreObject<'a> {
 #[derive(Clone, Copy)]
 pub struct StateVolume<'a> {
     pub id: &'a str,
+    pub owner: &'a str,
+    pub schema_version: &'a str,
+    pub storage_class: &'a str,
+    pub migration_policy: &'a str,
+    pub retention_policy: &'a str,
+    pub sharing_policy: &'a str,
 }
 
 #[derive(Clone, Copy)]
@@ -919,6 +925,12 @@ fn parse_compact_into(
     while index < state_volume_count {
         manifest.state_volumes[index] = Some(StateVolume {
             id: reader.read_fixed_str()?,
+            owner: reader.read_fixed_str()?,
+            schema_version: reader.read_fixed_str()?,
+            storage_class: reader.read_fixed_str()?,
+            migration_policy: reader.read_fixed_str()?,
+            retention_policy: reader.read_fixed_str()?,
+            sharing_policy: reader.read_fixed_str()?,
         });
         index += 1;
     }
@@ -1506,6 +1518,9 @@ fn validate_graph_store(manifest: &Manifest<'_>) -> Result<(), ParseError> {
         let state = manifest
             .state_volume(index)
             .ok_or(ParseError::InvalidReference)?;
+        if !valid_state_volume_policy(state) {
+            return Err(ParseError::InvalidReference);
+        }
         if !graph_has_node(manifest, GRAPH_NODE_STATE_VOLUME, state.id) {
             return Err(ParseError::InvalidGraphRecord);
         }
@@ -1562,6 +1577,25 @@ fn validate_graph_store(manifest: &Manifest<'_>) -> Result<(), ParseError> {
     }
 
     Ok(())
+}
+
+fn valid_state_volume_policy(state: StateVolume<'_>) -> bool {
+    !state.owner.is_empty()
+        && !state.schema_version.is_empty()
+        && !state.storage_class.is_empty()
+        && !state.migration_policy.is_empty()
+        && !state.retention_policy.is_empty()
+        && !state.sharing_policy.is_empty()
+        && matches!(state.storage_class, "vertexdisk-v1" | "hosted-local-directory")
+        && matches!(
+            state.migration_policy,
+            "preserve" | "migrate" | "fork" | "discard"
+        )
+        && matches!(
+            state.retention_policy,
+            "retain-while-referenced" | "retain-forever" | "delete-when-unreferenced"
+        )
+        && matches!(state.sharing_policy, "owner-only" | "explicit")
 }
 
 fn validate_graph_device_nodes(manifest: &Manifest<'_>) -> Result<(), ParseError> {

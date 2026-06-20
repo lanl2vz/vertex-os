@@ -178,7 +178,7 @@ pub fn state_grants_for_service(
             ));
         };
 
-        if state.owner != service.id {
+        if state.owner != service.id && !state_sharing_policy_allows(state, &service.id) {
             return Err(format!(
                 "state volume {} is owned by {}, so it cannot be granted to {} without an explicit sharing policy",
                 state.id, state.owner, service.id
@@ -233,6 +233,26 @@ pub fn state_grants_for_service(
         });
     }
     Ok(grants)
+}
+
+fn state_sharing_policy_allows(state: &StateVolume, service_id: &str) -> bool {
+    let Some(object) = state.sharing_policy.as_object() else {
+        return false;
+    };
+    if object.get("mode").and_then(Value::as_str) != Some("explicit") {
+        return false;
+    }
+    ["readers", "writers", "controllers"].iter().any(|field| {
+        object
+            .get(*field)
+            .and_then(Value::as_array)
+            .map(|entries| {
+                entries
+                    .iter()
+                    .any(|entry| entry.as_str() == Some(service_id))
+            })
+            .unwrap_or(false)
+    })
 }
 
 pub fn encode_capability_grants(grants: &[HostedCapabilityGrant]) -> String {

@@ -57,9 +57,11 @@ pub extern "C" fn _start() -> ! {
         let command = &command[..received as usize];
         if bytes_eq(command, b"help") {
             log(b"console-shell command: help");
-            log(b"commands: generation services devices counter increment install rollback why halt");
+            log(
+                b"commands: generation services devices counter increment state-health install rollback why halt",
+            );
             console_write(
-                b"commands: generation services devices counter increment install rollback why halt\n> ",
+                b"commands: generation services devices counter increment state-health install rollback why halt\n> ",
             );
             continue;
         }
@@ -103,6 +105,12 @@ pub extern "C" fn _start() -> ! {
             console_write_counter(b"increment -> ", value);
             continue;
         }
+        if bytes_eq(command, b"state-health") {
+            log(b"console-shell command: state-health");
+            let report = runtime_report();
+            console_write_state_health(report);
+            continue;
+        }
         if bytes_eq(command, b"install generation gen:new") {
             log(b"console-shell command: install generation gen:new");
             console_write(b"install generation gen:new\n> ");
@@ -114,6 +122,42 @@ pub extern "C" fn _start() -> ! {
             );
             if status != sys::STATUS_OK {
                 log(b"console-shell install generation failed");
+                console_write(b"install generation failed\n> ");
+                continue;
+            }
+            loop {
+                sys::pause();
+            }
+        }
+        if bytes_eq(command, b"install generation gen:state-bad") {
+            log(b"console-shell command: install generation gen:state-bad");
+            console_write(b"install generation gen:state-bad\n> ");
+            yield_for_console_driver();
+            log(b"console-shell requests generation-manager bad state migration install");
+            let status = sys::ipc_send(
+                CAP_GENERATION_MANAGER_REQUEST,
+                b"install gen:state-migration-bad-0003",
+            );
+            if status != sys::STATUS_OK {
+                log(b"console-shell bad state migration install send failed");
+                console_write(b"install generation failed\n> ");
+                continue;
+            }
+            yield_for_console_driver();
+            yield_for_console_driver();
+            continue;
+        }
+        if bytes_eq(command, b"install generation gen:state-new") {
+            log(b"console-shell command: install generation gen:state-new");
+            console_write(b"install generation gen:state-new\n> ");
+            yield_for_console_driver();
+            log(b"console-shell requests generation-manager state migration install");
+            let status = sys::ipc_send(
+                CAP_GENERATION_MANAGER_REQUEST,
+                b"install gen:state-migration-new-0002",
+            );
+            if status != sys::STATUS_OK {
+                log(b"console-shell state migration install failed");
                 console_write(b"install generation failed\n> ");
                 continue;
             }
@@ -171,6 +215,24 @@ pub extern "C" fn _start() -> ! {
                 sys::ipc_send(CAP_GENERATION_MANAGER_REQUEST, b"rollback gen:console-0001");
             if status != sys::STATUS_OK {
                 log(b"console-shell rollback failed");
+                console_write(b"rollback failed\n> ");
+                continue;
+            }
+            loop {
+                sys::pause();
+            }
+        }
+        if bytes_eq(command, b"rollback state migration") {
+            log(b"console-shell command: rollback state migration");
+            console_write(b"rollback state migration\n> ");
+            yield_for_console_driver();
+            log(b"console-shell requests generation-manager rollback");
+            let status = sys::ipc_send(
+                CAP_GENERATION_MANAGER_REQUEST,
+                b"rollback gen:state-migration-0001",
+            );
+            if status != sys::STATUS_OK {
+                log(b"console-shell state migration rollback failed");
                 console_write(b"rollback failed\n> ");
                 continue;
             }
@@ -312,6 +374,86 @@ fn console_write_devices(report: &[u8]) {
     log(b"appliance shell reports last device failure reason and owner process");
     append(&mut payload, &mut len, b"\n> ");
     console_write(&payload[..len]);
+}
+
+fn console_write_state_health(report: &[u8]) {
+    let policy_needles: [&[u8]; 3] = [
+        b"state-policy[",
+        b"id=state:counter",
+        b"storage=vertexdisk-v1",
+    ];
+    let Some(policy_line) = find_line_contains_all(report, &policy_needles) else {
+        log(b"console-shell state policy report missing");
+        sys::exit(1);
+    };
+    let Some(storage) = field_slice(policy_line, b"storage=") else {
+        log(b"console-shell state policy storage missing");
+        sys::exit(1);
+    };
+    let Some(migration) = field_slice(policy_line, b"migration=") else {
+        log(b"console-shell state policy migration missing");
+        sys::exit(1);
+    };
+    let Some(retention) = field_slice(policy_line, b"retention=") else {
+        log(b"console-shell state policy retention missing");
+        sys::exit(1);
+    };
+    let Some(sharing) = field_slice(policy_line, b"sharing=") else {
+        log(b"console-shell state policy sharing missing");
+        sys::exit(1);
+    };
+
+    let health_needles: [&[u8]; 2] = [b"state-health[", b"id=state:counter"];
+    let Some(line) = find_line_contains_all(report, &health_needles) else {
+        log(b"console-shell state health report missing");
+        sys::exit(1);
+    };
+    let Some(owner) = field_slice(line, b"owner=") else {
+        log(b"console-shell state health owner missing");
+        sys::exit(1);
+    };
+    let Some(schema) = field_slice(line, b"schema=") else {
+        log(b"console-shell state health schema missing");
+        sys::exit(1);
+    };
+    let Some(generation) = field_slice(line, b"generation=") else {
+        log(b"console-shell state health generation missing");
+        sys::exit(1);
+    };
+    let Some(status) = field_slice(line, b"migration_status=") else {
+        log(b"console-shell state health migration status missing");
+        sys::exit(1);
+    };
+    let Some(error) = field_slice(line, b"last_error=") else {
+        log(b"console-shell state health last error missing");
+        sys::exit(1);
+    };
+
+    let mut payload = [0u8; 160];
+    let mut len = 0;
+    append(&mut payload, &mut len, b"state-health state:counter owner=");
+    append(&mut payload, &mut len, owner);
+    append(&mut payload, &mut len, b" schema=");
+    append(&mut payload, &mut len, schema);
+    append(&mut payload, &mut len, b" generation=");
+    append(&mut payload, &mut len, generation);
+    append(&mut payload, &mut len, b" migration_status=");
+    append(&mut payload, &mut len, status);
+    append(&mut payload, &mut len, b" last_error=");
+    append(&mut payload, &mut len, error);
+    log(&payload[..len]);
+    len = 0;
+    append(&mut payload, &mut len, b"state-policy state:counter storage=");
+    append(&mut payload, &mut len, storage);
+    append(&mut payload, &mut len, b" migration=");
+    append(&mut payload, &mut len, migration);
+    append(&mut payload, &mut len, b" retention=");
+    append(&mut payload, &mut len, retention);
+    append(&mut payload, &mut len, b" sharing=");
+    append(&mut payload, &mut len, sharing);
+    log(&payload[..len]);
+    log(b"state health reports owner schema generation migration status and last error");
+    console_write(b"state-health ok\n> ");
 }
 
 fn counter_request(request: &[u8]) -> &[u8] {

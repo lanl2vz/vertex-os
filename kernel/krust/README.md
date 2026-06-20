@@ -1,6 +1,6 @@
 # Krust Kernel
 
-Krust now covers the M14-M84 native graph-activation proof path, substrate
+Krust now covers the M14-M85 native graph-activation proof path, substrate
 hardening, reproducible build environment, directed IPC ABI v1, and native
 console shell plus virtio device I/O, VertexDisk v1 persistence, native boot
 selection, verified store objects, native update transactions, and store-loaded
@@ -22,7 +22,8 @@ authority, the current VFS security/soak gate, the native VertexDisk
 graph-store read/provenance surface, native generation-manager
 install/rollback/recovery, and native package closure import with separate
 negative import validation, native metadata registration for a graph-store-only
-candidate, and an actual base-to-candidate active graph delta. M44-M84 are
+candidate, an actual base-to-candidate active graph delta, and declared
+state-object migration policy. M44-M85 are
 tracked in `../../docs/krust-milestones.md`.
 
 The target is intentionally small:
@@ -443,7 +444,7 @@ transcripts. The same check is available from the repository root:
 scripts/krust-smoke.sh
 ```
 
-## M26-M84 Substrate Gate
+## M26-M85 Substrate Gate
 
 Run the clean-clone gate from the repository root:
 
@@ -458,13 +459,13 @@ make release-gate
 ```
 
 The gate checks script executability and shell syntax, verifies Makefile recipe
-parsing, checks Rust formatting and Markdown whitespace, confirms the M14-M84
+parsing, checks Rust formatting and Markdown whitespace, confirms the M14-M85
 documentation anchors, checks the pinned M39 toolchain and Cargo lockfiles, runs
 `cargo metadata --locked --offline`, `cargo build --locked --offline`, and
 `cargo test --locked --offline`,
 validates `examples/hello-generation.vertex.json`, runs `make doctor`, rebuilds
 from `make clean`, runs `make smoke`, checks package/link/build import commands,
-and then runs the M14-M84 QEMU cases:
+and then runs the M14-M85 QEMU cases:
 `m14`,
 `manifest-cycle`, `bad-cap`, `readiness-timeout`, `rollback`, `store-state-services`,
 `timer`, `preemption`, `user-fault`, `restart`, `manifest-v1`, `cap-lifecycle`,
@@ -478,7 +479,7 @@ and then runs the M14-M84 QEMU cases:
 `m78-journal-checkpoint-after-journal`, `m78-journal-checkpoint-after-data`,
 `m78-journal-checkpoint-after-inode`, `m78-post-sync-remount`,
 `m78-fsync-fault`, `m79`, `m80`, `m81`, `m82`, `m83`, `m83-hostless`,
-`m83-power-prepare`, `m83-power-commit`, `m83-power-rollback`, `m84`,
+`m83-power-prepare`, `m83-power-commit`, `m83-power-rollback`, `m84`, `m85`,
 `manifest-graph-store-checksum`, `manifest-graph-store-record`, and the
 remaining malformed-manifest cases. If
 the offline build fails, the gate prints the Cargo cache or vendoring

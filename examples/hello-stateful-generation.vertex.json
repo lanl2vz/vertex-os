@@ -125,6 +125,17 @@
       },
       "backupPolicy": {
         "enabled": false
+      },
+      "schemaVersion": "echo-data.v1",
+      "storageClass": "hosted-local-directory",
+      "migrationPolicy": {
+        "mode": "preserve"
+      },
+      "retentionPolicy": {
+        "mode": "retain-while-referenced"
+      },
+      "sharingPolicy": {
+        "mode": "owner-only"
       }
     }
   ],

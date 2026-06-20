@@ -405,7 +405,7 @@ fn release_profile_validates_current_krustboot_identity() {
         &kernel_path.to_string_lossy(),
         &vertexdisk_path.to_string_lossy(),
     ]));
-    assert!(profile.contains("krustboot=Manifest v1 compact KRUSTBOOTM84 version 14"));
+    assert!(profile.contains("krustboot=Manifest v1 compact KRUSTBOOTM85 version 15"));
 
     assert_success(run(&[
         "corrupt-boot-manifest",
@@ -422,7 +422,7 @@ fn release_profile_validates_current_krustboot_identity() {
         &vertexdisk_path.to_string_lossy(),
     ]));
     assert!(stderr.contains("unsupported KrustBoot compact magic"));
-    assert!(stderr.contains("expected KRUSTBOOTM84"));
+    assert!(stderr.contains("expected KRUSTBOOTM85"));
 }
 
 #[test]
@@ -636,6 +636,17 @@ fn create_vertex_disk_rejects_state_volumes_above_krust_limit() {
             },
             "backupPolicy": {
                 "mode": "none"
+            },
+            "schemaVersion": format!("extra-{index}.v1"),
+            "storageClass": "vertexdisk-v1",
+            "migrationPolicy": {
+                "mode": "preserve"
+            },
+            "retentionPolicy": {
+                "mode": "retain-while-referenced"
+            },
+            "sharingPolicy": {
+                "mode": "owner-only"
             }
         }));
     }
@@ -653,6 +664,98 @@ fn create_vertex_disk_rejects_state_volumes_above_krust_limit() {
     ]));
 
     assert!(stderr.contains("Krust native runtime supports at most 4 state volumes"));
+    assert!(!output_path.exists());
+}
+
+#[test]
+fn validate_rejects_non_owner_state_without_explicit_sharing() {
+    let dir = temp_dir("state-sharing-validator");
+    let input_path = dir.join("owner-only-state.vertex.json");
+    let mut manifest: Value = serde_json::from_str(
+        &fs::read_to_string(repo_root().join("examples/hello-generation.vertex.json"))
+            .expect("read hello manifest"),
+    )
+    .expect("hello manifest should be json");
+
+    let state_volumes = manifest["stateVolumes"]
+        .as_array_mut()
+        .expect("stateVolumes should be an array");
+    let counter = state_volumes
+        .iter_mut()
+        .find(|state| state["id"] == "state:counter")
+        .expect("counter state volume");
+    counter["sharingPolicy"] = serde_json::json!({
+        "mode": "owner-only"
+    });
+
+    fs::write(
+        &input_path,
+        serde_json::to_string_pretty(&manifest).expect("serialize owner-only state manifest"),
+    )
+    .expect("write owner-only state manifest");
+
+    let stderr = assert_failure(run(&["validate", &input_path.to_string_lossy()]));
+
+    assert!(stderr.contains(
+        "service svc:vertex-state references state volume state:counter owned by svc:echo-server without explicit sharing policy"
+    ));
+}
+
+#[test]
+fn compile_boot_manifest_rejects_state_path_alias_without_matching_write_share() {
+    let dir = temp_dir("state-sharing-path-alias");
+    let input_path = dir.join("state-alias.vertex.json");
+    let output_path = dir.join("state-alias.krustboot");
+    let mut manifest: Value = serde_json::from_str(
+        &fs::read_to_string(repo_root().join("examples/hello-generation.vertex.json"))
+            .expect("read hello manifest"),
+    )
+    .expect("hello manifest should be json");
+
+    let state_volumes = manifest["stateVolumes"]
+        .as_array_mut()
+        .expect("stateVolumes should be an array");
+    let counter = state_volumes
+        .iter_mut()
+        .find(|state| state["id"] == "state:counter")
+        .expect("counter state volume");
+    counter["sharingPolicy"] = serde_json::json!({
+        "mode": "explicit",
+        "readers": [
+            "svc:counter-service",
+            "svc:state-reader",
+            "svc:vertex-state"
+        ],
+        "writers": [
+            "svc:vertex-state"
+        ],
+        "controllers": []
+    });
+
+    let capabilities = manifest["capabilities"]
+        .as_array_mut()
+        .expect("capabilities should be an array");
+    let counter_root = capabilities
+        .iter_mut()
+        .find(|capability| capability["id"] == "cap:vfs.counter-state")
+        .expect("counter VFS root capability");
+    counter_root["properties"]["root"] = serde_json::json!("/state/counter/alias");
+
+    fs::write(
+        &input_path,
+        serde_json::to_string_pretty(&manifest).expect("serialize state alias manifest"),
+    )
+    .expect("write state alias manifest");
+
+    let stderr = assert_failure(run(&[
+        "compile-boot-manifest",
+        &input_path.to_string_lossy(),
+        &output_path.to_string_lossy(),
+    ]));
+
+    assert!(stderr.contains(
+        "service svc:counter-service receives VFS root cap:vfs.counter-state over state volume state:counter owned by svc:echo-server without matching sharingPolicy"
+    ));
     assert!(!output_path.exists());
 }
 

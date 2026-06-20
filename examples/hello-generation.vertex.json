@@ -346,6 +346,28 @@
       },
       "backupPolicy": {
         "mode": "none"
+      },
+      "schemaVersion": "counter.v1",
+      "storageClass": "vertexdisk-v1",
+      "migrationPolicy": {
+        "mode": "preserve"
+      },
+      "retentionPolicy": {
+        "mode": "retain-while-referenced"
+      },
+      "sharingPolicy": {
+        "mode": "explicit",
+        "readers": [
+          "svc:counter-service",
+          "svc:state-reader",
+          "svc:vertex-state"
+        ],
+        "writers": [
+          "svc:counter-service",
+          "svc:state-reader",
+          "svc:vertex-state"
+        ],
+        "controllers": []
       }
     },
     {
@@ -359,6 +381,24 @@
       },
       "backupPolicy": {
         "mode": "none"
+      },
+      "schemaVersion": "scratch.v1",
+      "storageClass": "vertexdisk-v1",
+      "migrationPolicy": {
+        "mode": "preserve"
+      },
+      "retentionPolicy": {
+        "mode": "retain-while-referenced"
+      },
+      "sharingPolicy": {
+        "mode": "explicit",
+        "readers": [
+          "svc:vertex-state"
+        ],
+        "writers": [
+          "svc:vertex-state"
+        ],
+        "controllers": []
       }
     }
   ],

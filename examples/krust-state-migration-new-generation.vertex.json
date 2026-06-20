@@ -1,10 +1,10 @@
 {
   "schema": "vertex.ir.v0",
   "generation": {
-    "id": "gen:console-0001",
+    "id": "gen:state-migration-new-0002",
     "createdUtc": "2026-05-22T00:00:00Z",
-    "description": "Krust native console shell test generation",
-    "parent": null,
+    "description": "Krust M85 state object migration policy update generation",
+    "parent": "gen:state-migration-0001",
     "manifestHash": null
   },
   "kernel": {
@@ -370,10 +370,10 @@
       "backupPolicy": {
         "mode": "none"
       },
-      "schemaVersion": "counter.v1",
+      "schemaVersion": "counter.v2",
       "storageClass": "vertexdisk-v1",
       "migrationPolicy": {
-        "mode": "preserve"
+        "mode": "migrate"
       },
       "retentionPolicy": {
         "mode": "retain-while-referenced"

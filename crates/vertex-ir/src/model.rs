@@ -214,9 +214,19 @@ pub struct StateVolume {
     pub owner: Id,
     pub mount_intent: String,
     #[serde(default)]
+    pub schema_version: String,
+    #[serde(default)]
+    pub storage_class: String,
+    #[serde(default)]
     pub snapshot_policy: Value,
     #[serde(default)]
     pub backup_policy: Value,
+    #[serde(default)]
+    pub migration_policy: Value,
+    #[serde(default)]
+    pub retention_policy: Value,
+    #[serde(default)]
+    pub sharing_policy: Value,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
 }

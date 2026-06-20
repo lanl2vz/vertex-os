@@ -7,7 +7,7 @@ runtime layered over a host kernel.
 
 ## Status Summary
 
-Current status: M14-M84 are implemented and smoke-tested under
+Current status: M14-M85 are implemented and smoke-tested under
 `qemu-system-x86_64` with Limine. The current tree has an image-backed VertexFS
 v1 mount, a strict VertexDisk v1 section carrying the current VertexFS image,
 fixed journal replay, kernel-owned device-backed fsync transactions,
@@ -63,7 +63,11 @@ package-import service that reads compact graph fragments from immutable store
 objects, verifies closure/config hashes, rejects standalone negative dependency
 and excess-authority import commands without sending generation-manager install
 requests, registers a graph-store-only candidate into native generation
-metadata before activation, and proves canonical closure hashing is stable.
+metadata before activation, and proves canonical closure hashing is stable. M85
+makes state volumes first-class policy records in the compact graph, validates
+owner/schema/storage/migration/retention/sharing declarations on the host and
+native boot paths, reports state policy and health through runtime inspection,
+and gates generation staging on declared migration and rollback policy.
 
 M74-M82 are implemented as the current VFS, open-file, directory, block-cache,
 VertexFS/mount-namespace, coordination, and security/soak substrate. The
@@ -83,9 +87,11 @@ create/write/read/fsync coverage, and a model-reader service rooted at
 journals, checkpoint remount verification, fsync faults, live-handle revocation
 semantics, a 100-cycle VFS churn probe, native graph-store checksum rejection,
 invalid graph-record rejection, and native package closure import through
-generation-manager activation/rollback. General vnode page cache integration,
-broader synthetic/device filesystem breadth, richer state policy, and durable
-graph-store mutation remain later work.
+generation-manager activation/rollback, plus M85 state migration,
+bad-migration rollback, sharing-policy, retention, and state-health reporting.
+General vnode page cache integration, broader synthetic/device filesystem
+breadth, native graph-policy validation, and durable graph-store mutation
+remain later work.
 
 ```sh
 make -C kernel/krust doctor
@@ -156,6 +162,7 @@ scripts/krust-test.sh m83-power-prepare
 scripts/krust-test.sh m83-power-commit
 scripts/krust-test.sh m83-power-rollback
 scripts/krust-test.sh m84
+scripts/krust-test.sh m85
 ```
 
 Next direction: move richer state lifecycle policy, policy validation, the
@@ -1569,7 +1576,7 @@ done: locked Cargo dependencies for the top-level host-tool workspace, Krust ker
 done: kernel/krust/rust-toolchain.toml pins Rust 1.95.0, rustfmt, and x86_64-unknown-none
 done: make doctor checks every required tool and reports actionable fixes
 done: legacy hello/ipc userspace crates are removed instead of carried forward
-done: single release-gate script runs the clean-clone M14-M84 substrate proof with the current QEMU matrix
+done: single release-gate script runs the clean-clone M14-M85 substrate proof with the current QEMU matrix
 ```
 
 Acceptance tests:
@@ -2769,7 +2776,7 @@ Supported profile:
 ```text
 x86_64 one CPU
 Limine boot
-KrustBoot Manifest v1 / compact payload KRUSTBOOTM84 version 14
+KrustBoot Manifest v1 / compact payload KRUSTBOOTM85 version 15
 QEMU virtio-blk, virtio-rng, virtio-net, and virtio-console
 VertexDisk store/state/update layout
 no legacy transport or payload compatibility
@@ -2796,7 +2803,7 @@ Implementation notes:
 - Do not expand to SMP, USB, GPU, a full filesystem, or Linux/POSIX
   compatibility until the profile can boot, update, recover, and explain its
   authority graph repeatably.
-- The compact native payload identity is now `KRUSTBOOTM84` version 14. M82,
+- The compact native payload identity is now `KRUSTBOOTM85` version 15. M82,
   M79, M75, M65, M61, and older compact payload identities are rejected rather
   than retained as compatibility formats.
 - The release gate records a supported profile artifact containing the exact
@@ -3947,8 +3954,8 @@ done: VertexDisk recovery metadata handles prepare, commit, and rollback
 done: console shutdown waits for finite state clients to drain before issuing
       the state-service control write, so generation activation completion does
       not race in-flight state VFS transactions
-todo: state migration policy remains preserve-only for the current counter
-      state case; richer migrate/fork/discard policies move to M85
+done: richer state migration, rollback, retention, sharing, and health-report
+      policy moves to the M85 state-object implementation
 ```
 
 Acceptance tests:
@@ -3990,9 +3997,8 @@ Implementation notes:
   against the generation metadata section, and the kernel verifies candidate
   generation closure and stages a buildable runtime before the manager commits
   selected-generation metadata.
-- M83 intentionally keeps migration policy minimal. The graph records preserve
-  policy for the current counter state; richer migrate/fork/discard semantics
-  are M85 work.
+- M83 intentionally kept migration policy minimal. M85 now carries the richer
+  state-object migration, rollback, retention, sharing, and health-report path.
 
 ## M84: Native Package And Closure Import
 
@@ -4006,7 +4012,7 @@ Scope:
 
 ```text
 done: native package-import service
-done: KrustBoot compact payload identity is `KRUSTBOOTM84` version 14
+done: KrustBoot compact payload identity is `KRUSTBOOTM85` version 15
 done: package graph fragment parser for the compact typed graph format
 done: store-object hash verification before materialization
 done: closure linking against existing graph-store objects
@@ -4045,7 +4051,7 @@ Implementation notes:
 
 ## M85: State Objects And Migration Policy
 
-Status: planned.
+Status: done.
 
 Goal: make mutable state a declared graph object with explicit ownership,
 schema, migration, retention, sharing, and rollback policy.
@@ -4071,10 +4077,35 @@ shared state requires explicit graph sharing policy and attenuated rights
 rollback follows state policy rather than blindly preserving all volumes
 state garbage collection removes unreferenced state only after retention policy allows it
 state health reports owner, schema, generation, migration status, and last error
+done: scripts/krust-test.sh m85
 ```
 
 Implementation notes:
 
+- done: state-volume graph records now carry owner, schemaVersion,
+  storageClass, migrationPolicy, retentionPolicy, and sharingPolicy in the
+  M85 compact payload, graph labels, native boot parser, and runtime config
+- done: host validation rejects missing state policy, unsupported policy modes,
+  unknown sharing services, non-owner state use without explicit sharing, and
+  state path aliases without matching read/write/control sharing authority
+- done: native boot validation rejects compact state records that omit owner,
+  schema, storage, migration, retention, or sharing policy fields
+- done: generation staging applies state transition policy before runtime
+  staging/commit, accepts `migrate` schema changes once, aborts bad migrations,
+  and leaves selected_generation unchanged
+- done: rollback logs state policy application and rollback journal records
+  instead of blindly preserving every state object
+- done: runtime inspection emits state-policy and state-health records with
+  owner, schema, storage, migration, retention, sharing, generation,
+  migration status, and last error
+- done: hosted supervisor state grants honor explicit sharing policy for
+  non-owner consumers
+- done: `scripts/krust-test.sh m85` boots
+  `gen:state-migration-0001`, rejects
+  `gen:state-migration-bad-0003`, installs
+  `gen:state-migration-new-0002`, rolls back to the base generation, verifies
+  retention defers GC for referenced state, and queries state health before and
+  after migration/rollback
 - This is the point where Vertex must improve on `/var`: every mutable object
   should have a graph owner and lifecycle policy.
 - Avoid migration scripts with ambient authority. A migration should receive

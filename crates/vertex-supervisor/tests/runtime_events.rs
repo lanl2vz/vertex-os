@@ -352,7 +352,17 @@ fn write_state_owner_mismatch_manifest(dir: &Path) -> PathBuf {
       "owner": "svc:owner",
       "mountIntent": "private",
       "snapshotPolicy": {{"enabled": true, "mode": "directory-copy"}},
-      "backupPolicy": {{"enabled": false}}
+      "backupPolicy": {{"enabled": false}},
+      "schemaVersion": "data.v1",
+      "storageClass": "hosted-local-directory",
+      "migrationPolicy": {{"mode": "preserve"}},
+      "retentionPolicy": {{"mode": "retain-while-referenced"}},
+      "sharingPolicy": {{
+        "mode": "explicit",
+        "readers": ["svc:consumer"],
+        "writers": [],
+        "controllers": []
+      }}
     }}
   ],
   "secrets": [],
@@ -423,7 +433,7 @@ fn write_state_owner_mismatch_manifest(dir: &Path) -> PathBuf {
   ],
   "activation": {{
     "rootService": "svc:vertex-supervisor",
-    "startOrder": ["svc:vertex-supervisor", "svc:consumer"],
+    "startOrder": ["svc:vertex-supervisor", "svc:owner", "svc:consumer"],
     "rollbackPolicy": {{"default": "system-only", "state": "preserve-unless-explicit"}},
     "onFailure": "stop-activation"
   }},
@@ -587,12 +597,12 @@ fn undeclared_capability_is_not_granted_to_consumer() {
 }
 
 #[test]
-fn state_volume_grants_reject_non_owner_consumers() {
+fn state_volume_grants_allow_explicit_non_owner_consumers() {
     let dir = temp_dir("state-owner");
     let manifest = write_state_owner_mismatch_manifest(&dir);
     let state_root = dir.join("state");
 
-    let stderr = assert_failure(
+    assert_success(
         Command::new(supervisor())
             .arg("--state-root")
             .arg(&state_root)
@@ -601,14 +611,23 @@ fn state_volume_grants_reject_non_owner_consumers() {
             .output()
             .expect("run supervisor"),
     );
-
-    assert!(stderr.contains("state volume state:data is owned by svc:owner"));
     let parsed = read_events(&state_root);
     assert!(parsed.iter().any(|event| {
-        event["event"] == "activationFailure"
-            && event["error"]
-                .as_str()
-                .expect("activation failure error")
-                .contains("cannot be granted")
+        event["event"] == "stateVolumeGrant"
+            && event["serviceId"] == "svc:consumer"
+            && event["stateId"] == "state:data"
+            && event["owner"] == "svc:owner"
+            && event["consumer"] == "svc:consumer"
     }));
+    let consumer_start = parsed
+        .iter()
+        .find(|event| event["event"] == "serviceStart" && event["serviceId"] == "svc:consumer")
+        .expect("consumer start event");
+    assert!(
+        consumer_start["stateVolumes"]
+            .as_array()
+            .expect("state volume grants")
+            .iter()
+            .any(|state| state["id"] == "state:data" && state["owner"] == "svc:owner")
+    );
 }

@@ -1,9 +1,9 @@
 {
   "schema": "vertex.ir.v0",
   "generation": {
-    "id": "gen:console-0001",
+    "id": "gen:state-migration-0001",
     "createdUtc": "2026-05-22T00:00:00Z",
-    "description": "Krust native console shell test generation",
+    "description": "Krust M85 state object migration policy base generation",
     "parent": null,
     "manifestHash": null
   },
@@ -391,6 +391,37 @@
         "controllers": [
           "svc:console-shell"
         ]
+      }
+    },
+    {
+      "id": "state:scratch",
+      "name": "scratch",
+      "kind": "vertexdisk-v1",
+      "owner": "svc:echo-server",
+      "mountIntent": "read-write",
+      "snapshotPolicy": {
+        "mode": "explicit"
+      },
+      "backupPolicy": {
+        "mode": "none"
+      },
+      "schemaVersion": "scratch.v1",
+      "storageClass": "vertexdisk-v1",
+      "migrationPolicy": {
+        "mode": "preserve"
+      },
+      "retentionPolicy": {
+        "mode": "retain-while-referenced"
+      },
+      "sharingPolicy": {
+        "mode": "explicit",
+        "readers": [
+          "svc:vertex-state"
+        ],
+        "writers": [
+          "svc:vertex-state"
+        ],
+        "controllers": []
       }
     }
   ],
@@ -1093,7 +1124,8 @@
         "cap:vertex-state.block.reply"
       ],
       "state": [
-        "state:counter"
+        "state:counter",
+        "state:scratch"
       ],
       "secrets": [],
       "restart": "never",
