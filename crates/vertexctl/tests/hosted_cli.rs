@@ -702,6 +702,40 @@ fn validate_rejects_non_owner_state_without_explicit_sharing() {
 }
 
 #[test]
+fn validate_rejects_delete_when_unreferenced_retention() {
+    let dir = temp_dir("state-delete-retention-validator");
+    let input_path = dir.join("delete-retention-state.vertex.json");
+    let mut manifest: Value = serde_json::from_str(
+        &fs::read_to_string(repo_root().join("examples/hello-generation.vertex.json"))
+            .expect("read hello manifest"),
+    )
+    .expect("hello manifest should be json");
+
+    let state_volumes = manifest["stateVolumes"]
+        .as_array_mut()
+        .expect("stateVolumes should be an array");
+    let counter = state_volumes
+        .iter_mut()
+        .find(|state| state["id"] == "state:counter")
+        .expect("counter state volume");
+    counter["retentionPolicy"] = serde_json::json!({
+        "mode": "delete-when-unreferenced"
+    });
+
+    fs::write(
+        &input_path,
+        serde_json::to_string_pretty(&manifest).expect("serialize delete retention manifest"),
+    )
+    .expect("write delete retention manifest");
+
+    let stderr = assert_failure(run(&["validate", &input_path.to_string_lossy()]));
+
+    assert!(stderr.contains(
+        "state volume state:counter retentionPolicy mode delete-when-unreferenced is unsupported"
+    ));
+}
+
+#[test]
 fn compile_boot_manifest_rejects_state_path_alias_without_matching_write_share() {
     let dir = temp_dir("state-sharing-path-alias");
     let input_path = dir.join("state-alias.vertex.json");

@@ -344,6 +344,7 @@ impl<'a> ActivationRuntime<'a> {
                     "kind": grant.kind,
                     "owner": grant.owner,
                     "consumer": grant.consumer,
+                    "rights": grant.rights,
                     "path": grant.path,
                     "endpoint": grant.endpoint,
                     "utcMs": unix_millis()?

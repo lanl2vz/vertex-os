@@ -560,6 +560,7 @@ fn write_state_policy_report(runtime: &RuntimeState, report: &mut InspectReport)
         report.push_str("state-policy v=1 status=unavailable\n");
         return;
     };
+    let manager = boot_manager_state();
     let mut index = 0;
     while index < config.state_volume_count {
         if let Some(state) = config.state_volumes[index] {
@@ -592,7 +593,19 @@ fn write_state_policy_report(runtime: &RuntimeState, report: &mut InspectReport)
             report.push_str(state.schema_version);
             report.push_str(" generation=");
             report.push_str(config.generation_id);
-            report.push_str(" migration_status=clean last_error=none retention=");
+            report.push_str(" migration_status=");
+            if manager.last_state_migration_state == state.id {
+                report.push_str(manager.last_state_migration_status);
+                report.push_str(" last_error=");
+                if manager.last_state_migration_error.is_empty() {
+                    report.push_str("none");
+                } else {
+                    report.push_str(manager.last_state_migration_error);
+                }
+            } else {
+                report.push_str("clean last_error=none");
+            }
+            report.push_str(" retention=");
             report.push_str(state.retention_policy);
             report.push_byte(b'\n');
         }

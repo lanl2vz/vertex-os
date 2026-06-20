@@ -635,7 +635,7 @@ fn validate_boot_config_state_volumes(config: &BootRuntimeConfig) -> Result<(), 
             )
             || !matches!(
                 state.retention_policy,
-                "retain-while-referenced" | "retain-forever" | "delete-when-unreferenced"
+                "retain-while-referenced" | "retain-forever"
             )
             || !matches!(state.sharing_policy, "owner-only" | "explicit")
         {

@@ -4062,7 +4062,7 @@ Scope:
 state-object graph records with owner, schema version, and storage class
 declared state sharing and read/write authority
 state migration plan attached to generation transitions
-state retention and garbage-collection policy
+state retention policy with unsafe delete modes rejected until durable GC exists
 rollback semantics for preserve, fork, discard, and migrate cases
 state health report and migration journal
 ```
@@ -4075,7 +4075,7 @@ failed migration rolls back graph selection and leaves old state readable
 service cannot open undeclared state even when a path alias exists
 shared state requires explicit graph sharing policy and attenuated rights
 rollback follows state policy rather than blindly preserving all volumes
-state garbage collection removes unreferenced state only after retention policy allows it
+delete-when-unreferenced retention is rejected until durable state deletion exists
 state health reports owner, schema, generation, migration status, and last error
 done: scripts/krust-test.sh m85
 ```
@@ -4090,16 +4090,17 @@ Implementation notes:
   state path aliases without matching read/write/control sharing authority
 - done: native boot validation rejects compact state records that omit owner,
   schema, storage, migration, retention, or sharing policy fields
-- done: generation staging applies state transition policy before runtime
-  staging/commit, accepts `migrate` schema changes once, aborts bad migrations,
-  and leaves selected_generation unchanged
-- done: rollback logs state policy application and rollback journal records
-  instead of blindly preserving every state object
+- done: generation staging validates the complete state transition before any
+  migration journal is emitted, accepts `migrate` schema changes at commit,
+  aborts bad migrations, and leaves selected_generation unchanged
+- done: rollback logs state policy application during staging and rollback
+  journal records after commit instead of blindly preserving every state object
 - done: runtime inspection emits state-policy and state-health records with
   owner, schema, storage, migration, retention, sharing, generation,
   migration status, and last error
-- done: hosted supervisor state grants honor explicit sharing policy for
-  non-owner consumers
+- done: hosted supervisor state grants carry explicit rights, allow
+  writer/controller non-owner consumers, and reject reader-only directory grants
+  because hosted paths cannot enforce read-only attenuation
 - done: `scripts/krust-test.sh m85` boots
   `gen:state-migration-0001`, rejects
   `gen:state-migration-bad-0003`, installs

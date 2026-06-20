@@ -949,7 +949,7 @@ svc:counter has state authority from generation graph
 	Native generation manager failure detail: service=gen:state-migration-bad-0003 dependency=state-schema policy=state-migration reason=state-migration-failed
 	Native update transaction selected_generation unchanged: gen:state-migration-0001
 	generation-manager transaction abort: reason=stage-failed generation=gen:state-migration-bad-0003
-	state-health state:counter owner=svc:echo-server schema=counter.v1 generation=gen:state-migration-0001 migration_status=clean last_error=none
+	state-health state:counter owner=svc:echo-server schema=counter.v1 generation=gen:state-migration-0001 migration_status=failed last_error=missing-migrate-policy
 	console-driver forwarded serial command: install generation gen:state-new
 	console-shell requests generation-manager state migration install
 	generation-manager install candidate from native graph-store: generation=gen:state-migration-new-0002
@@ -984,6 +984,7 @@ svc:counter has state authority from generation graph
 	'
 	        case_forbidden_lines='
 	Krust generation switch entering generation: gen:state-migration-bad-0003
+	State migration journal record: state=state:scratch from=scratch.v1 to=scratch.v2 status=applied-once
 	State garbage collection removed unreferenced state: state=state:scratch
 	'
 	        ;;

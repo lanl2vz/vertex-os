@@ -1593,7 +1593,7 @@ fn valid_state_volume_policy(state: StateVolume<'_>) -> bool {
         )
         && matches!(
             state.retention_policy,
-            "retain-while-referenced" | "retain-forever" | "delete-when-unreferenced"
+            "retain-while-referenced" | "retain-forever"
         )
         && matches!(state.sharing_policy, "owner-only" | "explicit")
 }

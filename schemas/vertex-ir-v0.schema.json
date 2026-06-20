@@ -435,11 +435,7 @@
           "required": ["mode"],
           "properties": {
             "mode": {
-              "enum": [
-                "retain-while-referenced",
-                "retain-forever",
-                "delete-when-unreferenced"
-              ]
+              "enum": ["retain-while-referenced", "retain-forever"]
             }
           }
         },

@@ -42,6 +42,7 @@ pub struct HostedStateGrant {
     pub kind: String,
     pub owner: String,
     pub consumer: String,
+    pub rights: Vec<String>,
     pub path: PathBuf,
     pub endpoint: HostedEndpoint,
 }
@@ -86,7 +87,12 @@ impl HostedCapabilityGrant {
 
 impl HostedStateGrant {
     pub fn env_value(&self) -> String {
-        format!("{}|{}", self.id, self.path.display())
+        format!(
+            "{}|{}|{}",
+            self.id,
+            self.rights.join(","),
+            self.path.display()
+        )
     }
 }
 
@@ -178,17 +184,23 @@ pub fn state_grants_for_service(
             ));
         };
 
-        if state.owner != service.id && !state_sharing_policy_allows(state, &service.id) {
+        let Some(rights) = state_grant_rights(state, &service.id) else {
             return Err(format!(
                 "state volume {} is owned by {}, so it cannot be granted to {} without an explicit sharing policy",
                 state.id, state.owner, service.id
             ));
-        }
+        };
 
         if state.kind != "hosted-local-directory" {
             return Err(format!(
                 "state volume {} has unsupported hosted kind {}",
                 state.id, state.kind
+            ));
+        }
+        if state.owner != service.id && rights.len() == 1 && rights[0] == "read" {
+            return Err(format!(
+                "state volume {} grants read-only hosted-local-directory access to {}, but hosted directory paths cannot enforce reader-only attenuation",
+                state.id, service.id
             ));
         }
 
@@ -226,6 +238,7 @@ pub fn state_grants_for_service(
             kind: state.kind.clone(),
             owner: state.owner.clone(),
             consumer: service.id.clone(),
+            rights,
             path: canonical_current.clone(),
             endpoint: HostedEndpoint::StateDir {
                 path: canonical_current,
@@ -235,24 +248,50 @@ pub fn state_grants_for_service(
     Ok(grants)
 }
 
-fn state_sharing_policy_allows(state: &StateVolume, service_id: &str) -> bool {
+fn state_grant_rights(state: &StateVolume, service_id: &str) -> Option<Vec<String>> {
+    if state.owner == service_id {
+        return Some(vec![
+            "read".to_owned(),
+            "write".to_owned(),
+            "control".to_owned(),
+        ]);
+    }
     let Some(object) = state.sharing_policy.as_object() else {
-        return false;
+        return None;
     };
     if object.get("mode").and_then(Value::as_str) != Some("explicit") {
-        return false;
+        return None;
     }
-    ["readers", "writers", "controllers"].iter().any(|field| {
-        object
-            .get(*field)
-            .and_then(Value::as_array)
-            .map(|entries| {
-                entries
-                    .iter()
-                    .any(|entry| entry.as_str() == Some(service_id))
-            })
-            .unwrap_or(false)
-    })
+    if state_sharing_list_contains(object, "controllers", service_id) {
+        return Some(vec![
+            "read".to_owned(),
+            "write".to_owned(),
+            "control".to_owned(),
+        ]);
+    }
+    if state_sharing_list_contains(object, "writers", service_id) {
+        return Some(vec!["read".to_owned(), "write".to_owned()]);
+    }
+    if state_sharing_list_contains(object, "readers", service_id) {
+        return Some(vec!["read".to_owned()]);
+    }
+    None
+}
+
+fn state_sharing_list_contains(
+    object: &serde_json::Map<String, Value>,
+    field: &str,
+    service_id: &str,
+) -> bool {
+    object
+        .get(field)
+        .and_then(Value::as_array)
+        .map(|entries| {
+            entries
+                .iter()
+                .any(|entry| entry.as_str() == Some(service_id))
+        })
+        .unwrap_or(false)
 }
 
 pub fn encode_capability_grants(grants: &[HostedCapabilityGrant]) -> String {

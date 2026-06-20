@@ -359,6 +359,37 @@
   ],
   "stateVolumes": [
     {
+      "id": "state:scratch",
+      "name": "scratch",
+      "kind": "vertexdisk-v1",
+      "owner": "svc:echo-server",
+      "mountIntent": "read-write",
+      "snapshotPolicy": {
+        "mode": "explicit"
+      },
+      "backupPolicy": {
+        "mode": "none"
+      },
+      "schemaVersion": "scratch.v2",
+      "storageClass": "vertexdisk-v1",
+      "migrationPolicy": {
+        "mode": "migrate"
+      },
+      "retentionPolicy": {
+        "mode": "retain-while-referenced"
+      },
+      "sharingPolicy": {
+        "mode": "explicit",
+        "readers": [
+          "svc:vertex-state"
+        ],
+        "writers": [
+          "svc:vertex-state"
+        ],
+        "controllers": []
+      }
+    },
+    {
       "id": "state:counter",
       "name": "counter",
       "kind": "vertexdisk-v1",

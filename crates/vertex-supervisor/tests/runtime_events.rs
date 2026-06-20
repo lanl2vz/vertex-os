@@ -359,8 +359,8 @@ fn write_state_owner_mismatch_manifest(dir: &Path) -> PathBuf {
       "retentionPolicy": {{"mode": "retain-while-referenced"}},
       "sharingPolicy": {{
         "mode": "explicit",
-        "readers": ["svc:consumer"],
-        "writers": [],
+        "readers": [],
+        "writers": ["svc:consumer"],
         "controllers": []
       }}
     }}
@@ -618,6 +618,7 @@ fn state_volume_grants_allow_explicit_non_owner_consumers() {
             && event["stateId"] == "state:data"
             && event["owner"] == "svc:owner"
             && event["consumer"] == "svc:consumer"
+            && event["rights"] == serde_json::json!(["read", "write"])
     }));
     let consumer_start = parsed
         .iter()
@@ -628,6 +629,43 @@ fn state_volume_grants_allow_explicit_non_owner_consumers() {
             .as_array()
             .expect("state volume grants")
             .iter()
-            .any(|state| state["id"] == "state:data" && state["owner"] == "svc:owner")
+            .any(|state| {
+                state["id"] == "state:data"
+                    && state["owner"] == "svc:owner"
+                    && state["rights"] == serde_json::json!(["read", "write"])
+            })
     );
+}
+
+#[test]
+fn state_volume_grants_reject_reader_only_hosted_directory_consumers() {
+    let dir = temp_dir("state-reader-only");
+    let manifest = write_state_owner_mismatch_manifest(&dir);
+    let mut manifest_json: Value =
+        serde_json::from_str(&fs::read_to_string(&manifest).expect("read manifest"))
+            .expect("manifest json");
+    manifest_json["stateVolumes"][0]["sharingPolicy"] = serde_json::json!({
+        "mode": "explicit",
+        "readers": ["svc:consumer"],
+        "writers": [],
+        "controllers": []
+    });
+    fs::write(
+        &manifest,
+        serde_json::to_string_pretty(&manifest_json).expect("serialize manifest"),
+    )
+    .expect("write manifest");
+    let state_root = dir.join("state");
+
+    let stderr = assert_failure(
+        Command::new(supervisor())
+            .arg("--state-root")
+            .arg(&state_root)
+            .arg("--run-once")
+            .arg(&manifest)
+            .output()
+            .expect("run supervisor"),
+    );
+
+    assert!(stderr.contains("hosted directory paths cannot enforce reader-only attenuation"));
 }

@@ -19,6 +19,15 @@ struct StagedGeneration {
     rollback: bool,
 }
 
+#[derive(Clone, Copy)]
+struct StateTransitionError {
+    state: &'static str,
+    previous_schema: &'static str,
+    target_schema: &'static str,
+    reason: &'static str,
+    old_state_readable: bool,
+}
+
 struct GenerationRuntimeTable {
     entries: [Option<GenerationRuntime>; MAX_GENERATION_CONFIGS],
     count: usize,
@@ -33,6 +42,9 @@ pub(super) struct BootManagerState {
     pub(super) last_failure_service: &'static str,
     pub(super) last_failure_dependency: &'static str,
     pub(super) last_failure_policy: &'static str,
+    pub(super) last_state_migration_state: &'static str,
+    pub(super) last_state_migration_error: &'static str,
+    pub(super) last_state_migration_status: &'static str,
     pub(super) last_transaction_state: &'static str,
     pub(super) last_transaction_target: &'static str,
     pub(super) transaction_counter: u64,
@@ -100,6 +112,9 @@ impl BootManagerState {
             last_failure_service: "",
             last_failure_dependency: "",
             last_failure_policy: "",
+            last_state_migration_state: "",
+            last_state_migration_error: "",
+            last_state_migration_status: "clean",
             last_transaction_state: "idle",
             last_transaction_target: "",
             transaction_counter: 0,
@@ -141,6 +156,7 @@ impl BootManagerState {
         self.last_failure_service = "";
         self.last_failure_dependency = "";
         self.last_failure_policy = "";
+        self.clear_state_migration_failure();
         self.last_transaction_state = "commit";
         self.last_transaction_target = selected;
         self.transaction_counter = self.transaction_counter.saturating_add(1);
@@ -179,6 +195,23 @@ impl BootManagerState {
         serial::write_str("\n");
     }
 
+    fn install_state_migration_abort(
+        &mut self,
+        target: &'static str,
+        error: StateTransitionError,
+    ) {
+        self.last_state_migration_state = error.state;
+        self.last_state_migration_error = error.reason;
+        self.last_state_migration_status = "failed";
+        self.install_abort(target, "state-migration-failed");
+    }
+
+    fn clear_state_migration_failure(&mut self) {
+        self.last_state_migration_state = "";
+        self.last_state_migration_error = "";
+        self.last_state_migration_status = "clean";
+    }
+
     pub(super) fn mark_known_good(&mut self, generation_id: &'static str) {
         self.known_good_generation = generation_id;
         self.selected_generation = generation_id;
@@ -186,6 +219,7 @@ impl BootManagerState {
         self.last_failure_service = "";
         self.last_failure_dependency = "";
         self.last_failure_policy = "";
+        self.clear_state_migration_failure();
         serial::write_str("Native boot manager known_good_generation=");
         serial::write_str(generation_id);
         serial::write_str("\n");
@@ -200,6 +234,7 @@ impl BootManagerState {
         self.last_failure_service = failed;
         self.last_failure_dependency = "service-readiness";
         self.last_failure_policy = "known-good-rollback";
+        self.clear_state_migration_failure();
         self.previous_generation = failed;
         self.selected_generation = fallback;
         self.last_transaction_state = "rollback";
@@ -518,12 +553,16 @@ pub fn stage_generation(cap_slot: u64, generation: *const u8, len: usize) -> Res
         serial::write_str("\n");
         return Err(IpcError::BadCapability);
     }
-    if apply_state_transition_policy(previous_config, target.config, false).is_err() {
-        boot_manager().install_abort(target.generation_id, "state-migration-failed");
-        serial::write_str("Native update transaction selected_generation unchanged: ");
-        serial::write_str(previous_generation);
-        serial::write_str("\n");
-        return Err(IpcError::BadCapability);
+    match validate_state_transition_policy(previous_config, target.config, false) {
+        Ok(()) => log_state_transition_plan(previous_config, target.config, false),
+        Err(error) => {
+            log_state_transition_error(error);
+            boot_manager().install_state_migration_abort(target.generation_id, error);
+            serial::write_str("Native update transaction selected_generation unchanged: ");
+            serial::write_str(previous_generation);
+            serial::write_str("\n");
+            return Err(IpcError::BadCapability);
+        }
     }
 
     let build = match stage_boot_config_runtime(target.config) {
@@ -609,6 +648,7 @@ pub fn activate_generation(
             old_context_count: staged.old_context_count,
         },
     );
+    log_state_transition_commit(staged.previous_config, staged.config, false);
     serial::write_str("Native update transaction journal commit\n");
     boot_manager().install_selected(staged.previous_generation, staged.generation_id);
     let context = staged.initial_context;
@@ -742,40 +782,31 @@ fn verify_generation_store_closure(config: &BootRuntimeConfig) -> Result<(), Ipc
     Ok(())
 }
 
-fn apply_state_transition_policy(
+fn validate_state_transition_policy(
     previous: Option<&'static BootRuntimeConfig>,
     target: &'static BootRuntimeConfig,
     rollback: bool,
-) -> Result<(), IpcError> {
+) -> Result<(), StateTransitionError> {
     let Some(previous) = previous else {
-        log_created_state_objects(target);
         return Ok(());
     };
 
     let mut target_index = 0;
     while target_index < target.state_volume_count {
         let Some(target_state) = target.state_volumes[target_index] else {
-            return Err(IpcError::BadCapability);
+            return Err(invalid_state_transition_error());
         };
-        match find_state_volume(previous, target_state.id) {
-            Some(previous_state) => {
-                if rollback {
-                    log_state_rollback_policy(previous_state, target_state);
-                }
-                if previous_state.schema_version != target_state.schema_version {
-                    if rollback {
-                        log_state_rollback_journal(previous_state, target_state);
-                    } else if target_state.migration_policy == "migrate" {
-                        log_state_migration_accept(previous_state, target_state);
-                    } else {
-                        log_state_migration_reject(previous_state, target_state);
-                        return Err(IpcError::BadCapability);
-                    }
-                } else if !rollback {
-                    log_state_schema_unchanged(target_state);
-                }
-            }
-            None => log_state_object_created(target_state, target.generation_id),
+        if let Some(previous_state) = find_state_volume(previous, target_state.id)
+            && previous_state.schema_version != target_state.schema_version
+            && !rollback
+            && target_state.migration_policy != "migrate"
+        {
+            return Err(state_transition_error(
+                previous_state,
+                target_state,
+                "missing-migrate-policy",
+                true,
+            ));
         }
         target_index += 1;
     }
@@ -783,15 +814,115 @@ fn apply_state_transition_policy(
     let mut previous_index = 0;
     while previous_index < previous.state_volume_count {
         let Some(previous_state) = previous.state_volumes[previous_index] else {
-            return Err(IpcError::BadCapability);
+            return Err(invalid_state_transition_error());
         };
-        if find_state_volume(target, previous_state.id).is_none() {
-            log_state_retention(previous_state);
+        if find_state_volume(target, previous_state.id).is_none()
+            && previous_state.retention_policy == "delete-when-unreferenced"
+        {
+            return Err(StateTransitionError {
+                state: previous_state.id,
+                previous_schema: previous_state.schema_version,
+                target_schema: "<removed>",
+                reason: "unsupported-delete-retention-policy",
+                old_state_readable: true,
+            });
         }
         previous_index += 1;
     }
 
     Ok(())
+}
+
+fn log_state_transition_plan(
+    previous: Option<&'static BootRuntimeConfig>,
+    target: &'static BootRuntimeConfig,
+    rollback: bool,
+) {
+    let Some(previous) = previous else {
+        log_created_state_objects(target);
+        return;
+    };
+
+    let mut target_index = 0;
+    while target_index < target.state_volume_count {
+        if let Some(target_state) = target.state_volumes[target_index] {
+            match find_state_volume(previous, target_state.id) {
+                Some(previous_state) => {
+                    if rollback {
+                        log_state_rollback_policy(previous_state, target_state);
+                    }
+                    if previous_state.schema_version != target_state.schema_version {
+                        if !rollback && target_state.migration_policy == "migrate" {
+                            log_state_migration_accept(previous_state, target_state);
+                        }
+                    } else if !rollback {
+                        log_state_schema_unchanged(target_state);
+                    }
+                }
+                None => log_state_object_created(target_state, target.generation_id),
+            }
+        }
+        target_index += 1;
+    }
+
+    let mut previous_index = 0;
+    while previous_index < previous.state_volume_count {
+        if let Some(previous_state) = previous.state_volumes[previous_index]
+            && find_state_volume(target, previous_state.id).is_none()
+        {
+            log_state_retention(previous_state);
+        }
+        previous_index += 1;
+    }
+}
+
+fn log_state_transition_commit(
+    previous: Option<&'static BootRuntimeConfig>,
+    target: &'static BootRuntimeConfig,
+    rollback: bool,
+) {
+    let Some(previous) = previous else {
+        return;
+    };
+    let mut target_index = 0;
+    while target_index < target.state_volume_count {
+        if let Some(target_state) = target.state_volumes[target_index]
+            && let Some(previous_state) = find_state_volume(previous, target_state.id)
+            && previous_state.schema_version != target_state.schema_version
+        {
+            if rollback {
+                log_state_rollback_journal(previous_state, target_state);
+            } else if target_state.migration_policy == "migrate" {
+                log_state_migration_journal(previous_state, target_state);
+            }
+        }
+        target_index += 1;
+    }
+}
+
+fn state_transition_error(
+    previous: BootStateVolumeConfig,
+    target: BootStateVolumeConfig,
+    reason: &'static str,
+    old_state_readable: bool,
+) -> StateTransitionError {
+    StateTransitionError {
+        state: target.id,
+        previous_schema: previous.schema_version,
+        target_schema: target.schema_version,
+        reason,
+        old_state_readable,
+    }
+}
+
+fn invalid_state_transition_error() -> StateTransitionError {
+    StateTransitionError {
+        state: "<invalid>",
+        previous_schema: "<unknown>",
+        target_schema: "<unknown>",
+        reason: "invalid-state-transition",
+        old_state_readable: false,
+    }
 }
 
 fn find_state_volume(
@@ -859,6 +990,12 @@ fn log_state_migration_accept(
     serial::write_str(" to=");
     serial::write_str(target.schema_version);
     serial::write_str(" mode=migrate\n");
+}
+
+fn log_state_migration_journal(
+    previous: BootStateVolumeConfig,
+    target: BootStateVolumeConfig,
+) {
     serial::write_str("State migration journal record: state=");
     serial::write_str(target.id);
     serial::write_str(" from=");
@@ -868,20 +1005,29 @@ fn log_state_migration_accept(
     serial::write_str(" status=applied-once\n");
 }
 
-fn log_state_migration_reject(
-    previous: BootStateVolumeConfig,
-    target: BootStateVolumeConfig,
-) {
-    serial::write_str("State migration failed: state=");
-    serial::write_str(target.id);
-    serial::write_str(" from=");
-    serial::write_str(previous.schema_version);
-    serial::write_str(" to=");
-    serial::write_str(target.schema_version);
-    serial::write_str(" reason=missing-migrate-policy\n");
-    serial::write_str("State migration rollback leaves old state readable: state=");
-    serial::write_str(previous.id);
-    serial::write_str("\n");
+fn log_state_transition_error(error: StateTransitionError) {
+    if error.reason == "unsupported-delete-retention-policy" {
+        serial::write_str("State retention failed: state=");
+        serial::write_str(error.state);
+        serial::write_str(" reason=");
+        serial::write_str(error.reason);
+        serial::write_str("\n");
+    } else {
+        serial::write_str("State migration failed: state=");
+        serial::write_str(error.state);
+        serial::write_str(" from=");
+        serial::write_str(error.previous_schema);
+        serial::write_str(" to=");
+        serial::write_str(error.target_schema);
+        serial::write_str(" reason=");
+        serial::write_str(error.reason);
+        serial::write_str("\n");
+    }
+    if error.old_state_readable {
+        serial::write_str("State migration rollback leaves old state readable: state=");
+        serial::write_str(error.state);
+        serial::write_str("\n");
+    }
 }
 
 fn log_state_rollback_policy(previous: BootStateVolumeConfig, target: BootStateVolumeConfig) {
@@ -922,11 +1068,7 @@ fn state_rollback_action(mode: &'static str) -> &'static str {
 }
 
 fn log_state_retention(state: BootStateVolumeConfig) {
-    if state.retention_policy == "delete-when-unreferenced" {
-        serial::write_str("State garbage collection removed unreferenced state: state=");
-    } else {
-        serial::write_str("State garbage collection deferred: state=");
-    }
+    serial::write_str("State garbage collection deferred: state=");
     serial::write_str(state.id);
     serial::write_str(" retention=");
     serial::write_str(state.retention_policy);
@@ -966,9 +1108,13 @@ pub fn stage_rollback_generation(
 
     discard_uncommitted_staged_generation();
     boot_manager().install_prepare(previous_generation, rollback.generation_id);
-    if apply_state_transition_policy(previous_config, rollback.config, true).is_err() {
-        boot_manager().install_abort(rollback.generation_id, "state-migration-failed");
-        return Err(IpcError::BadCapability);
+    match validate_state_transition_policy(previous_config, rollback.config, true) {
+        Ok(()) => log_state_transition_plan(previous_config, rollback.config, true),
+        Err(error) => {
+            log_state_transition_error(error);
+            boot_manager().install_state_migration_abort(rollback.generation_id, error);
+            return Err(IpcError::BadCapability);
+        }
     }
     let build = match stage_boot_config_runtime(rollback.config) {
         Ok(build) => build,
@@ -1032,6 +1178,7 @@ pub fn rollback_generation(
             old_context_count: staged.old_context_count,
         },
     );
+    log_state_transition_commit(staged.previous_config, staged.config, true);
     if let Some(previous_config) = staged.previous_config {
         set_rollback_runtime(GenerationRuntime {
             generation_id: staged.previous_generation,

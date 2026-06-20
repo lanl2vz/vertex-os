@@ -512,11 +512,7 @@ fn validate_state_volumes(
         let retention_mode = required_policy_mode(
             &state.retention_policy,
             &format!("state volume {} retentionPolicy", state.id),
-            &[
-                "retain-while-referenced",
-                "retain-forever",
-                "delete-when-unreferenced",
-            ],
+            &["retain-while-referenced", "retain-forever"],
             report,
         );
         let sharing_mode = required_policy_mode(
