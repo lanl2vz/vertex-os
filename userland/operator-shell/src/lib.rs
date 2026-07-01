@@ -117,6 +117,16 @@ pub fn is_operator_command(command: &[u8]) -> bool {
     bytes_eq(command, b"current-generation")
         || bytes_eq(command, b"generations")
         || bytes_eq(command, b"generation-status")
+        || bytes_eq(command, b"overview")
+        || bytes_eq(command, b"services")
+        || starts_with(command, b"service ")
+        || bytes_eq(command, b"capabilities")
+        || starts_with(command, b"capabilities ")
+        || starts_with(command, b"capability ")
+        || bytes_eq(command, b"states")
+        || starts_with(command, b"state ")
+        || bytes_eq(command, b"devices")
+        || starts_with(command, b"device ")
         || starts_with(command, b"diff-generation ")
         || starts_with(command, b"planned-authority-delta ")
         || starts_with(command, b"why ")
@@ -127,6 +137,431 @@ pub fn is_operator_command(command: &[u8]) -> bool {
         || starts_with(command, b"activate ")
         || starts_with(command, b"rollback ")
         || starts_with(command, b"mark-known-good ")
+}
+
+pub fn help<F>(command: &[u8], mut visit: F) -> Result<()>
+where
+    F: FnMut(&[u8]),
+{
+    let topic = word_at(command, 1);
+    if word_at(command, 2).is_some() {
+        return Err(Error::new(b"operator help rejected: too many arguments"));
+    }
+    let Some(topic) = topic else {
+        emit_line(&mut visit, &[b"Vertex OS operator console"])?;
+        emit_line(
+            &mut visit,
+            &[b"start: overview services capabilities states devices"],
+        )?;
+        emit_line(
+            &mut visit,
+            &[b"inspect: service <id> capability <id> state <id> device <id>"],
+        )?;
+        emit_line(
+            &mut visit,
+            &[b"explain: why <service> <capability> who-can <object>"],
+        )?;
+        emit_line(
+            &mut visit,
+            &[b"commands: help generation services devices counter increment state-health halt"],
+        )?;
+        emit_line(
+            &mut visit,
+            &[b"commands: generation services devices counter increment state-health install rollback why halt"],
+        )?;
+        emit_line(
+            &mut visit,
+            &[b"operator: current-generation generations generation-status package-list activation-log"],
+        )?;
+        emit_line(
+            &mut visit,
+            &[b"operator: diff-generation <from> <to> planned-authority-delta <from> <to>"],
+        )?;
+        emit_line(
+            &mut visit,
+            &[b"operator: why <service> <capability> who-can <object> which-generation <process>"],
+        )?;
+        emit_line(
+            &mut visit,
+            &[b"operator: activate <generation> rollback <generation> mark-known-good <generation>"],
+        )?;
+        emit_line(&mut visit, &[b"help <command> for examples"])?;
+        return Ok(());
+    };
+
+    if bytes_eq(topic, b"overview") {
+        emit_line(&mut visit, &[b"overview"])?;
+        emit_line(&mut visit, &[b"  system summary for the active generation"])?;
+        emit_line(&mut visit, &[b"  example: overview"])?;
+        return Ok(());
+    }
+    if bytes_eq(topic, b"services") || bytes_eq(topic, b"service") {
+        emit_line(&mut visit, &[b"services"])?;
+        emit_line(
+            &mut visit,
+            &[b"  list services with process state and restart policy"],
+        )?;
+        emit_line(&mut visit, &[b"service <service-or-process>"])?;
+        emit_line(
+            &mut visit,
+            &[b"  show requirements and state paths for one service"],
+        )?;
+        emit_line(&mut visit, &[b"  example: service svc:echo-server"])?;
+        return Ok(());
+    }
+    if bytes_eq(topic, b"capabilities") || bytes_eq(topic, b"capability") {
+        emit_line(&mut visit, &[b"capabilities"])?;
+        emit_line(
+            &mut visit,
+            &[b"  list capability IDs, providers, rights, and consumers"],
+        )?;
+        emit_line(&mut visit, &[b"capabilities for <service-or-process>"])?;
+        emit_line(&mut visit, &[b"capability <capability-id>"])?;
+        emit_line(&mut visit, &[b"  example: capability cap:log.sink"])?;
+        return Ok(());
+    }
+    if bytes_eq(topic, b"why") {
+        emit_line(&mut visit, &[b"why <service> <capability>"])?;
+        emit_line(
+            &mut visit,
+            &[b"  proves policy requirement, capability object, graph edge, and live cap"],
+        )?;
+        emit_line(
+            &mut visit,
+            &[b"  example: why svc:echo-server cap:log.sink"],
+        )?;
+        emit_line(
+            &mut visit,
+            &[b"  discover IDs with: services and capabilities"],
+        )?;
+        return Ok(());
+    }
+    if bytes_eq(topic, b"who-can") {
+        emit_line(&mut visit, &[b"who-can <object>"])?;
+        emit_line(
+            &mut visit,
+            &[b"  lists graph-authorized writers or capability consumers"],
+        )?;
+        emit_line(
+            &mut visit,
+            &[b"  examples: who-can state:counter | who-can cap:log.sink"],
+        )?;
+        return Ok(());
+    }
+    if bytes_eq(topic, b"generations") || bytes_eq(topic, b"generation") {
+        emit_line(&mut visit, &[b"generations"])?;
+        emit_line(&mut visit, &[b"generation-status"])?;
+        emit_line(&mut visit, &[b"diff-generation <from> <to>"])?;
+        emit_line(&mut visit, &[b"planned-authority-delta <from> <to>"])?;
+        return Ok(());
+    }
+    if bytes_eq(topic, b"states") || bytes_eq(topic, b"state") {
+        emit_line(&mut visit, &[b"states"])?;
+        emit_line(&mut visit, &[b"state <state-id>"])?;
+        emit_line(&mut visit, &[b"  example: state state:counter"])?;
+        return Ok(());
+    }
+    if bytes_eq(topic, b"devices") || bytes_eq(topic, b"device") {
+        emit_line(&mut visit, &[b"devices"])?;
+        emit_line(&mut visit, &[b"device <device-id>"])?;
+        emit_line(&mut visit, &[b"  lists graph device nodes when present"])?;
+        return Ok(());
+    }
+
+    Err(Error::new(b"operator help rejected: unknown command"))
+}
+
+pub fn overview<F>(report: &[u8], mut visit: F) -> Result<()>
+where
+    F: FnMut(&[u8]),
+{
+    let generation = active_generation(report)?;
+    let generation_line = require_operator_generation(report, generation)?;
+    emit_line(&mut visit, &[b"overview generation=", generation])?;
+    emit_line(&mut visit, &[b"policy_hash=", active_policy_hash(report)?])?;
+    emit_line(&mut visit, &[b"graph_hash=", active_graph_hash(report)?])?;
+    emit_line(
+        &mut visit,
+        &[
+            b"inventory services=",
+            required_field(generation_line, b"services=", b"overview missing services")?,
+            b" capabilities=",
+            required_field(
+                generation_line,
+                b"capabilities=",
+                b"overview missing capabilities",
+            )?,
+            b" states=",
+            required_field(generation_line, b"states=", b"overview missing states")?,
+            b" devices=",
+            required_field(generation_line, b"devices=", b"overview missing devices")?,
+        ],
+    )?;
+    emit_line(
+        &mut visit,
+        &[b"try: services | capabilities | service svc:console-shell"],
+    )?;
+    Ok(())
+}
+
+pub fn services<F>(report: &[u8], mut visit: F) -> Result<u64>
+where
+    F: FnMut(&[u8]),
+{
+    let generation = active_generation(report)?;
+    emit_line(&mut visit, &[b"services generation=", generation])?;
+    let mut count = 0;
+    let mut error = None;
+    for_each_line(report, |line| {
+        if error.is_some() {
+            return;
+        }
+        if starts_with(line, b"operator-service[") && field_eq(line, b"generation=", generation) {
+            match emit_service_summary(report, line, &mut visit) {
+                Ok(()) => count += 1,
+                Err(err) => error = Some(err),
+            }
+        }
+    });
+    if let Some(err) = error {
+        return Err(err);
+    }
+    if count == 0 {
+        return Err(Error::new(b"operator services rejected: no services"));
+    }
+    Ok(count)
+}
+
+pub fn service_detail<F>(report: &[u8], command: &[u8], mut visit: F) -> Result<()>
+where
+    F: FnMut(&[u8]),
+{
+    let selector = word_or_error(command, 1, b"operator service missing selector")?;
+    if word_at(command, 2).is_some() {
+        return Err(Error::new(b"operator service rejected: too many arguments"));
+    }
+    let generation = active_generation(report)?;
+    let service_line = operator_service_line_for_selector(report, generation, selector)?;
+    let service = required_field(service_line, b"id=", b"operator service missing id")?;
+    let process = required_field(
+        service_line,
+        b"process=",
+        b"operator service missing process",
+    )?;
+    let process_line = find_process_line(report, process).ok_or(Error::new(
+        b"operator service rejected: live process missing",
+    ))?;
+    emit_line(
+        &mut visit,
+        &[b"service ", service, b" generation=", generation],
+    )?;
+    emit_line(
+        &mut visit,
+        &[
+            b"process=",
+            process,
+            b" state=",
+            required_field(
+                process_line,
+                b"state=",
+                b"operator service missing process state",
+            )?,
+            b" restart=",
+            required_field(
+                service_line,
+                b"restart=",
+                b"operator service missing restart",
+            )?,
+            b" mount_root=",
+            required_field(
+                service_line,
+                b"mount_root=",
+                b"operator service missing mount root",
+            )?,
+        ],
+    )?;
+    emit_service_requirements(report, generation, service, &mut visit)?;
+    emit_service_state_paths(report, generation, service, &mut visit)?;
+    Ok(())
+}
+
+pub fn capabilities<F>(report: &[u8], command: &[u8], mut visit: F) -> Result<u64>
+where
+    F: FnMut(&[u8]),
+{
+    let generation = active_generation(report)?;
+    if word_at(command, 1).is_none() {
+        emit_line(&mut visit, &[b"capabilities generation=", generation])?;
+        return emit_capability_list(report, generation, &mut visit);
+    }
+
+    let keyword = word_or_error(command, 1, b"operator capabilities missing selector")?;
+    if !bytes_eq(keyword, b"for") {
+        return Err(Error::new(
+            b"operator capabilities usage: capabilities for <service>",
+        ));
+    }
+    let selector = word_or_error(command, 2, b"operator capabilities missing service")?;
+    if word_at(command, 3).is_some() {
+        return Err(Error::new(
+            b"operator capabilities rejected: too many arguments",
+        ));
+    }
+    let service_line = operator_service_line_for_selector(report, generation, selector)?;
+    let service = required_field(service_line, b"id=", b"operator service missing id")?;
+    emit_line(
+        &mut visit,
+        &[b"capabilities for ", service, b" generation=", generation],
+    )?;
+    emit_service_capabilities(report, generation, service, &mut visit)
+}
+
+pub fn capability_detail<F>(report: &[u8], command: &[u8], mut visit: F) -> Result<()>
+where
+    F: FnMut(&[u8]),
+{
+    let capability = word_or_error(command, 1, b"operator capability missing id")?;
+    if word_at(command, 2).is_some() {
+        return Err(Error::new(
+            b"operator capability rejected: too many arguments",
+        ));
+    }
+    let generation = active_generation(report)?;
+    let line = require_operator_capability(report, generation, capability)?;
+    emit_line(
+        &mut visit,
+        &[b"capability ", capability, b" generation=", generation],
+    )?;
+    emit_line(
+        &mut visit,
+        &[
+            b"provider=",
+            required_field(line, b"provider=", b"operator capability missing provider")?,
+            b" rights=",
+            required_field(line, b"rights=", b"operator capability missing rights")?,
+        ],
+    )?;
+    emit_line(
+        &mut visit,
+        &[
+            b"object_kind=",
+            required_field(
+                line,
+                b"object_kind=",
+                b"operator capability missing object kind",
+            )?,
+            b" object=",
+            required_field(line, b"object=", b"operator capability missing object")?,
+        ],
+    )?;
+    emit_capability_consumers(report, generation, capability, &mut visit)?;
+    Ok(())
+}
+
+pub fn states<F>(report: &[u8], mut visit: F) -> Result<u64>
+where
+    F: FnMut(&[u8]),
+{
+    let generation = active_generation(report)?;
+    emit_line(&mut visit, &[b"states generation=", generation])?;
+    let mut count = 0;
+    let mut error = None;
+    for_each_line(report, |line| {
+        if error.is_some() {
+            return;
+        }
+        if starts_with(line, b"operator-state[") && field_eq(line, b"generation=", generation) {
+            match emit_state_summary(line, &mut visit) {
+                Ok(()) => count += 1,
+                Err(err) => error = Some(err),
+            }
+        }
+    });
+    if let Some(err) = error {
+        return Err(err);
+    }
+    Ok(count)
+}
+
+pub fn state_detail<F>(report: &[u8], command: &[u8], mut visit: F) -> Result<()>
+where
+    F: FnMut(&[u8]),
+{
+    let state = word_or_error(command, 1, b"operator state missing id")?;
+    if word_at(command, 2).is_some() {
+        return Err(Error::new(b"operator state rejected: too many arguments"));
+    }
+    let generation = active_generation(report)?;
+    let line = operator_state_line(report, generation, state)
+        .ok_or(Error::new(b"operator rejected: unknown state"))?;
+    emit_line(&mut visit, &[b"state ", state, b" generation=", generation])?;
+    emit_state_summary(line, &mut visit)?;
+    emit_state_paths(report, generation, state, &mut visit)?;
+    Ok(())
+}
+
+pub fn devices<F>(report: &[u8], mut visit: F) -> Result<u64>
+where
+    F: FnMut(&[u8]),
+{
+    let generation = active_generation(report)?;
+    let generation_line = require_operator_generation(report, generation)?;
+    emit_line(
+        &mut visit,
+        &[
+            b"devices generation=",
+            generation,
+            b" declared=",
+            required_field(
+                generation_line,
+                b"devices=",
+                b"operator devices missing count",
+            )?,
+        ],
+    )?;
+    let mut count = 0;
+    let mut error = None;
+    for_each_line(report, |line| {
+        if error.is_some() {
+            return;
+        }
+        if starts_with(line, b"operator-node[")
+            && field_eq(line, b"generation=", generation)
+            && field_eq(line, b"kind=", b"device")
+        {
+            match emit_device_summary(line, &mut visit) {
+                Ok(()) => count += 1,
+                Err(err) => error = Some(err),
+            }
+        }
+    });
+    if let Some(err) = error {
+        return Err(err);
+    }
+    if count == 0 {
+        emit_line(&mut visit, &[b"device graph nodes: <none>"])?;
+    }
+    Ok(count)
+}
+
+pub fn device_detail<F>(report: &[u8], command: &[u8], mut visit: F) -> Result<()>
+where
+    F: FnMut(&[u8]),
+{
+    let device = word_or_error(command, 1, b"operator device missing id")?;
+    if word_at(command, 2).is_some() {
+        return Err(Error::new(b"operator device rejected: too many arguments"));
+    }
+    let generation = active_generation(report)?;
+    let line = operator_node_line(report, generation, b"device", device)
+        .ok_or(Error::new(b"operator rejected: unknown device"))?;
+    emit_line(
+        &mut visit,
+        &[b"device ", device, b" generation=", generation],
+    )?;
+    emit_device_summary(line, &mut visit)?;
+    emit_device_capabilities(report, generation, device, &mut visit)?;
+    Ok(())
 }
 
 pub fn current_generation(report: &[u8]) -> Result<CurrentGeneration<'_>> {
@@ -471,6 +906,489 @@ fn write_request(buffer: &mut [u8], prefix: &[u8], generation: &[u8]) -> Result<
     Ok(len)
 }
 
+fn emit_service_summary<F>(report: &[u8], line: &[u8], visit: &mut F) -> Result<()>
+where
+    F: FnMut(&[u8]),
+{
+    let id = required_field(line, b"id=", b"operator service missing id")?;
+    let process = required_field(line, b"process=", b"operator service missing process")?;
+    let process_line = find_process_line(report, process).ok_or(Error::new(
+        b"operator services rejected: live process missing",
+    ))?;
+    emit_line(
+        visit,
+        &[
+            id,
+            b" process=",
+            process,
+            b" state=",
+            required_field(
+                process_line,
+                b"state=",
+                b"operator services missing process state",
+            )?,
+            b" restart=",
+            required_field(line, b"restart=", b"operator services missing restart")?,
+        ],
+    )
+}
+
+fn emit_service_requirements<F>(
+    report: &[u8],
+    generation: &[u8],
+    service: &[u8],
+    visit: &mut F,
+) -> Result<u64>
+where
+    F: FnMut(&[u8]),
+{
+    let mut count = 0;
+    let mut error = None;
+    for_each_line(report, |line| {
+        if error.is_some() {
+            return;
+        }
+        if starts_with(line, b"operator-requirement[")
+            && field_eq(line, b"generation=", generation)
+            && field_eq(line, b"service=", service)
+        {
+            match emit_requirement_with_provider(report, generation, line, visit) {
+                Ok(()) => count += 1,
+                Err(err) => error = Some(err),
+            }
+        }
+    });
+    if let Some(err) = error {
+        return Err(err);
+    }
+    if count == 0 {
+        emit_line(visit, &[b"requires <none>"])?;
+    }
+    Ok(count)
+}
+
+fn emit_requirement_with_provider<F>(
+    report: &[u8],
+    generation: &[u8],
+    line: &[u8],
+    visit: &mut F,
+) -> Result<()>
+where
+    F: FnMut(&[u8]),
+{
+    let capability = required_field(
+        line,
+        b"capability=",
+        b"operator requirement missing capability",
+    )?;
+    let capability_line = require_operator_capability(report, generation, capability)?;
+    emit_line(
+        visit,
+        &[
+            b"requires ",
+            capability,
+            b" rights=",
+            required_field(line, b"rights=", b"operator requirement missing rights")?,
+            b" provider=",
+            required_field(
+                capability_line,
+                b"provider=",
+                b"operator capability missing provider",
+            )?,
+        ],
+    )
+}
+
+fn emit_service_state_paths<F>(
+    report: &[u8],
+    generation: &[u8],
+    service: &[u8],
+    visit: &mut F,
+) -> Result<u64>
+where
+    F: FnMut(&[u8]),
+{
+    let mut count = 0;
+    let mut error = None;
+    for_each_line(report, |line| {
+        if error.is_some() {
+            return;
+        }
+        if starts_with(line, b"operator-state-path[")
+            && field_eq(line, b"generation=", generation)
+            && field_eq(line, b"service=", service)
+        {
+            match emit_line(
+                visit,
+                &[
+                    b"state ",
+                    match required_field(line, b"state=", b"operator state path missing state") {
+                        Ok(value) => value,
+                        Err(err) => {
+                            error = Some(err);
+                            return;
+                        }
+                    },
+                    b" root=",
+                    match required_field(line, b"root=", b"operator state path missing root") {
+                        Ok(value) => value,
+                        Err(err) => {
+                            error = Some(err);
+                            return;
+                        }
+                    },
+                    b" rights=",
+                    match required_field(line, b"rights=", b"operator state path missing rights") {
+                        Ok(value) => value,
+                        Err(err) => {
+                            error = Some(err);
+                            return;
+                        }
+                    },
+                ],
+            ) {
+                Ok(()) => count += 1,
+                Err(err) => error = Some(err),
+            }
+        }
+    });
+    if let Some(err) = error {
+        return Err(err);
+    }
+    if count == 0 {
+        emit_line(visit, &[b"state <none>"])?;
+    }
+    Ok(count)
+}
+
+fn emit_capability_list<F>(report: &[u8], generation: &[u8], visit: &mut F) -> Result<u64>
+where
+    F: FnMut(&[u8]),
+{
+    let mut count = 0;
+    let mut error = None;
+    for_each_line(report, |line| {
+        if error.is_some() {
+            return;
+        }
+        if starts_with(line, b"operator-capability[") && field_eq(line, b"generation=", generation)
+        {
+            match emit_capability_summary(report, generation, line, visit) {
+                Ok(()) => count += 1,
+                Err(err) => error = Some(err),
+            }
+        }
+    });
+    if let Some(err) = error {
+        return Err(err);
+    }
+    Ok(count)
+}
+
+fn emit_capability_summary<F>(
+    report: &[u8],
+    generation: &[u8],
+    line: &[u8],
+    visit: &mut F,
+) -> Result<()>
+where
+    F: FnMut(&[u8]),
+{
+    let capability = required_field(line, b"id=", b"operator capability missing id")?;
+    let mut buffer = [0u8; 128];
+    let mut len = 0;
+    append_output(&mut buffer, &mut len, capability)?;
+    append_output(&mut buffer, &mut len, b" provider=")?;
+    append_output(
+        &mut buffer,
+        &mut len,
+        required_field(line, b"provider=", b"operator capability missing provider")?,
+    )?;
+    append_output(&mut buffer, &mut len, b" rights=")?;
+    append_output(
+        &mut buffer,
+        &mut len,
+        required_field(line, b"rights=", b"operator capability missing rights")?,
+    )?;
+    append_output(&mut buffer, &mut len, b" consumers=")?;
+    append_u64_output(
+        &mut buffer,
+        &mut len,
+        count_capability_consumers(report, generation, capability),
+    )?;
+    visit(&buffer[..len]);
+    Ok(())
+}
+
+fn emit_service_capabilities<F>(
+    report: &[u8],
+    generation: &[u8],
+    service: &[u8],
+    visit: &mut F,
+) -> Result<u64>
+where
+    F: FnMut(&[u8]),
+{
+    let mut count = 0;
+    let mut error = None;
+    for_each_line(report, |line| {
+        if error.is_some() {
+            return;
+        }
+        if starts_with(line, b"operator-requirement[")
+            && field_eq(line, b"generation=", generation)
+            && field_eq(line, b"service=", service)
+        {
+            match emit_requirement_with_provider(report, generation, line, visit) {
+                Ok(()) => count += 1,
+                Err(err) => error = Some(err),
+            }
+        }
+    });
+    if let Some(err) = error {
+        return Err(err);
+    }
+    if count == 0 {
+        emit_line(visit, &[b"capabilities <none>"])?;
+    }
+    Ok(count)
+}
+
+fn emit_capability_consumers<F>(
+    report: &[u8],
+    generation: &[u8],
+    capability: &[u8],
+    visit: &mut F,
+) -> Result<u64>
+where
+    F: FnMut(&[u8]),
+{
+    let mut count = 0;
+    let mut error = None;
+    for_each_line(report, |line| {
+        if error.is_some() {
+            return;
+        }
+        if starts_with(line, b"operator-requirement[")
+            && field_eq(line, b"generation=", generation)
+            && field_eq(line, b"capability=", capability)
+        {
+            match emit_line(
+                visit,
+                &[
+                    b"consumer ",
+                    match required_field(line, b"service=", b"operator requirement missing service")
+                    {
+                        Ok(value) => value,
+                        Err(err) => {
+                            error = Some(err);
+                            return;
+                        }
+                    },
+                    b" rights=",
+                    match required_field(line, b"rights=", b"operator requirement missing rights") {
+                        Ok(value) => value,
+                        Err(err) => {
+                            error = Some(err);
+                            return;
+                        }
+                    },
+                ],
+            ) {
+                Ok(()) => count += 1,
+                Err(err) => error = Some(err),
+            }
+        }
+    });
+    if let Some(err) = error {
+        return Err(err);
+    }
+    if count == 0 {
+        emit_line(visit, &[b"consumers <none>"])?;
+    }
+    Ok(count)
+}
+
+fn emit_state_summary<F>(line: &[u8], visit: &mut F) -> Result<()>
+where
+    F: FnMut(&[u8]),
+{
+    emit_line(
+        visit,
+        &[
+            required_field(line, b"id=", b"operator state missing id")?,
+            b" owner=",
+            required_field(line, b"owner=", b"operator state missing owner")?,
+            b" schema=",
+            required_field(line, b"schema=", b"operator state missing schema")?,
+            b" storage=",
+            required_field(line, b"storage=", b"operator state missing storage")?,
+        ],
+    )
+}
+
+fn emit_state_paths<F>(report: &[u8], generation: &[u8], state: &[u8], visit: &mut F) -> Result<u64>
+where
+    F: FnMut(&[u8]),
+{
+    let mut count = 0;
+    let mut error = None;
+    for_each_line(report, |line| {
+        if error.is_some() {
+            return;
+        }
+        if starts_with(line, b"operator-state-path[")
+            && field_eq(line, b"generation=", generation)
+            && field_eq(line, b"state=", state)
+        {
+            match emit_line(
+                visit,
+                &[
+                    b"service ",
+                    match required_field(line, b"service=", b"operator state path missing service")
+                    {
+                        Ok(value) => value,
+                        Err(err) => {
+                            error = Some(err);
+                            return;
+                        }
+                    },
+                    b" root=",
+                    match required_field(line, b"root=", b"operator state path missing root") {
+                        Ok(value) => value,
+                        Err(err) => {
+                            error = Some(err);
+                            return;
+                        }
+                    },
+                    b" rights=",
+                    match required_field(line, b"rights=", b"operator state path missing rights") {
+                        Ok(value) => value,
+                        Err(err) => {
+                            error = Some(err);
+                            return;
+                        }
+                    },
+                ],
+            ) {
+                Ok(()) => count += 1,
+                Err(err) => error = Some(err),
+            }
+        }
+    });
+    if let Some(err) = error {
+        return Err(err);
+    }
+    if count == 0 {
+        emit_line(visit, &[b"paths <none>"])?;
+    }
+    Ok(count)
+}
+
+fn emit_device_summary<F>(line: &[u8], visit: &mut F) -> Result<()>
+where
+    F: FnMut(&[u8]),
+{
+    emit_line(
+        visit,
+        &[
+            required_field(line, b"id=", b"operator device missing id")?,
+            b" object_kind=",
+            required_field(
+                line,
+                b"object_kind=",
+                b"operator device missing object kind",
+            )?,
+            b" label=",
+            required_field(line, b"label=", b"operator device missing label")?,
+        ],
+    )
+}
+
+fn emit_device_capabilities<F>(
+    report: &[u8],
+    generation: &[u8],
+    device: &[u8],
+    visit: &mut F,
+) -> Result<u64>
+where
+    F: FnMut(&[u8]),
+{
+    let mut count = 0;
+    let mut error = None;
+    for_each_line(report, |line| {
+        if error.is_some() {
+            return;
+        }
+        if starts_with(line, b"operator-capability[")
+            && field_eq(line, b"generation=", generation)
+            && field_eq(line, b"provider=", device)
+        {
+            match emit_line(
+                visit,
+                &[
+                    b"capability ",
+                    match required_field(line, b"id=", b"operator capability missing id") {
+                        Ok(value) => value,
+                        Err(err) => {
+                            error = Some(err);
+                            return;
+                        }
+                    },
+                    b" rights=",
+                    match required_field(line, b"rights=", b"operator capability missing rights") {
+                        Ok(value) => value,
+                        Err(err) => {
+                            error = Some(err);
+                            return;
+                        }
+                    },
+                ],
+            ) {
+                Ok(()) => count += 1,
+                Err(err) => error = Some(err),
+            }
+        }
+    });
+    if let Some(err) = error {
+        return Err(err);
+    }
+    if count == 0 {
+        emit_line(visit, &[b"capabilities <none>"])?;
+    }
+    Ok(count)
+}
+
+fn count_capability_consumers(report: &[u8], generation: &[u8], capability: &[u8]) -> u64 {
+    let mut count = 0;
+    for_each_line(report, |line| {
+        if starts_with(line, b"operator-requirement[")
+            && field_eq(line, b"generation=", generation)
+            && field_eq(line, b"capability=", capability)
+        {
+            count += 1;
+        }
+    });
+    count
+}
+
+fn operator_service_line_for_selector<'a>(
+    report: &'a [u8],
+    generation: &[u8],
+    selector: &[u8],
+) -> Result<&'a [u8]> {
+    find_line_where(report, |line| {
+        starts_with(line, b"operator-service[")
+            && field_eq(line, b"generation=", generation)
+            && if starts_with(selector, b"svc:") {
+                field_eq(line, b"id=", selector)
+            } else {
+                field_eq(line, b"process=", selector)
+            }
+    })
+    .ok_or(Error::new(b"operator rejected: unknown service"))
+}
+
 fn operator_report_line(report: &[u8]) -> Result<&[u8]> {
     let needles: [&[u8]; 2] = [b"operator-report v=1", b"active="];
     find_line_contains_all(report, &needles).ok_or(Error::new(b"operator report missing"))
@@ -489,6 +1407,14 @@ fn active_policy_hash(report: &[u8]) -> Result<&[u8]> {
         operator_report_line(report)?,
         b"policy_hash=",
         b"operator report missing policy hash",
+    )
+}
+
+fn active_graph_hash(report: &[u8]) -> Result<&[u8]> {
+    required_field(
+        operator_report_line(report)?,
+        b"graph_hash=",
+        b"operator report missing graph hash",
     )
 }
 
@@ -1147,6 +2073,57 @@ fn bytes_eq(left: &[u8], right: &[u8]) -> bool {
     true
 }
 
+fn emit_line<F>(visit: &mut F, parts: &[&[u8]]) -> Result<()>
+where
+    F: FnMut(&[u8]),
+{
+    let mut buffer = [0u8; 128];
+    let mut len = 0;
+    let mut index = 0;
+    while index < parts.len() {
+        append_output(&mut buffer, &mut len, parts[index])?;
+        index += 1;
+    }
+    visit(&buffer[..len]);
+    Ok(())
+}
+
+fn append_output(buffer: &mut [u8], len: &mut usize, value: &[u8]) -> Result<()> {
+    let mut index = 0;
+    while index < value.len() {
+        if *len >= buffer.len() {
+            return Err(Error::new(b"operator output line too large"));
+        }
+        buffer[*len] = value[index];
+        *len += 1;
+        index += 1;
+    }
+    Ok(())
+}
+
+fn append_u64_output(buffer: &mut [u8], len: &mut usize, value: u64) -> Result<()> {
+    if value == 0 {
+        return append_output(buffer, len, b"0");
+    }
+    let mut digits = [0u8; 20];
+    let mut digit_count = 0;
+    let mut remaining = value;
+    while remaining > 0 {
+        digits[digit_count] = b'0' + (remaining % 10) as u8;
+        digit_count += 1;
+        remaining /= 10;
+    }
+    while digit_count > 0 {
+        digit_count -= 1;
+        if *len >= buffer.len() {
+            return Err(Error::new(b"operator output line too large"));
+        }
+        buffer[*len] = digits[digit_count];
+        *len += 1;
+    }
+    Ok(())
+}
+
 fn append(buffer: &mut [u8], len: &mut usize, value: &[u8]) -> Result<()> {
     let mut index = 0;
     while index < value.len() {
@@ -1182,6 +2159,17 @@ operator-capability[0] generation=gen:a id=cap:log.sink provider=svc:logd object
 operator-capability[1] generation=gen:b id=cap:log.sink provider=svc:logd object_kind=endpoint object=log-sink rights=send|inspect
 ";
 
+    const DISCOVERY_REPORT: &[u8] = b"operator-report v=1 active=gen:a registered=1 policy_hash=hash:policy graph_hash=hash:graph
+operator-generation[0] id=gen:a active=yes selected=yes previous=no known_good=yes policy_hash=hash:policy graph_hash=hash:graph services=1 capabilities=1 states=1 devices=1 packages=0 package_facts=absent
+operator-service[0] generation=gen:a id=svc:echo-server process=echo restart=on-failure mount_root=/state
+process[0] name=echo pid=2 state=running restart_policy=on-failure mount_root=/state context_reaped=no cr3=0 generation=gen:a graph_node=svc:echo-server
+operator-requirement[0] generation=gen:a service=svc:echo-server capability=cap:log.sink rights=send
+operator-capability[0] generation=gen:a id=cap:log.sink provider=svc:logd object_kind=endpoint object=log-sink rights=send
+operator-state[0] generation=gen:a id=state:counter owner=svc:echo-server schema=counter.v1 storage=vertexdisk-v1 migration=preserve retention=retain-while-referenced sharing=explicit
+operator-state-path[0] generation=gen:a service=svc:echo-server state=state:counter root=/state rights=read|write|resolve
+operator-node[0] generation=gen:a kind=device id=device:virtio-blk0 object_kind=virtio-device label=device:virtio-blk0
+";
+
     #[test]
     fn why_rejects_live_capability_with_wrong_graph_target() {
         let error = why(WRONG_TARGET_REPORT, b"why svc:echo-server cap:log.sink")
@@ -1207,5 +2195,65 @@ operator-capability[1] generation=gen:b id=cap:log.sink provider=svc:logd object
         let message = activate_request(b"activate gen:b", &mut request).unwrap();
         assert_eq!(message.generation, b"gen:b");
         assert_eq!(message.request, b"install gen:b");
+    }
+
+    #[test]
+    fn discovery_renderers_emit_operator_inventory() {
+        let mut lines = std::vec::Vec::<std::vec::Vec<u8>>::new();
+        overview(DISCOVERY_REPORT, |line| lines.push(line.to_vec())).unwrap();
+        services(DISCOVERY_REPORT, |line| lines.push(line.to_vec())).unwrap();
+        service_detail(DISCOVERY_REPORT, b"service svc:echo-server", |line| {
+            lines.push(line.to_vec())
+        })
+        .unwrap();
+        capabilities(DISCOVERY_REPORT, b"capabilities", |line| {
+            lines.push(line.to_vec())
+        })
+        .unwrap();
+        capabilities(DISCOVERY_REPORT, b"capabilities for echo", |line| {
+            lines.push(line.to_vec())
+        })
+        .unwrap();
+        capability_detail(DISCOVERY_REPORT, b"capability cap:log.sink", |line| {
+            lines.push(line.to_vec())
+        })
+        .unwrap();
+        states(DISCOVERY_REPORT, |line| lines.push(line.to_vec())).unwrap();
+        state_detail(DISCOVERY_REPORT, b"state state:counter", |line| {
+            lines.push(line.to_vec())
+        })
+        .unwrap();
+        devices(DISCOVERY_REPORT, |line| lines.push(line.to_vec())).unwrap();
+        device_detail(DISCOVERY_REPORT, b"device device:virtio-blk0", |line| {
+            lines.push(line.to_vec())
+        })
+        .unwrap();
+
+        assert!(
+            lines
+                .iter()
+                .any(|line| line == b"overview generation=gen:a")
+        );
+        assert!(
+            lines.iter().any(
+                |line| line == b"svc:echo-server process=echo state=running restart=on-failure"
+            )
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|line| line == b"requires cap:log.sink rights=send provider=svc:logd")
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|line| line == b"cap:log.sink provider=svc:logd rights=send consumers=1")
+        );
+        assert!(lines.iter().any(|line| line
+            == b"state:counter owner=svc:echo-server schema=counter.v1 storage=vertexdisk-v1"));
+        assert!(
+            lines.iter().any(|line| line
+                == b"device:virtio-blk0 object_kind=virtio-device label=device:virtio-blk0")
+        );
     }
 }

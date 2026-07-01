@@ -1030,12 +1030,24 @@ Native introspection service ok
 	        SERIAL_INPUT_DELAYED=1
 	        SERIAL_INPUT_DELAY_SECONDS=6
 	        QEMU_ATTEMPTS=${QEMU_M87_ATTEMPTS:-150}
-	        SERIAL_INPUT='current-generation
+	        SERIAL_INPUT='help
+	overview
+	services
+	service svc:echo-server
+	capabilities
+	capabilities for svc:echo-server
+	capability cap:log.sink
+	states
+	state state:counter
+	current-generation
 	generations
 	generation-status
 	diff-generation gen:console-0001 gen:console-new-0002
 	planned-authority-delta gen:console-0001 gen:console-new-0002
 	why svc:echo-server cap:log.sink
+	WHY a b
+	WHO-CAN nowhere
+	diff-generation gen:nope gen:console-new-0002
 	who-can state:counter
 	which-generation svc:console-shell
 	package-list
@@ -1051,6 +1063,37 @@ Native introspection service ok
 	Boot generation: gen:console-0001
 	generation-manager ready
 	Vertex shell ready
+	console-driver forwarded serial command: help
+	commands: help generation services devices counter increment state-health halt
+	commands: generation services devices counter increment state-health install rollback why halt
+	operator: current-generation generations generation-status package-list activation-log
+	operator: why <service> <capability> who-can <object> which-generation <process>
+	console-driver forwarded serial command: overview
+	overview generation=gen:console-0001
+	inventory services=
+	console-driver forwarded serial command: services
+	services generation=gen:console-0001
+	svc:echo-server process=echo state=
+	console-driver forwarded serial command: service svc:echo-server
+	service svc:echo-server generation=gen:console-0001
+	process=echo state=
+	requires cap:log.sink rights=send provider=svc:logd
+	state state:counter root=/state rights=read|write
+	console-driver forwarded serial command: capabilities
+	capabilities generation=gen:console-0001
+	cap:log.sink provider=svc:logd rights=send
+	console-driver forwarded serial command: capabilities for svc:echo-server
+	capabilities for svc:echo-server generation=gen:console-0001
+	console-driver forwarded serial command: capability cap:log.sink
+	capability cap:log.sink generation=gen:console-0001
+	object_kind=endpoint object=log-sink
+	consumer svc:echo-server rights=send
+	console-driver forwarded serial command: states
+	states generation=gen:console-0001
+	state:counter owner=svc:echo-server
+	console-driver forwarded serial command: state state:counter
+	state state:counter generation=gen:console-0001
+	service svc:echo-server root=/state rights=read|write
 	console-driver forwarded serial command: current-generation
 	operator current-generation generation=gen:console-0001
 	console-driver forwarded serial command: generations
@@ -1067,6 +1110,12 @@ Native introspection service ok
 	operator planned-authority-delta from=gen:console-0001 to=gen:console-new-0002 capabilities=+0-0 changed_capabilities=0
 	console-driver forwarded serial command: why svc:echo-server cap:log.sink
 	operator why service=svc:echo-server capability=cap:log.sink provider=svc:logd rights=send
+	console-driver forwarded serial command: WHY a b
+	operator rejected: missing policy requirement
+	console-driver forwarded serial command: WHO-CAN nowhere
+	operator who-can rejected: unsupported object kind
+	console-driver forwarded serial command: diff-generation gen:nope gen:console-new-0002
+	operator rejected: unknown generation
 	console-driver forwarded serial command: who-can state:counter
 	operator who-can object=state:counter writer_count=
 	console-driver forwarded serial command: which-generation svc:console-shell
@@ -1097,7 +1146,6 @@ Native introspection service ok
 	Native console shell ok
 	'
 	        case_forbidden_lines='
-	operator rejected:
 	operator mark-known-good rejected:
 	generation-manager mark-known-good abort:
 	'

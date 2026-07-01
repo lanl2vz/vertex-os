@@ -2,6 +2,7 @@ use core::arch::asm;
 
 pub const STATUS_OK: u64 = 0;
 pub const STATUS_BAD_CAPABILITY: u64 = u64::MAX - 1;
+pub const STATUS_TOO_LARGE: u64 = u64::MAX - 3;
 pub const STATUS_EMPTY: u64 = u64::MAX - 4;
 pub const STATUS_TIMEOUT: u64 = u64::MAX - 9;
 

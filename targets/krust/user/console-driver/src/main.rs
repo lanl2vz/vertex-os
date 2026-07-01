@@ -20,11 +20,13 @@ const ENVELOPE_LEN: usize = 16;
 const CONTROL_SHUTDOWN: &[u8] = b"shutdown";
 const LOGD_PROOF_OUTPUT: &[u8] = b"logd sends log message";
 const INTERACTIVE_QUIET: bool = option_env!("KRUST_INTERACTIVE_QUIET").is_some();
+const INPUT_BUFFER_LEN: usize = 160;
+const SHELL_COMMAND_SEND_ATTEMPTS: u64 = 4096;
 
 #[unsafe(link_section = ".text._start")]
 #[unsafe(no_mangle)]
 pub extern "C" fn _start() -> ! {
-    let mut input = [0u8; 96];
+    let mut input = [0u8; INPUT_BUFFER_LEN];
     let mut input_len = 0;
 
     log(b"console-driver ready");
@@ -97,7 +99,7 @@ fn receive_shutdown() -> bool {
     true
 }
 
-fn poll_serial_input(input: &mut [u8; 96], input_len: &mut usize) -> bool {
+fn poll_serial_input(input: &mut [u8; INPUT_BUFFER_LEN], input_len: &mut usize) -> bool {
     let status = sys::io_read(CAP_COM1, COM1_LINE_STATUS);
     if status == sys::STATUS_BAD_CAPABILITY {
         log(b"console-driver COM1 status read failed");
@@ -147,7 +149,17 @@ fn poll_serial_input(input: &mut [u8; 96], input_len: &mut usize) -> bool {
 }
 
 fn send_shell_command(command: &[u8]) {
-    if sys::ipc_send(CAP_SHELL_REQUEST, command) != sys::STATUS_OK {
+    let mut attempts = 0;
+    loop {
+        let status = sys::ipc_send(CAP_SHELL_REQUEST, command);
+        if status == sys::STATUS_OK {
+            break;
+        }
+        if status == sys::STATUS_TOO_LARGE && attempts < SHELL_COMMAND_SEND_ATTEMPTS {
+            attempts += 1;
+            let _ = sys::yield_now();
+            continue;
+        }
         log(b"console-driver shell command send failed");
         sys::exit(1);
     }

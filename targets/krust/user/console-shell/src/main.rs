@@ -22,11 +22,14 @@ const CAP_INSPECT_AFTER_PACKAGE_IMPORT: u64 = 10;
 const PROTOCOL_HEALTH_V0: u16 = 2;
 const MESSAGE_READY: u16 = 1;
 const ENVELOPE_LEN: usize = 16;
+const COMMAND_BUFFER_LEN: usize = 160;
 const REPORT_BUFFER_LEN: usize = 256 * 1024;
 const CONTROL_SHUTDOWN: &[u8] = b"shutdown";
 const GENERATION_MANAGER_SHUTDOWN: &[u8] = b"shutdown";
 const STATE_CONTROL_PATH: &[u8] = b"/state/counter/control";
 const STATE_CLIENT_DRAIN_ATTEMPTS: u64 = 4096;
+const CONSOLE_WRITE_ATTEMPTS: u64 = 4096;
+const IPC_SEND_ATTEMPTS: u64 = 4096;
 const SERVICE_NAMES: [&[u8]; 5] = [
     b"vertex-init",
     b"logd",
@@ -49,24 +52,100 @@ pub extern "C" fn _start() -> ! {
     console_write(b"Vertex OS v0 appliance booted\nVertex shell ready\n> ");
 
     loop {
-        let mut command = [0u8; 96];
+        let mut command = [0u8; COMMAND_BUFFER_LEN];
         let received = sys::ipc_recv(CAP_SHELL_REQUEST, &mut command);
         if received == sys::STATUS_BAD_CAPABILITY || received > command.len() as u64 {
             log(b"console-shell command receive failed");
             sys::exit(1);
         }
-        let command = &command[..received as usize];
-        if bytes_eq(command, b"help") {
+        let mut normalized_command = [0u8; COMMAND_BUFFER_LEN];
+        let command =
+            normalize_command_verb(&command[..received as usize], &mut normalized_command);
+        if command.is_empty() {
+            console_write(b"> ");
+            continue;
+        }
+        if command_verb_eq(command, b"help") {
             log(b"console-shell command: help");
-            log(
-                b"commands: generation services devices counter increment state-health install rollback why halt",
-            );
-            log(
-                b"operator commands: current-generation generations generation-status diff-generation planned-authority-delta why who-can which-generation package-list activation-log activate rollback mark-known-good",
-            );
-            console_write(
-                b"commands: generation services devices counter increment state-health install rollback why halt\n> ",
-            );
+            operator_help(command);
+            continue;
+        }
+        if bytes_eq(command, b"overview") {
+            log(b"console-shell command: overview");
+            let report = runtime_report();
+            operator_overview(report);
+            continue;
+        }
+        if bytes_eq(command, b"services") {
+            log(b"console-shell command: services");
+            let report = runtime_report();
+            operator_services(report);
+            continue;
+        }
+        if command_verb_eq(command, b"service") {
+            if !require_word_count(command, 2, b"usage: service <service-or-process>\n> ") {
+                continue;
+            }
+            log(b"console-shell command: service");
+            let report = runtime_report();
+            operator_service_detail(report, command);
+            continue;
+        }
+        if command_verb_eq(command, b"capabilities") {
+            let words = command_word_count(command);
+            if words != 1 && words != 3 {
+                console_write(b"usage: capabilities [for <service-or-process>]\n> ");
+                continue;
+            }
+            log(b"console-shell command: capabilities");
+            let report = runtime_report();
+            operator_capabilities(report, command);
+            continue;
+        }
+        if command_verb_eq(command, b"capability") {
+            if !require_word_count(command, 2, b"usage: capability <capability-id>\n> ") {
+                continue;
+            }
+            log(b"console-shell command: capability");
+            let report = runtime_report();
+            operator_capability_detail(report, command);
+            continue;
+        }
+        if bytes_eq(command, b"states") {
+            log(b"console-shell command: states");
+            let report = runtime_report();
+            operator_states(report);
+            continue;
+        }
+        if command_verb_eq(command, b"state") {
+            if !require_word_count(command, 2, b"usage: state <state-id>\n> ") {
+                continue;
+            }
+            log(b"console-shell command: state");
+            let report = runtime_report();
+            operator_state_detail(report, command);
+            continue;
+        }
+        if bytes_eq(command, b"devices") {
+            log(b"console-shell command: devices");
+            let report = runtime_report();
+            operator_devices(report);
+            continue;
+        }
+        if command_verb_eq(command, b"device") {
+            if !require_word_count(command, 2, b"usage: device <device-id>\n> ") {
+                continue;
+            }
+            log(b"console-shell command: device");
+            let report = runtime_report();
+            operator_device_detail(report, command);
+            continue;
+        }
+        if bytes_eq(command, b"device-failures") {
+            log(b"console-shell command: device-failures");
+            let report = runtime_report();
+            console_write_device_failure(report);
+            console_write(b"> ");
             continue;
         }
         if bytes_eq(command, b"generation") {
@@ -94,18 +173,6 @@ pub extern "C" fn _start() -> ! {
             operator_generation_status(report);
             continue;
         }
-        if bytes_eq(command, b"services") {
-            log(b"console-shell command: services");
-            let report = runtime_report();
-            console_write_services(report);
-            continue;
-        }
-        if bytes_eq(command, b"devices") {
-            log(b"console-shell command: devices");
-            let report = runtime_report();
-            console_write_devices(report);
-            continue;
-        }
         if bytes_eq(command, b"why svc:echo cap:log.sink") {
             log(b"console-shell command: why");
             let report = runtime_report();
@@ -115,31 +182,58 @@ pub extern "C" fn _start() -> ! {
             );
             continue;
         }
-        if starts_with(command, b"diff-generation ") {
+        if bytes_eq(command, b"why svc:counter state:counter") {
+            log(b"console-shell command: why counter state");
+            let report = runtime_report();
+            require_counter_state_authority(report);
+            log(b"svc:counter has state authority from generation graph");
+            console_write(b"why svc:counter state:counter\nsvc:counter has state authority from generation graph\n> ");
+            continue;
+        }
+        if command_verb_eq(command, b"diff-generation") {
+            if !require_word_count(command, 3, b"usage: diff-generation <from> <to>\n> ") {
+                continue;
+            }
             log(b"console-shell command: diff-generation");
             let report = runtime_report();
             operator_diff_generation(report, command, false);
             continue;
         }
-        if starts_with(command, b"planned-authority-delta ") {
+        if command_verb_eq(command, b"planned-authority-delta") {
+            if !require_word_count(
+                command,
+                3,
+                b"usage: planned-authority-delta <from> <to>\n> ",
+            ) {
+                continue;
+            }
             log(b"console-shell command: planned-authority-delta");
             let report = runtime_report();
             operator_diff_generation(report, command, true);
             continue;
         }
-        if starts_with(command, b"why ") {
+        if command_verb_eq(command, b"why") {
+            if !require_word_count(command, 3, b"usage: why <service> <capability>\n> ") {
+                continue;
+            }
             log(b"console-shell command: operator why");
             let report = runtime_report();
             operator_why(report, command);
             continue;
         }
-        if starts_with(command, b"who-can ") {
+        if command_verb_eq(command, b"who-can") {
+            if !require_word_count(command, 2, b"usage: who-can <object>\n> ") {
+                continue;
+            }
             log(b"console-shell command: who-can");
             let report = runtime_report();
             operator_who_can(report, command);
             continue;
         }
-        if starts_with(command, b"which-generation ") {
+        if command_verb_eq(command, b"which-generation") {
+            if !require_word_count(command, 2, b"usage: which-generation <process>\n> ") {
+                continue;
+            }
             log(b"console-shell command: which-generation");
             let report = runtime_report();
             operator_which_generation(report, command);
@@ -159,13 +253,19 @@ pub extern "C" fn _start() -> ! {
         }
         if bytes_eq(command, b"counter") {
             log(b"console-shell command: counter");
-            let value = counter_request(b"G");
+            let Some(value) = counter_request(b"G") else {
+                console_write(b"counter request failed\n> ");
+                continue;
+            };
             console_write_counter(b"counter value: ", value);
             continue;
         }
         if bytes_eq(command, b"increment") {
             log(b"console-shell command: increment");
-            let value = counter_request(b"I");
+            let Some(value) = counter_request(b"I") else {
+                console_write(b"counter request failed\n> ");
+                continue;
+            };
             console_write_counter(b"increment -> ", value);
             continue;
         }
@@ -180,12 +280,11 @@ pub extern "C" fn _start() -> ! {
             console_write(b"install generation gen:new\n> ");
             yield_for_console_driver();
             log(b"console-shell requests generation-manager install");
-            let status = sys::ipc_send(
+            if !ipc_send_with_backpressure(
                 CAP_GENERATION_MANAGER_REQUEST,
                 b"install gen:console-new-0002",
-            );
-            if status != sys::STATUS_OK {
-                log(b"console-shell install generation failed");
+                b"console-shell install generation failed",
+            ) {
                 console_write(b"install generation failed\n> ");
                 continue;
             }
@@ -198,12 +297,11 @@ pub extern "C" fn _start() -> ! {
             console_write(b"install generation gen:state-bad\n> ");
             yield_for_console_driver();
             log(b"console-shell requests generation-manager bad state migration install");
-            let status = sys::ipc_send(
+            if !ipc_send_with_backpressure(
                 CAP_GENERATION_MANAGER_REQUEST,
                 b"install gen:state-migration-bad-0003",
-            );
-            if status != sys::STATUS_OK {
-                log(b"console-shell bad state migration install send failed");
+                b"console-shell bad state migration install send failed",
+            ) {
                 console_write(b"install generation failed\n> ");
                 continue;
             }
@@ -216,12 +314,11 @@ pub extern "C" fn _start() -> ! {
             console_write(b"install generation gen:state-new\n> ");
             yield_for_console_driver();
             log(b"console-shell requests generation-manager state migration install");
-            let status = sys::ipc_send(
+            if !ipc_send_with_backpressure(
                 CAP_GENERATION_MANAGER_REQUEST,
                 b"install gen:state-migration-new-0002",
-            );
-            if status != sys::STATUS_OK {
-                log(b"console-shell state migration install failed");
+                b"console-shell state migration install failed",
+            ) {
                 console_write(b"install generation failed\n> ");
                 continue;
             }
@@ -234,9 +331,11 @@ pub extern "C" fn _start() -> ! {
             console_write(b"import package pkg:logd\n> ");
             yield_for_console_driver();
             log(b"console-shell requests package-import import");
-            let status = sys::ipc_send(CAP_PACKAGE_IMPORT_REQUEST, b"import pkg:logd");
-            if status != sys::STATUS_OK {
-                log(b"console-shell package import failed");
+            if !ipc_send_with_backpressure(
+                CAP_PACKAGE_IMPORT_REQUEST,
+                b"import pkg:logd",
+                b"console-shell package import failed",
+            ) {
                 console_write(b"package import failed\n> ");
                 continue;
             }
@@ -249,10 +348,11 @@ pub extern "C" fn _start() -> ! {
             console_write(b"import package pkg:missing-dependency\n> ");
             yield_for_console_driver();
             log(b"console-shell requests package-import missing-dependency validation");
-            let status =
-                sys::ipc_send(CAP_PACKAGE_IMPORT_REQUEST, b"import pkg:missing-dependency");
-            if status != sys::STATUS_OK {
-                log(b"console-shell missing-dependency validation failed");
+            if !ipc_send_with_backpressure(
+                CAP_PACKAGE_IMPORT_REQUEST,
+                b"import pkg:missing-dependency",
+                b"console-shell missing-dependency validation failed",
+            ) {
                 console_write(b"package import validation failed\n> ");
             }
             continue;
@@ -262,23 +362,29 @@ pub extern "C" fn _start() -> ! {
             console_write(b"import package pkg:excess-authority\n> ");
             yield_for_console_driver();
             log(b"console-shell requests package-import excess-authority validation");
-            let status = sys::ipc_send(CAP_PACKAGE_IMPORT_REQUEST, b"import pkg:excess-authority");
-            if status != sys::STATUS_OK {
-                log(b"console-shell excess-authority validation failed");
+            if !ipc_send_with_backpressure(
+                CAP_PACKAGE_IMPORT_REQUEST,
+                b"import pkg:excess-authority",
+                b"console-shell excess-authority validation failed",
+            ) {
                 console_write(b"package import validation failed\n> ");
             }
             continue;
         }
         if bytes_eq(command, b"rollback to gen:old") {
             log(b"console-shell command: rollback to gen:old");
-            let value = counter_request(b"G");
+            let Some(value) = counter_request(b"G") else {
+                console_write(b"counter request failed\n> ");
+                continue;
+            };
             console_write_rollback(value);
             yield_for_console_driver();
             log(b"console-shell requests generation-manager rollback");
-            let status =
-                sys::ipc_send(CAP_GENERATION_MANAGER_REQUEST, b"rollback gen:console-0001");
-            if status != sys::STATUS_OK {
-                log(b"console-shell rollback failed");
+            if !ipc_send_with_backpressure(
+                CAP_GENERATION_MANAGER_REQUEST,
+                b"rollback gen:console-0001",
+                b"console-shell rollback failed",
+            ) {
                 console_write(b"rollback failed\n> ");
                 continue;
             }
@@ -291,12 +397,11 @@ pub extern "C" fn _start() -> ! {
             console_write(b"rollback state migration\n> ");
             yield_for_console_driver();
             log(b"console-shell requests generation-manager rollback");
-            let status = sys::ipc_send(
+            if !ipc_send_with_backpressure(
                 CAP_GENERATION_MANAGER_REQUEST,
                 b"rollback gen:state-migration-0001",
-            );
-            if status != sys::STATUS_OK {
-                log(b"console-shell state migration rollback failed");
+                b"console-shell state migration rollback failed",
+            ) {
                 console_write(b"rollback failed\n> ");
                 continue;
             }
@@ -309,12 +414,11 @@ pub extern "C" fn _start() -> ! {
             console_write(b"rollback imported package\n> ");
             yield_for_console_driver();
             log(b"console-shell requests generation-manager rollback");
-            let status = sys::ipc_send(
+            if !ipc_send_with_backpressure(
                 CAP_GENERATION_MANAGER_REQUEST,
                 b"rollback gen:package-import-0001",
-            );
-            if status != sys::STATUS_OK {
-                log(b"console-shell rollback failed");
+                b"console-shell rollback failed",
+            ) {
                 console_write(b"rollback failed\n> ");
                 continue;
             }
@@ -322,40 +426,49 @@ pub extern "C" fn _start() -> ! {
                 sys::pause();
             }
         }
-        if starts_with(command, b"activate ") {
+        if command_verb_eq(command, b"activate") {
+            if !require_word_count(command, 2, b"usage: activate <generation>\n> ") {
+                continue;
+            }
             log(b"console-shell command: activate");
             operator_activate(command);
             continue;
         }
-        if starts_with(command, b"rollback ") {
+        if command_verb_eq(command, b"rollback") {
+            if !require_word_count(command, 2, b"usage: rollback <generation>\n> ") {
+                continue;
+            }
             log(b"console-shell command: operator rollback");
             operator_rollback(command);
             continue;
         }
-        if starts_with(command, b"mark-known-good ") {
+        if command_verb_eq(command, b"mark-known-good") {
+            if !require_word_count(command, 2, b"usage: mark-known-good <generation>\n> ") {
+                continue;
+            }
             log(b"console-shell command: mark-known-good");
             let report = runtime_report();
             operator_mark_known_good(report, command);
             continue;
         }
-        if bytes_eq(command, b"why svc:counter state:counter") {
-            log(b"console-shell command: why counter state");
-            let report = runtime_report();
-            require_counter_state_authority(report);
-            log(b"svc:counter has state authority from generation graph");
-            console_write(b"why svc:counter state:counter\nsvc:counter has state authority from generation graph\n> ");
-            continue;
-        }
         if bytes_eq(command, b"halt") {
             log(b"console-shell command: halt");
             console_write(b"Native console shell ok\n");
-            let _ = sys::ipc_send(CAP_COUNTER_REQUEST, b"H");
-            let _ = sys::ipc_send(CAP_PACKAGE_IMPORT_REQUEST, b"shutdown");
+            let _ =
+                ipc_send_with_backpressure(CAP_COUNTER_REQUEST, b"H", b"counter shutdown failed");
+            let _ = ipc_send_with_backpressure(
+                CAP_PACKAGE_IMPORT_REQUEST,
+                b"shutdown",
+                b"package-import shutdown failed",
+            );
             wait_for_state_clients_to_drain();
             shutdown_state_service();
             shutdown_generation_manager();
-            if sys::ipc_send(CAP_CONSOLE_CONTROL, CONTROL_SHUTDOWN) != sys::STATUS_OK {
-                log(b"console-shell shutdown send failed");
+            if !ipc_send_with_backpressure(
+                CAP_CONSOLE_CONTROL,
+                CONTROL_SHUTDOWN,
+                b"console-shell shutdown send failed",
+            ) {
                 sys::exit(1);
             }
             sys::exit(0);
@@ -410,26 +523,7 @@ fn console_write_generation(generation: &[u8]) {
     console_write(&payload[..len]);
 }
 
-fn console_write_services(report: &[u8]) {
-    let mut payload = [0u8; 128];
-    let mut len = 0;
-    append(&mut payload, &mut len, b"services:");
-    let mut index = 0;
-    while index < SERVICE_NAMES.len() {
-        let state = process_state(report, SERVICE_NAMES[index]);
-        log_service_state(SERVICE_NAMES[index], state);
-        append(&mut payload, &mut len, b" ");
-        append(&mut payload, &mut len, SERVICE_NAMES[index]);
-        append(&mut payload, &mut len, b"=");
-        append(&mut payload, &mut len, state);
-        index += 1;
-    }
-    append(&mut payload, &mut len, b"\n> ");
-    console_write(&payload[..len]);
-    log(b"native shell services query ok");
-}
-
-fn console_write_devices(report: &[u8]) {
+fn console_write_device_failure(report: &[u8]) {
     let needles: [&[u8]; 2] = [b"virtio-device-runtime[", b"device=device:virtio-blk0"];
     let Some(line) = find_line_contains_all(report, &needles) else {
         log(b"console-shell device query failed");
@@ -452,7 +546,7 @@ fn console_write_devices(report: &[u8]) {
     append(&mut payload, &mut len, reason);
     log(&payload[..len]);
     log(b"appliance shell reports last device failure reason and owner process");
-    append(&mut payload, &mut len, b"\n> ");
+    append(&mut payload, &mut len, b"\n");
     console_write(&payload[..len]);
 }
 
@@ -540,20 +634,115 @@ fn console_write_state_health(report: &[u8]) {
     console_write(b"state-health ok\n> ");
 }
 
-fn operator_fail(error: operator_shell::Error) -> ! {
-    log(error.message);
-    sys::exit(1);
+fn operator_help(command: &[u8]) {
+    operator_finish(operator_shell::help(command, |line| {
+        console_stream_line(line)
+    }));
 }
 
-fn operator_expect<T>(result: operator_shell::Result<T>) -> T {
+fn operator_overview(report: &[u8]) {
+    operator_finish(operator_shell::overview(report, |line| {
+        console_stream_line(line)
+    }));
+}
+
+fn operator_services(report: &[u8]) {
+    log_core_service_states(report);
+    operator_finish(operator_shell::services(report, |line| {
+        console_stream_line(line)
+    }));
+}
+
+fn operator_service_detail(report: &[u8], command: &[u8]) {
+    operator_finish(operator_shell::service_detail(report, command, |line| {
+        console_stream_line(line)
+    }));
+}
+
+fn operator_capabilities(report: &[u8], command: &[u8]) {
+    operator_finish(operator_shell::capabilities(report, command, |line| {
+        console_stream_line(line)
+    }));
+}
+
+fn operator_capability_detail(report: &[u8], command: &[u8]) {
+    operator_finish(operator_shell::capability_detail(report, command, |line| {
+        console_stream_line(line)
+    }));
+}
+
+fn operator_states(report: &[u8]) {
+    operator_finish(operator_shell::states(report, |line| {
+        console_stream_line(line)
+    }));
+}
+
+fn operator_state_detail(report: &[u8], command: &[u8]) {
+    operator_finish(operator_shell::state_detail(report, command, |line| {
+        console_stream_line(line)
+    }));
+}
+
+fn operator_devices(report: &[u8]) {
+    console_write_device_failure(report);
+    operator_finish(operator_shell::devices(report, |line| {
+        console_stream_line(line)
+    }));
+}
+
+fn operator_device_detail(report: &[u8], command: &[u8]) {
+    operator_finish(operator_shell::device_detail(report, command, |line| {
+        console_stream_line(line)
+    }));
+}
+
+fn log_core_service_states(report: &[u8]) {
+    let mut index = 0;
+    while index < SERVICE_NAMES.len() {
+        let state = process_state(report, SERVICE_NAMES[index]);
+        log_service_state(SERVICE_NAMES[index], state);
+        index += 1;
+    }
+    log(b"native shell services query ok");
+}
+
+fn operator_finish<T>(result: operator_shell::Result<T>) {
     match result {
-        Ok(value) => value,
+        Ok(_) => console_write(b"> "),
         Err(error) => operator_fail(error),
     }
 }
 
+fn console_stream_line(line: &[u8]) {
+    log(line);
+    console_write(line);
+    console_write(b"\n");
+}
+
+fn operator_fail(error: operator_shell::Error) {
+    log(error.message);
+    let mut payload = [0u8; 128];
+    let mut len = 0;
+    append(&mut payload, &mut len, b"error: ");
+    append(&mut payload, &mut len, error.message);
+    append(&mut payload, &mut len, b"\n> ");
+    console_write(&payload[..len]);
+}
+
+fn operator_expect<T>(result: operator_shell::Result<T>) -> Option<T> {
+    match result {
+        Ok(value) => Some(value),
+        Err(error) => {
+            operator_fail(error);
+            None
+        }
+    }
+}
+
 fn operator_current_generation(report: &[u8]) {
-    let answer = operator_expect(operator_shell::current_generation(report));
+    let Some(answer) = operator_expect(operator_shell::current_generation(report)) else {
+        return;
+    };
     let mut buffer = [0u8; 256];
     let mut len = 0;
     append(
@@ -571,13 +760,18 @@ fn operator_current_generation(report: &[u8]) {
 }
 
 fn operator_generations(report: &[u8]) {
-    let count = operator_expect(operator_shell::for_generations(report, |line| log(line)));
+    let Some(count) = operator_expect(operator_shell::for_generations(report, |line| log(line)))
+    else {
+        return;
+    };
     log_count_line(b"operator generations listed=", count);
     console_write(b"generations ok\n> ");
 }
 
 fn operator_generation_status(report: &[u8]) {
-    let answer = operator_expect(operator_shell::generation_status(report));
+    let Some(answer) = operator_expect(operator_shell::generation_status(report)) else {
+        return;
+    };
 
     let mut buffer = [0u8; 256];
     let mut len = 0;
@@ -602,7 +796,9 @@ fn operator_generation_status(report: &[u8]) {
 }
 
 fn operator_diff_generation(report: &[u8], command: &[u8], authority_only: bool) {
-    let answer = operator_expect(operator_shell::diff_generation(report, command));
+    let Some(answer) = operator_expect(operator_shell::diff_generation(report, command)) else {
+        return;
+    };
 
     let mut buffer = [0u8; 384];
     let mut len = 0;
@@ -658,7 +854,9 @@ fn operator_diff_generation(report: &[u8], command: &[u8], authority_only: bool)
 }
 
 fn operator_why(report: &[u8], command: &[u8]) {
-    let answer = operator_expect(operator_shell::why(report, command));
+    let Some(answer) = operator_expect(operator_shell::why(report, command)) else {
+        return;
+    };
 
     let mut buffer = [0u8; 256];
     let mut len = 0;
@@ -681,7 +879,7 @@ fn operator_why(report: &[u8], command: &[u8]) {
 }
 
 fn operator_who_can(report: &[u8], command: &[u8]) {
-    let answer = operator_expect(operator_shell::who_can(
+    let Some(answer) = operator_expect(operator_shell::who_can(
         report,
         command,
         |entry| match entry {
@@ -716,7 +914,9 @@ fn operator_who_can(report: &[u8], command: &[u8]) {
                 log(&buffer[..len]);
             }
         },
-    ));
+    )) else {
+        return;
+    };
 
     let mut buffer = [0u8; 192];
     let mut len = 0;
@@ -740,7 +940,9 @@ fn operator_who_can(report: &[u8], command: &[u8]) {
 }
 
 fn operator_which_generation(report: &[u8], command: &[u8]) {
-    let answer = operator_expect(operator_shell::which_generation(report, command));
+    let Some(answer) = operator_expect(operator_shell::which_generation(report, command)) else {
+        return;
+    };
     let mut buffer = [0u8; 192];
     let mut len = 0;
     append(
@@ -760,30 +962,42 @@ fn operator_which_generation(report: &[u8], command: &[u8]) {
 }
 
 fn operator_package_list(report: &[u8]) {
-    operator_expect(operator_shell::package_list_unavailable(report));
+    if operator_expect(operator_shell::package_list_unavailable(report)).is_none() {
+        return;
+    }
     log(b"operator package-list unavailable: no native package facts");
     console_write(b"package-list unavailable\n> ");
 }
 
 fn operator_activation_log(report: &[u8]) {
-    let count = operator_expect(operator_shell::activation_log(report, |line| log(line)));
+    let Some(count) = operator_expect(operator_shell::activation_log(report, |line| log(line)))
+    else {
+        return;
+    };
     log_count_line(b"operator activation-log records=", count);
     console_write(b"activation-log ok\n> ");
 }
 
 fn operator_activate(command: &[u8]) {
     let mut request = [0u8; 96];
-    let answer = operator_expect(operator_shell::activate_request(command, &mut request));
-    console_write(b"activate requested\n> ");
-    yield_for_console_driver();
+    let Some(answer) = operator_expect(operator_shell::activate_request(command, &mut request))
+    else {
+        return;
+    };
     log_prefix(
         b"operator activate queues generation-manager install: generation=",
         answer.generation,
     );
-    if sys::ipc_send(CAP_GENERATION_MANAGER_REQUEST, answer.request) != sys::STATUS_OK {
-        log(b"operator activate send failed");
-        sys::exit(1);
+    if !ipc_send_with_backpressure(
+        CAP_GENERATION_MANAGER_REQUEST,
+        answer.request,
+        b"operator activate send failed",
+    ) {
+        console_write(b"activate failed\n> ");
+        return;
     }
+    console_write(b"activate requested\n> ");
+    yield_for_console_driver();
     loop {
         sys::pause();
     }
@@ -791,17 +1005,24 @@ fn operator_activate(command: &[u8]) {
 
 fn operator_rollback(command: &[u8]) {
     let mut request = [0u8; 96];
-    let answer = operator_expect(operator_shell::rollback_request(command, &mut request));
-    console_write(b"rollback requested\n> ");
-    yield_for_console_driver();
+    let Some(answer) = operator_expect(operator_shell::rollback_request(command, &mut request))
+    else {
+        return;
+    };
     log_prefix(
         b"operator rollback queues generation-manager rollback: generation=",
         answer.generation,
     );
-    if sys::ipc_send(CAP_GENERATION_MANAGER_REQUEST, answer.request) != sys::STATUS_OK {
-        log(b"operator rollback send failed");
-        sys::exit(1);
+    if !ipc_send_with_backpressure(
+        CAP_GENERATION_MANAGER_REQUEST,
+        answer.request,
+        b"operator rollback send failed",
+    ) {
+        console_write(b"rollback failed\n> ");
+        return;
     }
+    console_write(b"rollback requested\n> ");
+    yield_for_console_driver();
     loop {
         sys::pause();
     }
@@ -809,18 +1030,24 @@ fn operator_rollback(command: &[u8]) {
 
 fn operator_mark_known_good(report: &[u8], command: &[u8]) {
     let mut request = [0u8; 96];
-    let answer = operator_expect(operator_shell::mark_known_good_request(
+    let Some(answer) = operator_expect(operator_shell::mark_known_good_request(
         report,
         command,
         &mut request,
-    ));
+    )) else {
+        return;
+    };
     log_prefix(
         b"operator mark-known-good queues generation-manager command: generation=",
         answer.generation,
     );
-    if sys::ipc_send(CAP_GENERATION_MANAGER_REQUEST, answer.request) != sys::STATUS_OK {
-        log(b"operator mark-known-good send failed");
-        sys::exit(1);
+    if !ipc_send_with_backpressure(
+        CAP_GENERATION_MANAGER_REQUEST,
+        answer.request,
+        b"operator mark-known-good send failed",
+    ) {
+        console_write(b"mark-known-good failed\n> ");
+        return;
     }
     yield_for_console_driver();
     console_write(b"mark-known-good requested\n> ");
@@ -840,6 +1067,23 @@ fn log_prefix(prefix: &[u8], value: &[u8]) {
     append(&mut buffer, &mut len, prefix);
     append(&mut buffer, &mut len, value);
     log(&buffer[..len]);
+}
+
+fn ipc_send_with_backpressure(capability: u64, payload: &[u8], failure_log: &[u8]) -> bool {
+    let mut attempts = 0;
+    loop {
+        let status = sys::ipc_send(capability, payload);
+        if status == sys::STATUS_OK {
+            return true;
+        }
+        if status == sys::STATUS_TOO_LARGE && attempts < IPC_SEND_ATTEMPTS {
+            attempts += 1;
+            sys::yield_now();
+            continue;
+        }
+        log(failure_log);
+        return false;
+    }
 }
 
 fn append_u64(buffer: &mut [u8], len: &mut usize, value: u64) {
@@ -866,10 +1110,13 @@ fn append_u64(buffer: &mut [u8], len: &mut usize, value: u64) {
     }
 }
 
-fn counter_request(request: &[u8]) -> &[u8] {
-    if sys::ipc_send(CAP_COUNTER_REQUEST, request) != sys::STATUS_OK {
-        log(b"console-shell counter request failed");
-        sys::exit(1);
+fn counter_request(request: &[u8]) -> Option<&'static [u8]> {
+    if !ipc_send_with_backpressure(
+        CAP_COUNTER_REQUEST,
+        request,
+        b"console-shell counter request failed",
+    ) {
+        return None;
     }
     let mut attempts = 0;
     loop {
@@ -880,6 +1127,10 @@ fn counter_request(request: &[u8]) -> &[u8] {
             sys::yield_now();
             continue;
         }
+        if received == sys::STATUS_EMPTY {
+            log(b"console-shell counter reply timed out");
+            return None;
+        }
         if received == sys::STATUS_BAD_CAPABILITY
             || received == sys::STATUS_BAD_BUFFER
             || received == sys::STATUS_TOO_LARGE
@@ -888,7 +1139,7 @@ fn counter_request(request: &[u8]) -> &[u8] {
             log(b"console-shell counter reply failed");
             sys::exit(1);
         }
-        return &buffer[..received as usize];
+        return Some(&buffer[..received as usize]);
     }
 }
 
@@ -1032,9 +1283,11 @@ fn service_lifecycle_seen(report: &[u8], service: &[u8], state: &[u8]) -> bool {
 }
 
 fn shutdown_generation_manager() {
-    if sys::ipc_send(CAP_GENERATION_MANAGER_REQUEST, GENERATION_MANAGER_SHUTDOWN) != sys::STATUS_OK
-    {
-        log(b"console-shell generation-manager shutdown failed");
+    if !ipc_send_with_backpressure(
+        CAP_GENERATION_MANAGER_REQUEST,
+        GENERATION_MANAGER_SHUTDOWN,
+        b"console-shell generation-manager shutdown failed",
+    ) {
         sys::exit(1);
     }
 }
@@ -1156,7 +1409,17 @@ fn console_write(payload: &[u8]) {
         log(b"console-shell payload too large");
         sys::exit(1);
     }
-    if sys::ipc_send(CAP_CONSOLE_OUTPUT, payload) != sys::STATUS_OK {
+    let mut attempts = 0;
+    loop {
+        let status = sys::ipc_send(CAP_CONSOLE_OUTPUT, payload);
+        if status == sys::STATUS_OK {
+            return;
+        }
+        if status == sys::STATUS_TOO_LARGE && attempts < CONSOLE_WRITE_ATTEMPTS {
+            attempts += 1;
+            sys::yield_now();
+            continue;
+        }
         log(b"console-shell console write failed");
         sys::exit(1);
     }
@@ -1307,6 +1570,96 @@ fn starts_with(value: &[u8], prefix: &[u8]) -> bool {
         index += 1;
     }
     true
+}
+
+fn normalize_command_verb<'a>(input: &[u8], output: &'a mut [u8]) -> &'a [u8] {
+    let mut start = 0;
+    while start < input.len() && is_command_space(input[start]) {
+        start += 1;
+    }
+    let mut end = input.len();
+    while end > start && is_command_space(input[end - 1]) {
+        end -= 1;
+    }
+    let len = end - start;
+    if len > output.len() {
+        return &output[..0];
+    }
+
+    let mut index = 0;
+    let mut in_verb = true;
+    while index < len {
+        let mut byte = input[start + index];
+        if is_command_space(byte) {
+            byte = b' ';
+            in_verb = false;
+        } else if in_verb && byte >= b'A' && byte <= b'Z' {
+            byte += b'a' - b'A';
+        }
+        output[index] = byte;
+        index += 1;
+    }
+    &output[..len]
+}
+
+fn require_word_count(command: &[u8], expected: usize, usage: &[u8]) -> bool {
+    if command_word_count(command) == expected {
+        return true;
+    }
+    log(usage);
+    console_write(usage);
+    false
+}
+
+fn command_verb_eq(command: &[u8], verb: &[u8]) -> bool {
+    if let Some(candidate) = command_word_at(command, 0) {
+        return bytes_eq(candidate, verb);
+    }
+    false
+}
+
+fn command_word_count(command: &[u8]) -> usize {
+    let mut count = 0;
+    let mut cursor = 0;
+    while cursor < command.len() {
+        while cursor < command.len() && is_command_space(command[cursor]) {
+            cursor += 1;
+        }
+        if cursor == command.len() {
+            break;
+        }
+        count += 1;
+        while cursor < command.len() && !is_command_space(command[cursor]) {
+            cursor += 1;
+        }
+    }
+    count
+}
+
+fn command_word_at(command: &[u8], requested: usize) -> Option<&[u8]> {
+    let mut cursor = 0;
+    let mut index = 0;
+    while cursor < command.len() {
+        while cursor < command.len() && is_command_space(command[cursor]) {
+            cursor += 1;
+        }
+        if cursor == command.len() {
+            return None;
+        }
+        let start = cursor;
+        while cursor < command.len() && !is_command_space(command[cursor]) {
+            cursor += 1;
+        }
+        if index == requested {
+            return Some(&command[start..cursor]);
+        }
+        index += 1;
+    }
+    None
+}
+
+fn is_command_space(byte: u8) -> bool {
+    byte == b' ' || byte == b'\t' || byte == b'\r' || byte == b'\n'
 }
 
 fn bytes_eq(left: &[u8], right: &[u8]) -> bool {

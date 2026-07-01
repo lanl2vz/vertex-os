@@ -7,7 +7,7 @@ runtime layered over a host kernel.
 
 ## Status Summary
 
-Current status: M14-M87 and M87-1 through M87-3 are implemented and
+Current status: M14-M87 and M87-1 through M87-4 are implemented and
 smoke-tested under `qemu-system-x86_64` with Limine. The current tree has an
 image-backed VertexFS v1 mount, a strict VertexDisk v1 section carrying the
 current VertexFS image,
@@ -89,6 +89,11 @@ portable Vertex OS semantics.
 M87-3 adds the repository-root Vertex OS runner, so users boot the OS with
 `make run-gui` while Krust stays an implementation target selected by
 `VERTEX_TARGET=krust`.
+M87-4 upgrades the operator shell from a proof-oriented test prompt into a
+usable discovery console with `overview`, richer `help`, real service,
+capability, state, and device inventory commands, plus detail views that make
+`why` and `who-can` discoverable rather than requiring the operator to know
+internal IDs ahead of time.
 
 M74-M82 are implemented as the current VFS, open-file, directory, block-cache,
 VertexFS/mount-namespace, coordination, and security/soak substrate. The
@@ -118,7 +123,9 @@ the Krust image instead of owned under the kernel tree. M87-2 adds the Krust
 target user adapter workspace at `targets/krust/user` and removes tracked
 userspace manifests from `kernel/krust/user`. M87-3 adds top-level `make`
 targets for booting, building, smoke-testing, and release-gating Vertex OS
-without requiring users to invoke `make -C kernel/krust`.
+without requiring users to invoke `make -C kernel/krust`. M87-4 makes the
+native operator console usable for discovery: services and capabilities can be
+listed before proof commands are run.
 General vnode page cache integration, broader synthetic/device filesystem
 breadth, durable graph-store mutation, and durable policy-denial history
 remain later work.
@@ -4258,6 +4265,24 @@ done: why requires policy requirement, policy capability, graph edge, and a
       policy capability object with sufficient rights
 done: mark-known-good rejects non-active or unverifiable generations and uses
       SYS_MARK_KNOWN_GOOD after generation-manager writes clean metadata
+done: console-shell normalizes operator command verbs case-insensitively and
+      reports explicit usage for missing or extra command arguments instead of
+      falling through to unknown-command behavior
+done: invalid operator proofs such as WHY a b are rejected explicitly, keep the
+      shell process alive, return a prompt, and do not fall back to guessed
+      answers
+done: help and other multi-line shell output handle console IPC backpressure
+      without killing the shell, and scripted M87 input proves a command after
+      help still runs
+done: shell commands that send to generation-manager, package-import,
+      counter-service, or console-driver shutdown use bounded IPC backpressure
+      retries instead of one-shot sends with command-specific failure behavior
+done: malformed read-only operator commands for missing policy requirements,
+      unsupported objects, and unknown generations reject explicitly and the
+      M87 transcript proves the next valid shell command still runs
+done: exact legacy shell commands are dispatched before generic operator verbs
+      so M87 operator grammar does not change appliance-era commands such as
+      `why svc:counter state:counter`
 done: scripts/krust-test.sh m87
 done: scripts/krust-release-gate.sh includes m87 in the default QEMU matrix
 ```
@@ -4421,6 +4446,66 @@ Implementation notes:
   boundary.
 - `kernel/krust` remains callable for target maintainers, but normal users boot
   Vertex OS from the repository root.
+
+## M87-4: Usable Operator Console
+
+Status: done.
+
+Goal: make the native shell feel like an operator console instead of a shallow
+test harness, while preserving explicit graph authority and avoiding guessed
+answers.
+
+Scope:
+
+```text
+portable discovery renderers in userland/operator-shell
+overview and richer help output
+service list and service detail commands
+capability list, capability detail, and capabilities-for-service commands
+state list and state detail commands
+device inventory output without dropping the existing device-failure signal
+Krust console-shell streams bounded operator lines and keeps old transcript logs
+```
+
+Acceptance tests:
+
+```text
+help explains discovery and proof commands with examples
+overview reports active generation and inventory counts from operator-report
+services lists real operator-service facts with live process state
+service svc:echo-server shows requirements and state paths
+capabilities and capability cap:log.sink reveal discoverable capability IDs
+state state:counter shows policy and service path authority
+M87 QEMU transcript proves discovery commands run before why/who-can proofs
+```
+
+Done:
+
+```text
+done: userland/operator-shell owns overview, help, services, service,
+      capabilities, capability, states, state, devices, and device renderers
+done: console-shell streams bounded lines from the portable renderer and uses
+      Krust only for runtime-inspect, IPC, console output, and legacy signals
+done: services is no longer a hard-coded tiny status line; it renders active
+      operator-service records with live process state and restart policy
+done: capabilities and capability detail reveal capability IDs, providers,
+      rights, object bindings, and consumers so why commands are discoverable
+done: service detail links requirements to providers and state paths to rights
+done: devices preserves the appliance device-failure line while also reporting
+      graph device inventory when available
+done: operator-shell host tests cover the discovery renderers
+done: scripts/krust-test.sh m87 includes overview, services, service detail,
+      capabilities, capability detail, states, and state detail before proofs
+```
+
+Implementation notes:
+
+- M87-4 does not add a syscall or make the shell POSIX-like. It improves the
+  user-facing operator model over existing runtime inspection facts.
+- Every rendered inventory line is bounded for console IPC and either comes
+  from an explicit operator report field or fails with a specific error.
+- This is the UX bridge that makes `why` useful: operators can now discover
+  service and capability IDs before asking for authority proofs.
 
 ## M88: End-To-End Appliance Update Gate
 
