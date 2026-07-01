@@ -69,7 +69,10 @@ step "checking Krust script and Makefile hygiene"
 check_script scripts/krust-smoke.sh
 check_script scripts/krust-test.sh
 check_script scripts/krust-release-gate.sh
+make -n run-gui >/dev/null
+make -n iso >/dev/null
 make -C "$KRUST_DIR" -n iso >/dev/null
+check_no_trailing_whitespace Makefile
 check_no_trailing_whitespace scripts/krust-smoke.sh
 check_no_trailing_whitespace scripts/krust-test.sh
 check_no_trailing_whitespace scripts/krust-release-gate.sh
@@ -96,6 +99,8 @@ step "checking Krust status documentation"
 require_doc_line README.md "M14-M87"
 require_doc_line README.md "M87-1"
 require_doc_line README.md "M87-2"
+require_doc_line README.md "M87-3"
+require_doc_line README.md "make run-gui"
 require_doc_line README.md "userland/operator-shell"
 require_doc_line README.md "targets/krust/user"
 require_doc_line README.md "scripts/krust-release-gate.sh"
@@ -155,6 +160,8 @@ require_doc_line docs/krust-milestones.md "scripts/krust-test.sh m86"
 require_doc_line docs/krust-milestones.md "scripts/krust-test.sh m87"
 require_doc_line docs/krust-milestones.md "## M87-1: Vertex-Owned Operator Shell Package"
 require_doc_line docs/krust-milestones.md "## M87-2: Krust Target User Adapter Workspace"
+require_doc_line docs/krust-milestones.md "## M87-3: Vertex OS Root Boot Runner"
+require_doc_line docs/krust-milestones.md "make run-gui"
 require_doc_line docs/krust-milestones.md "userland/operator-shell"
 require_doc_line docs/krust-milestones.md "targets/krust/user"
 require_doc_line docs/krust-milestones.md "manifest-policy-mount-root"
@@ -173,10 +180,13 @@ require_doc_line docs/krust-toolchain.md "limine 12.3.0"
 require_doc_line docs/krust-toolchain.md "xorriso 1.5.8.pl01"
 require_doc_line docs/krust-abi-v1.md "M40 freezes ABI v1"
 require_doc_line docs/krust-abi-v1.md "M87-2"
+require_doc_line docs/krust-abi-v1.md "M87-3"
 require_doc_line docs/posix-personality-v0.md "Status: M58 design artifact."
 require_doc_line kernel/krust/README.md "M14-M87"
 require_doc_line kernel/krust/README.md "M87-1"
 require_doc_line kernel/krust/README.md "M87-2"
+require_doc_line kernel/krust/README.md "M87-3"
+require_doc_line kernel/krust/README.md "make run-gui"
 require_doc_line kernel/krust/README.md "userland/operator-shell"
 require_doc_line kernel/krust/README.md "targets/krust/user"
 require_doc_line kernel/krust/README.md "scripts/krust-release-gate.sh"

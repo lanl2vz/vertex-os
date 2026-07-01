@@ -187,7 +187,7 @@ doctor: check-tools check-tool-versions check-cargo-locks check-rust-target chec
 	@echo "limine: $$(command -v $(LIMINE)) ($$($(LIMINE) --version | sed -n '1p'))"
 	@echo "xorriso: $$(command -v $(XORRISO)) ($$($(XORRISO) --version 2>/dev/null | sed -n '1p'))"
 	@echo "LIMINE_DIR: $(LIMINE_DIR)"
-	@echo "Krust M14-M87 plus M87-1/M87-2 toolchain is ready."
+	@echo "Krust M14-M87 plus M87-1/M87-3 toolchain is ready."
 
 release-gate:
 	../../scripts/krust-release-gate.sh

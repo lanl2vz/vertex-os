@@ -17,6 +17,7 @@ tools:
 
 ```text
 vertex-os/
+  Makefile               Vertex OS root boot/build/test runner
   docs/                  Design notes and Vertex IR drafts
   schemas/               JSON schemas for manifest experiments
   examples/              Example generation manifests
@@ -39,7 +40,7 @@ vertex-os/
     vertex-lang/         Planned typed system-definition language
 ```
 
-## Krust M14-M87 Plus M87-1/M87-2
+## Krust M14-M87 Plus M87-1/M87-3
 
 The current native activation path lives in `kernel/krust`. It is isolated
 from the host-side Cargo workspace and boots a Limine ISO under QEMU. The ISO
@@ -117,6 +118,8 @@ into `targets/krust/user`, making the OS/kernel boundary explicit: portable
 Vertex behavior belongs in `userland/`, while target-specific Krust syscalls,
 linker glue, and process entry points belong in the Krust target adapter
 workspace.
+M87-3 adds the repository-root Vertex OS runner, so `make run-gui` boots the OS
+while Krust remains the selected native target behind `VERTEX_TARGET=krust`.
 
 ```sh
 scripts/krust-smoke.sh
@@ -124,14 +127,14 @@ scripts/krust-smoke.sh
 
 The clean-clone release gate validates the host-side build and tests, checks
 the Krust toolchain, rebuilds the standalone ISO from clean kernel artifacts,
-and runs the M14-M87 substrate gate plus M87-1/M87-2 layout checks with the
+and runs the M14-M87 substrate gate plus M87-1/M87-3 layout checks with the
 M14-M87 QEMU test matrix:
 
 ```sh
 scripts/krust-release-gate.sh
 ```
 
-See [docs/krust-milestones.md](docs/krust-milestones.md) for M0 through M87-2
+See [docs/krust-milestones.md](docs/krust-milestones.md) for M0 through M87-3
 current status and the appliance OS MVP profile,
 [docs/krust-toolchain.md](docs/krust-toolchain.md) for the pinned M39 toolchain,
 and [docs/krust-abi-v1.md](docs/krust-abi-v1.md) for the current syscall,
@@ -141,6 +144,34 @@ The M58 compatibility plan is tracked in
 
 The current Krust milestone status and deferred work are tracked in
 [docs/krust-milestones.md](docs/krust-milestones.md).
+
+## Boot Vertex OS
+
+Boot Vertex OS in a QEMU window from the repository root:
+
+```sh
+make run-gui
+```
+
+This is the supported OS-level entry point. It selects the current native
+target with `VERTEX_TARGET=krust`, builds the Krust kernel/substrate, builds
+the Krust target user adapters from `targets/krust/user`, creates the
+VertexDisk/VertexFS boot artifacts, and opens the QEMU window. Krust remains an
+implementation target; the command you run is Vertex OS.
+
+Useful root commands:
+
+```sh
+make doctor
+make iso
+make run
+make smoke
+make release-gate
+```
+
+`make run` boots headlessly with serial in the terminal. `make run-gui` uses a
+QEMU window and writes GUI-run serial output under
+`kernel/krust/build/serial-gui.log`.
 
 ## Current Demo
 

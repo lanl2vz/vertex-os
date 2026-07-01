@@ -44,5 +44,5 @@ scripts/krust-release-gate.sh
 Run the native tool check directly with:
 
 ```sh
-cd kernel/krust && make doctor
+make doctor
 ```

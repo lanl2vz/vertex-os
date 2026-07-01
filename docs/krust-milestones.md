@@ -7,10 +7,10 @@ runtime layered over a host kernel.
 
 ## Status Summary
 
-Current status: M14-M87, M87-1, and M87-2 are implemented and smoke-tested
-under `qemu-system-x86_64` with Limine. The current tree has an image-backed
-VertexFS v1 mount, a strict VertexDisk v1 section carrying the current
-VertexFS image,
+Current status: M14-M87 and M87-1 through M87-3 are implemented and
+smoke-tested under `qemu-system-x86_64` with Limine. The current tree has an
+image-backed VertexFS v1 mount, a strict VertexDisk v1 section carrying the
+current VertexFS image,
 fixed journal replay, kernel-owned device-backed fsync transactions,
 post-sync image remount, fsync fault/restart handling, declared-file journal
 checkpoint recovery, mount-namespace gates, and a read-only `servicefs`
@@ -86,6 +86,9 @@ logging, console output, generation-manager IPC, and exits.
 M87-2 moves Krust-built user adapter crates into `targets/krust/user`, leaving
 `kernel/krust` as kernel/substrate source and making `userland/` the home for
 portable Vertex OS semantics.
+M87-3 adds the repository-root Vertex OS runner, so users boot the OS with
+`make run-gui` while Krust stays an implementation target selected by
+`VERTEX_TARGET=krust`.
 
 M74-M82 are implemented as the current VFS, open-file, directory, block-cache,
 VertexFS/mount-namespace, coordination, and security/soak substrate. The
@@ -113,13 +116,16 @@ policy-provenance answers plus generic generation-manager activation and
 rollback. M87-1 adds the first Vertex-owned no_std userland package consumed by
 the Krust image instead of owned under the kernel tree. M87-2 adds the Krust
 target user adapter workspace at `targets/krust/user` and removes tracked
-userspace manifests from `kernel/krust/user`.
+userspace manifests from `kernel/krust/user`. M87-3 adds top-level `make`
+targets for booting, building, smoke-testing, and release-gating Vertex OS
+without requiring users to invoke `make -C kernel/krust`.
 General vnode page cache integration, broader synthetic/device filesystem
 breadth, durable graph-store mutation, and durable policy-denial history
 remain later work.
 
 ```sh
-make -C kernel/krust doctor
+make doctor
+make run-gui
 scripts/krust-release-gate.sh
 scripts/krust-smoke.sh
 scripts/krust-test.sh manifest-cycle
@@ -4367,6 +4373,54 @@ Implementation notes:
   `userland/`.
 - Keeping the adapter workspace outside `kernel/krust` prevents target-specific
   user programs from being mistaken for kernel responsibilities.
+
+## M87-3: Vertex OS Root Boot Runner
+
+Status: done.
+
+Goal: remove the last user-facing kernel target leak from the normal boot path.
+
+Scope:
+
+```text
+repository-root Makefile with Vertex OS commands
+make run-gui as the supported QEMU window boot path
+make run, iso, smoke, doctor, release-gate, and clean as root OS commands
+explicit VERTEX_TARGET=krust selection for the current native target
+release gate checks for the root runner and documentation
+```
+
+Acceptance tests:
+
+```text
+make run-gui dry-runs from the repository root without requiring -C kernel/krust
+make iso dry-runs from the repository root and delegates to the selected target
+unsupported VERTEX_TARGET values fail explicitly
+README documents make run-gui as the OS-level boot command
+release gate checks the root Makefile
+```
+
+Done:
+
+```text
+done: repository-root Makefile exposes Vertex OS boot/build/test commands
+done: make run-gui delegates to the Krust target while keeping the user command
+      at the OS root
+done: make run keeps the existing headless serial path available as an OS-level
+      command
+done: scripts/krust-release-gate.sh checks root Makefile syntax, whitespace,
+      docs, and dry-run parsing
+done: docs describe Krust as the selected native target rather than the command
+      users invoke to boot Vertex OS
+```
+
+Implementation notes:
+
+- M87-3 does not change the runtime image or syscall ABI. It changes the
+  operator/developer entry point so the product boundary matches the source
+  boundary.
+- `kernel/krust` remains callable for target maintainers, but normal users boot
+  Vertex OS from the repository root.
 
 ## M88: End-To-End Appliance Update Gate
 

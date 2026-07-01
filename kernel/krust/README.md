@@ -1,8 +1,8 @@
 # Krust Kernel
 
 Krust now covers the M14-M87 native graph-activation proof path plus the M87-1
-Vertex-owned operator-shell package split and the M87-2 Krust target user
-adapter workspace, substrate
+Vertex-owned operator-shell package split, the M87-2 Krust target user adapter
+workspace, and the M87-3 repository-root Vertex OS runner, substrate
 hardening, reproducible build environment, directed IPC ABI v1, and native
 console shell plus virtio device I/O, VertexDisk v1 persistence, native boot
 selection, verified store objects, native update transactions, and store-loaded
@@ -29,7 +29,9 @@ state-object migration policy, native policy validation, and the operator graph
 shell. The Krust console-shell is now the target adapter for
 `../../userland/operator-shell` rather than the owner of operator semantics,
 and Krust-built user programs live in `../../targets/krust/user` rather than
-under the kernel source tree. M44-M87-2 are tracked in
+under the kernel source tree. Normal users boot Vertex OS from the repository
+root with `make run-gui`; this directory is the target implementation behind
+`VERTEX_TARGET=krust`. M44-M87-3 are tracked in
 `../../docs/krust-milestones.md`.
 
 The target is intentionally small:
