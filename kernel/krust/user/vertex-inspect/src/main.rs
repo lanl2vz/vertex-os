@@ -66,7 +66,7 @@ fn explain_policy_validation(report: &[u8]) {
     let policy_needles: [&[u8]; 5] = [
         b"policy-validation v=1",
         b"status=accepted",
-        b"version=1",
+        b"version=2",
         b"hash=",
         b"capabilities=",
     ];
@@ -76,6 +76,7 @@ fn explain_policy_validation(report: &[u8]) {
     };
     if field_u64(policy, b"capabilities=").unwrap_or(0) == 0
         || field_u64(policy, b"requirements=").unwrap_or(0) == 0
+        || field_u64(policy, b"mounts=").unwrap_or(0) == 0
     {
         log(b"vertex-inspect policy-validation facts missing");
         sys::exit(1);

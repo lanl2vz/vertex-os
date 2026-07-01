@@ -69,6 +69,7 @@ const GENERATION_MANAGER_PROCESS_NAME: &[u8] = b"gen-manager";
 const GENERATION_MANAGER_UPDATE_CAP_SLOT: u64 = 3;
 const FLAKY_PROCESS_NAME: &[u8] = b"flaky-service";
 const FAULTY_PROCESS_NAME: &[u8] = b"faulty-service";
+const BLOCK_DRIVER_PROCESS_NAME: &[u8] = b"block-driver";
 const TIMER_PROCESS_NAME: &[u8] = b"timer-service";
 const FLAKY_PROCESS_CONTROL_CAP_SLOT: u64 = 3;
 
@@ -767,8 +768,18 @@ fn supervise_services(
     let mut restart_counts = [0u16; MAX_PROCESSES];
     let mut complete_count = 0;
     let mut restart_observed = false;
+    let mut finite_count = 0;
+    let mut index = 0;
+    while index < order_len {
+        let process_index = order[index] as usize;
+        let name = process_name(manifest, boot_modules, process_index);
+        if !service_is_persistent(name) {
+            finite_count += 1;
+        }
+        index += 1;
+    }
 
-    while complete_count < order_len {
+    while complete_count < finite_count {
         let mut made_progress = false;
         let mut index = 0;
         while index < order_len {
@@ -826,6 +837,11 @@ fn supervise_services(
                 continue;
             }
 
+            if service_is_persistent(name) {
+                log_prefix(b"persistent service exited unexpectedly: ", name);
+                activation_failed(parent_generation);
+            }
+
             if status == 0 {
                 log(b"vertex-init waits for service exit status");
                 log_prefix(b"service lifecycle exited: ", name);
@@ -845,17 +861,54 @@ fn supervise_services(
             activation_failed(parent_generation);
         }
 
-        if complete_count < order_len && !made_progress {
+        if complete_count < finite_count && !made_progress {
             sys::yield_now();
         }
     }
 
+    verify_persistent_services(
+        manifest,
+        boot_modules,
+        order,
+        order_len,
+        pids,
+        parent_generation,
+    );
     if restart_observed {
         log(b"restart budget and backoff policy enforced");
         log(b"Native restart policy ok");
     }
     log(b"operator-visible activation log records generation id");
     verify_lifecycle_inspect_states(parent_generation, device_report_required);
+}
+
+fn verify_persistent_services(
+    manifest: &[u8],
+    boot_modules: u16,
+    order: &[u16; MAX_PROCESSES],
+    order_len: usize,
+    pids: &[u64; MAX_PROCESSES],
+    parent_generation: &[u8],
+) {
+    let mut index = 0;
+    while index < order_len {
+        let process_index = order[index] as usize;
+        let name = process_name(manifest, boot_modules, process_index);
+        if service_is_persistent(name) {
+            let status = sys::process_wait(pids[process_index]);
+            if status == STATUS_RUNNING {
+                log_prefix(b"persistent service remains running: ", name);
+            } else {
+                log_prefix(b"persistent service not running: ", name);
+                activation_failed(parent_generation);
+            }
+        }
+        index += 1;
+    }
+}
+
+fn service_is_persistent(name: &[u8]) -> bool {
+    bytes_eq(name, BLOCK_DRIVER_PROCESS_NAME)
 }
 
 fn verify_lifecycle_inspect_states(parent_generation: &[u8], device_report_required: bool) {
@@ -975,18 +1028,17 @@ fn verify_device_hardening_report(report: &[u8], parent_generation: &[u8]) {
     let dma_needles: [&[u8]; 4] = [
         b"dma-region[",
         b"name=cap:dma.virtio-blk0",
-        b"owner=kernel",
-        b"mapped=no",
+        b"owner=block-driver",
+        b"mapped=yes",
     ];
     if let Some(line) = find_line_contains_all(report, &dma_needles) {
         let maps = decimal_after(line, b"map_count=").unwrap_or(0);
-        let releases = decimal_after(line, b"release_count=").unwrap_or(0);
-        if maps > 0 && releases > 0 {
-            log(b"driver exit releases DMA buffers and user DMA mappings");
+        if maps > 0 {
+            log(b"persistent block-driver owns its DMA mapping while serving storage");
             log(b"DMA map twice for the same object returns the same mapping without leaking frames");
             log(b"unauthorized service cannot map or inspect another driver's DMA region");
         } else {
-            log(b"M71 DMA map/release counters missing");
+            log(b"M71 DMA map counters missing");
             activation_failed(parent_generation);
         }
     } else {
@@ -997,7 +1049,7 @@ fn verify_device_hardening_report(report: &[u8], parent_generation: &[u8]) {
     let block_needles: [&[u8]; 5] = [
         b"virtio-device-runtime[",
         b"device=device:virtio-blk0",
-        b"owner=kernel",
+        b"owner=block-driver",
         b"queue_size=8",
         b"last_error=none",
     ];

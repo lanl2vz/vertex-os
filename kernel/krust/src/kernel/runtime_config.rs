@@ -13,6 +13,7 @@ pub(crate) const MAX_BOOT_GRAPH_EDGES: usize = 224;
 pub(crate) const MAX_BOOT_POLICY_CAPABILITIES: usize = 128;
 pub(crate) const MAX_BOOT_POLICY_REQUIREMENTS: usize = 160;
 pub(crate) const MAX_BOOT_POLICY_PROVIDES: usize = 64;
+pub(crate) const MAX_BOOT_POLICY_MOUNTS: usize = 96;
 pub const BOOT_POLICY_VERSION: u16 = vertex_abi::krustboot::POLICY_VERSION;
 
 pub(crate) const BOOT_PROCESS_MOUNT_BIND: u16 = 1;
@@ -203,6 +204,15 @@ pub struct BootPolicyProvideConfig {
 }
 
 #[derive(Clone, Copy)]
+pub struct BootPolicyMountConfig {
+    pub service: &'static str,
+    pub mount_root: &'static str,
+    pub path: &'static str,
+    pub source: &'static str,
+    pub flags: u16,
+}
+
+#[derive(Clone, Copy)]
 pub struct BootRuntimeConfig {
     pub(crate) generation_id: &'static str,
     pub(crate) manifest_hash: [u8; 64],
@@ -254,6 +264,8 @@ pub struct BootRuntimeConfig {
     pub(crate) policy_requirement_count: usize,
     pub(crate) policy_provides: [Option<BootPolicyProvideConfig>; MAX_BOOT_POLICY_PROVIDES],
     pub(crate) policy_provide_count: usize,
+    pub(crate) policy_mounts: [Option<BootPolicyMountConfig>; MAX_BOOT_POLICY_MOUNTS],
+    pub(crate) policy_mount_count: usize,
 }
 
 fn valid_boot_process_mounts(process: BootProcessConfig) -> bool {
@@ -343,6 +355,8 @@ impl BootRuntimeConfig {
             policy_requirement_count: 0,
             policy_provides: [None; MAX_BOOT_POLICY_PROVIDES],
             policy_provide_count: 0,
+            policy_mounts: [None; MAX_BOOT_POLICY_MOUNTS],
+            policy_mount_count: 0,
         }
     }
 
@@ -375,6 +389,7 @@ impl BootRuntimeConfig {
         self.policy_capability_count = 0;
         self.policy_requirement_count = 0;
         self.policy_provide_count = 0;
+        self.policy_mount_count = 0;
     }
 
     pub fn set_generation_id(&mut self, generation_id: &'static str) {
@@ -697,6 +712,31 @@ impl BootRuntimeConfig {
         }
         self.policy_provides[self.policy_provide_count] = Some(provide);
         self.policy_provide_count += 1;
+        Ok(())
+    }
+
+    pub fn add_policy_mount(&mut self, mount: BootPolicyMountConfig) -> Result<(), InitError> {
+        if self.policy_mount_count == self.policy_mounts.len()
+            || mount.service.is_empty()
+            || mount.mount_root.is_empty()
+            || !valid_vfs_root_path(mount.mount_root.as_bytes())
+        {
+            return Err(InitError::InvalidBootManifest);
+        }
+        if mount.path.is_empty() || mount.source.is_empty() {
+            if !mount.path.is_empty() || !mount.source.is_empty() || mount.flags != 0 {
+                return Err(InitError::InvalidBootManifest);
+            }
+        } else if !valid_vfs_root_path(mount.path.as_bytes())
+            || !valid_vfs_root_path(mount.source.as_bytes())
+            || mount.path == "/"
+            || mount.flags & !known_boot_process_mount_flags() != 0
+            || mount.flags & BOOT_PROCESS_MOUNT_BIND == 0
+        {
+            return Err(InitError::InvalidBootManifest);
+        }
+        self.policy_mounts[self.policy_mount_count] = Some(mount);
+        self.policy_mount_count += 1;
         Ok(())
     }
 

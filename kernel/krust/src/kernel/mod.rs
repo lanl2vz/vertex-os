@@ -34,9 +34,9 @@ pub use runtime_config::{
     BootGrantConfig, BootGraphEdgeConfig, BootGraphNodeConfig, BootInterruptLineConfig,
     BootIoPortRangeConfig, BootMmioRegionConfig, BootModuleConfig, BootNamespaceConfig,
     BootNamespaceEntryConfig, BootNetworkPortConfig, BootPciDeviceConfig,
-    BootPolicyCapabilityConfig, BootPolicyProvideConfig, BootPolicyRequirementConfig,
-    BootProcessConfig, BootProcessMountConfig, BootRuntimeConfig, BootStateVolumeConfig,
-    BootStoreObjectConfig, BootVfsRootConfig, BootVirtioDeviceConfig,
+    BootPolicyCapabilityConfig, BootPolicyMountConfig, BootPolicyProvideConfig,
+    BootPolicyRequirementConfig, BootProcessConfig, BootProcessMountConfig, BootRuntimeConfig,
+    BootStateVolumeConfig, BootStoreObjectConfig, BootVfsRootConfig, BootVirtioDeviceConfig,
 };
 pub(crate) use runtime_config::{
     BOOT_PROCESS_MOUNT_BIND, BOOT_PROCESS_MOUNT_READ_ONLY, MAX_BOOT_NAMESPACES,

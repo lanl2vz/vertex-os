@@ -13,9 +13,9 @@ pub use crate::kernel::{
     BootGrantConfig, BootGraphEdgeConfig, BootGraphNodeConfig, BootInterruptLineConfig,
     BootIoPortRangeConfig, BootMmioRegionConfig, BootModuleConfig, BootNamespaceConfig,
     BootNamespaceEntryConfig, BootNetworkPortConfig, BootPciDeviceConfig,
-    BootPolicyCapabilityConfig, BootPolicyProvideConfig, BootPolicyRequirementConfig,
-    BootProcessConfig, BootProcessMountConfig, BootRuntimeConfig, BootStateVolumeConfig,
-    BootStoreObjectConfig, BootVfsRootConfig, BootVirtioDeviceConfig,
+    BootPolicyCapabilityConfig, BootPolicyMountConfig, BootPolicyProvideConfig,
+    BootPolicyRequirementConfig, BootProcessConfig, BootProcessMountConfig, BootRuntimeConfig,
+    BootStateVolumeConfig, BootStoreObjectConfig, BootVfsRootConfig, BootVirtioDeviceConfig,
 };
 use crate::kernel::{
     BOOT_PROCESS_MOUNT_BIND, BOOT_PROCESS_MOUNT_READ_ONLY, BootModuleObject, Capability,

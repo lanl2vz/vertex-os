@@ -1,6 +1,6 @@
 # Krust Kernel
 
-Krust now covers the M14-M85 native graph-activation proof path, substrate
+Krust now covers the M14-M86 native graph-activation proof path, substrate
 hardening, reproducible build environment, directed IPC ABI v1, and native
 console shell plus virtio device I/O, VertexDisk v1 persistence, native boot
 selection, verified store objects, native update transactions, and store-loaded
@@ -23,7 +23,7 @@ graph-store read/provenance surface, native generation-manager
 install/rollback/recovery, and native package closure import with separate
 negative import validation, native metadata registration for a graph-store-only
 candidate, an actual base-to-candidate active graph delta, and declared
-state-object migration policy. M44-M85 are
+state-object migration policy, and native policy validation. M44-M86 are
 tracked in `../../docs/krust-milestones.md`.
 
 The target is intentionally small:
@@ -459,13 +459,13 @@ make release-gate
 ```
 
 The gate checks script executability and shell syntax, verifies Makefile recipe
-parsing, checks Rust formatting and Markdown whitespace, confirms the M14-M85
+parsing, checks Rust formatting and Markdown whitespace, confirms the M14-M86
 documentation anchors, checks the pinned M39 toolchain and Cargo lockfiles, runs
 `cargo metadata --locked --offline`, `cargo build --locked --offline`, and
 `cargo test --locked --offline`,
 validates `examples/hello-generation.vertex.json`, runs `make doctor`, rebuilds
 from `make clean`, runs `make smoke`, checks package/link/build import commands,
-and then runs the M14-M85 QEMU cases:
+and then runs the M14-M86 QEMU cases:
 `m14`,
 `manifest-cycle`, `bad-cap`, `readiness-timeout`, `rollback`, `store-state-services`,
 `timer`, `preemption`, `user-fault`, `restart`, `manifest-v1`, `cap-lifecycle`,

@@ -539,6 +539,7 @@ pub(super) fn validate_boot_config_installable(
     validate_counted_config_entries(&config.policy_capabilities, config.policy_capability_count)?;
     validate_counted_config_entries(&config.policy_requirements, config.policy_requirement_count)?;
     validate_counted_config_entries(&config.policy_provides, config.policy_provide_count)?;
+    validate_counted_config_entries(&config.policy_mounts, config.policy_mount_count)?;
 
     if config.endpoint_count == 0 {
         return Err(InitError::InvalidBootManifest);
@@ -823,6 +824,35 @@ fn validate_boot_config_policy(config: &BootRuntimeConfig) -> Result<(), InitErr
     }
 
     index = 0;
+    while index < config.policy_mount_count {
+        let mount = config.policy_mounts[index].ok_or(InitError::InvalidBootManifest)?;
+        if !valid_boot_policy_mount_fact(config, mount)? {
+            let target = if mount.path.is_empty() {
+                mount.mount_root
+            } else {
+                mount.path
+            };
+            log_policy_denial(mount.service, target, "mount-fact", "invalid-mount");
+            return Err(InitError::InvalidBootManifest);
+        }
+        let mut prior = 0;
+        while prior < index {
+            let existing = config.policy_mounts[prior].ok_or(InitError::InvalidBootManifest)?;
+            if existing.service == mount.service
+                && existing.mount_root == mount.mount_root
+                && existing.path == mount.path
+                && existing.source == mount.source
+                && existing.flags == mount.flags
+            {
+                log_policy_denial(mount.service, mount.mount_root, "mount-fact", "duplicate");
+                return Err(InitError::InvalidBootManifest);
+            }
+            prior += 1;
+        }
+        index += 1;
+    }
+
+    index = 0;
     while index < config.grant_count {
         let grant = config.grants[index].ok_or(InitError::InvalidBootManifest)?;
         if !boot_grant_authorized_by_policy(config, grant)? {
@@ -836,7 +866,144 @@ fn validate_boot_config_policy(config: &BootRuntimeConfig) -> Result<(), InitErr
         index += 1;
     }
 
+    index = 0;
+    while index < config.process_count {
+        let process = config.processes[index].ok_or(InitError::InvalidBootManifest)?;
+        if !boot_policy_mount_root_allows(config, process.graph_node, process.mount_root) {
+            log_policy_denial(
+                process.graph_node,
+                process.mount_root,
+                "mount-root",
+                "no-policy-edge",
+            );
+            return Err(InitError::InvalidBootManifest);
+        }
+        let mut mount_index = 0;
+        while mount_index < process.mount_count {
+            let mount = process.mounts[mount_index].ok_or(InitError::InvalidBootManifest)?;
+            if !boot_policy_mount_allows(config, process.graph_node, process.mount_root, mount) {
+                log_policy_denial(
+                    process.graph_node,
+                    mount.path,
+                    "declared-mount",
+                    "no-policy-edge",
+                );
+                return Err(InitError::InvalidBootManifest);
+            }
+            mount_index += 1;
+        }
+        index += 1;
+    }
+
+    index = 0;
+    while index < config.policy_mount_count {
+        let mount = config.policy_mounts[index].ok_or(InitError::InvalidBootManifest)?;
+        if !boot_policy_mount_matches_process(config, mount)? {
+            let target = if mount.path.is_empty() {
+                mount.mount_root
+            } else {
+                mount.path
+            };
+            log_policy_denial(mount.service, target, "mount-fact", "unused-policy-edge");
+            return Err(InitError::InvalidBootManifest);
+        }
+        index += 1;
+    }
+
     Ok(())
+}
+
+fn valid_boot_policy_mount_fact(
+    config: &BootRuntimeConfig,
+    mount: BootPolicyMountConfig,
+) -> Result<bool, InitError> {
+    if !boot_config_has_service(config, mount.service)?
+        || !valid_vfs_root_path(mount.mount_root.as_bytes())
+    {
+        return Ok(false);
+    }
+    if mount.path.is_empty() && mount.source.is_empty() {
+        return Ok(mount.flags == 0);
+    }
+    Ok(!mount.path.is_empty()
+        && !mount.source.is_empty()
+        && mount.path != "/"
+        && valid_vfs_root_path(mount.path.as_bytes())
+        && valid_vfs_root_path(mount.source.as_bytes())
+        && mount.flags & !known_boot_process_mount_flags() == 0
+        && mount.flags & BOOT_PROCESS_MOUNT_BIND != 0)
+}
+
+fn boot_policy_mount_root_allows(
+    config: &BootRuntimeConfig,
+    service: &str,
+    mount_root: &str,
+) -> bool {
+    let mut index = 0;
+    while index < config.policy_mount_count {
+        if let Some(mount) = config.policy_mounts[index]
+            && mount.service == service
+            && mount.mount_root == mount_root
+            && mount.path.is_empty()
+            && mount.source.is_empty()
+            && mount.flags == 0
+        {
+            return true;
+        }
+        index += 1;
+    }
+    false
+}
+
+fn boot_policy_mount_allows(
+    config: &BootRuntimeConfig,
+    service: &str,
+    mount_root: &str,
+    process_mount: BootProcessMountConfig,
+) -> bool {
+    let mut index = 0;
+    while index < config.policy_mount_count {
+        if let Some(mount) = config.policy_mounts[index]
+            && mount.service == service
+            && mount.mount_root == mount_root
+            && mount.path == process_mount.path
+            && mount.source == process_mount.source
+            && mount.flags == process_mount.flags
+        {
+            return true;
+        }
+        index += 1;
+    }
+    false
+}
+
+fn boot_policy_mount_matches_process(
+    config: &BootRuntimeConfig,
+    mount: BootPolicyMountConfig,
+) -> Result<bool, InitError> {
+    let mut index = 0;
+    while index < config.process_count {
+        let process = config.processes[index].ok_or(InitError::InvalidBootManifest)?;
+        if process.graph_node == mount.service && process.mount_root == mount.mount_root {
+            if mount.path.is_empty() && mount.source.is_empty() && mount.flags == 0 {
+                return Ok(true);
+            }
+            let mut mount_index = 0;
+            while mount_index < process.mount_count {
+                let process_mount =
+                    process.mounts[mount_index].ok_or(InitError::InvalidBootManifest)?;
+                if mount.path == process_mount.path
+                    && mount.source == process_mount.source
+                    && mount.flags == process_mount.flags
+                {
+                    return Ok(true);
+                }
+                mount_index += 1;
+            }
+        }
+        index += 1;
+    }
+    Ok(false)
 }
 
 fn boot_grant_authorized_by_policy(

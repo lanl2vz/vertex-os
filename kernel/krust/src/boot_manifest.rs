@@ -38,6 +38,7 @@ const MAX_GRAPH_EDGES: usize = 224;
 const MAX_POLICY_CAPABILITIES: usize = 128;
 const MAX_POLICY_REQUIREMENTS: usize = 160;
 const MAX_POLICY_PROVIDES: usize = 64;
+const MAX_POLICY_MOUNTS: usize = 96;
 const POLICY_VERSION: u16 = krustboot_abi::POLICY_VERSION;
 const MAX_RUNTIME_OBJECTS: usize = 64;
 const FIXED_RUNTIME_OBJECTS: usize = 4;
@@ -267,6 +268,15 @@ pub struct PolicyProvide<'a> {
     pub capability: &'a str,
 }
 
+#[derive(Clone, Copy)]
+pub struct PolicyMount<'a> {
+    pub service: &'a str,
+    pub mount_root: &'a str,
+    pub path: &'a str,
+    pub source: &'a str,
+    pub flags: u16,
+}
+
 pub struct Manifest<'a> {
     generation_id: &'a str,
     parent_generation_id: &'a str,
@@ -321,6 +331,8 @@ pub struct Manifest<'a> {
     policy_requirement_count: usize,
     policy_provides: [Option<PolicyProvide<'a>>; MAX_POLICY_PROVIDES],
     policy_provide_count: usize,
+    policy_mounts: [Option<PolicyMount<'a>>; MAX_POLICY_MOUNTS],
+    policy_mount_count: usize,
 }
 
 struct Global<T>(UnsafeCell<T>);
@@ -359,6 +371,7 @@ pub enum ParseError {
     TooManyPolicyCapabilities,
     TooManyPolicyRequirements,
     TooManyPolicyProvides,
+    TooManyPolicyMounts,
     TooManyRuntimeObjects,
     InvalidString,
     InvalidReference,
@@ -431,6 +444,8 @@ impl<'a> Manifest<'a> {
             policy_requirement_count: 0,
             policy_provides: [None; MAX_POLICY_PROVIDES],
             policy_provide_count: 0,
+            policy_mounts: [None; MAX_POLICY_MOUNTS],
+            policy_mount_count: 0,
         }
     }
 
@@ -488,6 +503,8 @@ impl<'a> Manifest<'a> {
         self.policy_requirement_count = 0;
         self.policy_provides.fill(None);
         self.policy_provide_count = 0;
+        self.policy_mounts.fill(None);
+        self.policy_mount_count = 0;
     }
 
     pub fn generation_id(&self) -> &'a str {
@@ -616,6 +633,10 @@ impl<'a> Manifest<'a> {
 
     pub fn policy_provide_count(&self) -> usize {
         self.policy_provide_count
+    }
+
+    pub fn policy_mount_count(&self) -> usize {
+        self.policy_mount_count
     }
 
     pub fn boot_module(&self, index: usize) -> Option<BootModule<'a>> {
@@ -781,6 +802,14 @@ impl<'a> Manifest<'a> {
     pub fn policy_provide(&self, index: usize) -> Option<PolicyProvide<'a>> {
         if index < self.policy_provide_count {
             self.policy_provides[index]
+        } else {
+            None
+        }
+    }
+
+    pub fn policy_mount(&self, index: usize) -> Option<PolicyMount<'a>> {
+        if index < self.policy_mount_count {
+            self.policy_mounts[index]
         } else {
             None
         }
@@ -1218,12 +1247,15 @@ fn parse_compact_into(
     )?;
     let policy_provide_count =
         reader.read_count(MAX_POLICY_PROVIDES, ParseError::TooManyPolicyProvides)?;
+    let policy_mount_count =
+        reader.read_count(MAX_POLICY_MOUNTS, ParseError::TooManyPolicyMounts)?;
     let policy_hash = reader.read_fixed_str()?;
     manifest.policy_version = policy_version;
     manifest.policy_hash = policy_hash;
     manifest.policy_capability_count = policy_capability_count;
     manifest.policy_requirement_count = policy_requirement_count;
     manifest.policy_provide_count = policy_provide_count;
+    manifest.policy_mount_count = policy_mount_count;
 
     let policy_records_start = reader.offset;
     index = 0;
@@ -1269,6 +1301,27 @@ fn parse_compact_into(
         manifest.policy_provides[index] = Some(PolicyProvide {
             service: reader.read_fixed_str()?,
             capability: reader.read_fixed_str()?,
+        });
+        index += 1;
+    }
+
+    index = 0;
+    while index < policy_mount_count {
+        let service = reader.read_fixed_str()?;
+        let mount_root = reader.read_fixed_str()?;
+        let path = reader.read_fixed_str_allow_empty()?;
+        let source = reader.read_fixed_str_allow_empty()?;
+        let flags = reader.read_u16()?;
+        let reserved = reader.read_u16()?;
+        if reserved != 0 {
+            return Err(ParseError::InvalidPolicy);
+        }
+        manifest.policy_mounts[index] = Some(PolicyMount {
+            service,
+            mount_root,
+            path,
+            source,
+            flags,
         });
         index += 1;
     }
@@ -1903,6 +1956,30 @@ fn validate_policy_facts(manifest: &Manifest<'_>) -> Result<(), ParseError> {
     }
 
     index = 0;
+    while index < manifest.policy_mount_count {
+        let mount = manifest
+            .policy_mount(index)
+            .ok_or(ParseError::InvalidPolicy)?;
+        validate_policy_mount_fact(manifest, mount)?;
+        let mut prior = 0;
+        while prior < index {
+            let existing = manifest
+                .policy_mount(prior)
+                .ok_or(ParseError::InvalidPolicy)?;
+            if existing.service == mount.service
+                && existing.mount_root == mount.mount_root
+                && existing.path == mount.path
+                && existing.source == mount.source
+                && existing.flags == mount.flags
+            {
+                return Err(ParseError::InvalidPolicy);
+            }
+            prior += 1;
+        }
+        index += 1;
+    }
+
+    index = 0;
     while index < manifest.grant_count {
         let grant = manifest.grant(index).ok_or(ParseError::InvalidReference)?;
         if !grant_authorized_by_policy(manifest, grant)? {
@@ -1921,7 +1998,143 @@ fn validate_policy_facts(manifest: &Manifest<'_>) -> Result<(), ParseError> {
         index += 1;
     }
 
+    index = 0;
+    while index < manifest.process_count {
+        let process = manifest
+            .process(index)
+            .ok_or(ParseError::InvalidReference)?;
+        let service = graph_process_node_id(process);
+        if !policy_mount_root_allows(manifest, service, process.mount_root) {
+            log_policy_denial(service, process.mount_root, "mount-root", "no-policy-edge");
+            return Err(ParseError::InvalidPolicy);
+        }
+        let mut mount_index = 0;
+        while mount_index < process.mount_count {
+            let mount = process.mounts[mount_index].ok_or(ParseError::InvalidReference)?;
+            if !policy_mount_allows(manifest, service, process.mount_root, mount) {
+                log_policy_denial(service, mount.path, "declared-mount", "no-policy-edge");
+                return Err(ParseError::InvalidPolicy);
+            }
+            mount_index += 1;
+        }
+        index += 1;
+    }
+
+    index = 0;
+    while index < manifest.policy_mount_count {
+        let mount = manifest
+            .policy_mount(index)
+            .ok_or(ParseError::InvalidPolicy)?;
+        if !policy_mount_matches_process(manifest, mount)? {
+            let target = if mount.path.is_empty() {
+                mount.mount_root
+            } else {
+                mount.path
+            };
+            log_policy_denial(mount.service, target, "mount-fact", "unused-policy-edge");
+            return Err(ParseError::InvalidPolicy);
+        }
+        index += 1;
+    }
+
     Ok(())
+}
+
+fn validate_policy_mount_fact(
+    manifest: &Manifest<'_>,
+    mount: PolicyMount<'_>,
+) -> Result<(), ParseError> {
+    if !manifest_has_service(manifest, mount.service) {
+        return Err(ParseError::InvalidPolicy);
+    }
+    validate_vfs_root_path(mount.mount_root)?;
+    if mount.path.is_empty() && mount.source.is_empty() {
+        if mount.flags != 0 {
+            return Err(ParseError::InvalidPolicy);
+        }
+        return Ok(());
+    }
+    if mount.path.is_empty()
+        || mount.source.is_empty()
+        || mount.path == "/"
+        || mount.flags & !known_process_mount_flags() != 0
+        || mount.flags & PROCESS_MOUNT_FLAG_BIND == 0
+    {
+        return Err(ParseError::InvalidPolicy);
+    }
+    validate_vfs_root_path(mount.path)?;
+    validate_vfs_root_path(mount.source)
+}
+
+fn policy_mount_root_allows(manifest: &Manifest<'_>, service: &str, mount_root: &str) -> bool {
+    let mut index = 0;
+    while index < manifest.policy_mount_count {
+        if let Some(mount) = manifest.policy_mount(index)
+            && mount.service == service
+            && mount.mount_root == mount_root
+            && mount.path.is_empty()
+            && mount.source.is_empty()
+            && mount.flags == 0
+        {
+            return true;
+        }
+        index += 1;
+    }
+    false
+}
+
+fn policy_mount_allows(
+    manifest: &Manifest<'_>,
+    service: &str,
+    mount_root: &str,
+    process_mount: ProcessMount<'_>,
+) -> bool {
+    let mut index = 0;
+    while index < manifest.policy_mount_count {
+        if let Some(mount) = manifest.policy_mount(index)
+            && mount.service == service
+            && mount.mount_root == mount_root
+            && mount.path == process_mount.path
+            && mount.source == process_mount.source
+            && mount.flags == process_mount.flags
+        {
+            return true;
+        }
+        index += 1;
+    }
+    false
+}
+
+fn policy_mount_matches_process(
+    manifest: &Manifest<'_>,
+    mount: PolicyMount<'_>,
+) -> Result<bool, ParseError> {
+    let mut index = 0;
+    while index < manifest.process_count {
+        let process = manifest
+            .process(index)
+            .ok_or(ParseError::InvalidReference)?;
+        if graph_process_node_id(process) == mount.service && process.mount_root == mount.mount_root
+        {
+            if mount.path.is_empty() && mount.source.is_empty() && mount.flags == 0 {
+                return Ok(true);
+            }
+            let mut mount_index = 0;
+            while mount_index < process.mount_count {
+                let process_mount =
+                    process.mounts[mount_index].ok_or(ParseError::InvalidReference)?;
+                if mount.path == process_mount.path
+                    && mount.source == process_mount.source
+                    && mount.flags == process_mount.flags
+                {
+                    return Ok(true);
+                }
+                mount_index += 1;
+            }
+        }
+        index += 1;
+    }
+    Ok(false)
 }
 
 fn grant_authorized_by_policy(manifest: &Manifest<'_>, grant: Grant) -> Result<bool, ParseError> {

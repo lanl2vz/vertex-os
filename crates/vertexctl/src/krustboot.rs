@@ -25,6 +25,7 @@ const PROCESS_REF_LIST_LEN: usize = 2 + MAX_PROCESS_REFS * 2;
 const ENDPOINT_REQUIREMENT_LIST_LEN: usize = 2 + MAX_PROCESS_REFS * 4;
 const PROCESS_MOUNT_RECORD_LEN: usize = STRING_LEN * 2 + 4;
 const PROCESS_MOUNT_LIST_LEN: usize = 2 + MAX_PROCESS_MOUNTS * PROCESS_MOUNT_RECORD_LEN;
+const PROCESS_MOUNT_ROOT_OFFSET: usize = STRING_LEN * 4 + 4;
 const PROCESS_RECORD_LEN: usize = STRING_LEN * 5
     + 4
     + PROCESS_MOUNT_LIST_LEN
@@ -54,6 +55,7 @@ const GRAPH_EDGE_RECORD_LEN: usize = graph_abi::EDGE_RECORD_LEN;
 const POLICY_CAPABILITY_RECORD_LEN: usize = STRING_LEN * 2 + 8;
 const POLICY_REQUIREMENT_RECORD_LEN: usize = STRING_LEN * 2 + 4;
 const POLICY_PROVIDE_RECORD_LEN: usize = STRING_LEN * 2;
+const POLICY_MOUNT_RECORD_LEN: usize = STRING_LEN * 4 + 4;
 const MAX_BOOT_MODULES: usize = 16;
 const MAX_PROCESSES: usize = 16;
 const MAX_ENDPOINTS: usize = 16;
@@ -75,6 +77,7 @@ const MAX_GRAPH_EDGES: usize = 224;
 const MAX_POLICY_CAPABILITIES: usize = 128;
 const MAX_POLICY_REQUIREMENTS: usize = 160;
 const MAX_POLICY_PROVIDES: usize = 64;
+const MAX_POLICY_MOUNTS: usize = 96;
 const MAX_NAMESPACE_ENTRIES: usize = 4;
 const MAX_PROCESS_REFS: usize = 5;
 const MAX_PROCESS_MOUNTS: usize = 4;
@@ -168,7 +171,7 @@ pub struct GraphStoreImage {
 impl KrustBootIdentity {
     pub fn release_profile_label(&self) -> String {
         format!(
-            "Manifest v1 compact KRUSTBOOTM85 version {}",
+            "Manifest v1 compact KRUSTBOOTM86 version {}",
             self.compact_version
         )
     }
@@ -349,6 +352,7 @@ pub fn compile(manifest: &GenerationManifest) -> Result<Vec<u8>, String> {
         "policy_requirements",
     )?;
     push_count(&mut body, plan.policy_provides.len(), "policy_provides")?;
+    push_count(&mut body, plan.policy_mounts.len(), "policy_mounts")?;
     push_fixed_str(&mut body, &policy_hash)?;
     body.extend_from_slice(&policy_records);
 
@@ -476,9 +480,13 @@ pub fn corrupt(bytes: &[u8], mode: &str) -> Result<Vec<u8>, String> {
             corrupt_policy_excess_grant(&mut out)?;
             rewrite_v1_checksum(&mut out)?;
         }
+        "policy-mount-root" => {
+            corrupt_policy_mount_root(&mut out)?;
+            rewrite_v1_checksum(&mut out)?;
+        }
         other => {
             return Err(format!(
-                "unknown KrustBoot corruption mode {other}; expected truncated, bad-magic, unsupported-version, out-of-bounds-record, raw-compact, old-compact-magic, graph-store-checksum, graph-store-record, missing-provider, policy-version, policy-hash, or policy-excess-grant"
+                "unknown KrustBoot corruption mode {other}; expected truncated, bad-magic, unsupported-version, out-of-bounds-record, raw-compact, old-compact-magic, graph-store-checksum, graph-store-record, missing-provider, policy-version, policy-hash, policy-excess-grant, or policy-mount-root"
             ));
         }
     }
@@ -555,7 +563,7 @@ pub fn validate_release_artifact(bytes: &[u8]) -> Result<KrustBootIdentity, Stri
 
     let payload = V1_PAYLOAD_OFFSET;
     if &bytes[payload..payload + COMPACT_MAGIC.len()] != COMPACT_MAGIC {
-        return Err("unsupported KrustBoot compact magic; expected KRUSTBOOTM85".to_owned());
+        return Err("unsupported KrustBoot compact magic; expected KRUSTBOOTM86".to_owned());
     }
     let compact_version = read_u16_at(bytes, payload + COMPACT_MAGIC.len())?;
     if compact_version != COMPACT_VERSION {
@@ -646,6 +654,7 @@ struct BootPlan {
     policy_capabilities: Vec<PolicyCapability>,
     policy_requirements: Vec<PolicyRequirement>,
     policy_provides: Vec<PolicyProvide>,
+    policy_mounts: Vec<PolicyMount>,
 }
 
 #[derive(Debug, Clone)]
@@ -821,6 +830,15 @@ struct PolicyRequirement {
 struct PolicyProvide {
     service: String,
     capability: String,
+}
+
+#[derive(Debug, Clone)]
+struct PolicyMount {
+    service: String,
+    mount_root: String,
+    path: String,
+    source: String,
+    flags: u16,
 }
 
 fn derive_plan(manifest: &GenerationManifest) -> Result<BootPlan, String> {
@@ -1357,6 +1375,7 @@ fn derive_plan(manifest: &GenerationManifest) -> Result<BootPlan, String> {
         policy_capabilities: Vec::new(),
         policy_requirements: Vec::new(),
         policy_provides: Vec::new(),
+        policy_mounts: Vec::new(),
     };
     derive_graph_store(manifest, &mut plan)?;
     derive_policy_facts(manifest, &mut plan)?;
@@ -1605,6 +1624,32 @@ fn derive_graph_store(manifest: &GenerationManifest, plan: &mut BootPlan) -> Res
 }
 
 fn derive_policy_facts(manifest: &GenerationManifest, plan: &mut BootPlan) -> Result<(), String> {
+    for process in &plan.processes {
+        let service = process_graph_node_id(process);
+        push_policy_mount(
+            &mut plan.policy_mounts,
+            PolicyMount {
+                service: service.clone(),
+                mount_root: process.mount_root.clone(),
+                path: String::new(),
+                source: String::new(),
+                flags: 0,
+            },
+        )?;
+        for mount in &process.mounts {
+            push_policy_mount(
+                &mut plan.policy_mounts,
+                PolicyMount {
+                    service: service.clone(),
+                    mount_root: process.mount_root.clone(),
+                    path: mount.path.clone(),
+                    source: mount.source.clone(),
+                    flags: mount.flags,
+                },
+            )?;
+        }
+    }
+
     for capability in &manifest.capabilities {
         let Some((object_kind, object_index)) = policy_object_ref_for_capability(plan, capability)
         else {
@@ -1914,6 +1959,20 @@ fn push_policy_provide(
         return Ok(());
     }
     provides.push(provide);
+    Ok(())
+}
+
+fn push_policy_mount(mounts: &mut Vec<PolicyMount>, mount: PolicyMount) -> Result<(), String> {
+    if mounts.iter().any(|existing| {
+        existing.service == mount.service
+            && existing.mount_root == mount.mount_root
+            && existing.path == mount.path
+            && existing.source == mount.source
+            && existing.flags == mount.flags
+    }) {
+        return Ok(());
+    }
+    mounts.push(mount);
     Ok(())
 }
 
@@ -3064,6 +3123,11 @@ fn validate_plan(plan: &BootPlan) -> Result<(), String> {
             "native policy exceeds {MAX_POLICY_PROVIDES} provide facts"
         ));
     }
+    if plan.policy_mounts.len() > MAX_POLICY_MOUNTS {
+        return Err(format!(
+            "native policy exceeds {MAX_POLICY_MOUNTS} mount facts"
+        ));
+    }
     validate_hardware_authority(plan)?;
 
     let initial_count = plan
@@ -4050,11 +4114,17 @@ fn serialize_policy_records(plan: &BootPlan) -> Result<Vec<u8>, String> {
             "native policy exceeds {MAX_POLICY_PROVIDES} provide facts"
         ));
     }
+    if plan.policy_mounts.len() > MAX_POLICY_MOUNTS {
+        return Err(format!(
+            "native policy exceeds {MAX_POLICY_MOUNTS} mount facts"
+        ));
+    }
 
     let mut bytes = Vec::with_capacity(
         plan.policy_capabilities.len() * POLICY_CAPABILITY_RECORD_LEN
             + plan.policy_requirements.len() * POLICY_REQUIREMENT_RECORD_LEN
-            + plan.policy_provides.len() * POLICY_PROVIDE_RECORD_LEN,
+            + plan.policy_provides.len() * POLICY_PROVIDE_RECORD_LEN
+            + plan.policy_mounts.len() * POLICY_MOUNT_RECORD_LEN,
     );
 
     for capability in &plan.policy_capabilities {
@@ -4076,6 +4146,15 @@ fn serialize_policy_records(plan: &BootPlan) -> Result<Vec<u8>, String> {
     for provide in &plan.policy_provides {
         push_fixed_str(&mut bytes, &provide.service)?;
         push_fixed_str(&mut bytes, &provide.capability)?;
+    }
+
+    for mount in &plan.policy_mounts {
+        push_fixed_str(&mut bytes, &mount.service)?;
+        push_fixed_str(&mut bytes, &mount.mount_root)?;
+        push_fixed_str(&mut bytes, &mount.path)?;
+        push_fixed_str(&mut bytes, &mount.source)?;
+        push_u16(&mut bytes, mount.flags);
+        push_u16(&mut bytes, 0);
     }
 
     Ok(bytes)
@@ -4378,13 +4457,48 @@ fn corrupt_policy_version(bytes: &mut [u8]) -> Result<(), String> {
 
 fn corrupt_policy_hash(bytes: &mut [u8]) -> Result<(), String> {
     let offset = compact_policy_header_offset(bytes)?
-        .checked_add(8)
+        .checked_add(10)
         .ok_or_else(|| "KrustBoot policy hash offset overflow".to_owned())?;
     if offset + STRING_LEN > bytes.len() {
         return Err("KrustBoot policy hash is out of bounds".to_owned());
     }
     bytes[offset] ^= 0x01;
     Ok(())
+}
+
+fn corrupt_policy_mount_root(bytes: &mut [u8]) -> Result<(), String> {
+    let payload = V1_PAYLOAD_OFFSET;
+    if bytes.len() < payload + COMPACT_HEADER_SIZE {
+        return Err("KrustBoot manifest is too short to corrupt mount root".to_owned());
+    }
+    let boot_modules = read_u16_at(bytes, payload + 18)? as usize;
+    let processes = read_u16_at(bytes, payload + 20)? as usize;
+    let process_base = payload
+        .checked_add(COMPACT_HEADER_SIZE)
+        .and_then(|offset| offset.checked_add(boot_modules.checked_mul(BOOT_MODULE_RECORD_LEN)?))
+        .ok_or_else(|| "KrustBoot process table offset overflow".to_owned())?;
+    let mut index = 0;
+    while index < processes {
+        let offset = process_base
+            .checked_add(
+                index
+                    .checked_mul(PROCESS_RECORD_LEN)
+                    .and_then(|offset| offset.checked_add(PROCESS_MOUNT_ROOT_OFFSET))
+                    .ok_or_else(|| "KrustBoot process mount-root offset overflow".to_owned())?,
+            )
+            .ok_or_else(|| "KrustBoot process mount-root offset overflow".to_owned())?;
+        if offset + STRING_LEN > bytes.len() {
+            return Err("KrustBoot process mount-root is out of bounds".to_owned());
+        }
+        if fixed_str_equals(bytes, offset, "/fs/app") {
+            let mut slot = [0u8; STRING_LEN];
+            slot[0] = b'/';
+            bytes[offset..offset + STRING_LEN].copy_from_slice(&slot);
+            return Ok(());
+        }
+        index += 1;
+    }
+    Err("KrustBoot manifest has no /fs/app mount root to corrupt".to_owned())
 }
 
 fn corrupt_policy_excess_grant(bytes: &mut [u8]) -> Result<(), String> {
@@ -4717,6 +4831,10 @@ mod tests {
             vfs_roots: Vec::new(),
             graph_nodes: Vec::new(),
             graph_edges: Vec::new(),
+            policy_capabilities: Vec::new(),
+            policy_requirements: Vec::new(),
+            policy_provides: Vec::new(),
+            policy_mounts: Vec::new(),
         }
     }
 

@@ -1664,6 +1664,25 @@ fn build_boot_runtime_config(
         index += 1;
     }
 
+    index = 0;
+    while index < boot_manifest.policy_mount_count() {
+        let mount = boot_manifest.policy_mount(index)?;
+        if config
+            .add_policy_mount(ipc::BootPolicyMountConfig {
+                service: mount.service,
+                mount_root: mount.mount_root,
+                path: mount.path,
+                source: mount.source,
+                flags: mount.flags,
+            })
+            .is_err()
+        {
+            serial::write_str("KrustBoot runtime plan failed: policy mount table\n");
+            return None;
+        }
+        index += 1;
+    }
+
     Some(())
 }
 
@@ -3102,6 +3121,9 @@ fn print_boot_manifest_error(error: boot_manifest::ParseError) {
         }
         boot_manifest::ParseError::TooManyPolicyProvides => {
             serial::write_str("too many policy provides")
+        }
+        boot_manifest::ParseError::TooManyPolicyMounts => {
+            serial::write_str("too many policy mounts")
         }
         boot_manifest::ParseError::TooManyRuntimeObjects => {
             serial::write_str("too many runtime objects")

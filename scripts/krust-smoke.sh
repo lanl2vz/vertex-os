@@ -538,7 +538,7 @@ Krust process wait observed exit: proc=logd
 vertex-init waits for service exit status
 block-driver sleeps on virtio-blk IRQ instead of polling for completion
 netstack sleeps on virtio-net IRQ instead of polling for RX completion
-driver exit releases DMA buffers and user DMA mappings
+persistent block-driver owns its DMA mapping while serving storage
 inspect reports virtio queue state, last error, reset count, and owner process
 release gate checks memory/object/cap/DMA/IRQ leak deltas after fault injection
 VFS poll reports empty pipe not readable

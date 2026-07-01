@@ -30,12 +30,12 @@ vertex-os/
     netstack/            Demo network capability provider
     echo-server/         Demo service consuming log and network capabilities
   kernel/
-    krust/               Bootable Krust kernel prototype, currently covering M14-M85 native graph activation, substrate hardening, pinned tooling, ABI v1 IPC, console shell, virtio device I/O, VertexDisk v1 durability, native boot selection, verified store objects, native updates, store-loaded executables, dynamic process creation, native config/secrets, package/link/build import, the first appliance transcript, native user-space driver objects, netstack boundaries, capability namespaces, policy compilation, lifecycle supervision, a supported standalone appliance profile, owned frame reclamation, address-space teardown, failure-atomic kernel object creation, memory lifecycle soak gates, interrupt routing, DMA ownership, virtio recovery, device-fault isolation, VFS root authority, open-file handles, directory metadata operations, bounded block-cache writeback, image-backed VertexFS/mount-namespace gates, VFS coordination primitives, filesystem security/soak gates, the native VertexDisk graph-store read/provenance surface, native generation-manager install/rollback/recovery, native package closure import, and declared state-object migration policy
+    krust/               Bootable Krust kernel prototype, currently covering M14-M86 native graph activation, substrate hardening, pinned tooling, ABI v1 IPC, console shell, virtio device I/O, VertexDisk v1 durability, native boot selection, verified store objects, native updates, store-loaded executables, dynamic process creation, native config/secrets, package/link/build import, the first appliance transcript, native user-space driver objects, netstack boundaries, capability namespaces, policy compilation, lifecycle supervision, a supported standalone appliance profile, owned frame reclamation, address-space teardown, failure-atomic kernel object creation, memory lifecycle soak gates, interrupt routing, DMA ownership, virtio recovery, device-fault isolation, VFS root authority, open-file handles, directory metadata operations, bounded block-cache writeback, image-backed VertexFS/mount-namespace gates, VFS coordination primitives, filesystem security/soak gates, the native VertexDisk graph-store read/provenance surface, native generation-manager install/rollback/recovery, native package closure import, declared state-object migration policy, and native policy validation
   lang/
     vertex-lang/         Planned typed system-definition language
 ```
 
-## Krust M14-M85
+## Krust M14-M86
 
 The current native activation path lives in `kernel/krust`. It is isolated
 from the host-side Cargo workspace and boots a Limine ISO under QEMU. The ISO
@@ -92,11 +92,13 @@ authority-delta reporting, separate negative import commands for undeclared
 dependencies and excess grants, a graph-store-only candidate that is not
 installable until package-import writes native generation metadata, an active
 graph delta from base to candidate generation, canonical closure hashing,
-activation, and rollback. M85 updates the compact payload identity to
-`KRUSTBOOTM85` version 15 and carries declared state
+activation, and rollback. M85 carries declared state
 owner/schema/storage/migration/retention/sharing policy through the graph
 store, native boot config, runtime inspection, generation staging, rollback,
-and host validation.
+and host validation. M86 updates the strict compact payload to
+`KRUSTBOOTM86` version 18, carries hashed policy facts for capability grants
+and service namespaces, and rejects graph-consistent but policy-invalid
+authority before activation.
 
 ```sh
 scripts/krust-smoke.sh
@@ -104,13 +106,13 @@ scripts/krust-smoke.sh
 
 The clean-clone release gate validates the host-side build and tests, checks
 the Krust toolchain, rebuilds the standalone ISO from clean kernel artifacts,
-and runs the M14-M85 substrate gate with the M14-M85 QEMU test matrix:
+and runs the M14-M86 substrate gate with the M14-M86 QEMU test matrix:
 
 ```sh
 scripts/krust-release-gate.sh
 ```
 
-See [docs/krust-milestones.md](docs/krust-milestones.md) for M0 through M85
+See [docs/krust-milestones.md](docs/krust-milestones.md) for M0 through M86
 current status and the appliance OS MVP profile,
 [docs/krust-toolchain.md](docs/krust-toolchain.md) for the pinned M39 toolchain,
 and [docs/krust-abi-v1.md](docs/krust-abi-v1.md) for the current syscall,

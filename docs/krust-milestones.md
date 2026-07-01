@@ -7,7 +7,7 @@ runtime layered over a host kernel.
 
 ## Status Summary
 
-Current status: M14-M85 are implemented and smoke-tested under
+Current status: M14-M86 are implemented and smoke-tested under
 `qemu-system-x86_64` with Limine. The current tree has an image-backed VertexFS
 v1 mount, a strict VertexDisk v1 section carrying the current VertexFS image,
 fixed journal replay, kernel-owned device-backed fsync transactions,
@@ -67,7 +67,11 @@ metadata before activation, and proves canonical closure hashing is stable. M85
 makes state volumes first-class policy records in the compact graph, validates
 owner/schema/storage/migration/retention/sharing declarations on the host and
 native boot paths, reports state policy and health through runtime inspection,
-and gates generation staging on declared migration and rollback policy.
+and gates generation staging on declared migration and rollback policy. M86
+adds a strict hashed native policy section to the compact payload, validates
+capability grants and service namespace authority before boot/runtime
+activation, reports the accepted policy hash through runtime inspection, and
+rejects unknown policy versions or graph-consistent policy-excess payloads.
 
 M74-M82 are implemented as the current VFS, open-file, directory, block-cache,
 VertexFS/mount-namespace, coordination, and security/soak substrate. The
@@ -88,9 +92,10 @@ journals, checkpoint remount verification, fsync faults, live-handle revocation
 semantics, a 100-cycle VFS churn probe, native graph-store checksum rejection,
 invalid graph-record rejection, and native package closure import through
 generation-manager activation/rollback, plus M85 state migration,
-bad-migration rollback, sharing-policy, retention, and state-health reporting.
+bad-migration rollback, sharing-policy, retention, state-health reporting, and
+M86 native policy validation with grant and mount-root tamper rejection.
 General vnode page cache integration, broader synthetic/device filesystem
-breadth, native graph-policy validation, and durable graph-store mutation
+breadth, durable graph-store mutation, and richer policy-denial persistence
 remain later work.
 
 ```sh
@@ -163,10 +168,15 @@ scripts/krust-test.sh m83-power-commit
 scripts/krust-test.sh m83-power-rollback
 scripts/krust-test.sh m84
 scripts/krust-test.sh m85
+scripts/krust-test.sh m86
+scripts/krust-test.sh manifest-policy-version
+scripts/krust-test.sh manifest-policy-hash
+scripts/krust-test.sh manifest-policy-excess-grant
+scripts/krust-test.sh manifest-policy-mount-root
 ```
 
-Next direction: move richer state lifecycle policy, policy validation, the
-operator graph shell, appliance update loop, and the graph soak gate into
+Next direction: move richer state lifecycle policy, durable policy-denial
+reporting, the operator graph shell, appliance update loop, and the graph soak gate into
 first-class Vertex OS surfaces on top of the M82 graph store, M83
 generation-manager substrate, and M84 package-import path while keeping Krust
 small and capability-mediated.
@@ -1576,7 +1586,7 @@ done: locked Cargo dependencies for the top-level host-tool workspace, Krust ker
 done: kernel/krust/rust-toolchain.toml pins Rust 1.95.0, rustfmt, and x86_64-unknown-none
 done: make doctor checks every required tool and reports actionable fixes
 done: legacy hello/ipc userspace crates are removed instead of carried forward
-done: single release-gate script runs the clean-clone M14-M85 substrate proof with the current QEMU matrix
+done: single release-gate script runs the clean-clone M14-M86 substrate proof with the current QEMU matrix
 ```
 
 Acceptance tests:
@@ -2776,7 +2786,7 @@ Supported profile:
 ```text
 x86_64 one CPU
 Limine boot
-KrustBoot Manifest v1 / compact payload KRUSTBOOTM85 version 15
+KrustBoot Manifest v1 / compact payload KRUSTBOOTM86 version 18
 QEMU virtio-blk, virtio-rng, virtio-net, and virtio-console
 VertexDisk store/state/update layout
 no legacy transport or payload compatibility
@@ -2803,9 +2813,9 @@ Implementation notes:
 - Do not expand to SMP, USB, GPU, a full filesystem, or Linux/POSIX
   compatibility until the profile can boot, update, recover, and explain its
   authority graph repeatably.
-- The compact native payload identity is now `KRUSTBOOTM85` version 15. M82,
-  M79, M75, M65, M61, and older compact payload identities are rejected rather
-  than retained as compatibility formats.
+- The compact native payload identity is now `KRUSTBOOTM86` version 18. M85,
+  M82, M79, M75, M65, M61, and older compact payload identities are rejected
+  rather than retained as compatibility formats.
 - The release gate records a supported profile artifact containing the exact
   toolchain, manifest hash, KrustBoot hash, kernel hash, VertexDisk hash, and
   store closure.
@@ -3043,7 +3053,7 @@ DMA zeroing on allocation and release
 Acceptance tests:
 
 ```text
-driver exit releases DMA buffers and user DMA mappings
+persistent block-driver owns its DMA mapping while serving storage
 restarted driver receives a fresh DMA mapping with zeroed contents
 overlapping DMA region in manifest is rejected
 unaligned DMA region in manifest is rejected
@@ -4012,7 +4022,7 @@ Scope:
 
 ```text
 done: native package-import service
-done: KrustBoot compact payload identity is `KRUSTBOOTM85` version 15
+done: package import runs under the current `KRUSTBOOTM86` version 18 strict compact payload
 done: package graph fragment parser for the compact typed graph format
 done: store-object hash verification before materialization
 done: closure linking against existing graph-store objects
@@ -4146,12 +4156,13 @@ done: legacy or unknown policy versions are rejected rather than interpreted loo
 
 Implementation notes:
 
-- The strict compact payload is version 17. It appends a policy section after
-  graph records: capability facts, requirement facts, provide facts, and a
-  BLAKE3 hash over the policy records.
-- The boot parser verifies policy version/hash and rejects any grant that is
-  only graph-backed but not policy-backed. The installable-generation runtime
-  validator repeats the same gate before generation-manager stage/install paths.
+- The strict compact payload is version 18. It appends a policy section after
+  graph records: capability facts, requirement facts, provide facts, mount-root
+  and declared-mount facts, and a BLAKE3 hash over the policy records.
+- The boot parser verifies policy version/hash and rejects any grant,
+  `mount_root`, or declared bind mount that is only graph/config-backed but not
+  policy-backed. The installable-generation runtime validator repeats the same
+  gate before generation-manager stage/install paths.
 - Native validation emits denial records naming source, target, rule, and
   reason on the serial path; `SYS_RUNTIME_INSPECT` exposes the accepted policy
   hash and fact counts.
@@ -4160,7 +4171,8 @@ Implementation notes:
 - No compatibility fallback for older policy formats. Add a new version only
   when the validator and gate understand it.
 - Tests: `scripts/krust-test.sh m86`, `manifest-policy-version`,
-  `manifest-policy-hash`, and `manifest-policy-excess-grant`.
+  `manifest-policy-hash`, `manifest-policy-excess-grant`, and
+  `manifest-policy-mount-root`.
 
 ## M87: Operator Graph Shell
 

@@ -341,6 +341,8 @@ fn write_policy_validation_report(runtime: &RuntimeState, report: &mut InspectRe
     report.push_u64_dec(config.policy_requirement_count as u64);
     report.push_str(" provides=");
     report.push_u64_dec(config.policy_provide_count as u64);
+    report.push_str(" mounts=");
+    report.push_u64_dec(config.policy_mount_count as u64);
     report.push_byte(b'\n');
 }
 
