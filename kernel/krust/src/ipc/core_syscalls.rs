@@ -33,11 +33,13 @@ pub fn send(cap_slot: u64, source: *const u8, len: usize) -> Result<(), IpcError
 
     endpoint.enqueue(sender, &message, len)?;
 
-    serial::write_str("IPC send accepted: endpoint=");
-    serial::write_u64_dec(endpoint.id.raw());
-    serial::write_str(" bytes=");
-    serial::write_u64_dec(len as u64);
-    serial::write_str("\n");
+    if serial::trace_enabled() {
+        serial::write_str("IPC send accepted: endpoint=");
+        serial::write_u64_dec(endpoint.id.raw());
+        serial::write_str(" bytes=");
+        serial::write_u64_dec(len as u64);
+        serial::write_str("\n");
+    }
 
     wake_blocked_receiver(endpoint_id);
     wake_blocked_vfs_state_reply(endpoint_id);
@@ -127,11 +129,13 @@ fn receive_with_timeout(
         .map_err(|_| IpcError::InvalidUserBuffer)?;
     record_ready_lifecycle(endpoint_id, current_pid, message);
 
-    serial::write_str("IPC receive delivered: endpoint=");
-    serial::write_u64_dec(endpoint_id.raw());
-    serial::write_str(" bytes=");
-    serial::write_u64_dec(copy_len as u64);
-    serial::write_str("\n");
+    if serial::trace_enabled() {
+        serial::write_str("IPC receive delivered: endpoint=");
+        serial::write_u64_dec(endpoint_id.raw());
+        serial::write_str(" bytes=");
+        serial::write_u64_dec(copy_len as u64);
+        serial::write_str("\n");
+    }
 
     frame.rax = copy_len as u64;
     Ok(())
@@ -235,8 +239,10 @@ pub fn log_write(cap_slot: u64, source: *const u8, len: usize) -> Result<(), Ipc
     usercopy::copy_from_user(&mut message, UserPtr::new(source as u64), len)
         .map_err(|_| IpcError::InvalidUserBuffer)?;
 
-    serial::write_ascii_bytes(&message[..len]);
-    serial::write_str("\n");
+    if !serial::interactive_quiet() {
+        serial::write_ascii_bytes(&message[..len]);
+        serial::write_str("\n");
+    }
     wake_blocked_vfs_pipe_read(&message[..len]);
     Ok(())
 }

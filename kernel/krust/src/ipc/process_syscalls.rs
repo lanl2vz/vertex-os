@@ -92,9 +92,11 @@ pub fn yield_current_process(frame: &mut SyscallFrame) -> ScheduleResult {
             process.state = ProcessState::Running;
         }
 
-        serial::write_str("Scheduler yield: proc=");
-        serial::write_str(current);
-        serial::write_str(" no other ready process\n");
+        if serial::trace_enabled() {
+            serial::write_str("Scheduler yield: proc=");
+            serial::write_str(current);
+            serial::write_str(" no other ready process\n");
+        }
         ScheduleResult::Continue
     }
 }
@@ -124,11 +126,13 @@ pub fn preempt_current_process(frame: &mut SyscallFrame) -> ScheduleResult {
     };
 
     if schedule_next_ready_no_wait_excluding_current(frame) {
-        serial::write_str("Scheduler preempted process without explicit yield: from=");
-        serial::write_str(current);
-        serial::write_str(" to=");
-        serial::write_str(current_process_name());
-        serial::write_str("\n");
+        if serial::trace_enabled() {
+            serial::write_str("Scheduler preempted process without explicit yield: from=");
+            serial::write_str(current);
+            serial::write_str(" to=");
+            serial::write_str(current_process_name());
+            serial::write_str("\n");
+        }
         ScheduleResult::Switched
     } else {
         let runtime = runtime();

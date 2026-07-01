@@ -62,11 +62,14 @@ KRUSTBOOT_CORRUPT ?=
 VERTEX_DISK_CORRUPT ?=
 VERTEXFS_CORRUPT ?=
 VERTEXFS_UPDATE_APP_A_PAYLOAD ?=
+KRUST_BUILD_ENV = $(if $(KRUST_INTERACTIVE_QUIET),KRUST_INTERACTIVE_QUIET=$(KRUST_INTERACTIVE_QUIET),)
 
 QEMU ?= qemu-system-x86_64
 QEMU_EXTRA ?= -object rng-random,filename=/dev/urandom,id=vertexrng -device virtio-rng-pci,rng=vertexrng,disable-modern=on -netdev user,id=vertexnet -device virtio-net-pci,netdev=vertexnet,mac=52:54:00:12:34:56,disable-modern=on
 QEMU_MACHINE ?=
 QEMU_BLOCK ?= -drive if=none,id=vertexblk,file=$(BLOCK_IMAGE),format=raw -device virtio-blk-pci,drive=vertexblk,disable-modern=on,queue-size=8
+QEMU_DISPLAY ?= cocoa
+QEMU_SERIAL_WINDOW ?= vc:80Cx30C
 LIMINE ?= limine
 XORRISO ?= xorriso
 CARGO ?= cargo
@@ -75,15 +78,15 @@ RUSTFMT ?= rustfmt
 VERTEXCTL ?= $(CARGO) run --locked --quiet --manifest-path ../../crates/vertexctl/Cargo.toml --target $(HOST_TARGET) --
 LIMINE_DIR ?= $(firstword $(wildcard /opt/homebrew/share/limine /usr/local/share/limine /usr/share/limine))
 
-.PHONY: build kernel user boot-manifest block-image vertexfs-image iso run smoke doctor release-gate clean check-tools check-tool-versions check-cargo-locks check-rust-target check-limine-dir
+.PHONY: build kernel user boot-manifest block-image vertexfs-image iso run run-window smoke doctor release-gate clean check-tools check-tool-versions check-cargo-locks check-rust-target check-limine-dir
 
 build: kernel user
 
 kernel:
-	$(CARGO) build --locked --target $(KRUST_TARGET)
+	$(KRUST_BUILD_ENV) $(CARGO) build --locked --target $(KRUST_TARGET)
 
 user:
-	cd user && $(CARGO) build --workspace --locked --target $(KRUST_TARGET)
+	cd user && $(KRUST_BUILD_ENV) $(CARGO) build --workspace --locked --target $(KRUST_TARGET)
 
 boot-manifest: user
 	mkdir -p $(BUILD_DIR)
@@ -151,8 +154,13 @@ iso: build boot-manifest block-image vertexfs-image check-tools check-limine-dir
 		-o $(ISO_IMAGE)
 	$(LIMINE) bios-install $(ISO_IMAGE)
 
+run: KRUST_INTERACTIVE_QUIET=1
 run: iso
 	$(QEMU) $(QEMU_MACHINE) $(QEMU_EXTRA) $(QEMU_BLOCK) -m 256M -serial stdio -monitor none -display none -no-reboot -no-shutdown -cdrom $(ISO_IMAGE)
+
+run-window: KRUST_INTERACTIVE_QUIET=1
+run-window: iso
+	$(QEMU) $(QEMU_MACHINE) $(QEMU_EXTRA) $(QEMU_BLOCK) -m 256M -display $(QEMU_DISPLAY) -serial $(QEMU_SERIAL_WINDOW) -monitor none -no-reboot -no-shutdown -cdrom $(ISO_IMAGE)
 
 smoke: iso
 	@QEMU="$(QEMU)" \

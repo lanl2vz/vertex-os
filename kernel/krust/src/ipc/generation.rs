@@ -195,11 +195,7 @@ impl BootManagerState {
         serial::write_str("\n");
     }
 
-    fn install_state_migration_abort(
-        &mut self,
-        target: &'static str,
-        error: StateTransitionError,
-    ) {
+    fn install_state_migration_abort(&mut self, target: &'static str, error: StateTransitionError) {
         self.last_state_migration_state = error.state;
         self.last_state_migration_error = error.reason;
         self.last_state_migration_status = "failed";
@@ -979,10 +975,7 @@ fn log_state_schema_unchanged(state: BootStateVolumeConfig) {
     serial::write_str("\n");
 }
 
-fn log_state_migration_accept(
-    previous: BootStateVolumeConfig,
-    target: BootStateVolumeConfig,
-) {
+fn log_state_migration_accept(previous: BootStateVolumeConfig, target: BootStateVolumeConfig) {
     serial::write_str("State migration plan accepted: state=");
     serial::write_str(target.id);
     serial::write_str(" from=");
@@ -992,10 +985,7 @@ fn log_state_migration_accept(
     serial::write_str(" mode=migrate\n");
 }
 
-fn log_state_migration_journal(
-    previous: BootStateVolumeConfig,
-    target: BootStateVolumeConfig,
-) {
+fn log_state_migration_journal(previous: BootStateVolumeConfig, target: BootStateVolumeConfig) {
     serial::write_str("State migration journal record: state=");
     serial::write_str(target.id);
     serial::write_str(" from=");
@@ -1044,10 +1034,7 @@ fn log_state_rollback_policy(previous: BootStateVolumeConfig, target: BootStateV
     serial::write_str("\n");
 }
 
-fn log_state_rollback_journal(
-    previous: BootStateVolumeConfig,
-    target: BootStateVolumeConfig,
-) {
+fn log_state_rollback_journal(previous: BootStateVolumeConfig, target: BootStateVolumeConfig) {
     serial::write_str("State rollback journal record: state=");
     serial::write_str(target.id);
     serial::write_str(" from=");

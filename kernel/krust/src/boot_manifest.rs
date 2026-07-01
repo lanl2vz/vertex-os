@@ -1586,7 +1586,10 @@ fn valid_state_volume_policy(state: StateVolume<'_>) -> bool {
         && !state.migration_policy.is_empty()
         && !state.retention_policy.is_empty()
         && !state.sharing_policy.is_empty()
-        && matches!(state.storage_class, "vertexdisk-v1" | "hosted-local-directory")
+        && matches!(
+            state.storage_class,
+            "vertexdisk-v1" | "hosted-local-directory"
+        )
         && matches!(
             state.migration_policy,
             "preserve" | "migrate" | "fork" | "discard"

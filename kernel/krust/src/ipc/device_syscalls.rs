@@ -59,21 +59,23 @@ pub fn virtio_device_report(cap_slot: u64, source: *const u8, len: usize) -> Res
     device.reset_count = read_report_u64(&bytes, 48);
     device.last_error = last_error;
 
-    serial::write_str("Virtio driver report accepted: proc=");
-    serial::write_str(process_name);
-    serial::write_str(" virtio-device=");
-    serial::write_str(device.name);
-    serial::write_str(" submissions=");
-    serial::write_u64_dec(device.submissions);
-    serial::write_str(" completions=");
-    serial::write_u64_dec(device.completions);
-    serial::write_str(" timeouts=");
-    serial::write_u64_dec(device.timeouts);
-    serial::write_str(" resets=");
-    serial::write_u64_dec(device.reset_count);
-    serial::write_str(" last_error=");
-    serial::write_str(device.last_error);
-    serial::write_str("\n");
+    if serial::trace_enabled() {
+        serial::write_str("Virtio driver report accepted: proc=");
+        serial::write_str(process_name);
+        serial::write_str(" virtio-device=");
+        serial::write_str(device.name);
+        serial::write_str(" submissions=");
+        serial::write_u64_dec(device.submissions);
+        serial::write_str(" completions=");
+        serial::write_u64_dec(device.completions);
+        serial::write_str(" timeouts=");
+        serial::write_u64_dec(device.timeouts);
+        serial::write_str(" resets=");
+        serial::write_u64_dec(device.reset_count);
+        serial::write_str(" last_error=");
+        serial::write_str(device.last_error);
+        serial::write_str("\n");
+    }
     Ok(())
 }
 
@@ -926,13 +928,15 @@ pub fn irq_wait(cap_slot: u64, timeout_ms: u64, frame: &mut SyscallFrame) -> Res
         return Ok(());
     }
 
-    serial::write_str("IRQ wait accepted: proc=");
-    serial::write_str(current_process_name());
-    serial::write_str(" interrupt-line=");
-    serial::write_str(line.name);
-    serial::write_str(" line=");
-    serial::write_u64_dec(line.line);
-    serial::write_str("\n");
+    if serial::trace_enabled() {
+        serial::write_str("IRQ wait accepted: proc=");
+        serial::write_str(current_process_name());
+        serial::write_str(" interrupt-line=");
+        serial::write_str(line.name);
+        serial::write_str(" line=");
+        serial::write_u64_dec(line.line);
+        serial::write_str("\n");
+    }
 
     if timeout_ms == 0 {
         frame.rax = STATUS_OK;
@@ -984,16 +988,18 @@ fn block_current_on_interrupt(
         (process.name, line.name, line.line)
     };
 
-    serial::write_str("IRQ wait blocked: proc=");
-    serial::write_str(name);
-    serial::write_str(" interrupt-line=");
-    serial::write_str(line_name);
-    serial::write_str(" line=");
-    serial::write_u64_dec(line_number);
-    if timeout_tsc.is_some() {
-        serial::write_str(" timeout=yes");
+    if serial::trace_enabled() {
+        serial::write_str("IRQ wait blocked: proc=");
+        serial::write_str(name);
+        serial::write_str(" interrupt-line=");
+        serial::write_str(line_name);
+        serial::write_str(" line=");
+        serial::write_u64_dec(line_number);
+        if timeout_tsc.is_some() {
+            serial::write_str(" timeout=yes");
+        }
+        serial::write_str("\n");
     }
-    serial::write_str("\n");
 
     if schedule_next_ready(frame) {
         return true;
@@ -1004,9 +1010,11 @@ fn block_current_on_interrupt(
         process.state = ProcessState::Running;
     }
 
-    serial::write_str("Scheduler blocked: proc=");
-    serial::write_str(name);
-    serial::write_str(" no ready process\n");
+    if serial::trace_enabled() {
+        serial::write_str("Scheduler blocked: proc=");
+        serial::write_str(name);
+        serial::write_str(" no ready process\n");
+    }
     false
 }
 

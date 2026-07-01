@@ -18,6 +18,8 @@ const PROTOCOL_HEALTH_V0: u16 = 2;
 const MESSAGE_READY: u16 = 1;
 const ENVELOPE_LEN: usize = 16;
 const CONTROL_SHUTDOWN: &[u8] = b"shutdown";
+const LOGD_PROOF_OUTPUT: &[u8] = b"logd sends log message";
+const INTERACTIVE_QUIET: bool = option_env!("KRUST_INTERACTIVE_QUIET").is_some();
 
 #[unsafe(link_section = ".text._start")]
 #[unsafe(no_mangle)]
@@ -33,12 +35,14 @@ pub extern "C" fn _start() -> ! {
         sys::exit(1);
     }
 
-    if sys::io_write(CAP_COM1, COM1, b'>') != sys::STATUS_OK {
-        log(b"console-driver COM1 write failed");
-        sys::exit(1);
+    if !INTERACTIVE_QUIET {
+        if sys::io_write(CAP_COM1, COM1, b'>') != sys::STATUS_OK {
+            log(b"console-driver COM1 write failed");
+            sys::exit(1);
+        }
+        write_byte(b'\n');
+        log(b"console-driver can write byte");
     }
-    write_byte(b'\n');
-    log(b"console-driver can write byte");
     send_ready();
 
     loop {
@@ -67,6 +71,9 @@ fn drain_console_output() {
             sys::exit(1);
         }
         let payload = &buffer[..received as usize];
+        if INTERACTIVE_QUIET && bytes_eq(payload, LOGD_PROOF_OUTPUT) {
+            return;
+        }
         mirror_console_lines(payload);
         write_bytes(payload);
         log(b"console-driver wrote console output");

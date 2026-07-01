@@ -8,13 +8,15 @@ pub fn sleep_ms(
     frame: &mut SyscallFrame,
 ) -> Result<(), IpcError> {
     let timer = timer_from_cap(cap_slot, capability::RIGHT_CONTROL)?;
-    serial::write_str("Timer sleep accepted: proc=");
-    serial::write_str(current_process_name());
-    serial::write_str(" timer=");
-    serial::write_str(timer.name);
-    serial::write_str(" ms=");
-    serial::write_u64_dec(milliseconds);
-    serial::write_str("\n");
+    if serial::trace_enabled() {
+        serial::write_str("Timer sleep accepted: proc=");
+        serial::write_str(current_process_name());
+        serial::write_str(" timer=");
+        serial::write_str(timer.name);
+        serial::write_str(" ms=");
+        serial::write_u64_dec(milliseconds);
+        serial::write_str("\n");
+    }
 
     if milliseconds == 0 {
         frame.rax = STATUS_OK;
@@ -35,9 +37,11 @@ pub fn sleep_ms(
         process.name
     };
 
-    serial::write_str("Timer sleep blocked: proc=");
-    serial::write_str(current);
-    serial::write_str("\n");
+    if serial::trace_enabled() {
+        serial::write_str("Timer sleep blocked: proc=");
+        serial::write_str(current);
+        serial::write_str("\n");
+    }
 
     if schedule_next_ready(frame) {
         return Ok(());
@@ -114,14 +118,16 @@ pub(super) fn block_current_on_endpoint(
         process.name
     };
 
-    serial::write_str("IPC receive blocked: proc=");
-    serial::write_str(current);
-    serial::write_str(" endpoint=");
-    serial::write_u64_dec(endpoint.raw());
-    if timeout_tsc.is_some() {
-        serial::write_str(" timeout=yes");
+    if serial::trace_enabled() {
+        serial::write_str("IPC receive blocked: proc=");
+        serial::write_str(current);
+        serial::write_str(" endpoint=");
+        serial::write_u64_dec(endpoint.raw());
+        if timeout_tsc.is_some() {
+            serial::write_str(" timeout=yes");
+        }
+        serial::write_str("\n");
     }
-    serial::write_str("\n");
 
     if schedule_next_ready(frame) {
         true
@@ -131,9 +137,11 @@ pub(super) fn block_current_on_endpoint(
             process.state = ProcessState::Running;
         }
 
-        serial::write_str("Scheduler blocked: proc=");
-        serial::write_str(current);
-        serial::write_str(" no ready process\n");
+        if serial::trace_enabled() {
+            serial::write_str("Scheduler blocked: proc=");
+            serial::write_str(current);
+            serial::write_str(" no ready process\n");
+        }
         false
     }
 }
@@ -237,17 +245,19 @@ pub(super) fn wake_blocked_receiver(endpoint: KernelObjectId) {
                 }
                 record_ready_lifecycle(endpoint, receiver_pid, message);
 
-                serial::write_str("IPC receive delivered: endpoint=");
-                serial::write_u64_dec(endpoint.raw());
-                serial::write_str(" bytes=");
-                serial::write_u64_dec(copy_len as u64);
-                serial::write_str("\n");
+                if serial::trace_enabled() {
+                    serial::write_str("IPC receive delivered: endpoint=");
+                    serial::write_u64_dec(endpoint.raw());
+                    serial::write_str(" bytes=");
+                    serial::write_u64_dec(copy_len as u64);
+                    serial::write_str("\n");
 
-                serial::write_str("IPC wake receiver: proc=");
-                serial::write_str(name);
-                serial::write_str(" endpoint=");
-                serial::write_u64_dec(endpoint.raw());
-                serial::write_str("\n");
+                    serial::write_str("IPC wake receiver: proc=");
+                    serial::write_str(name);
+                    serial::write_str(" endpoint=");
+                    serial::write_u64_dec(endpoint.raw());
+                    serial::write_str("\n");
+                }
             }
             Err(_) => {
                 {
@@ -426,9 +436,11 @@ pub(super) fn wake_timed_processes(now: u64) -> usize {
                     process.saved_frame.rax = STATUS_OK;
                     process.state = ProcessState::Ready;
                     woke += 1;
-                    serial::write_str("Timer wake: proc=");
-                    serial::write_str(process.name);
-                    serial::write_str("\n");
+                    if serial::trace_enabled() {
+                        serial::write_str("Timer wake: proc=");
+                        serial::write_str(process.name);
+                        serial::write_str("\n");
+                    }
                 }
                 ProcessState::BlockedOnEndpoint {
                     timeout_tsc: Some(timeout_tsc),
@@ -437,9 +449,11 @@ pub(super) fn wake_timed_processes(now: u64) -> usize {
                     process.saved_frame.rax = STATUS_TIMEOUT;
                     process.state = ProcessState::Ready;
                     woke += 1;
-                    serial::write_str("IPC receive timeout: proc=");
-                    serial::write_str(process.name);
-                    serial::write_str("\n");
+                    if serial::trace_enabled() {
+                        serial::write_str("IPC receive timeout: proc=");
+                        serial::write_str(process.name);
+                        serial::write_str("\n");
+                    }
                 }
                 ProcessState::BlockedOnInterrupt {
                     timeout_tsc: Some(timeout_tsc),
@@ -448,9 +462,11 @@ pub(super) fn wake_timed_processes(now: u64) -> usize {
                     process.saved_frame.rax = STATUS_TIMEOUT;
                     process.state = ProcessState::Ready;
                     woke += 1;
-                    serial::write_str("IRQ wait timeout: proc=");
-                    serial::write_str(process.name);
-                    serial::write_str("\n");
+                    if serial::trace_enabled() {
+                        serial::write_str("IRQ wait timeout: proc=");
+                        serial::write_str(process.name);
+                        serial::write_str("\n");
+                    }
                 }
                 _ => {}
             }
@@ -585,11 +601,13 @@ fn schedule_next_ready_inner(
 
     *frame = next_frame;
 
-    serial::write_str("Scheduler switch: from=");
-    serial::write_str(from);
-    serial::write_str(" to=");
-    serial::write_str(to);
-    serial::write_str("\n");
+    if serial::trace_enabled() {
+        serial::write_str("Scheduler switch: from=");
+        serial::write_str(from);
+        serial::write_str(" to=");
+        serial::write_str(to);
+        serial::write_str("\n");
+    }
 
     unsafe {
         gdt::switch_address_space(next_cr3);
