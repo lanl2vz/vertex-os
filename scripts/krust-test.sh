@@ -23,6 +23,7 @@ BOOT_BAD_GENERATION_MANIFEST=
 VERTEX_DISK_GRAPH_ONLY_MANIFESTS=
 HOSTLESS_BOOT_GENERATIONS=0
 KRUSTBOOT_CORRUPT=
+BAD_GENERATION_KRUSTBOOT_CORRUPT=
 VERTEX_DISK_CORRUPT=
 VERTEXFS_CORRUPT=
 VERTEXFS_UPDATE_APP_A_PAYLOAD=
@@ -997,7 +998,27 @@ Native graph store loaded from VertexDisk: generation=gen:inspect-0001
 vertex-inspect runtime report captured
 vertex-inspect graph-store proof parsed
 vertex-inspect policy-validation proof parsed
+vertex-inspect policy-denial ring parsed
 native policy validation hash visible
+Native introspection service ok
+'
+	        ;;
+	    m86-policy-denial-report|policy-denial-report)
+		        MANIFEST="$ROOT_DIR/examples/krust-inspect-generation.vertex.json"
+		        BAD_GENERATION_MANIFEST="$ROOT_DIR/examples/krust-console-new-generation.vertex.json"
+		        BAD_GENERATION_KRUSTBOOT_CORRUPT=policy-excess-grant
+	        EXPECT_ACTIVATION_SUCCESS=1
+	        required_lines='
+native policy validation rejected: source=
+target=
+rule=grant-authorized
+reason=no-policy-edge
+KrustBoot bad generation manifest parse failed: invalid policy
+Boot generation: gen:inspect-0001
+vertex-inspect policy-denial ring parsed
+policy denial report: generation=gen:console-new-0002
+rule=grant-authorized
+reason=no-policy-edge
 Native introspection service ok
 '
 	        ;;
@@ -1795,7 +1816,7 @@ KrustBoot manifest unavailable
 '
         ;;
     *)
-        echo "usage: scripts/krust-test.sh <m13|m14|valid-activation|manifest-cycle|bad-cap|readiness|readiness-timeout|rollback|store-state-services|timer|preemption|m30|user-fault|m31|restart|manifest-v1|cap-lifecycle|typed-arenas|quotas|m32|io-substrate|m33|serial-driver|m34|block-driver|m35|store-service|m36|state-service|m37|generation-switch|m38|introspection|m40|directed-ipc|m41|console-shell|m42|virtio-block|m42-driver-fault|block-driver-fault|m43|vertexdisk|m43-bad-superblock|vertexdisk-bad-superblock|m44|boot-manager|m45|store-verification|m46|native-update|m47|store-executables|m47-corrupt-executable|store-executable-corruption|m48|dynamic-process|m49|config-objects|m49-config-corrupt|config-hash-mismatch|m50|secrets|m54|appliance|m55|driver-framework|m56|virtio-device-stack|m57|networking-v0|m59|namespace-service|m60|policy-typed|m61|abi-authority-hardening|m62|storage-durability|m62-journal-replay|storage-journal-replay|m62-corrupt-journal|storage-corrupt-journal|m63|network-boundary|m64|supervisor-lifecycle|m66|memory-lifecycle|m67|address-space-teardown|m68|failure-atomicity|m69|memory-pressure|m70|interrupt-routing|m71|dma-ownership|m72|virtio-recovery|m73|device-fault-gate|m75|vfs-blocking|m76|directory-metadata|m77|cache-writeback|m78|vertexfs-v1|m78-bad-superblock|vertexfs-bad-superblock|m78-journal-replay|vertexfs-journal-replay|m78-journal-checkpoint-after-journal|vertexfs-journal-checkpoint-after-journal|m78-journal-checkpoint-after-data|vertexfs-journal-checkpoint-after-data|m78-journal-checkpoint-after-inode|vertexfs-journal-checkpoint-after-inode|m78-post-sync-remount|vertexfs-post-sync-remount|m78-fsync-fault|vertexfs-fsync-fault|m79|mount-namespaces|m80|vfs-coordination|m81|vfs-crash-security-soak|m82|native-graph-store|m82-vertexdisk-graph-corrupt|vertexdisk-graph-store-corrupt|m83|generation-manager|m83-hostless|generation-manager-hostless|m83-power-prepare|m83-power-commit|m83-power-rollback|m84|package-import|m85|state-migration|m86|native-policy-validation|manifest-truncated|manifest-bad-magic|manifest-raw-compact|manifest-old-compact-magic|manifest-graph-store-checksum|manifest-graph-store-record|manifest-unsupported-version|manifest-oob-record|manifest-missing-provider|manifest-policy-version|manifest-policy-hash|manifest-policy-excess-grant|manifest-policy-mount-root>" >&2
+        echo "usage: scripts/krust-test.sh <m13|m14|valid-activation|manifest-cycle|bad-cap|readiness|readiness-timeout|rollback|store-state-services|timer|preemption|m30|user-fault|m31|restart|manifest-v1|cap-lifecycle|typed-arenas|quotas|m32|io-substrate|m33|serial-driver|m34|block-driver|m35|store-service|m36|state-service|m37|generation-switch|m38|introspection|m40|directed-ipc|m41|console-shell|m42|virtio-block|m42-driver-fault|block-driver-fault|m43|vertexdisk|m43-bad-superblock|vertexdisk-bad-superblock|m44|boot-manager|m45|store-verification|m46|native-update|m47|store-executables|m47-corrupt-executable|store-executable-corruption|m48|dynamic-process|m49|config-objects|m49-config-corrupt|config-hash-mismatch|m50|secrets|m54|appliance|m55|driver-framework|m56|virtio-device-stack|m57|networking-v0|m59|namespace-service|m60|policy-typed|m61|abi-authority-hardening|m62|storage-durability|m62-journal-replay|storage-journal-replay|m62-corrupt-journal|storage-corrupt-journal|m63|network-boundary|m64|supervisor-lifecycle|m66|memory-lifecycle|m67|address-space-teardown|m68|failure-atomicity|m69|memory-pressure|m70|interrupt-routing|m71|dma-ownership|m72|virtio-recovery|m73|device-fault-gate|m75|vfs-blocking|m76|directory-metadata|m77|cache-writeback|m78|vertexfs-v1|m78-bad-superblock|vertexfs-bad-superblock|m78-journal-replay|vertexfs-journal-replay|m78-journal-checkpoint-after-journal|vertexfs-journal-checkpoint-after-journal|m78-journal-checkpoint-after-data|vertexfs-journal-checkpoint-after-data|m78-journal-checkpoint-after-inode|vertexfs-journal-checkpoint-after-inode|m78-post-sync-remount|vertexfs-post-sync-remount|m78-fsync-fault|vertexfs-fsync-fault|m79|mount-namespaces|m80|vfs-coordination|m81|vfs-crash-security-soak|m82|native-graph-store|m82-vertexdisk-graph-corrupt|vertexdisk-graph-store-corrupt|m83|generation-manager|m83-hostless|generation-manager-hostless|m83-power-prepare|m83-power-commit|m83-power-rollback|m84|package-import|m85|state-migration|m86|native-policy-validation|m86-policy-denial-report|policy-denial-report|manifest-truncated|manifest-bad-magic|manifest-raw-compact|manifest-old-compact-magic|manifest-graph-store-checksum|manifest-graph-store-record|manifest-unsupported-version|manifest-oob-record|manifest-missing-provider|manifest-policy-version|manifest-policy-hash|manifest-policy-excess-grant|manifest-policy-mount-root>" >&2
         exit 2
         ;;
 esac
@@ -1883,7 +1904,7 @@ if [ "$HOSTLESS_BOOT_GENERATIONS" -eq 0 ]; then
     fi
 fi
 
-(cd "$KRUST_DIR" && make iso VERTEX_MANIFEST="$MANIFEST" FALLBACK_MANIFEST="$FALLBACK_MANIFEST" BAD_GENERATION_MANIFEST="$BAD_GENERATION_MANIFEST" BOOT_FALLBACK_MANIFEST="$BOOT_FALLBACK_MANIFEST" BOOT_BAD_GENERATION_MANIFEST="$BOOT_BAD_GENERATION_MANIFEST" VERTEX_DISK_GRAPH_ONLY_MANIFESTS="$VERTEX_DISK_GRAPH_ONLY_MANIFESTS" KRUSTBOOT_CORRUPT="$KRUSTBOOT_CORRUPT" VERTEX_DISK_CORRUPT="$VERTEX_DISK_CORRUPT" VERTEXFS_CORRUPT="$VERTEXFS_CORRUPT" VERTEXFS_UPDATE_APP_A_PAYLOAD="$VERTEXFS_UPDATE_APP_A_PAYLOAD")
+(cd "$KRUST_DIR" && make iso VERTEX_MANIFEST="$MANIFEST" FALLBACK_MANIFEST="$FALLBACK_MANIFEST" BAD_GENERATION_MANIFEST="$BAD_GENERATION_MANIFEST" BOOT_FALLBACK_MANIFEST="$BOOT_FALLBACK_MANIFEST" BOOT_BAD_GENERATION_MANIFEST="$BOOT_BAD_GENERATION_MANIFEST" VERTEX_DISK_GRAPH_ONLY_MANIFESTS="$VERTEX_DISK_GRAPH_ONLY_MANIFESTS" KRUSTBOOT_CORRUPT="$KRUSTBOOT_CORRUPT" BAD_GENERATION_KRUSTBOOT_CORRUPT="$BAD_GENERATION_KRUSTBOOT_CORRUPT" VERTEX_DISK_CORRUPT="$VERTEX_DISK_CORRUPT" VERTEXFS_CORRUPT="$VERTEXFS_CORRUPT" VERTEXFS_UPDATE_APP_A_PAYLOAD="$VERTEXFS_UPDATE_APP_A_PAYLOAD")
 
 mkdir -p "$(dirname "$SERIAL_LOG")"
 rm -f "$SERIAL_LOG"

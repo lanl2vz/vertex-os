@@ -70,8 +70,9 @@ native boot paths, reports state policy and health through runtime inspection,
 and gates generation staging on declared migration and rollback policy. M86
 adds a strict hashed native policy section to the compact payload, validates
 capability grants and service namespace authority before boot/runtime
-activation, reports the accepted policy hash through runtime inspection, and
-rejects unknown policy versions or graph-consistent policy-excess payloads.
+activation, reports the accepted policy hash plus a bounded native denial ring
+through runtime inspection, and rejects unknown policy versions or
+graph-consistent policy-excess payloads.
 
 M74-M82 are implemented as the current VFS, open-file, directory, block-cache,
 VertexFS/mount-namespace, coordination, and security/soak substrate. The
@@ -93,9 +94,10 @@ semantics, a 100-cycle VFS churn probe, native graph-store checksum rejection,
 invalid graph-record rejection, and native package closure import through
 generation-manager activation/rollback, plus M85 state migration,
 bad-migration rollback, sharing-policy, retention, state-health reporting, and
-M86 native policy validation with grant and mount-root tamper rejection.
+M86 native policy validation with grant and mount-root tamper rejection plus
+inspectable policy-denial records.
 General vnode page cache integration, broader synthetic/device filesystem
-breadth, durable graph-store mutation, and richer policy-denial persistence
+breadth, durable graph-store mutation, and durable policy-denial history
 remain later work.
 
 ```sh
@@ -176,7 +178,7 @@ scripts/krust-test.sh manifest-policy-mount-root
 ```
 
 Next direction: move richer state lifecycle policy, durable policy-denial
-reporting, the operator graph shell, appliance update loop, and the graph soak gate into
+history, the operator graph shell, appliance update loop, and the graph soak gate into
 first-class Vertex OS surfaces on top of the M82 graph store, M83
 generation-manager substrate, and M84 package-import path while keeping Krust
 small and capability-mediated.
@@ -4149,6 +4151,7 @@ done: native validator rejects missing providers before process creation
 done: native validator rejects excess capability grants before process creation
 done: device, network, state, config, and mount authority checks match kernel enforcement
 done: policy explanation names the rejected edge, source node, and required rule
+done: runtime inspection exposes a bounded native denial ring with generation, policy hash, source, target, rule, and reason
 done: host-validated but tampered graph is rejected inside the booted system
 done: policy hash is recorded in runtime inspection
 done: legacy or unknown policy versions are rejected rather than interpreted loosely
@@ -4164,15 +4167,17 @@ Implementation notes:
   policy-backed. The installable-generation runtime validator repeats the same
   gate before generation-manager stage/install paths.
 - Native validation emits denial records naming source, target, rule, and
-  reason on the serial path; `SYS_RUNTIME_INSPECT` exposes the accepted policy
-  hash and fact counts.
+  reason on the serial path and records a bounded native denial ring with
+  generation and policy hash. `SYS_RUNTIME_INSPECT` exposes the accepted
+  policy hash, fact counts, `policy-denials v=1`, and `policy-denial[...]`
+  records.
 - Keep the kernel enforcement model simple: it should consume validated compact
   records, not become the graph policy engine.
 - No compatibility fallback for older policy formats. Add a new version only
   when the validator and gate understand it.
-- Tests: `scripts/krust-test.sh m86`, `manifest-policy-version`,
-  `manifest-policy-hash`, `manifest-policy-excess-grant`, and
-  `manifest-policy-mount-root`.
+- Tests: `scripts/krust-test.sh m86`, `m86-policy-denial-report`,
+  `manifest-policy-version`, `manifest-policy-hash`,
+  `manifest-policy-excess-grant`, and `manifest-policy-mount-root`.
 
 ## M87: Operator Graph Shell
 

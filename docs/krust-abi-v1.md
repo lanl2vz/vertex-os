@@ -876,10 +876,19 @@ or declared bind mounts that are not backed by exact policy mount facts. The
 runtime installable-generation validator repeats the same policy gate for
 candidate generations before generation-manager stage/install/activate paths.
 `SYS_RUNTIME_INSPECT` exposes the accepted policy hash, policy version, and
-policy fact counts in a
-`policy-validation v=1` report line. Unknown policy versions, malformed policy
-hashes, and graph-consistent but policy-excess grants are rejected without a
-legacy fallback.
+policy fact counts in a `policy-validation v=1` report line. It also exposes a
+bounded native denial ring:
+
+```text
+policy-denials v=1 count=<n> capacity=8
+policy-denial[0] sequence=<n> generation=<id> hash=<policy-hash> source=<node> target=<node-or-object> rule=<rule> reason=<reason>
+```
+
+The ring is native kernel state, not a host-tooling artifact. It records
+denials from the compact policy parser and the runtime installable-generation
+gate with generation, policy hash, source, target, rule, and reason. Unknown
+policy versions, malformed policy hashes, and graph-consistent but
+policy-excess grants are rejected without a legacy fallback.
 
 M82 also extends the native VertexDisk image with a required graph-store object
 section. That section carries `VDISKGRAPHV0`, generation identity, node/edge

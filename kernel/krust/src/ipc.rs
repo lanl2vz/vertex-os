@@ -142,8 +142,8 @@ use process_syscalls::{
 use runtime_access::current_process_id;
 pub use runtime_access::{current_process_name, initial_process_name};
 use runtime_state::{
-    FRAME_ALLOCATOR, Global, INSPECT_REPORT, INSTALL_STAGING_RUNTIME, RUNTIME, RuntimeState,
-    VIRTIO_NET_STATE, VIRTIO_RNG_STATE,
+    FRAME_ALLOCATOR, Global, INSPECT_REPORT, INSTALL_STAGING_RUNTIME, MAX_POLICY_DENIAL_RECORDS,
+    POLICY_DENIAL_LOG, RUNTIME, RuntimeState, VIRTIO_NET_STATE, VIRTIO_RNG_STATE,
 };
 pub use scheduler::sleep_ms;
 use scheduler::{
@@ -188,6 +188,25 @@ const INIT_TIMER_CAP_SLOT: u64 = 30;
 const VFS_OPEN_READ: u64 = 1;
 const VFS_OPEN_WRITE: u64 = 1 << 1;
 const VFS_OPEN_CREATE: u64 = 1 << 2;
+
+pub(crate) fn record_policy_denial(
+    generation: &str,
+    policy_hash: &[u8],
+    source: &str,
+    target: &str,
+    rule: &str,
+    reason: &str,
+) {
+    policy_denial_log_mut().record(generation, policy_hash, source, target, rule, reason);
+}
+
+fn policy_denial_log() -> &'static runtime_state::PolicyDenialLog {
+    unsafe { &*POLICY_DENIAL_LOG.0.get() }
+}
+
+fn policy_denial_log_mut() -> &'static mut runtime_state::PolicyDenialLog {
+    unsafe { &mut *POLICY_DENIAL_LOG.0.get() }
+}
 const VFS_OPEN_TRUNC: u64 = 1 << 3;
 const VFS_OPEN_APPEND: u64 = 1 << 4;
 const VFS_OPEN_KNOWN_FLAGS: u64 =

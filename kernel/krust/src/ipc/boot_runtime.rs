@@ -725,7 +725,13 @@ fn boot_graph_has_node(config: &BootRuntimeConfig, kind: u16, id: &str) -> bool 
 
 fn validate_boot_config_policy(config: &BootRuntimeConfig) -> Result<(), InitError> {
     if config.policy_version != BOOT_POLICY_VERSION || config.policy_hash[0] == 0 {
-        log_policy_denial("<boot>", "<policy>", "policy-version", "unknown-or-empty");
+        log_policy_denial(
+            config,
+            "<boot>",
+            "<policy>",
+            "policy-version",
+            "unknown-or-empty",
+        );
         return Err(InitError::InvalidBootManifest);
     }
 
@@ -743,6 +749,7 @@ fn validate_boot_config_policy(config: &BootRuntimeConfig) -> Result<(), InitErr
             )
         {
             log_policy_denial(
+                config,
                 capability.provider,
                 capability.id,
                 "capability-fact",
@@ -756,6 +763,7 @@ fn validate_boot_config_policy(config: &BootRuntimeConfig) -> Result<(), InitErr
                 config.policy_capabilities[prior].ok_or(InitError::InvalidBootManifest)?;
             if existing.id == capability.id {
                 log_policy_denial(
+                    config,
                     capability.provider,
                     capability.id,
                     "capability-fact",
@@ -774,6 +782,7 @@ fn validate_boot_config_policy(config: &BootRuntimeConfig) -> Result<(), InitErr
             config.policy_requirements[index].ok_or(InitError::InvalidBootManifest)?;
         let Some(capability) = boot_policy_capability_by_id(config, requirement.capability) else {
             log_policy_denial(
+                config,
                 requirement.service,
                 requirement.capability,
                 "requirement-fact",
@@ -787,6 +796,7 @@ fn validate_boot_config_policy(config: &BootRuntimeConfig) -> Result<(), InitErr
             || requirement.rights & !capability.rights != 0
         {
             log_policy_denial(
+                config,
                 requirement.service,
                 requirement.capability,
                 "requirement-fact",
@@ -802,6 +812,7 @@ fn validate_boot_config_policy(config: &BootRuntimeConfig) -> Result<(), InitErr
         let provide = config.policy_provides[index].ok_or(InitError::InvalidBootManifest)?;
         let Some(capability) = boot_policy_capability_by_id(config, provide.capability) else {
             log_policy_denial(
+                config,
                 provide.service,
                 provide.capability,
                 "provide-fact",
@@ -813,6 +824,7 @@ fn validate_boot_config_policy(config: &BootRuntimeConfig) -> Result<(), InitErr
             || capability.provider != provide.service
         {
             log_policy_denial(
+                config,
                 provide.service,
                 provide.capability,
                 "provide-fact",
@@ -832,7 +844,7 @@ fn validate_boot_config_policy(config: &BootRuntimeConfig) -> Result<(), InitErr
             } else {
                 mount.path
             };
-            log_policy_denial(mount.service, target, "mount-fact", "invalid-mount");
+            log_policy_denial(config, mount.service, target, "mount-fact", "invalid-mount");
             return Err(InitError::InvalidBootManifest);
         }
         let mut prior = 0;
@@ -844,7 +856,13 @@ fn validate_boot_config_policy(config: &BootRuntimeConfig) -> Result<(), InitErr
                 && existing.source == mount.source
                 && existing.flags == mount.flags
             {
-                log_policy_denial(mount.service, mount.mount_root, "mount-fact", "duplicate");
+                log_policy_denial(
+                    config,
+                    mount.service,
+                    mount.mount_root,
+                    "mount-fact",
+                    "duplicate",
+                );
                 return Err(InitError::InvalidBootManifest);
             }
             prior += 1;
@@ -860,7 +878,7 @@ fn validate_boot_config_policy(config: &BootRuntimeConfig) -> Result<(), InitErr
                 .map(|process| process.graph_node)
                 .unwrap_or("<invalid>");
             let target = boot_config_object_label(config, grant).unwrap_or("<invalid>");
-            log_policy_denial(source, target, "grant-authorized", "no-policy-edge");
+            log_policy_denial(config, source, target, "grant-authorized", "no-policy-edge");
             return Err(InitError::InvalidBootManifest);
         }
         index += 1;
@@ -871,6 +889,7 @@ fn validate_boot_config_policy(config: &BootRuntimeConfig) -> Result<(), InitErr
         let process = config.processes[index].ok_or(InitError::InvalidBootManifest)?;
         if !boot_policy_mount_root_allows(config, process.graph_node, process.mount_root) {
             log_policy_denial(
+                config,
                 process.graph_node,
                 process.mount_root,
                 "mount-root",
@@ -883,6 +902,7 @@ fn validate_boot_config_policy(config: &BootRuntimeConfig) -> Result<(), InitErr
             let mount = process.mounts[mount_index].ok_or(InitError::InvalidBootManifest)?;
             if !boot_policy_mount_allows(config, process.graph_node, process.mount_root, mount) {
                 log_policy_denial(
+                    config,
                     process.graph_node,
                     mount.path,
                     "declared-mount",
@@ -904,7 +924,13 @@ fn validate_boot_config_policy(config: &BootRuntimeConfig) -> Result<(), InitErr
             } else {
                 mount.path
             };
-            log_policy_denial(mount.service, target, "mount-fact", "unused-policy-edge");
+            log_policy_denial(
+                config,
+                mount.service,
+                target,
+                "mount-fact",
+                "unused-policy-edge",
+            );
             return Err(InitError::InvalidBootManifest);
         }
         index += 1;
@@ -1180,7 +1206,21 @@ fn boot_config_object_label(
     }
 }
 
-fn log_policy_denial(source: &str, target: &str, rule: &str, reason: &str) {
+fn log_policy_denial(
+    config: &BootRuntimeConfig,
+    source: &str,
+    target: &str,
+    rule: &str,
+    reason: &str,
+) {
+    record_policy_denial(
+        config.generation_id,
+        &config.policy_hash,
+        source,
+        target,
+        rule,
+        reason,
+    );
     serial::write_str("native policy validation rejected: source=");
     serial::write_str(source);
     serial::write_str(" target=");

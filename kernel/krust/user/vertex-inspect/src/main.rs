@@ -83,6 +83,39 @@ fn explain_policy_validation(report: &[u8]) {
     }
     log(b"vertex-inspect policy-validation proof parsed");
     log(b"native policy validation hash visible");
+    explain_policy_denials(report);
+}
+
+fn explain_policy_denials(report: &[u8]) {
+    let Some(header) =
+        find_line_contains_all(report, &[b"policy-denials v=1", b"count=", b"capacity="])
+    else {
+        log(b"vertex-inspect policy-denial ring missing");
+        sys::exit(1);
+    };
+    log(b"vertex-inspect policy-denial ring parsed");
+    let count = field_u64(header, b"count=").unwrap_or(0);
+    if count == 0 {
+        log(b"vertex-inspect policy-denial ring empty");
+        return;
+    }
+
+    let Some(record) = find_line_contains_all(
+        report,
+        &[
+            b"policy-denial[",
+            b"generation=",
+            b"hash=",
+            b"source=",
+            b"target=",
+            b"rule=",
+            b"reason=",
+        ],
+    ) else {
+        log(b"vertex-inspect policy-denial record missing");
+        sys::exit(1);
+    };
+    log_policy_denial_record(record);
 }
 
 fn report_buffer() -> &'static mut [u8; REPORT_BUFFER_LEN] {
@@ -396,6 +429,21 @@ fn log_derived_endpoint_cap(line: &[u8]) {
     len = append_field(&mut buffer, len, line, b"cap[", b']');
     len = append(&mut buffer, len, b"] endpoint=");
     len = append_field(&mut buffer, len, line, b"endpoint=", b' ');
+    log(&buffer[..len]);
+}
+
+fn log_policy_denial_record(line: &[u8]) {
+    let mut buffer = [0u8; 256];
+    let mut len = append(&mut buffer, 0, b"policy denial report: generation=");
+    len = append_field(&mut buffer, len, line, b"generation=", b' ');
+    len = append(&mut buffer, len, b" source=");
+    len = append_field(&mut buffer, len, line, b"source=", b' ');
+    len = append(&mut buffer, len, b" target=");
+    len = append_field(&mut buffer, len, line, b"target=", b' ');
+    len = append(&mut buffer, len, b" rule=");
+    len = append_field(&mut buffer, len, line, b"rule=", b' ');
+    len = append(&mut buffer, len, b" reason=");
+    len = append_field(&mut buffer, len, line, b"reason=", b' ');
     log(&buffer[..len]);
 }
 

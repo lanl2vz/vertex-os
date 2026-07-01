@@ -327,6 +327,7 @@ fn write_graph_store_report(runtime: &RuntimeState, report: &mut InspectReport) 
 fn write_policy_validation_report(runtime: &RuntimeState, report: &mut InspectReport) {
     let Some(config) = runtime.active_config else {
         report.push_str("policy-validation v=1 status=unavailable\n");
+        write_policy_denial_report(report);
         return;
     };
     report.push_str("policy-validation v=1 generation=");
@@ -344,6 +345,40 @@ fn write_policy_validation_report(runtime: &RuntimeState, report: &mut InspectRe
     report.push_str(" mounts=");
     report.push_u64_dec(config.policy_mount_count as u64);
     report.push_byte(b'\n');
+    write_policy_denial_report(report);
+}
+
+fn write_policy_denial_report(report: &mut InspectReport) {
+    let denials = policy_denial_log();
+    report.push_str("policy-denials v=1 count=");
+    report.push_u64_dec(denials.count as u64);
+    report.push_str(" capacity=");
+    report.push_u64_dec(MAX_POLICY_DENIAL_RECORDS as u64);
+    report.push_byte(b'\n');
+
+    let mut index = 0;
+    while index < denials.count {
+        if let Some(record) = denials.record_at(index) {
+            report.push_str("policy-denial[");
+            report.push_u64_dec(index as u64);
+            report.push_str("] sequence=");
+            report.push_u64_dec(record.sequence);
+            report.push_str(" generation=");
+            report.push_bytes(&record.generation[..record.generation_len]);
+            report.push_str(" hash=");
+            report.push_bytes(&record.policy_hash);
+            report.push_str(" source=");
+            report.push_bytes(&record.source[..record.source_len]);
+            report.push_str(" target=");
+            report.push_bytes(&record.target[..record.target_len]);
+            report.push_str(" rule=");
+            report.push_bytes(&record.rule[..record.rule_len]);
+            report.push_str(" reason=");
+            report.push_bytes(&record.reason[..record.reason_len]);
+            report.push_byte(b'\n');
+        }
+        index += 1;
+    }
 }
 
 fn graph_node_kind_count(config: &BootRuntimeConfig, kind: u16) -> u64 {

@@ -1988,6 +1988,7 @@ fn validate_policy_facts(manifest: &Manifest<'_>) -> Result<(), ParseError> {
                 .ok_or(ParseError::InvalidReference)?;
             let target = graph_object_node_id(manifest, grant).unwrap_or("<invalid>");
             log_policy_denial(
+                manifest,
                 graph_process_node_id(process),
                 target,
                 "grant-authorized",
@@ -2005,14 +2006,26 @@ fn validate_policy_facts(manifest: &Manifest<'_>) -> Result<(), ParseError> {
             .ok_or(ParseError::InvalidReference)?;
         let service = graph_process_node_id(process);
         if !policy_mount_root_allows(manifest, service, process.mount_root) {
-            log_policy_denial(service, process.mount_root, "mount-root", "no-policy-edge");
+            log_policy_denial(
+                manifest,
+                service,
+                process.mount_root,
+                "mount-root",
+                "no-policy-edge",
+            );
             return Err(ParseError::InvalidPolicy);
         }
         let mut mount_index = 0;
         while mount_index < process.mount_count {
             let mount = process.mounts[mount_index].ok_or(ParseError::InvalidReference)?;
             if !policy_mount_allows(manifest, service, process.mount_root, mount) {
-                log_policy_denial(service, mount.path, "declared-mount", "no-policy-edge");
+                log_policy_denial(
+                    manifest,
+                    service,
+                    mount.path,
+                    "declared-mount",
+                    "no-policy-edge",
+                );
                 return Err(ParseError::InvalidPolicy);
             }
             mount_index += 1;
@@ -2031,7 +2044,13 @@ fn validate_policy_facts(manifest: &Manifest<'_>) -> Result<(), ParseError> {
             } else {
                 mount.path
             };
-            log_policy_denial(mount.service, target, "mount-fact", "unused-policy-edge");
+            log_policy_denial(
+                manifest,
+                mount.service,
+                target,
+                "mount-fact",
+                "unused-policy-edge",
+            );
             return Err(ParseError::InvalidPolicy);
         }
         index += 1;
@@ -2281,7 +2300,21 @@ fn known_policy_rights(rights: u16) -> bool {
         == 0
 }
 
-fn log_policy_denial(source: &str, target: &str, rule: &str, reason: &str) {
+fn log_policy_denial(
+    manifest: &Manifest<'_>,
+    source: &str,
+    target: &str,
+    rule: &str,
+    reason: &str,
+) {
+    crate::ipc::record_policy_denial(
+        manifest.generation_id(),
+        manifest.policy_hash().as_bytes(),
+        source,
+        target,
+        rule,
+        reason,
+    );
     serial::write_str("native policy validation rejected: source=");
     serial::write_str(source);
     serial::write_str(" target=");

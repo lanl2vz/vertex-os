@@ -6,6 +6,146 @@ pub(super) struct CapabilityLineage {
     pub(super) parent_cap_id: u64,
 }
 
+pub(super) const MAX_POLICY_DENIAL_RECORDS: usize = 8;
+pub(super) const POLICY_DENIAL_FIELD_BYTES: usize = 64;
+
+#[derive(Clone, Copy)]
+pub(super) struct PolicyDenialRecord {
+    pub(super) sequence: u64,
+    pub(super) generation: [u8; POLICY_DENIAL_FIELD_BYTES],
+    pub(super) generation_len: usize,
+    pub(super) policy_hash: [u8; POLICY_DENIAL_FIELD_BYTES],
+    pub(super) source: [u8; POLICY_DENIAL_FIELD_BYTES],
+    pub(super) source_len: usize,
+    pub(super) target: [u8; POLICY_DENIAL_FIELD_BYTES],
+    pub(super) target_len: usize,
+    pub(super) rule: [u8; POLICY_DENIAL_FIELD_BYTES],
+    pub(super) rule_len: usize,
+    pub(super) reason: [u8; POLICY_DENIAL_FIELD_BYTES],
+    pub(super) reason_len: usize,
+}
+
+impl PolicyDenialRecord {
+    const fn empty() -> Self {
+        Self {
+            sequence: 0,
+            generation: [0; POLICY_DENIAL_FIELD_BYTES],
+            generation_len: 0,
+            policy_hash: [0; POLICY_DENIAL_FIELD_BYTES],
+            source: [0; POLICY_DENIAL_FIELD_BYTES],
+            source_len: 0,
+            target: [0; POLICY_DENIAL_FIELD_BYTES],
+            target_len: 0,
+            rule: [0; POLICY_DENIAL_FIELD_BYTES],
+            rule_len: 0,
+            reason: [0; POLICY_DENIAL_FIELD_BYTES],
+            reason_len: 0,
+        }
+    }
+
+    fn new(
+        sequence: u64,
+        generation: &str,
+        policy_hash: &[u8],
+        source: &str,
+        target: &str,
+        rule: &str,
+        reason: &str,
+    ) -> Self {
+        let mut record = Self::empty();
+        record.sequence = sequence;
+        record.generation_len =
+            copy_policy_denial_field(generation.as_bytes(), &mut record.generation);
+        copy_policy_hash(policy_hash, &mut record.policy_hash);
+        record.source_len = copy_policy_denial_field(source.as_bytes(), &mut record.source);
+        record.target_len = copy_policy_denial_field(target.as_bytes(), &mut record.target);
+        record.rule_len = copy_policy_denial_field(rule.as_bytes(), &mut record.rule);
+        record.reason_len = copy_policy_denial_field(reason.as_bytes(), &mut record.reason);
+        record
+    }
+}
+
+pub(super) struct PolicyDenialLog {
+    records: [PolicyDenialRecord; MAX_POLICY_DENIAL_RECORDS],
+    pub(super) count: usize,
+    next: usize,
+    sequence: u64,
+}
+
+impl PolicyDenialLog {
+    const fn new() -> Self {
+        Self {
+            records: [PolicyDenialRecord::empty(); MAX_POLICY_DENIAL_RECORDS],
+            count: 0,
+            next: 0,
+            sequence: 0,
+        }
+    }
+
+    pub(super) fn record(
+        &mut self,
+        generation: &str,
+        policy_hash: &[u8],
+        source: &str,
+        target: &str,
+        rule: &str,
+        reason: &str,
+    ) {
+        self.sequence = self.sequence.saturating_add(1);
+        self.records[self.next] = PolicyDenialRecord::new(
+            self.sequence,
+            generation,
+            policy_hash,
+            source,
+            target,
+            rule,
+            reason,
+        );
+        self.next = (self.next + 1) % MAX_POLICY_DENIAL_RECORDS;
+        if self.count < MAX_POLICY_DENIAL_RECORDS {
+            self.count += 1;
+        }
+    }
+
+    pub(super) fn record_at(&self, offset: usize) -> Option<PolicyDenialRecord> {
+        if offset >= self.count {
+            return None;
+        }
+        let start = if self.count == MAX_POLICY_DENIAL_RECORDS {
+            self.next
+        } else {
+            0
+        };
+        Some(self.records[(start + offset) % MAX_POLICY_DENIAL_RECORDS])
+    }
+}
+
+fn copy_policy_denial_field(source: &[u8], target: &mut [u8; POLICY_DENIAL_FIELD_BYTES]) -> usize {
+    let mut index = 0;
+    while index < source.len() && index < target.len() {
+        let byte = source[index];
+        target[index] = if byte == b'\n' || byte == b'\r' || byte == b'\t' {
+            b'?'
+        } else {
+            byte
+        };
+        index += 1;
+    }
+    index
+}
+
+fn copy_policy_hash(source: &[u8], target: &mut [u8; POLICY_DENIAL_FIELD_BYTES]) {
+    let mut index = 0;
+    while index < target.len() {
+        target[index] = if source.len() == target.len() {
+            source[index]
+        } else {
+            b'0'
+        };
+        index += 1;
+    }
+}
+
 pub(super) struct RuntimeState {
     pub(super) objects: ObjectTable,
     pub(super) processes: ProcessTable,
@@ -72,6 +212,8 @@ unsafe impl<T> Sync for Global<T> {}
 pub(super) static RUNTIME: Global<RuntimeState> = Global(UnsafeCell::new(RuntimeState::new()));
 pub(super) static INSTALL_STAGING_RUNTIME: Global<RuntimeState> =
     Global(UnsafeCell::new(RuntimeState::new()));
+pub(super) static POLICY_DENIAL_LOG: Global<PolicyDenialLog> =
+    Global(UnsafeCell::new(PolicyDenialLog::new()));
 pub(super) static FRAME_ALLOCATOR: Global<Option<*mut memory::FrameAllocator>> =
     Global(UnsafeCell::new(None));
 pub(super) static VIRTIO_RNG_STATE: Global<VirtioRngState> =
