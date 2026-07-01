@@ -798,16 +798,16 @@ fn native_store_candidate_paths(module_string: &str) -> Vec<PathBuf> {
     };
     vec![
         PathBuf::from(format!(
-            "user/target/x86_64-unknown-none/debug/{module_string}"
+            "targets/krust/user/target/x86_64-unknown-none/debug/{module_string}"
         )),
         PathBuf::from(format!(
-            "kernel/krust/user/target/x86_64-unknown-none/debug/{module_string}"
+            "../../targets/krust/user/target/x86_64-unknown-none/debug/{module_string}"
         )),
         PathBuf::from(format!(
-            "user/{crate_dir}/target/x86_64-unknown-none/debug/{module_string}"
+            "targets/krust/user/{crate_dir}/target/x86_64-unknown-none/debug/{module_string}"
         )),
         PathBuf::from(format!(
-            "kernel/krust/user/{crate_dir}/target/x86_64-unknown-none/debug/{module_string}"
+            "../../targets/krust/user/{crate_dir}/target/x86_64-unknown-none/debug/{module_string}"
         )),
     ]
 }

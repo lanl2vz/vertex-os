@@ -405,13 +405,7 @@ fn write_operator_report(runtime: &RuntimeState, report: &mut InspectReport) {
     let mut generation_index = 0;
     while generation_index < registered_generation_count() {
         if let Some(config) = registered_generation_config_at(generation_index) {
-            write_operator_generation_report(
-                runtime,
-                report,
-                manager,
-                generation_index,
-                config,
-            );
+            write_operator_generation_report(runtime, report, manager, generation_index, config);
         }
         generation_index += 1;
     }
@@ -435,7 +429,10 @@ fn write_operator_generation_report(
     report.push_str(" previous=");
     write_yes_no(report, config.generation_id == manager.previous_generation);
     report.push_str(" known_good=");
-    write_yes_no(report, config.generation_id == manager.known_good_generation);
+    write_yes_no(
+        report,
+        config.generation_id == manager.known_good_generation,
+    );
     report.push_str(" policy_hash=");
     report.push_bytes(&config.policy_hash);
     report.push_str(" graph_hash=");
@@ -698,7 +695,11 @@ fn boot_object_kind_label(kind: u16) -> &'static str {
     }
 }
 
-fn boot_policy_object_id(config: &BootRuntimeConfig, object_kind: u16, index: usize) -> &'static str {
+fn boot_policy_object_id(
+    config: &BootRuntimeConfig,
+    object_kind: u16,
+    index: usize,
+) -> &'static str {
     match object_kind {
         BOOT_OBJECT_ENDPOINT if index < config.endpoint_count => {
             config.endpoints[index].map_or("<invalid>", |object| object.name)

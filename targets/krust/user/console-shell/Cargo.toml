@@ -8,3 +8,6 @@ publish = false
 [[bin]]
 name = "console-shell"
 path = "src/main.rs"
+
+[dependencies]
+vertex-operator-shell = { path = "../../../../userland/operator-shell" }

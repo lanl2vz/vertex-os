@@ -3,6 +3,7 @@ set -eu
 
 ROOT_DIR=$(CDPATH= cd "$(dirname "$0")/.." && pwd)
 KRUST_DIR=${KRUST_DIR:-"$ROOT_DIR/kernel/krust"}
+KRUST_USER_DIR=${KRUST_USER_DIR:-"$ROOT_DIR/targets/krust/user"}
 LOG_DIR=${LOG_DIR:-"$KRUST_DIR/build/release-gate"}
 KRUST_CASES=${KRUST_CASES:-"m14 manifest-cycle bad-cap readiness-timeout rollback store-state-services timer preemption user-fault restart manifest-v1 cap-lifecycle typed-arenas quotas m32 m33 m34 m35 m36 m37 m38 m40 m41 m42 m42-driver-fault m43 m43-bad-superblock m44 m45 m46 m47 m47-corrupt-executable m48 m49 m49-config-corrupt m50 m54 m55 m56 m57 m59 m60 m61 m62 m62-journal-replay m62-corrupt-journal m63 m64 m66 m67 m68 m69 m70 m71 m72 m73 m75 m76 m77 m78 m78-bad-superblock m78-journal-replay m78-journal-checkpoint-after-journal m78-journal-checkpoint-after-data m78-journal-checkpoint-after-inode m78-post-sync-remount m78-fsync-fault m79 m80 m81 m82 m82-vertexdisk-graph-corrupt m83 m83-hostless m83-power-prepare m83-power-commit m83-power-rollback m84 m85 m86 m86-policy-denial-report m87 manifest-truncated manifest-bad-magic manifest-raw-compact manifest-old-compact-magic manifest-graph-store-checksum manifest-graph-store-record manifest-unsupported-version manifest-oob-record manifest-missing-provider manifest-policy-version manifest-policy-hash manifest-policy-excess-grant manifest-policy-mount-root manifest-policy-state-root"}
 
@@ -21,10 +22,16 @@ run() {
     "$@"
 }
 
+run_fmt_manifest() {
+    manifest=$1
+    display=${manifest#"$ROOT_DIR"/}
+    step "cargo fmt --manifest-path $display -- --check"
+    cargo fmt --manifest-path "$manifest" -- --check
+}
+
 run_krust_fmt() {
     manifest=$1
-    step "cargo fmt --manifest-path kernel/krust/$manifest -- --check"
-    (cd "$KRUST_DIR" && cargo fmt --manifest-path "$manifest" -- --check)
+    run_fmt_manifest "$KRUST_DIR/$manifest"
 }
 
 require_doc_line() {
@@ -72,8 +79,8 @@ check_no_trailing_whitespace kernel/krust/rust-toolchain.toml
 step "checking Krust Rust and Markdown formatting"
 run cargo fmt --all -- --check
 run_krust_fmt Cargo.toml
-for manifest in "$KRUST_DIR"/user/*/Cargo.toml; do
-    run_krust_fmt "${manifest#"$KRUST_DIR"/}"
+for manifest in "$KRUST_USER_DIR"/*/Cargo.toml; do
+    run_fmt_manifest "$manifest"
 done
 check_no_trailing_whitespace README.md
 check_no_trailing_whitespace docs/krust-milestones.md
@@ -81,9 +88,16 @@ check_no_trailing_whitespace docs/krust-abi-v1.md
 check_no_trailing_whitespace docs/posix-personality-v0.md
 check_no_trailing_whitespace docs/krust-toolchain.md
 check_no_trailing_whitespace kernel/krust/README.md
+check_no_trailing_whitespace targets/krust/README.md
+check_no_trailing_whitespace targets/krust/user/README.md
+check_no_trailing_whitespace userland/operator-shell/Vertex.toml
 
 step "checking Krust status documentation"
 require_doc_line README.md "M14-M87"
+require_doc_line README.md "M87-1"
+require_doc_line README.md "M87-2"
+require_doc_line README.md "userland/operator-shell"
+require_doc_line README.md "targets/krust/user"
 require_doc_line README.md "scripts/krust-release-gate.sh"
 require_doc_line README.md "docs/krust-toolchain.md"
 require_doc_line README.md "docs/krust-abi-v1.md"
@@ -139,6 +153,10 @@ require_doc_line docs/krust-milestones.md "done: scripts/krust-test.sh m84"
 require_doc_line docs/krust-milestones.md "done: scripts/krust-test.sh m85"
 require_doc_line docs/krust-milestones.md "scripts/krust-test.sh m86"
 require_doc_line docs/krust-milestones.md "scripts/krust-test.sh m87"
+require_doc_line docs/krust-milestones.md "## M87-1: Vertex-Owned Operator Shell Package"
+require_doc_line docs/krust-milestones.md "## M87-2: Krust Target User Adapter Workspace"
+require_doc_line docs/krust-milestones.md "userland/operator-shell"
+require_doc_line docs/krust-milestones.md "targets/krust/user"
 require_doc_line docs/krust-milestones.md "manifest-policy-mount-root"
 require_doc_line docs/krust-milestones.md "manifest-policy-state-root"
 require_doc_line docs/krust-milestones.md "## M42: Minimal Virtio-Block Driver"
@@ -154,15 +172,23 @@ require_doc_line docs/krust-toolchain.md "qemu-system-x86_64 11.0.0"
 require_doc_line docs/krust-toolchain.md "limine 12.3.0"
 require_doc_line docs/krust-toolchain.md "xorriso 1.5.8.pl01"
 require_doc_line docs/krust-abi-v1.md "M40 freezes ABI v1"
+require_doc_line docs/krust-abi-v1.md "M87-2"
 require_doc_line docs/posix-personality-v0.md "Status: M58 design artifact."
 require_doc_line kernel/krust/README.md "M14-M87"
+require_doc_line kernel/krust/README.md "M87-1"
+require_doc_line kernel/krust/README.md "M87-2"
+require_doc_line kernel/krust/README.md "userland/operator-shell"
+require_doc_line kernel/krust/README.md "targets/krust/user"
 require_doc_line kernel/krust/README.md "scripts/krust-release-gate.sh"
 require_doc_line kernel/krust/README.md "rustc 1.95.0"
 require_doc_line kernel/krust/README.md "directed IPC"
 
 step "checking removed legacy Krust userspace crates"
-require_absent kernel/krust/user/hello/Cargo.toml
-require_absent kernel/krust/user/ipc/Cargo.toml
+require_absent kernel/krust/user/Cargo.toml
+require_absent kernel/krust/user/console-shell/Cargo.toml
+require_absent kernel/krust/user/generation-manager/Cargo.toml
+require_absent targets/krust/user/hello/Cargo.toml
+require_absent targets/krust/user/ipc/Cargo.toml
 
 step "checking locked offline Cargo metadata"
 run cargo metadata --locked --offline --no-deps --format-version 1
@@ -173,6 +199,9 @@ if ! cargo build --locked --offline >"$offline_log" 2>&1; then
     cat "$offline_log"
     fail "cargo build --locked --offline failed. Populate the Cargo cache from Cargo.lock or configure a vendored Cargo source before running the M40 gate offline."
 fi
+
+run make -C "$KRUST_DIR" doctor
+run make -C "$KRUST_DIR" build
 
 step "cargo test --locked --offline"
 test_log="$LOG_DIR/cargo-test-offline.log"
@@ -192,7 +221,6 @@ fi
 run "$ROOT_DIR/target/debug/vertexctl" compile-boot-manifest "$LOG_DIR/m60-policy-generation.vertex.json" "$LOG_DIR/m60-policy.krustboot"
 run "$ROOT_DIR/target/debug/vertexctl" create-vertex-disk "$LOG_DIR/m60-policy.img" "$LOG_DIR/m60-policy-generation.vertex.json"
 
-run make -C "$KRUST_DIR" doctor
 run make -C "$KRUST_DIR" clean
 run make -C "$KRUST_DIR" smoke
 mkdir -p "$LOG_DIR"

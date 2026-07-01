@@ -1,0 +1,12 @@
+[package]
+name = "vertex-operator-shell"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+name = "vertex_operator_shell"
+path = "src/lib.rs"
+
+[dependencies]

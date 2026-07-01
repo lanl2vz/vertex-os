@@ -109,15 +109,15 @@ use device_syscalls::{
     release_process_dma_mappings, release_process_virtio_ownership,
 };
 pub use endpoint::run_fifo_regression;
+use generation::{
+    BootManagerState, boot_manager, boot_manager_state, registered_generation_config_at,
+    registered_generation_count, store_hash_matches,
+};
 pub use generation::{
     activate_generation, generation_config_by_id, install_generation_recovery,
     mark_known_good_generation, register_generation_config, rollback_generation,
-    set_failed_generation_id,
-    set_rollback_boot_config, stage_generation, stage_rollback_generation, verify_generation,
-};
-use generation::{
-    boot_manager, boot_manager_state, registered_generation_config_at, registered_generation_count,
-    store_hash_matches, BootManagerState,
+    set_failed_generation_id, set_rollback_boot_config, stage_generation,
+    stage_rollback_generation, verify_generation,
 };
 use inspect_report::{
     build_inspect_report, inspect_report, object_reachable_by_cap, print_boot_tables,

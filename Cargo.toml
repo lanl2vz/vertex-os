@@ -7,6 +7,7 @@ members = [
     "userland/echo-server",
     "userland/logd",
     "userland/netstack",
+    "userland/operator-shell",
 ]
 resolver = "3"
 

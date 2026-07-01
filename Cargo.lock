@@ -192,6 +192,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "vertex-operator-shell"
+version = "0.1.0"
+
+[[package]]
 name = "vertex-supervisor"
 version = "0.1.0"
 dependencies = [

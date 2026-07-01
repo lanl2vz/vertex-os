@@ -1,0 +1,21 @@
+[package]
+id = "pkg:vertex.operator-shell"
+name = "operator-shell"
+kind = "userland-library"
+milestone = "M87-2"
+
+[service]
+id = "svc:console-shell"
+binary = "console-shell"
+
+[targets.krust]
+adapter = "targets/krust/user/console-shell"
+runtime = "no_std"
+
+[capabilities]
+requires = [
+  "cap:inspect",
+  "cap:console.output",
+  "cap:generation-manager.request",
+  "cap:serial-log",
+]

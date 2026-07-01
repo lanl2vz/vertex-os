@@ -1,6 +1,8 @@
 # Krust Kernel
 
-Krust now covers the M14-M87 native graph-activation proof path, substrate
+Krust now covers the M14-M87 native graph-activation proof path plus the M87-1
+Vertex-owned operator-shell package split and the M87-2 Krust target user
+adapter workspace, substrate
 hardening, reproducible build environment, directed IPC ABI v1, and native
 console shell plus virtio device I/O, VertexDisk v1 persistence, native boot
 selection, verified store objects, native update transactions, and store-loaded
@@ -24,7 +26,11 @@ install/rollback/recovery, and native package closure import with separate
 negative import validation, native metadata registration for a graph-store-only
 candidate, an actual base-to-candidate active graph delta, and declared
 state-object migration policy, native policy validation, and the operator graph
-shell. M44-M87 are tracked in `../../docs/krust-milestones.md`.
+shell. The Krust console-shell is now the target adapter for
+`../../userland/operator-shell` rather than the owner of operator semantics,
+and Krust-built user programs live in `../../targets/krust/user` rather than
+under the kernel source tree. M44-M87-2 are tracked in
+`../../docs/krust-milestones.md`.
 
 The target is intentionally small:
 
@@ -169,7 +175,8 @@ make build
 ```
 
 This builds `target/x86_64-unknown-none/debug/krust` and the supported native
-user programs under `user/target/x86_64-unknown-none/debug/`: `vertex-init`,
+user programs under
+`../../targets/krust/user/target/x86_64-unknown-none/debug/`: `vertex-init`,
 `serial-driver`, `logd`, `echo`, `netstack`, `block-driver`, `vertex-store`,
 `vertex-state`, `vertex-inspect`, `model-reader`, `counter`, `state-reader`,
 `timer`, `flaky`, `cpu-hog`, and `faulty-service`.

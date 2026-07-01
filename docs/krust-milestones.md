@@ -7,9 +7,10 @@ runtime layered over a host kernel.
 
 ## Status Summary
 
-Current status: M14-M87 are implemented and smoke-tested under
-`qemu-system-x86_64` with Limine. The current tree has an image-backed VertexFS
-v1 mount, a strict VertexDisk v1 section carrying the current VertexFS image,
+Current status: M14-M87, M87-1, and M87-2 are implemented and smoke-tested
+under `qemu-system-x86_64` with Limine. The current tree has an image-backed
+VertexFS v1 mount, a strict VertexDisk v1 section carrying the current
+VertexFS image,
 fixed journal replay, kernel-owned device-backed fsync transactions,
 post-sync image remount, fsync fault/restart handling, declared-file journal
 checkpoint recovery, mount-namespace gates, and a read-only `servicefs`
@@ -78,6 +79,13 @@ runtime inspect graph/policy facts to answer current-generation, generation
 status, generation diff, authority delta, `why`, `who-can`, package-list,
 activation-log, mark-known-good, activate, and rollback commands without
 falling back to transcript guesses.
+M87-1 moves the operator graph-shell command semantics and structured report
+parsing into `userland/operator-shell`, a target-independent no_std Vertex
+userland package. The Krust console-shell now acts as a runtime adapter for
+logging, console output, generation-manager IPC, and exits.
+M87-2 moves Krust-built user adapter crates into `targets/krust/user`, leaving
+`kernel/krust` as kernel/substrate source and making `userland/` the home for
+portable Vertex OS semantics.
 
 M74-M82 are implemented as the current VFS, open-file, directory, block-cache,
 VertexFS/mount-namespace, coordination, and security/soak substrate. The
@@ -102,7 +110,10 @@ bad-migration rollback, sharing-policy, retention, state-health reporting, M86
 native policy validation with grant and mount-root tamper rejection plus
 inspectable policy-denial records, and M87 operator graph-shell commands with
 policy-provenance answers plus generic generation-manager activation and
-rollback.
+rollback. M87-1 adds the first Vertex-owned no_std userland package consumed by
+the Krust image instead of owned under the kernel tree. M87-2 adds the Krust
+target user adapter workspace at `targets/krust/user` and removes tracked
+userspace manifests from `kernel/krust/user`.
 General vnode page cache integration, broader synthetic/device filesystem
 breadth, durable graph-store mutation, and durable policy-denial history
 remain later work.
@@ -4252,6 +4263,110 @@ Implementation notes:
 - Prefer structured command replies that can later back a richer UI.
 - Every operator answer should identify the generation and policy hash it came
   from so stale answers are visible.
+
+## M87-1: Vertex-Owned Operator Shell Package
+
+Status: done.
+
+Goal: make Vertex OS userland real by moving operator-shell semantics out of
+the Krust tree while preserving the native Krust appliance behavior.
+
+Scope:
+
+```text
+target-independent no_std userland/operator-shell package
+Vertex.toml package metadata for service identity and target adapter
+structured operator report parser with explicit errors
+Krust console-shell as a thin syscall, IPC, logging, and console adapter
+host unit tests for negative why proofs and same-ID authority diffs
+```
+
+Acceptance tests:
+
+```text
+operator-shell builds in the top-level Vertex workspace
+Krust console-shell depends on userland/operator-shell by package path
+why rejects live capabilities whose graph target does not match the policy object
+diff-generation reports same-ID capability changes through the shared package
+M87 QEMU transcript remains unchanged except for the richer diff fields
+```
+
+Done:
+
+```text
+done: userland/operator-shell exposes target-independent current-generation,
+      generation-status, diff-generation, planned-authority-delta, why,
+      who-can, which-generation, package-list, activation-log, activate,
+      rollback, and mark-known-good request logic
+done: userland/operator-shell/Vertex.toml declares pkg:vertex.operator-shell,
+      svc:console-shell, and the Krust adapter path
+done: targets/krust/user/console-shell keeps runtime transport only and calls
+      vertex-operator-shell for operator graph answers
+done: operator-shell unit tests cover mismatched graph_target rejection,
+      same-ID authority changes, and target-neutral generation-manager requests
+done: scripts/krust-test.sh m87 continues to validate the QEMU appliance path
+```
+
+Implementation notes:
+
+- M87-1 does not add a kernel syscall. It changes source ownership: Krust owns
+  enforcement and boot plumbing, while Vertex userland owns operator semantics.
+- Future userland services should follow this package-plus-target-adapter
+  pattern before moving code under a kernel target directory.
+
+## M87-2: Krust Target User Adapter Workspace
+
+Status: done.
+
+Goal: make the OS/kernel split normal by moving Krust-built user programs out
+of the kernel source tree and into a target-specific adapter workspace.
+
+Scope:
+
+```text
+targets/krust/user workspace for Krust ABI adapter crates
+kernel/krust remains kernel and substrate source only
+Makefile builds Krust userspace from the target workspace
+vertexctl store-object lookup uses the canonical target workspace path
+release gate checks the target workspace and rejects old kernel-owned manifests
+```
+
+Acceptance tests:
+
+```text
+make -C kernel/krust build builds kernel plus targets/krust/user programs
+vertexctl resolves native user binaries from targets/krust/user/target
+kernel/krust/user/Cargo.toml is absent
+kernel/krust/user/console-shell/Cargo.toml is absent
+operator-shell Vertex.toml points to targets/krust/user/console-shell
+release gate documentation checks mention M87-2 and targets/krust/user
+```
+
+Done:
+
+```text
+done: Krust user workspace moved from kernel/krust/user to targets/krust/user
+done: kernel/krust/Makefile builds and cleans the target user workspace through
+      KRUST_USER_DIR
+done: vertexctl KrustBoot and VertexDisk store-object path resolution uses
+      targets/krust/user as the canonical native userspace artifact location
+done: userland/operator-shell/Vertex.toml declares the Krust adapter under
+      targets/krust/user/console-shell
+done: scripts/krust-release-gate.sh formats targets/krust/user crates and
+      rejects legacy kernel-owned userspace manifests
+done: targets/krust/README.md and targets/krust/user/README.md document the
+      adapter boundary
+```
+
+Implementation notes:
+
+- M87-2 does not add a kernel syscall or change runtime authority. It changes
+  source layout and build ownership.
+- `targets/krust/user` crates may contain Krust syscalls, IPC transport,
+  linker files, and entry points. Portable Vertex behavior belongs in
+  `userland/`.
+- Keeping the adapter workspace outside `kernel/krust` prevents target-specific
+  user programs from being mistaken for kernel responsibilities.
 
 ## M88: End-To-End Appliance Update Gate
 

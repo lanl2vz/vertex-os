@@ -15,7 +15,8 @@ BOOT_MANIFEST := $(BUILD_DIR)/hello-generation.krustboot
 FALLBACK_BOOT_MANIFEST := $(BUILD_DIR)/fallback-generation.krustboot
 BAD_GENERATION_BOOT_MANIFEST := $(BUILD_DIR)/bad-generation.krustboot
 KERNEL_ELF := target/$(KRUST_TARGET)/debug/krust
-USER_TARGET_DIR := user/target/$(KRUST_TARGET)/debug
+KRUST_USER_DIR := ../../targets/krust/user
+USER_TARGET_DIR := $(KRUST_USER_DIR)/target/$(KRUST_TARGET)/debug
 INIT_TARGET_DIR := $(USER_TARGET_DIR)
 SERIAL_DRIVER_TARGET_DIR := $(USER_TARGET_DIR)
 CONSOLE_DRIVER_TARGET_DIR := $(USER_TARGET_DIR)
@@ -88,7 +89,7 @@ kernel:
 	$(KRUST_BUILD_ENV) $(CARGO) build --locked --target $(KRUST_TARGET)
 
 user:
-	cd user && $(KRUST_BUILD_ENV) $(CARGO) build --workspace --locked --target $(KRUST_TARGET)
+	cd $(KRUST_USER_DIR) && $(KRUST_BUILD_ENV) $(CARGO) build --workspace --locked --target $(KRUST_TARGET)
 
 boot-manifest: user
 	mkdir -p $(BUILD_DIR)
@@ -186,13 +187,13 @@ doctor: check-tools check-tool-versions check-cargo-locks check-rust-target chec
 	@echo "limine: $$(command -v $(LIMINE)) ($$($(LIMINE) --version | sed -n '1p'))"
 	@echo "xorriso: $$(command -v $(XORRISO)) ($$($(XORRISO) --version 2>/dev/null | sed -n '1p'))"
 	@echo "LIMINE_DIR: $(LIMINE_DIR)"
-	@echo "Krust M14-M86 toolchain is ready."
+	@echo "Krust M14-M87 plus M87-1/M87-2 toolchain is ready."
 
 release-gate:
 	../../scripts/krust-release-gate.sh
 
 clean:
-	rm -rf $(BUILD_DIR) target user/target user/*/target
+	rm -rf $(BUILD_DIR) target $(KRUST_USER_DIR)/target $(KRUST_USER_DIR)/*/target
 
 check-tools:
 	@command -v $(RUSTC) >/dev/null 2>&1 || { echo "error: rustc not found. Install Rust $(REQUIRED_RUST), or run rustup from kernel/krust so rust-toolchain.toml installs it."; exit 1; }
@@ -237,7 +238,7 @@ check-tool-versions:
 check-cargo-locks:
 	@test -f ../../Cargo.lock || { echo "error: repository Cargo.lock missing. Run cargo generate-lockfile at the repository root with Rust $(REQUIRED_RUST)."; exit 1; }
 	@test -f Cargo.lock || { echo "error: kernel/krust/Cargo.lock missing. Run cargo generate-lockfile with Rust $(REQUIRED_RUST)."; exit 1; }
-	@test -f user/Cargo.lock || { echo "error: kernel/krust/user/Cargo.lock missing. Run cargo generate-lockfile --manifest-path kernel/krust/user/Cargo.toml with Rust $(REQUIRED_RUST)."; exit 1; }
+	@test -f $(KRUST_USER_DIR)/Cargo.lock || { echo "error: targets/krust/user/Cargo.lock missing. Run cargo generate-lockfile --manifest-path targets/krust/user/Cargo.toml with Rust $(REQUIRED_RUST)."; exit 1; }
 
 check-rust-target:
 	@ls "$$($(RUSTC) --print sysroot)/lib/rustlib/$(KRUST_TARGET)/lib"/libcore-*.rlib >/dev/null 2>&1 || { echo "error: Rust target $(KRUST_TARGET) is not installed for Rust $(REQUIRED_RUST). Run: rustup target add $(KRUST_TARGET) --toolchain $(REQUIRED_RUST)"; exit 1; }

@@ -4,6 +4,7 @@
 mod sys;
 
 use core::{cell::UnsafeCell, panic::PanicInfo};
+use vertex_operator_shell as operator_shell;
 
 const CAP_SHELL_REQUEST: u64 = 0;
 const CAP_SERIAL_LOG: u64 = 1;
@@ -539,103 +540,69 @@ fn console_write_state_health(report: &[u8]) {
     console_write(b"state-health ok\n> ");
 }
 
+fn operator_fail(error: operator_shell::Error) -> ! {
+    log(error.message);
+    sys::exit(1);
+}
+
+fn operator_expect<T>(result: operator_shell::Result<T>) -> T {
+    match result {
+        Ok(value) => value,
+        Err(error) => operator_fail(error),
+    }
+}
+
 fn operator_current_generation(report: &[u8]) {
-    let line = operator_report_line(report);
-    let generation = required_field(line, b"active=", b"operator current-generation missing active");
-    let policy_hash = required_field(
-        line,
-        b"policy_hash=",
-        b"operator current-generation missing policy hash",
-    );
-    let graph_hash = required_field(
-        line,
-        b"graph_hash=",
-        b"operator current-generation missing graph hash",
-    );
+    let answer = operator_expect(operator_shell::current_generation(report));
     let mut buffer = [0u8; 256];
     let mut len = 0;
-    append(&mut buffer, &mut len, b"operator current-generation generation=");
-    append(&mut buffer, &mut len, generation);
+    append(
+        &mut buffer,
+        &mut len,
+        b"operator current-generation generation=",
+    );
+    append(&mut buffer, &mut len, answer.generation);
     append(&mut buffer, &mut len, b" policy_hash=");
-    append(&mut buffer, &mut len, policy_hash);
+    append(&mut buffer, &mut len, answer.policy_hash);
     append(&mut buffer, &mut len, b" graph_hash=");
-    append(&mut buffer, &mut len, graph_hash);
+    append(&mut buffer, &mut len, answer.graph_hash);
     log(&buffer[..len]);
     console_write(b"current-generation ok\n> ");
 }
 
 fn operator_generations(report: &[u8]) {
-    let mut count = 0;
-    for_each_line(report, |line| {
-        if starts_with(line, b"operator-generation[") {
-            log(line);
-            count += 1;
-        }
-    });
-    if count == 0 {
-        log(b"operator generations query failed");
-        sys::exit(1);
-    }
+    let count = operator_expect(operator_shell::for_generations(report, |line| log(line)));
     log_count_line(b"operator generations listed=", count);
     console_write(b"generations ok\n> ");
 }
 
 fn operator_generation_status(report: &[u8]) {
-    let needles: [&[u8]; 2] = [b"generation-manager v=1", b"selected="];
-    let Some(manager) = find_line_contains_all(report, &needles) else {
-        log(b"operator generation-status query failed");
-        sys::exit(1);
-    };
-    let selected = required_field(manager, b"selected=", b"generation-status missing selected");
-    let previous = required_field(manager, b"previous=", b"generation-status missing previous");
-    let known_good =
-        required_field(manager, b"known_good=", b"generation-status missing known-good");
-    let transaction =
-        required_field(manager, b"transaction=", b"generation-status missing transaction");
-    let target = required_field(manager, b"target=", b"generation-status missing target");
-    let policy_hash = active_policy_hash(report);
+    let answer = operator_expect(operator_shell::generation_status(report));
 
     let mut buffer = [0u8; 256];
     let mut len = 0;
-    append(&mut buffer, &mut len, b"operator generation-status selected=");
-    append(&mut buffer, &mut len, selected);
+    append(
+        &mut buffer,
+        &mut len,
+        b"operator generation-status selected=",
+    );
+    append(&mut buffer, &mut len, answer.selected);
     append(&mut buffer, &mut len, b" previous=");
-    append(&mut buffer, &mut len, previous);
+    append(&mut buffer, &mut len, answer.previous);
     append(&mut buffer, &mut len, b" known_good=");
-    append(&mut buffer, &mut len, known_good);
+    append(&mut buffer, &mut len, answer.known_good);
     append(&mut buffer, &mut len, b" transaction=");
-    append(&mut buffer, &mut len, transaction);
+    append(&mut buffer, &mut len, answer.transaction);
     append(&mut buffer, &mut len, b" target=");
-    append(&mut buffer, &mut len, target);
+    append(&mut buffer, &mut len, answer.target);
     append(&mut buffer, &mut len, b" policy_hash=");
-    append(&mut buffer, &mut len, policy_hash);
+    append(&mut buffer, &mut len, answer.policy_hash);
     log(&buffer[..len]);
     console_write(b"generation-status ok\n> ");
 }
 
 fn operator_diff_generation(report: &[u8], command: &[u8], authority_only: bool) {
-    let from = word_or_fail(command, 1, b"operator diff missing source generation");
-    let to = word_or_fail(command, 2, b"operator diff missing target generation");
-    if word_at(command, 3).is_some() {
-        log(b"operator diff rejected: too many arguments");
-        sys::exit(1);
-    }
-    require_operator_generation(report, from);
-    let target_line = require_operator_generation(report, to);
-    let policy_hash = required_field(target_line, b"policy_hash=", b"operator diff missing hash");
-
-    let service_added = count_node_delta(report, from, to, b"service");
-    let service_removed = count_node_delta(report, to, from, b"service");
-    let state_added = count_node_delta(report, from, to, b"state-volume");
-    let state_removed = count_node_delta(report, to, from, b"state-volume");
-    let device_added = count_node_delta(report, from, to, b"device");
-    let device_removed = count_node_delta(report, to, from, b"device");
-    let capability_added = count_capability_delta(report, from, to);
-    let capability_removed = count_capability_delta(report, to, from);
-    let service_changed = count_service_changed(report, from, to);
-    let state_changed = count_state_changed(report, from, to);
-    let device_changed = count_node_changed(report, from, to, b"device");
-    let capability_changed = count_capability_changed(report, from, to);
+    let answer = operator_expect(operator_shell::diff_generation(report, command));
 
     let mut buffer = [0u8; 384];
     let mut len = 0;
@@ -648,40 +615,40 @@ fn operator_diff_generation(report: &[u8], command: &[u8], authority_only: bool)
     } else {
         append(&mut buffer, &mut len, b"operator diff-generation from=");
     }
-    append(&mut buffer, &mut len, from);
+    append(&mut buffer, &mut len, answer.from);
     append(&mut buffer, &mut len, b" to=");
-    append(&mut buffer, &mut len, to);
+    append(&mut buffer, &mut len, answer.to);
     if !authority_only {
         append(&mut buffer, &mut len, b" services=+");
-        append_u64(&mut buffer, &mut len, service_added);
+        append_u64(&mut buffer, &mut len, answer.service_added);
         append(&mut buffer, &mut len, b"-");
-        append_u64(&mut buffer, &mut len, service_removed);
+        append_u64(&mut buffer, &mut len, answer.service_removed);
         append(&mut buffer, &mut len, b" changed_services=");
-        append_u64(&mut buffer, &mut len, service_changed);
+        append_u64(&mut buffer, &mut len, answer.service_changed);
         append(&mut buffer, &mut len, b" packages=unavailable");
     }
     append(&mut buffer, &mut len, b" capabilities=+");
-    append_u64(&mut buffer, &mut len, capability_added);
+    append_u64(&mut buffer, &mut len, answer.capability_added);
     append(&mut buffer, &mut len, b"-");
-    append_u64(&mut buffer, &mut len, capability_removed);
+    append_u64(&mut buffer, &mut len, answer.capability_removed);
     append(&mut buffer, &mut len, b" changed_capabilities=");
-    append_u64(&mut buffer, &mut len, capability_changed);
+    append_u64(&mut buffer, &mut len, answer.capability_changed);
     if !authority_only {
         append(&mut buffer, &mut len, b" state=+");
-        append_u64(&mut buffer, &mut len, state_added);
+        append_u64(&mut buffer, &mut len, answer.state_added);
         append(&mut buffer, &mut len, b"-");
-        append_u64(&mut buffer, &mut len, state_removed);
+        append_u64(&mut buffer, &mut len, answer.state_removed);
         append(&mut buffer, &mut len, b" changed_state=");
-        append_u64(&mut buffer, &mut len, state_changed);
+        append_u64(&mut buffer, &mut len, answer.state_changed);
         append(&mut buffer, &mut len, b" devices=+");
-        append_u64(&mut buffer, &mut len, device_added);
+        append_u64(&mut buffer, &mut len, answer.device_added);
         append(&mut buffer, &mut len, b"-");
-        append_u64(&mut buffer, &mut len, device_removed);
+        append_u64(&mut buffer, &mut len, answer.device_removed);
         append(&mut buffer, &mut len, b" changed_devices=");
-        append_u64(&mut buffer, &mut len, device_changed);
+        append_u64(&mut buffer, &mut len, answer.device_changed);
     }
     append(&mut buffer, &mut len, b" policy_hash=");
-    append(&mut buffer, &mut len, policy_hash);
+    append(&mut buffer, &mut len, answer.policy_hash);
     log(&buffer[..len]);
     if authority_only {
         console_write(b"planned-authority-delta ok\n> ");
@@ -691,185 +658,129 @@ fn operator_diff_generation(report: &[u8], command: &[u8], authority_only: bool)
 }
 
 fn operator_why(report: &[u8], command: &[u8]) {
-    let service = word_or_fail(command, 1, b"operator why missing service");
-    let capability = word_or_fail(command, 2, b"operator why missing capability");
-    if word_at(command, 3).is_some() {
-        log(b"operator why rejected: too many arguments");
-        sys::exit(1);
-    }
-    let generation = active_generation(report);
-    let requirement = require_operator_requirement(report, generation, service, capability);
-    let capability_line = require_operator_capability(report, generation, capability);
-    let requirement_rights =
-        required_field(requirement, b"rights=", b"operator why missing requirement rights");
-    let capability_rights =
-        required_field(capability_line, b"rights=", b"operator why missing capability rights");
-    if !rights_cover(capability_rights, requirement_rights) {
-        log(b"operator why rejected: requirement rights exceed capability rights");
-        sys::exit(1);
-    }
-    let object = required_field(
-        capability_line,
-        b"object=",
-        b"operator why missing capability object",
-    );
-    let edge = require_operator_edge(report, generation, object, requirement_rights);
-    let process = operator_service_process(report, generation, service);
-    require_live_capability(report, process, service, object, requirement_rights);
-    let policy_hash = active_policy_hash(report);
-    let provider = required_field(
-        capability_line,
-        b"provider=",
-        b"operator why missing capability provider",
-    );
+    let answer = operator_expect(operator_shell::why(report, command));
 
     let mut buffer = [0u8; 256];
     let mut len = 0;
     append(&mut buffer, &mut len, b"operator why service=");
-    append(&mut buffer, &mut len, service);
+    append(&mut buffer, &mut len, answer.service);
     append(&mut buffer, &mut len, b" capability=");
-    append(&mut buffer, &mut len, capability);
+    append(&mut buffer, &mut len, answer.capability);
     append(&mut buffer, &mut len, b" provider=");
-    append(&mut buffer, &mut len, provider);
+    append(&mut buffer, &mut len, answer.provider);
     append(&mut buffer, &mut len, b" rights=");
-    append(&mut buffer, &mut len, requirement_rights);
+    append(&mut buffer, &mut len, answer.rights);
     append(&mut buffer, &mut len, b" edge=");
-    append(
-        &mut buffer,
-        &mut len,
-        required_field(edge, b"id=", b"operator why missing edge id"),
-    );
+    append(&mut buffer, &mut len, answer.edge);
     append(&mut buffer, &mut len, b" generation=");
-    append(&mut buffer, &mut len, generation);
+    append(&mut buffer, &mut len, answer.generation);
     append(&mut buffer, &mut len, b" policy_hash=");
-    append(&mut buffer, &mut len, policy_hash);
+    append(&mut buffer, &mut len, answer.policy_hash);
     log(&buffer[..len]);
     console_write(b"why ok\n> ");
 }
 
 fn operator_who_can(report: &[u8], command: &[u8]) {
-    let object = word_or_fail(command, 1, b"operator who-can missing object");
-    if word_at(command, 2).is_some() {
-        log(b"operator who-can rejected: too many arguments");
-        sys::exit(1);
-    }
-    let generation = active_generation(report);
-    let policy_hash = active_policy_hash(report);
-    if starts_with(object, b"state:") {
-        let writers = log_state_writers(report, generation, object);
-        if writers == 0 {
-            log(b"operator who-can rejected: no graph-authorized state writers");
-            sys::exit(1);
+    let answer = operator_expect(operator_shell::who_can(
+        report,
+        command,
+        |entry| match entry {
+            operator_shell::WhoCanEntry::StateWriter {
+                service,
+                state,
+                rights,
+            } => {
+                let mut buffer = [0u8; 192];
+                let mut len = 0;
+                append(&mut buffer, &mut len, b"operator who-can writer service=");
+                append(&mut buffer, &mut len, service);
+                append(&mut buffer, &mut len, b" state=");
+                append(&mut buffer, &mut len, state);
+                append(&mut buffer, &mut len, b" rights=");
+                append(&mut buffer, &mut len, rights);
+                log(&buffer[..len]);
+            }
+            operator_shell::WhoCanEntry::CapabilityConsumer {
+                service,
+                capability,
+                rights,
+            } => {
+                let mut buffer = [0u8; 192];
+                let mut len = 0;
+                append(&mut buffer, &mut len, b"operator who-can consumer service=");
+                append(&mut buffer, &mut len, service);
+                append(&mut buffer, &mut len, b" capability=");
+                append(&mut buffer, &mut len, capability);
+                append(&mut buffer, &mut len, b" rights=");
+                append(&mut buffer, &mut len, rights);
+                log(&buffer[..len]);
+            }
+        },
+    ));
+
+    let mut buffer = [0u8; 192];
+    let mut len = 0;
+    append(&mut buffer, &mut len, b"operator who-can object=");
+    append(&mut buffer, &mut len, answer.object);
+    match answer.kind {
+        operator_shell::WhoCanKind::StateWriters => {
+            append(&mut buffer, &mut len, b" writer_count=");
         }
-        let mut buffer = [0u8; 192];
-        let mut len = 0;
-        append(&mut buffer, &mut len, b"operator who-can object=");
-        append(&mut buffer, &mut len, object);
-        append(&mut buffer, &mut len, b" writer_count=");
-        append_u64(&mut buffer, &mut len, writers);
-        append(&mut buffer, &mut len, b" generation=");
-        append(&mut buffer, &mut len, generation);
-        append(&mut buffer, &mut len, b" policy_hash=");
-        append(&mut buffer, &mut len, policy_hash);
-        log(&buffer[..len]);
-        console_write(b"who-can ok\n> ");
-        return;
+        operator_shell::WhoCanKind::CapabilityConsumers => {
+            append(&mut buffer, &mut len, b" consumer_count=");
+        }
     }
-    if starts_with(object, b"cap:") {
-        let consumers = log_capability_consumers(report, generation, object);
-        let mut buffer = [0u8; 192];
-        let mut len = 0;
-        append(&mut buffer, &mut len, b"operator who-can object=");
-        append(&mut buffer, &mut len, object);
-        append(&mut buffer, &mut len, b" consumer_count=");
-        append_u64(&mut buffer, &mut len, consumers);
-        append(&mut buffer, &mut len, b" generation=");
-        append(&mut buffer, &mut len, generation);
-        append(&mut buffer, &mut len, b" policy_hash=");
-        append(&mut buffer, &mut len, policy_hash);
-        log(&buffer[..len]);
-        console_write(b"who-can ok\n> ");
-        return;
-    }
-    log(b"operator who-can rejected: unsupported object kind");
-    sys::exit(1);
+    append_u64(&mut buffer, &mut len, answer.count);
+    append(&mut buffer, &mut len, b" generation=");
+    append(&mut buffer, &mut len, answer.generation);
+    append(&mut buffer, &mut len, b" policy_hash=");
+    append(&mut buffer, &mut len, answer.policy_hash);
+    log(&buffer[..len]);
+    console_write(b"who-can ok\n> ");
 }
 
 fn operator_which_generation(report: &[u8], command: &[u8]) {
-    let selector = word_or_fail(command, 1, b"operator which-generation missing selector");
-    if word_at(command, 2).is_some() {
-        log(b"operator which-generation rejected: too many arguments");
-        sys::exit(1);
-    }
-    let process = if starts_with(selector, b"svc:") {
-        operator_service_process(report, active_generation(report), selector)
-    } else {
-        selector
-    };
-    let Some(line) = find_process_line(report, process) else {
-        log(b"operator which-generation rejected: unknown process");
-        sys::exit(1);
-    };
-    let generation =
-        required_field(line, b"generation=", b"operator which-generation missing generation");
-    let policy_hash = active_policy_hash(report);
+    let answer = operator_expect(operator_shell::which_generation(report, command));
     let mut buffer = [0u8; 192];
     let mut len = 0;
-    append(&mut buffer, &mut len, b"operator which-generation selector=");
-    append(&mut buffer, &mut len, selector);
+    append(
+        &mut buffer,
+        &mut len,
+        b"operator which-generation selector=",
+    );
+    append(&mut buffer, &mut len, answer.selector);
     append(&mut buffer, &mut len, b" process=");
-    append(&mut buffer, &mut len, process);
+    append(&mut buffer, &mut len, answer.process());
     append(&mut buffer, &mut len, b" generation=");
-    append(&mut buffer, &mut len, generation);
+    append(&mut buffer, &mut len, answer.generation);
     append(&mut buffer, &mut len, b" policy_hash=");
-    append(&mut buffer, &mut len, policy_hash);
+    append(&mut buffer, &mut len, answer.policy_hash);
     log(&buffer[..len]);
     console_write(b"which-generation ok\n> ");
 }
 
 fn operator_package_list(report: &[u8]) {
-    let generation = active_generation(report);
-    let generation_line = require_operator_generation(report, generation);
-    let facts =
-        required_field(generation_line, b"package_facts=", b"operator package-list missing facts");
-    if !bytes_eq(facts, b"absent") {
-        log(b"operator package-list rejected: unsupported package fact encoding");
-        sys::exit(1);
-    }
+    operator_expect(operator_shell::package_list_unavailable(report));
     log(b"operator package-list unavailable: no native package facts");
     console_write(b"package-list unavailable\n> ");
 }
 
 fn operator_activation_log(report: &[u8]) {
-    let mut count = 0;
-    for_each_line(report, |line| {
-        if starts_with(line, b"service-lifecycle[") {
-            log(line);
-            count += 1;
-        }
-    });
-    if count == 0 {
-        log(b"operator activation-log rejected: no lifecycle records");
-        sys::exit(1);
-    }
+    let count = operator_expect(operator_shell::activation_log(report, |line| log(line)));
     log_count_line(b"operator activation-log records=", count);
     console_write(b"activation-log ok\n> ");
 }
 
 fn operator_activate(command: &[u8]) {
-    let generation = word_or_fail(command, 1, b"operator activate missing generation");
-    if word_at(command, 2).is_some() {
-        log(b"operator activate rejected: too many arguments");
-        sys::exit(1);
-    }
     let mut request = [0u8; 96];
-    let mut len = 0;
-    append(&mut request, &mut len, b"install ");
-    append(&mut request, &mut len, generation);
+    let answer = operator_expect(operator_shell::activate_request(command, &mut request));
     console_write(b"activate requested\n> ");
     yield_for_console_driver();
-    log_prefix(b"operator activate queues generation-manager install: generation=", generation);
-    if sys::ipc_send(CAP_GENERATION_MANAGER_REQUEST, &request[..len]) != sys::STATUS_OK {
+    log_prefix(
+        b"operator activate queues generation-manager install: generation=",
+        answer.generation,
+    );
+    if sys::ipc_send(CAP_GENERATION_MANAGER_REQUEST, answer.request) != sys::STATUS_OK {
         log(b"operator activate send failed");
         sys::exit(1);
     }
@@ -879,19 +790,15 @@ fn operator_activate(command: &[u8]) {
 }
 
 fn operator_rollback(command: &[u8]) {
-    let generation = word_or_fail(command, 1, b"operator rollback missing generation");
-    if word_at(command, 2).is_some() {
-        log(b"operator rollback rejected: too many arguments");
-        sys::exit(1);
-    }
     let mut request = [0u8; 96];
-    let mut len = 0;
-    append(&mut request, &mut len, b"rollback ");
-    append(&mut request, &mut len, generation);
+    let answer = operator_expect(operator_shell::rollback_request(command, &mut request));
     console_write(b"rollback requested\n> ");
     yield_for_console_driver();
-    log_prefix(b"operator rollback queues generation-manager rollback: generation=", generation);
-    if sys::ipc_send(CAP_GENERATION_MANAGER_REQUEST, &request[..len]) != sys::STATUS_OK {
+    log_prefix(
+        b"operator rollback queues generation-manager rollback: generation=",
+        answer.generation,
+    );
+    if sys::ipc_send(CAP_GENERATION_MANAGER_REQUEST, answer.request) != sys::STATUS_OK {
         log(b"operator rollback send failed");
         sys::exit(1);
     }
@@ -901,607 +808,22 @@ fn operator_rollback(command: &[u8]) {
 }
 
 fn operator_mark_known_good(report: &[u8], command: &[u8]) {
-    let generation = word_or_fail(command, 1, b"operator mark-known-good missing generation");
-    if word_at(command, 2).is_some() {
-        log(b"operator mark-known-good rejected: too many arguments");
-        sys::exit(1);
-    }
-    let active = active_generation(report);
-    if !bytes_eq(active, generation) {
-        log(b"operator mark-known-good rejected: target is not active generation");
-        sys::exit(1);
-    }
     let mut request = [0u8; 96];
-    let mut len = 0;
-    append(&mut request, &mut len, b"mark-known-good ");
-    append(&mut request, &mut len, generation);
+    let answer = operator_expect(operator_shell::mark_known_good_request(
+        report,
+        command,
+        &mut request,
+    ));
     log_prefix(
         b"operator mark-known-good queues generation-manager command: generation=",
-        generation,
+        answer.generation,
     );
-    if sys::ipc_send(CAP_GENERATION_MANAGER_REQUEST, &request[..len]) != sys::STATUS_OK {
+    if sys::ipc_send(CAP_GENERATION_MANAGER_REQUEST, answer.request) != sys::STATUS_OK {
         log(b"operator mark-known-good send failed");
         sys::exit(1);
     }
     yield_for_console_driver();
     console_write(b"mark-known-good requested\n> ");
-}
-
-fn operator_report_line(report: &[u8]) -> &[u8] {
-    let needles: [&[u8]; 2] = [b"operator-report v=1", b"active="];
-    let Some(line) = find_line_contains_all(report, &needles) else {
-        log(b"operator report missing");
-        sys::exit(1);
-    };
-    line
-}
-
-fn active_generation(report: &[u8]) -> &[u8] {
-    required_field(
-        operator_report_line(report),
-        b"active=",
-        b"operator report missing active generation",
-    )
-}
-
-fn active_policy_hash(report: &[u8]) -> &[u8] {
-    required_field(
-        operator_report_line(report),
-        b"policy_hash=",
-        b"operator report missing policy hash",
-    )
-}
-
-fn require_operator_generation<'a>(report: &'a [u8], generation: &[u8]) -> &'a [u8] {
-    let Some(line) = find_line_where(report, |line| {
-        starts_with(line, b"operator-generation[") && field_eq(line, b"id=", generation)
-    }) else {
-        log(b"operator rejected: unknown generation");
-        sys::exit(1);
-    };
-    line
-}
-
-fn require_operator_requirement<'a>(
-    report: &'a [u8],
-    generation: &[u8],
-    service: &[u8],
-    capability: &[u8],
-) -> &'a [u8] {
-    let Some(line) = find_line_where(report, |line| {
-        starts_with(line, b"operator-requirement[")
-            && field_eq(line, b"generation=", generation)
-            && field_eq(line, b"service=", service)
-            && field_eq(line, b"capability=", capability)
-    }) else {
-        log(b"operator rejected: missing policy requirement");
-        sys::exit(1);
-    };
-    line
-}
-
-fn require_operator_capability<'a>(
-    report: &'a [u8],
-    generation: &[u8],
-    capability: &[u8],
-) -> &'a [u8] {
-    let Some(line) = find_line_where(report, |line| {
-        starts_with(line, b"operator-capability[")
-            && field_eq(line, b"generation=", generation)
-            && field_eq(line, b"id=", capability)
-    }) else {
-        log(b"operator rejected: missing policy capability");
-        sys::exit(1);
-    };
-    line
-}
-
-fn require_operator_edge<'a>(
-    report: &'a [u8],
-    generation: &[u8],
-    object: &[u8],
-    required_rights: &[u8],
-) -> &'a [u8] {
-    let Some(line) = find_line_where(report, |line| {
-        if !(starts_with(line, b"operator-edge[")
-            && field_eq(line, b"generation=", generation)
-            && field_eq(line, b"kind=", b"capability")
-            && field_eq(line, b"to=", object))
-        {
-            return false;
-        }
-        field_slice(line, b"rights=")
-            .is_some_and(|edge_rights| rights_cover(edge_rights, required_rights))
-    }) else {
-        log(b"operator rejected: missing graph capability edge");
-        sys::exit(1);
-    };
-    line
-}
-
-fn operator_service_process<'a>(
-    report: &'a [u8],
-    generation: &[u8],
-    service: &[u8],
-) -> &'a [u8] {
-    let Some(line) = find_line_where(report, |line| {
-        starts_with(line, b"operator-service[")
-            && field_eq(line, b"generation=", generation)
-            && field_eq(line, b"id=", service)
-    }) else {
-        log(b"operator rejected: unknown service");
-        sys::exit(1);
-    };
-    required_field(line, b"process=", b"operator service missing process")
-}
-
-fn require_live_capability(
-    report: &[u8],
-    process: &[u8],
-    service: &[u8],
-    object: &[u8],
-    required_rights: &[u8],
-) {
-    let generation = active_generation(report);
-    let mut accepted = false;
-    for_each_line(report, |line| {
-        if starts_with(line, b"space=")
-            && field_eq(line, b"proc=", process)
-            && field_eq(line, b"generation=", generation)
-            && field_eq(line, b"graph_from=", service)
-            && field_eq(line, b"graph_target=", object)
-            && field_eq(line, b"revoked=", b"no")
-            && let Some(rights) = field_slice(line, b"rights=")
-            && rights_cover(rights, required_rights)
-        {
-            accepted = true;
-        }
-    });
-    if !accepted {
-        log(b"operator rejected: live capability missing or insufficient");
-        sys::exit(1);
-    }
-}
-
-fn log_state_writers(report: &[u8], generation: &[u8], state: &[u8]) -> u64 {
-    let mut writers = 0;
-    for_each_line(report, |line| {
-        if starts_with(line, b"operator-state-path[")
-            && field_eq(line, b"generation=", generation)
-            && field_eq(line, b"state=", state)
-            && let Some(rights) = field_slice(line, b"rights=")
-            && right_present(rights, b"write")
-        {
-            let service = required_field(line, b"service=", b"operator state path missing service");
-            let mut buffer = [0u8; 192];
-            let mut len = 0;
-            append(&mut buffer, &mut len, b"operator who-can writer service=");
-            append(&mut buffer, &mut len, service);
-            append(&mut buffer, &mut len, b" state=");
-            append(&mut buffer, &mut len, state);
-            append(&mut buffer, &mut len, b" rights=");
-            append(&mut buffer, &mut len, rights);
-            log(&buffer[..len]);
-            writers += 1;
-        }
-    });
-    writers
-}
-
-fn log_capability_consumers(report: &[u8], generation: &[u8], capability: &[u8]) -> u64 {
-    let mut consumers = 0;
-    for_each_line(report, |line| {
-        if starts_with(line, b"operator-requirement[")
-            && field_eq(line, b"generation=", generation)
-            && field_eq(line, b"capability=", capability)
-        {
-            let service = required_field(line, b"service=", b"operator requirement missing service");
-            let rights = required_field(line, b"rights=", b"operator requirement missing rights");
-            let mut buffer = [0u8; 192];
-            let mut len = 0;
-            append(
-                &mut buffer,
-                &mut len,
-                b"operator who-can consumer service=",
-            );
-            append(&mut buffer, &mut len, service);
-            append(&mut buffer, &mut len, b" capability=");
-            append(&mut buffer, &mut len, capability);
-            append(&mut buffer, &mut len, b" rights=");
-            append(&mut buffer, &mut len, rights);
-            log(&buffer[..len]);
-            consumers += 1;
-        }
-    });
-    consumers
-}
-
-fn count_node_delta(report: &[u8], from: &[u8], to: &[u8], kind: &[u8]) -> u64 {
-    let mut count = 0;
-    for_each_line(report, |line| {
-        if starts_with(line, b"operator-node[")
-            && field_eq(line, b"generation=", to)
-            && field_eq(line, b"kind=", kind)
-            && let Some(id) = field_slice(line, b"id=")
-            && !operator_node_exists(report, from, kind, id)
-        {
-            count += 1;
-        }
-    });
-    count
-}
-
-fn count_capability_delta(report: &[u8], from: &[u8], to: &[u8]) -> u64 {
-    let mut count = 0;
-    for_each_line(report, |line| {
-        if starts_with(line, b"operator-capability[")
-            && field_eq(line, b"generation=", to)
-            && let Some(id) = field_slice(line, b"id=")
-            && !operator_capability_exists(report, from, id)
-        {
-            count += 1;
-        }
-    });
-    count
-}
-
-fn count_service_changed(report: &[u8], from: &[u8], to: &[u8]) -> u64 {
-    let mut count = 0;
-    for_each_line(report, |line| {
-        if starts_with(line, b"operator-node[")
-            && field_eq(line, b"generation=", to)
-            && field_eq(line, b"kind=", b"service")
-            && let Some(id) = field_slice(line, b"id=")
-            && let Some(previous_node) = operator_node_line(report, from, b"service", id)
-        {
-            let previous_service = require_operator_service_line(report, from, id);
-            let current_service = require_operator_service_line(report, to, id);
-            if !operator_node_semantically_equal(previous_node, line)
-                || !operator_service_semantically_equal(previous_service, current_service)
-            {
-                count += 1;
-            }
-        }
-    });
-    count
-}
-
-fn count_state_changed(report: &[u8], from: &[u8], to: &[u8]) -> u64 {
-    let mut count = 0;
-    for_each_line(report, |line| {
-        if starts_with(line, b"operator-node[")
-            && field_eq(line, b"generation=", to)
-            && field_eq(line, b"kind=", b"state-volume")
-            && let Some(id) = field_slice(line, b"id=")
-            && let Some(previous_node) = operator_node_line(report, from, b"state-volume", id)
-        {
-            let previous_state = require_operator_state_line(report, from, id);
-            let current_state = require_operator_state_line(report, to, id);
-            if !operator_node_semantically_equal(previous_node, line)
-                || !operator_state_semantically_equal(previous_state, current_state)
-            {
-                count += 1;
-            }
-        }
-    });
-    count
-}
-
-fn count_node_changed(report: &[u8], from: &[u8], to: &[u8], kind: &[u8]) -> u64 {
-    let mut count = 0;
-    for_each_line(report, |line| {
-        if starts_with(line, b"operator-node[")
-            && field_eq(line, b"generation=", to)
-            && field_eq(line, b"kind=", kind)
-            && let Some(id) = field_slice(line, b"id=")
-            && let Some(previous) = operator_node_line(report, from, kind, id)
-            && !operator_node_semantically_equal(previous, line)
-        {
-            count += 1;
-        }
-    });
-    count
-}
-
-fn count_capability_changed(report: &[u8], from: &[u8], to: &[u8]) -> u64 {
-    let mut count = 0;
-    for_each_line(report, |line| {
-        if starts_with(line, b"operator-capability[")
-            && field_eq(line, b"generation=", to)
-            && let Some(id) = field_slice(line, b"id=")
-            && let Some(previous) = operator_capability_line(report, from, id)
-            && !operator_capability_semantically_equal(previous, line)
-        {
-            count += 1;
-        }
-    });
-    count
-}
-
-fn operator_node_line<'a>(
-    report: &'a [u8],
-    generation: &[u8],
-    kind: &[u8],
-    id: &[u8],
-) -> Option<&'a [u8]> {
-    find_line_where(report, |line| {
-        starts_with(line, b"operator-node[")
-            && field_eq(line, b"generation=", generation)
-            && field_eq(line, b"kind=", kind)
-            && field_eq(line, b"id=", id)
-    })
-}
-
-fn operator_capability_line<'a>(
-    report: &'a [u8],
-    generation: &[u8],
-    id: &[u8],
-) -> Option<&'a [u8]> {
-    find_line_where(report, |line| {
-        starts_with(line, b"operator-capability[")
-            && field_eq(line, b"generation=", generation)
-            && field_eq(line, b"id=", id)
-    })
-}
-
-fn operator_service_line<'a>(
-    report: &'a [u8],
-    generation: &[u8],
-    id: &[u8],
-) -> Option<&'a [u8]> {
-    find_line_where(report, |line| {
-        starts_with(line, b"operator-service[")
-            && field_eq(line, b"generation=", generation)
-            && field_eq(line, b"id=", id)
-    })
-}
-
-fn operator_state_line<'a>(
-    report: &'a [u8],
-    generation: &[u8],
-    id: &[u8],
-) -> Option<&'a [u8]> {
-    find_line_where(report, |line| {
-        starts_with(line, b"operator-state[")
-            && field_eq(line, b"generation=", generation)
-            && field_eq(line, b"id=", id)
-    })
-}
-
-fn require_operator_service_line<'a>(
-    report: &'a [u8],
-    generation: &[u8],
-    id: &[u8],
-) -> &'a [u8] {
-    let Some(line) = operator_service_line(report, generation, id) else {
-        log(b"operator diff rejected: service fact missing");
-        sys::exit(1);
-    };
-    line
-}
-
-fn require_operator_state_line<'a>(
-    report: &'a [u8],
-    generation: &[u8],
-    id: &[u8],
-) -> &'a [u8] {
-    let Some(line) = operator_state_line(report, generation, id) else {
-        log(b"operator diff rejected: state fact missing");
-        sys::exit(1);
-    };
-    line
-}
-
-fn operator_node_exists(report: &[u8], generation: &[u8], kind: &[u8], id: &[u8]) -> bool {
-    operator_node_line(report, generation, kind, id).is_some()
-}
-
-fn operator_capability_exists(report: &[u8], generation: &[u8], id: &[u8]) -> bool {
-    operator_capability_line(report, generation, id)
-    .is_some()
-}
-
-fn operator_node_semantically_equal(left: &[u8], right: &[u8]) -> bool {
-    field_pair_eq(left, right, b"kind=", b"operator node missing kind")
-        && field_pair_eq(left, right, b"id=", b"operator node missing id")
-        && field_pair_eq(
-            left,
-            right,
-            b"object_kind=",
-            b"operator node missing object kind",
-        )
-        && field_pair_eq(left, right, b"label=", b"operator node missing label")
-}
-
-fn operator_capability_semantically_equal(left: &[u8], right: &[u8]) -> bool {
-    field_pair_eq(
-        left,
-        right,
-        b"id=",
-        b"operator capability missing id",
-    ) && field_pair_eq(
-        left,
-        right,
-        b"provider=",
-        b"operator capability missing provider",
-    ) && field_pair_eq(
-        left,
-        right,
-        b"object_kind=",
-        b"operator capability missing object kind",
-    ) && field_pair_eq(
-        left,
-        right,
-        b"object=",
-        b"operator capability missing object",
-    ) && rights_pair_eq(
-        left,
-        right,
-        b"operator capability missing rights",
-    )
-}
-
-fn operator_service_semantically_equal(left: &[u8], right: &[u8]) -> bool {
-    field_pair_eq(left, right, b"id=", b"operator service missing id")
-        && field_pair_eq(left, right, b"process=", b"operator service missing process")
-        && field_pair_eq(left, right, b"restart=", b"operator service missing restart")
-        && field_pair_eq(
-            left,
-            right,
-            b"mount_root=",
-            b"operator service missing mount root",
-        )
-}
-
-fn operator_state_semantically_equal(left: &[u8], right: &[u8]) -> bool {
-    field_pair_eq(left, right, b"id=", b"operator state missing id")
-        && field_pair_eq(left, right, b"owner=", b"operator state missing owner")
-        && field_pair_eq(left, right, b"schema=", b"operator state missing schema")
-        && field_pair_eq(left, right, b"storage=", b"operator state missing storage")
-        && field_pair_eq(
-            left,
-            right,
-            b"migration=",
-            b"operator state missing migration",
-        )
-        && field_pair_eq(left, right, b"retention=", b"operator state missing retention")
-        && field_pair_eq(left, right, b"sharing=", b"operator state missing sharing")
-}
-
-fn field_pair_eq(left: &[u8], right: &[u8], prefix: &[u8], message: &[u8]) -> bool {
-    bytes_eq(
-        required_field(left, prefix, message),
-        required_field(right, prefix, message),
-    )
-}
-
-fn rights_pair_eq(left: &[u8], right: &[u8], message: &[u8]) -> bool {
-    let left_rights = required_field(left, b"rights=", message);
-    let right_rights = required_field(right, b"rights=", message);
-    rights_cover(left_rights, right_rights) && rights_cover(right_rights, left_rights)
-}
-
-fn find_process_line<'a>(report: &'a [u8], process: &[u8]) -> Option<&'a [u8]> {
-    find_line_where(report, |line| {
-        starts_with(line, b"process[") && field_eq(line, b"name=", process)
-    })
-}
-
-fn word_or_fail<'a>(command: &'a [u8], index: usize, message: &[u8]) -> &'a [u8] {
-    let Some(word) = word_at(command, index) else {
-        log(message);
-        sys::exit(1);
-    };
-    word
-}
-
-fn word_at(command: &[u8], requested: usize) -> Option<&[u8]> {
-    let mut cursor = 0;
-    let mut index = 0;
-    while cursor < command.len() {
-        while cursor < command.len() && command[cursor] == b' ' {
-            cursor += 1;
-        }
-        if cursor == command.len() {
-            return None;
-        }
-        let start = cursor;
-        while cursor < command.len() && command[cursor] != b' ' {
-            cursor += 1;
-        }
-        if index == requested {
-            return Some(&command[start..cursor]);
-        }
-        index += 1;
-    }
-    None
-}
-
-fn required_field<'a>(line: &'a [u8], prefix: &[u8], message: &[u8]) -> &'a [u8] {
-    let Some(value) = field_slice(line, prefix) else {
-        log(message);
-        sys::exit(1);
-    };
-    value
-}
-
-fn rights_cover(available: &[u8], required: &[u8]) -> bool {
-    if bytes_eq(required, b"none") {
-        return true;
-    }
-    let mut start = 0;
-    while start <= required.len() {
-        let mut end = start;
-        while end < required.len() && required[end] != b'|' {
-            end += 1;
-        }
-        if end == start || !right_present(available, &required[start..end]) {
-            return false;
-        }
-        if end == required.len() {
-            break;
-        }
-        start = end + 1;
-    }
-    true
-}
-
-fn right_present(rights: &[u8], right: &[u8]) -> bool {
-    let mut start = 0;
-    while start <= rights.len() {
-        let mut end = start;
-        while end < rights.len() && rights[end] != b'|' {
-            end += 1;
-        }
-        if bytes_eq(&rights[start..end], right) {
-            return true;
-        }
-        if end == rights.len() {
-            break;
-        }
-        start = end + 1;
-    }
-    false
-}
-
-fn find_line_where<'a, F>(haystack: &'a [u8], mut predicate: F) -> Option<&'a [u8]>
-where
-    F: FnMut(&[u8]) -> bool,
-{
-    let mut start = 0;
-    while start <= haystack.len() {
-        let mut end = start;
-        while end < haystack.len() && haystack[end] != b'\n' {
-            end += 1;
-        }
-        let line = &haystack[start..end];
-        if predicate(line) {
-            return Some(line);
-        }
-        if end == haystack.len() {
-            break;
-        }
-        start = end + 1;
-    }
-    None
-}
-
-fn for_each_line<F>(haystack: &[u8], mut visit: F)
-where
-    F: FnMut(&[u8]),
-{
-    let mut start = 0;
-    while start <= haystack.len() {
-        let mut end = start;
-        while end < haystack.len() && haystack[end] != b'\n' {
-            end += 1;
-        }
-        visit(&haystack[start..end]);
-        if end == haystack.len() {
-            break;
-        }
-        start = end + 1;
-    }
 }
 
 fn log_count_line(prefix: &[u8], count: u64) {

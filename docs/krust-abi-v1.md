@@ -6,7 +6,9 @@ current job is to boot native `vertex-init`, create services from verified
 process templates, and enforce explicit process-local capabilities.
 
 Milestone status: ABI v1 now covers the M14-M87 native activation and substrate
-proof. M25 adds the release gate. M26-M29 add Manifest v1 parsing, capability
+proof plus the M87-1 target-independent operator-shell package split and M87-2
+Krust target user adapter workspace. M25 adds the release gate. M26-M29 add
+Manifest v1 parsing, capability
 provenance/revocation, typed arena allocation checks, and resource quotas.
 M30-M31 add PIT-backed preemption and user page-fault containment. M32-M36 add
 I/O capability objects, user-space serial, a native block-driver path, and
@@ -49,9 +51,12 @@ schema, storage, migration, retention, and sharing policy. M86 keeps the
 with a hashed native policy section used to reject unauthorized grants,
 state-path changes, bootstrap authority drift, and namespace authority during
 boot and generation activation. M87 adds operator graph-shell report facts and
-`SYS_MARK_KNOWN_GOOD` for generation-manager-verified active generations. The
-ABI is still intentionally small, but this subset is the current native
-contract.
+`SYS_MARK_KNOWN_GOOD` for generation-manager-verified active generations.
+M87-1 moves operator-shell command semantics into Vertex userland without
+adding a syscall. M87-2 moves Krust-built user adapters to `targets/krust/user`
+without adding a syscall; this is a source ownership and build-layout change,
+not an ABI expansion. The ABI is still intentionally small, but this subset is
+the current native contract.
 
 ## Machine ABI
 
