@@ -311,6 +311,15 @@ fn build_boot_config_runtime(
     grant_config_caps_to_process(runtime, config, initial_index, initial_pid)?;
 
     if let Some(module) = config.manifest_module {
+        if !boot_bootstrap_authority_allows(
+            config,
+            initial_process.graph_node,
+            "boot-module:krustboot-manifest",
+            "initial-manifest",
+            capability::RIGHT_READ,
+        ) {
+            return Err(InitError::InvalidBootManifest);
+        }
         let module_id = runtime
             .objects
             .add_boot_module(module.name, module.base, module.length)?;
@@ -337,6 +346,15 @@ fn build_boot_config_runtime(
         | capability::RIGHT_START
         | capability::RIGHT_KILL
         | capability::RIGHT_WAIT;
+    if !boot_bootstrap_authority_allows(
+        config,
+        initial_process.graph_node,
+        "process-control",
+        "initial-process-control",
+        process_control_rights,
+    ) {
+        return Err(InitError::InvalidBootManifest);
+    }
     let cap = runtime
         .new_capability(
             process_control_id,
@@ -349,6 +367,15 @@ fn build_boot_config_runtime(
     grant_process_cap_by_pid(runtime, initial_pid, 2, cap, true)?;
 
     let timer_id = runtime.timer_id.ok_or(InitError::InvalidBootManifest)?;
+    if !boot_bootstrap_authority_allows(
+        config,
+        initial_process.graph_node,
+        "timer:monotonic-timer",
+        "initial-restart-timer",
+        capability::RIGHT_CONTROL,
+    ) {
+        return Err(InitError::InvalidBootManifest);
+    }
     let cap = runtime
         .new_capability(
             timer_id,
@@ -540,6 +567,8 @@ pub(super) fn validate_boot_config_installable(
     validate_counted_config_entries(&config.policy_requirements, config.policy_requirement_count)?;
     validate_counted_config_entries(&config.policy_provides, config.policy_provide_count)?;
     validate_counted_config_entries(&config.policy_mounts, config.policy_mount_count)?;
+    validate_counted_config_entries(&config.policy_state_paths, config.policy_state_path_count)?;
+    validate_counted_config_entries(&config.policy_bootstraps, config.policy_bootstrap_count)?;
 
     if config.endpoint_count == 0 {
         return Err(InitError::InvalidBootManifest);
@@ -742,7 +771,7 @@ fn validate_boot_config_policy(config: &BootRuntimeConfig) -> Result<(), InitErr
             || capability.provider.is_empty()
             || capability.rights == 0
             || !known_policy_rights(capability.rights)
-            || !boot_object_config_ref_valid(
+            || !boot_policy_object_config_ref_valid(
                 config,
                 capability.object_kind,
                 capability.object_index,
@@ -871,6 +900,75 @@ fn validate_boot_config_policy(config: &BootRuntimeConfig) -> Result<(), InitErr
     }
 
     index = 0;
+    while index < config.policy_state_path_count {
+        let state_path = config.policy_state_paths[index].ok_or(InitError::InvalidBootManifest)?;
+        if !valid_boot_policy_state_path_fact(config, state_path)? {
+            log_policy_denial(
+                config,
+                state_path.service,
+                state_path.root,
+                "state-path-fact",
+                "invalid-state-path",
+            );
+            return Err(InitError::InvalidBootManifest);
+        }
+        let mut prior = 0;
+        while prior < index {
+            let existing =
+                config.policy_state_paths[prior].ok_or(InitError::InvalidBootManifest)?;
+            if existing.service == state_path.service
+                && existing.state == state_path.state
+                && existing.root == state_path.root
+            {
+                log_policy_denial(
+                    config,
+                    state_path.service,
+                    state_path.root,
+                    "state-path-fact",
+                    "duplicate",
+                );
+                return Err(InitError::InvalidBootManifest);
+            }
+            prior += 1;
+        }
+        index += 1;
+    }
+
+    index = 0;
+    while index < config.policy_bootstrap_count {
+        let bootstrap = config.policy_bootstraps[index].ok_or(InitError::InvalidBootManifest)?;
+        if !valid_boot_policy_bootstrap_fact(config, bootstrap)? {
+            log_policy_denial(
+                config,
+                bootstrap.service,
+                bootstrap.authority,
+                bootstrap.rule,
+                "invalid-bootstrap",
+            );
+            return Err(InitError::InvalidBootManifest);
+        }
+        let mut prior = 0;
+        while prior < index {
+            let existing = config.policy_bootstraps[prior].ok_or(InitError::InvalidBootManifest)?;
+            if existing.service == bootstrap.service
+                && existing.authority == bootstrap.authority
+                && existing.rule == bootstrap.rule
+            {
+                log_policy_denial(
+                    config,
+                    bootstrap.service,
+                    bootstrap.authority,
+                    bootstrap.rule,
+                    "duplicate",
+                );
+                return Err(InitError::InvalidBootManifest);
+            }
+            prior += 1;
+        }
+        index += 1;
+    }
+
+    index = 0;
     while index < config.grant_count {
         let grant = config.grants[index].ok_or(InitError::InvalidBootManifest)?;
         if !boot_grant_authorized_by_policy(config, grant)? {
@@ -878,7 +976,12 @@ fn validate_boot_config_policy(config: &BootRuntimeConfig) -> Result<(), InitErr
                 .map(|process| process.graph_node)
                 .unwrap_or("<invalid>");
             let target = boot_config_object_label(config, grant).unwrap_or("<invalid>");
-            log_policy_denial(config, source, target, "grant-authorized", "no-policy-edge");
+            let rule = if boot_grant_covers_state_volume_path(config, grant)? {
+                "state-path"
+            } else {
+                "grant-authorized"
+            };
+            log_policy_denial(config, source, target, rule, "no-policy-edge");
             return Err(InitError::InvalidBootManifest);
         }
         index += 1;
@@ -929,6 +1032,40 @@ fn validate_boot_config_policy(config: &BootRuntimeConfig) -> Result<(), InitErr
                 mount.service,
                 target,
                 "mount-fact",
+                "unused-policy-edge",
+            );
+            return Err(InitError::InvalidBootManifest);
+        }
+        index += 1;
+    }
+
+    index = 0;
+    while index < config.policy_state_path_count {
+        let state_path = config.policy_state_paths[index].ok_or(InitError::InvalidBootManifest)?;
+        if !boot_policy_state_path_matches_grant(config, state_path)? {
+            log_policy_denial(
+                config,
+                state_path.service,
+                state_path.root,
+                "state-path-fact",
+                "unused-policy-edge",
+            );
+            return Err(InitError::InvalidBootManifest);
+        }
+        index += 1;
+    }
+
+    validate_bootstrap_authority_policy(config)?;
+
+    index = 0;
+    while index < config.policy_bootstrap_count {
+        let bootstrap = config.policy_bootstraps[index].ok_or(InitError::InvalidBootManifest)?;
+        if !boot_policy_bootstrap_matches_runtime(config, bootstrap)? {
+            log_policy_denial(
+                config,
+                bootstrap.service,
+                bootstrap.authority,
+                bootstrap.rule,
                 "unused-policy-edge",
             );
             return Err(InitError::InvalidBootManifest);
@@ -1032,6 +1169,559 @@ fn boot_policy_mount_matches_process(
     Ok(false)
 }
 
+fn valid_boot_policy_state_path_fact(
+    config: &BootRuntimeConfig,
+    state_path: BootPolicyStatePathConfig,
+) -> Result<bool, InitError> {
+    let Some(state) = boot_state_volume_by_id(config, state_path.state)? else {
+        return Ok(false);
+    };
+    Ok(boot_config_has_service(config, state_path.service)?
+        && !state_path.root.is_empty()
+        && valid_vfs_root_path(state_path.root.as_bytes())
+        && state_path.rights != 0
+        && known_policy_rights(state_path.rights)
+        && (state.sharing_policy != "owner-only" || state.owner == state_path.service))
+}
+
+fn boot_state_path_policy_allows_grant(
+    config: &BootRuntimeConfig,
+    service: &str,
+    grant: BootGrantConfig,
+) -> Result<bool, InitError> {
+    if grant.object_kind != BOOT_OBJECT_VFS_ROOT {
+        return Ok(true);
+    }
+    let root = config.vfs_roots[grant.object_index].ok_or(InitError::InvalidBootManifest)?;
+    let mut index = 0;
+    while index < config.state_volume_count {
+        let state = config.state_volumes[index].ok_or(InitError::InvalidBootManifest)?;
+        if boot_state_volume_covered_by_root_path(root.root_path, state)? {
+            if state.sharing_policy == "owner-only" && state.owner != service {
+                return Ok(false);
+            }
+            if !boot_policy_state_path_allows(
+                config,
+                service,
+                state.id,
+                root.root_path,
+                grant.rights,
+            ) {
+                return Ok(false);
+            }
+        }
+        index += 1;
+    }
+    Ok(true)
+}
+
+fn boot_policy_state_path_allows(
+    config: &BootRuntimeConfig,
+    service: &str,
+    state_id: &str,
+    root: &str,
+    rights: u64,
+) -> bool {
+    let mut index = 0;
+    while index < config.policy_state_path_count {
+        if let Some(state_path) = config.policy_state_paths[index]
+            && state_path.service == service
+            && state_path.state == state_id
+            && state_path.root == root
+            && rights & !state_path.rights == 0
+        {
+            return true;
+        }
+        index += 1;
+    }
+    false
+}
+
+fn boot_policy_state_path_matches_grant(
+    config: &BootRuntimeConfig,
+    state_path: BootPolicyStatePathConfig,
+) -> Result<bool, InitError> {
+    let Some(state) = boot_state_volume_by_id(config, state_path.state)? else {
+        return Ok(false);
+    };
+    let mut matched_rights = 0;
+    let mut index = 0;
+    while index < config.grant_count {
+        let grant = config.grants[index].ok_or(InitError::InvalidBootManifest)?;
+        if grant.object_kind == BOOT_OBJECT_VFS_ROOT {
+            let process =
+                config.processes[grant.process_index].ok_or(InitError::InvalidBootManifest)?;
+            if process.graph_node == state_path.service {
+                let root =
+                    config.vfs_roots[grant.object_index].ok_or(InitError::InvalidBootManifest)?;
+                if root.root_path == state_path.root
+                    && boot_state_volume_covered_by_root_path(root.root_path, state)?
+                {
+                    matched_rights |= grant.rights;
+                }
+            }
+        }
+        index += 1;
+    }
+    Ok(matched_rights != 0 && state_path.rights & !matched_rights == 0)
+}
+
+fn boot_grant_covers_state_volume_path(
+    config: &BootRuntimeConfig,
+    grant: BootGrantConfig,
+) -> Result<bool, InitError> {
+    if grant.object_kind != BOOT_OBJECT_VFS_ROOT {
+        return Ok(false);
+    }
+    let root = config.vfs_roots[grant.object_index].ok_or(InitError::InvalidBootManifest)?;
+    let mut index = 0;
+    while index < config.state_volume_count {
+        let state = config.state_volumes[index].ok_or(InitError::InvalidBootManifest)?;
+        if boot_state_volume_covered_by_root_path(root.root_path, state)? {
+            return Ok(true);
+        }
+        index += 1;
+    }
+    Ok(false)
+}
+
+fn boot_state_volume_covered_by_root_path(
+    root: &str,
+    state: BootStateVolumeConfig,
+) -> Result<bool, InitError> {
+    if root == "/state" {
+        return Ok(true);
+    }
+    let Some(rest) = root.strip_prefix("/state/") else {
+        return Ok(false);
+    };
+    let Some(component) = rest.split('/').next() else {
+        return Err(InitError::InvalidBootManifest);
+    };
+    Ok(component == state_volume_mount_component(state.id)?)
+}
+
+fn boot_state_volume_by_id(
+    config: &BootRuntimeConfig,
+    state_id: &str,
+) -> Result<Option<BootStateVolumeConfig>, InitError> {
+    let mut index = 0;
+    while index < config.state_volume_count {
+        let state = config.state_volumes[index].ok_or(InitError::InvalidBootManifest)?;
+        if state.id == state_id {
+            return Ok(Some(state));
+        }
+        index += 1;
+    }
+    Ok(None)
+}
+
+fn valid_boot_policy_bootstrap_fact(
+    config: &BootRuntimeConfig,
+    bootstrap: BootPolicyBootstrapConfig,
+) -> Result<bool, InitError> {
+    Ok(boot_config_has_service(config, bootstrap.service)?
+        && !bootstrap.authority.is_empty()
+        && !bootstrap.rule.is_empty()
+        && bootstrap.rights != 0
+        && known_bootstrap_rights(bootstrap.rights))
+}
+
+fn validate_bootstrap_authority_policy(config: &BootRuntimeConfig) -> Result<(), InitError> {
+    let initial =
+        config.processes[initial_process_index(config)?].ok_or(InitError::InvalidBootManifest)?;
+    if config.manifest_module.is_some() {
+        require_bootstrap_authority(
+            config,
+            initial.graph_node,
+            "boot-module:krustboot-manifest",
+            "initial-manifest",
+            capability::RIGHT_READ,
+        )?;
+    }
+    require_bootstrap_authority(
+        config,
+        initial.graph_node,
+        "process-control",
+        "initial-process-control",
+        initial_process_control_rights(),
+    )?;
+    require_bootstrap_authority(
+        config,
+        initial.graph_node,
+        "timer:monotonic-timer",
+        "initial-restart-timer",
+        capability::RIGHT_CONTROL,
+    )?;
+    if boot_config_has_process(config, "logd")? {
+        require_bootstrap_authority(
+            config,
+            "svc:logd",
+            "secret:logd-token",
+            "native-secret",
+            capability::RIGHT_READ | capability::RIGHT_INSPECT_METADATA,
+        )?;
+    }
+    if config.state_volume_count > 0
+        && let Some(service) = boot_process_graph_node_by_name(config, VERTEX_STATE_PROCESS_NAME)?
+    {
+        require_bootstrap_authority(
+            config,
+            service,
+            "endpoint:state-vfs-request",
+            "state-vfs-request",
+            capability::RIGHT_RECEIVE,
+        )?;
+        require_bootstrap_authority(
+            config,
+            service,
+            "endpoint:state-vfs-reply",
+            "state-vfs-reply",
+            capability::RIGHT_SEND,
+        )?;
+    }
+    if let Some(service) = boot_process_graph_node_by_name(config, BLOCK_DRIVER_PROCESS_NAME)? {
+        require_bootstrap_authority(
+            config,
+            service,
+            "endpoint:vertexfs-device-request",
+            "vertexfs-device-request",
+            capability::RIGHT_RECEIVE,
+        )?;
+        require_bootstrap_authority(
+            config,
+            service,
+            "endpoint:vertexfs-device-reply",
+            "vertexfs-device-reply",
+            capability::RIGHT_SEND,
+        )?;
+        require_bootstrap_authority(
+            config,
+            service,
+            "endpoint:generation-metadata-block-request",
+            "generation-metadata-block-request",
+            capability::RIGHT_RECEIVE,
+        )?;
+        require_bootstrap_authority(
+            config,
+            service,
+            "endpoint:generation-metadata-block-reply",
+            "generation-metadata-block-reply",
+            capability::RIGHT_SEND,
+        )?;
+    }
+    if boot_config_has_process(config, BLOCK_DRIVER_PROCESS_NAME)?
+        && let Some(service) =
+            boot_process_graph_node_by_name(config, GENERATION_MANAGER_PROCESS_NAME)?
+    {
+        require_bootstrap_authority(
+            config,
+            service,
+            "endpoint:generation-metadata-block-request",
+            "generation-metadata-block-request",
+            capability::RIGHT_SEND,
+        )?;
+        require_bootstrap_authority(
+            config,
+            service,
+            "endpoint:generation-metadata-block-reply",
+            "generation-metadata-block-reply",
+            capability::RIGHT_RECEIVE,
+        )?;
+    }
+    Ok(())
+}
+
+fn require_bootstrap_authority(
+    config: &BootRuntimeConfig,
+    service: &str,
+    authority: &str,
+    rule: &str,
+    rights: u64,
+) -> Result<(), InitError> {
+    if boot_bootstrap_authority_allows(config, service, authority, rule, rights) {
+        return Ok(());
+    }
+    log_policy_denial(
+        config,
+        service,
+        authority,
+        rule,
+        "missing-bootstrap-authority",
+    );
+    Err(InitError::InvalidBootManifest)
+}
+
+fn boot_bootstrap_authority_allows(
+    config: &BootRuntimeConfig,
+    service: &str,
+    authority: &str,
+    rule: &str,
+    rights: u64,
+) -> bool {
+    let mut index = 0;
+    while index < config.policy_bootstrap_count {
+        if let Some(bootstrap) = config.policy_bootstraps[index]
+            && bootstrap.service == service
+            && bootstrap.authority == authority
+            && bootstrap.rule == rule
+            && rights & !bootstrap.rights == 0
+        {
+            return true;
+        }
+        index += 1;
+    }
+    false
+}
+
+fn boot_policy_bootstrap_matches_runtime(
+    config: &BootRuntimeConfig,
+    bootstrap: BootPolicyBootstrapConfig,
+) -> Result<bool, InitError> {
+    if bootstrap.authority == "boot-module:krustboot-manifest" {
+        return Ok(bootstrap.rule == "initial-manifest"
+            && bootstrap.rights == capability::RIGHT_READ
+            && boot_service_is_initial(config, bootstrap.service)?);
+    }
+    if bootstrap.authority == "process-control" {
+        return Ok(bootstrap.rule == "initial-process-control"
+            && bootstrap.rights == initial_process_control_rights()
+            && boot_service_is_initial(config, bootstrap.service)?);
+    }
+    if bootstrap.authority == "timer:monotonic-timer" {
+        return Ok(bootstrap.rule == "initial-restart-timer"
+            && bootstrap.rights == capability::RIGHT_CONTROL
+            && boot_service_is_initial(config, bootstrap.service)?);
+    }
+    if bootstrap.authority == "secret:logd-token" {
+        let Some(capability) = boot_policy_capability_by_id(config, "secret:logd-token") else {
+            return Ok(false);
+        };
+        return Ok(bootstrap.rule == "native-secret"
+            && bootstrap.rights == (capability::RIGHT_READ | capability::RIGHT_INSPECT_METADATA)
+            && boot_service_process_name(config, bootstrap.service)? == Some("logd")
+            && capability.object_kind == BOOT_OBJECT_SECRET
+            && capability.object_index == 0
+            && capability.rights & capability::RIGHT_READ != 0
+            && boot_policy_requirement_allows(
+                config,
+                bootstrap.service,
+                "secret:logd-token",
+                capability::RIGHT_READ,
+            ));
+    }
+    if let Some(endpoint) = bootstrap.authority.strip_prefix("endpoint:") {
+        if !boot_config_has_endpoint(config, endpoint)? {
+            return Ok(false);
+        }
+        if boot_policy_bootstrap_matches_internal_endpoint(config, bootstrap, endpoint)? {
+            return Ok(true);
+        }
+        return boot_policy_bootstrap_matches_builtin_grant(config, bootstrap, endpoint);
+    }
+    Ok(false)
+}
+
+fn boot_policy_bootstrap_matches_builtin_grant(
+    config: &BootRuntimeConfig,
+    bootstrap: BootPolicyBootstrapConfig,
+    endpoint: &str,
+) -> Result<bool, InitError> {
+    let mut index = 0;
+    while index < config.grant_count {
+        let grant = config.grants[index].ok_or(InitError::InvalidBootManifest)?;
+        if grant.object_kind == BOOT_OBJECT_ENDPOINT && grant.rights == bootstrap.rights {
+            let process =
+                config.processes[grant.process_index].ok_or(InitError::InvalidBootManifest)?;
+            let grant_endpoint =
+                config.endpoints[grant.object_index].ok_or(InitError::InvalidBootManifest)?;
+            if process.graph_node == bootstrap.service
+                && grant_endpoint.name == endpoint
+                && boot_builtin_endpoint_rule_for_grant(process, grant_endpoint.name, grant)
+                    == Some(bootstrap.rule)
+            {
+                return Ok(true);
+            }
+        }
+        index += 1;
+    }
+    Ok(false)
+}
+
+fn boot_policy_bootstrap_matches_internal_endpoint(
+    config: &BootRuntimeConfig,
+    bootstrap: BootPolicyBootstrapConfig,
+    endpoint: &str,
+) -> Result<bool, InitError> {
+    let Some(process_name) = boot_service_process_name(config, bootstrap.service)? else {
+        return Ok(false);
+    };
+    let expected = match (process_name, endpoint, bootstrap.rule) {
+        (VERTEX_STATE_PROCESS_NAME, STATE_VFS_REQUEST_ENDPOINT_NAME, "state-vfs-request") => {
+            capability::RIGHT_RECEIVE
+        }
+        (VERTEX_STATE_PROCESS_NAME, STATE_VFS_REPLY_ENDPOINT_NAME, "state-vfs-reply") => {
+            capability::RIGHT_SEND
+        }
+        (
+            BLOCK_DRIVER_PROCESS_NAME,
+            VERTEXFS_DEVICE_REQUEST_ENDPOINT_NAME,
+            "vertexfs-device-request",
+        ) => capability::RIGHT_RECEIVE,
+        (
+            BLOCK_DRIVER_PROCESS_NAME,
+            VERTEXFS_DEVICE_REPLY_ENDPOINT_NAME,
+            "vertexfs-device-reply",
+        ) => capability::RIGHT_SEND,
+        (
+            BLOCK_DRIVER_PROCESS_NAME,
+            GENERATION_METADATA_BLOCK_REQUEST_ENDPOINT_NAME,
+            "generation-metadata-block-request",
+        ) => capability::RIGHT_RECEIVE,
+        (
+            BLOCK_DRIVER_PROCESS_NAME,
+            GENERATION_METADATA_BLOCK_REPLY_ENDPOINT_NAME,
+            "generation-metadata-block-reply",
+        ) => capability::RIGHT_SEND,
+        (
+            GENERATION_MANAGER_PROCESS_NAME,
+            GENERATION_METADATA_BLOCK_REQUEST_ENDPOINT_NAME,
+            "generation-metadata-block-request",
+        ) => capability::RIGHT_SEND,
+        (
+            GENERATION_MANAGER_PROCESS_NAME,
+            GENERATION_METADATA_BLOCK_REPLY_ENDPOINT_NAME,
+            "generation-metadata-block-reply",
+        ) => capability::RIGHT_RECEIVE,
+        _ => return Ok(false),
+    };
+    Ok(bootstrap.rights == expected)
+}
+
+fn boot_policy_bootstrap_allows_endpoint(
+    config: &BootRuntimeConfig,
+    service: &str,
+    endpoint: &str,
+    rule: &str,
+    rights: u64,
+) -> bool {
+    let mut index = 0;
+    while index < config.policy_bootstrap_count {
+        if let Some(bootstrap) = config.policy_bootstraps[index]
+            && bootstrap.service == service
+            && bootstrap.rule == rule
+            && rights & !bootstrap.rights == 0
+            && boot_authority_matches_endpoint(bootstrap.authority, endpoint)
+        {
+            return true;
+        }
+        index += 1;
+    }
+    false
+}
+
+fn boot_authority_matches_endpoint(authority: &str, endpoint: &str) -> bool {
+    authority.strip_prefix("endpoint:") == Some(endpoint)
+}
+
+fn boot_builtin_endpoint_rule_for_grant(
+    process: BootProcessConfig,
+    endpoint_name: &str,
+    grant: BootGrantConfig,
+) -> Option<&'static str> {
+    if endpoint_name == LOG_ENDPOINT_NAME && grant.rights == capability::RIGHT_SEND {
+        return Some("serial-log");
+    }
+    if endpoint_name == "readiness" {
+        if process.initial && grant.rights == capability::RIGHT_RECEIVE {
+            return Some("readiness-receive");
+        }
+        if !process.initial && grant.rights == capability::RIGHT_SEND {
+            return Some("readiness-send");
+        }
+    }
+    if process.initial && grant.rights == capability::RIGHT_SEND {
+        return Some("init-endpoint-delegation");
+    }
+    None
+}
+
+fn boot_service_is_initial(config: &BootRuntimeConfig, service: &str) -> Result<bool, InitError> {
+    let mut index = 0;
+    while index < config.process_count {
+        let process = config.processes[index].ok_or(InitError::InvalidBootManifest)?;
+        if process.graph_node == service {
+            return Ok(process.initial);
+        }
+        index += 1;
+    }
+    Ok(false)
+}
+
+fn boot_service_process_name(
+    config: &BootRuntimeConfig,
+    service: &str,
+) -> Result<Option<&'static str>, InitError> {
+    let mut index = 0;
+    while index < config.process_count {
+        let process = config.processes[index].ok_or(InitError::InvalidBootManifest)?;
+        if process.graph_node == service {
+            return Ok(Some(process.name));
+        }
+        index += 1;
+    }
+    Ok(None)
+}
+
+fn boot_process_graph_node_by_name(
+    config: &BootRuntimeConfig,
+    name: &str,
+) -> Result<Option<&'static str>, InitError> {
+    let mut index = 0;
+    while index < config.process_count {
+        let process = config.processes[index].ok_or(InitError::InvalidBootManifest)?;
+        if process.name == name {
+            return Ok(Some(process.graph_node));
+        }
+        index += 1;
+    }
+    Ok(None)
+}
+
+fn boot_config_has_endpoint(config: &BootRuntimeConfig, endpoint: &str) -> Result<bool, InitError> {
+    let mut index = 0;
+    while index < config.endpoint_count {
+        let candidate = config.endpoints[index].ok_or(InitError::InvalidBootManifest)?;
+        if candidate.name == endpoint {
+            return Ok(true);
+        }
+        index += 1;
+    }
+    match endpoint {
+        STATE_VFS_REQUEST_ENDPOINT_NAME | STATE_VFS_REPLY_ENDPOINT_NAME => {
+            Ok(config.state_volume_count > 0)
+        }
+        VERTEXFS_DEVICE_REQUEST_ENDPOINT_NAME | VERTEXFS_DEVICE_REPLY_ENDPOINT_NAME => Ok(true),
+        GENERATION_METADATA_BLOCK_REQUEST_ENDPOINT_NAME
+        | GENERATION_METADATA_BLOCK_REPLY_ENDPOINT_NAME => {
+            boot_config_has_process(config, BLOCK_DRIVER_PROCESS_NAME)
+        }
+        _ => Ok(false),
+    }
+}
+
+fn initial_process_control_rights() -> u64 {
+    capability::RIGHT_CONTROL
+        | capability::RIGHT_ALLOCATE
+        | capability::RIGHT_DELEGATE
+        | capability::RIGHT_REVOKE
+        | capability::RIGHT_INSPECT
+        | capability::RIGHT_CREATE
+        | capability::RIGHT_START
+        | capability::RIGHT_KILL
+        | capability::RIGHT_WAIT
+}
+
 fn boot_grant_authorized_by_policy(
     config: &BootRuntimeConfig,
     grant: BootGrantConfig,
@@ -1062,7 +1752,7 @@ fn boot_grant_authorized_by_policy(
                 capability.id,
                 grant.rights,
             ) {
-                return Ok(true);
+                return boot_state_path_policy_allows_grant(config, process.graph_node, grant);
             }
         }
         index += 1;
@@ -1079,21 +1769,16 @@ fn boot_builtin_grant_authorized(
         return Ok(false);
     }
     let endpoint = config.endpoints[grant.object_index].ok_or(InitError::InvalidBootManifest)?;
-    if endpoint.name == LOG_ENDPOINT_NAME && grant.rights == capability::RIGHT_SEND {
-        return Ok(true);
-    }
-    if endpoint.name == "readiness" {
-        if process.initial && grant.rights == capability::RIGHT_RECEIVE {
-            return Ok(true);
-        }
-        if !process.initial && grant.rights == capability::RIGHT_SEND {
-            return Ok(true);
-        }
-    }
-    if process.initial && grant.rights == capability::RIGHT_SEND {
-        return Ok(true);
-    }
-    Ok(false)
+    let Some(rule) = boot_builtin_endpoint_rule_for_grant(process, endpoint.name, grant) else {
+        return Ok(false);
+    };
+    Ok(boot_policy_bootstrap_allows_endpoint(
+        config,
+        process.graph_node,
+        endpoint.name,
+        rule,
+        grant.rights,
+    ))
 }
 
 fn boot_policy_requirement_allows(
@@ -1176,6 +1861,45 @@ fn known_policy_rights(rights: u64) -> bool {
             | capability::RIGHT_RENAME
             | capability::RIGHT_MOUNT)
         == 0
+}
+
+fn known_bootstrap_rights(rights: u64) -> bool {
+    rights
+        & !(capability::RIGHT_SEND
+            | capability::RIGHT_RECEIVE
+            | capability::RIGHT_READ
+            | capability::RIGHT_WRITE
+            | capability::RIGHT_SNAPSHOT
+            | capability::RIGHT_RESTORE
+            | capability::RIGHT_CONTROL
+            | capability::RIGHT_BIND
+            | capability::RIGHT_LISTEN
+            | capability::RIGHT_MAP
+            | capability::RIGHT_RESOLVE
+            | capability::RIGHT_CREATE
+            | capability::RIGHT_UNLINK
+            | capability::RIGHT_RENAME
+            | capability::RIGHT_MOUNT
+            | capability::RIGHT_ALLOCATE
+            | capability::RIGHT_DELEGATE
+            | capability::RIGHT_REVOKE
+            | capability::RIGHT_INSPECT
+            | capability::RIGHT_START
+            | capability::RIGHT_KILL
+            | capability::RIGHT_WAIT
+            | capability::RIGHT_INSPECT_METADATA)
+        == 0
+}
+
+fn boot_policy_object_config_ref_valid(
+    config: &BootRuntimeConfig,
+    object_kind: u16,
+    object_index: usize,
+) -> bool {
+    match object_kind {
+        BOOT_OBJECT_SECRET => object_index == 0,
+        _ => boot_object_config_ref_valid(config, object_kind, object_index),
+    }
 }
 
 fn boot_config_object_label(
@@ -1566,6 +2290,15 @@ pub(super) fn validate_config_caps_for_process(
     }
 
     if process.name == "logd" {
+        if !boot_bootstrap_authority_allows(
+            config,
+            process.graph_node,
+            "secret:logd-token",
+            "native-secret",
+            capability::RIGHT_READ | capability::RIGHT_INSPECT_METADATA,
+        ) {
+            return Err(InitError::InvalidBootManifest);
+        }
         runtime.secret_id.ok_or(InitError::InvalidBootManifest)?;
         let secret_slot = 6usize;
         if secret_slot >= MAX_CAPS || occupied_slots[secret_slot] {
@@ -1573,6 +2306,21 @@ pub(super) fn validate_config_caps_for_process(
         }
     }
     if process.name == VERTEX_STATE_PROCESS_NAME && runtime.state_vfs_reply_endpoint.is_some() {
+        if !boot_bootstrap_authority_allows(
+            config,
+            process.graph_node,
+            "endpoint:state-vfs-request",
+            "state-vfs-request",
+            capability::RIGHT_RECEIVE,
+        ) || !boot_bootstrap_authority_allows(
+            config,
+            process.graph_node,
+            "endpoint:state-vfs-reply",
+            "state-vfs-reply",
+            capability::RIGHT_SEND,
+        ) {
+            return Err(InitError::InvalidBootManifest);
+        }
         let Ok(request_slot) = usize::try_from(VERTEX_STATE_VFS_REQUEST_CAP_SLOT) else {
             return Err(InitError::CapabilityTableFull);
         };
@@ -1588,10 +2336,89 @@ pub(super) fn validate_config_caps_for_process(
     }
     if process.name == BLOCK_DRIVER_PROCESS_NAME && runtime.vertexfs_device_reply_endpoint.is_some()
     {
+        if !boot_bootstrap_authority_allows(
+            config,
+            process.graph_node,
+            "endpoint:vertexfs-device-request",
+            "vertexfs-device-request",
+            capability::RIGHT_RECEIVE,
+        ) || !boot_bootstrap_authority_allows(
+            config,
+            process.graph_node,
+            "endpoint:vertexfs-device-reply",
+            "vertexfs-device-reply",
+            capability::RIGHT_SEND,
+        ) {
+            return Err(InitError::InvalidBootManifest);
+        }
         let Ok(request_slot) = usize::try_from(BLOCK_DRIVER_VERTEXFS_REQUEST_CAP_SLOT) else {
             return Err(InitError::CapabilityTableFull);
         };
         let Ok(reply_slot) = usize::try_from(BLOCK_DRIVER_VERTEXFS_REPLY_CAP_SLOT) else {
+            return Err(InitError::CapabilityTableFull);
+        };
+        if request_slot >= MAX_CAPS || occupied_slots[request_slot] {
+            return Err(InitError::InvalidBootManifest);
+        }
+        if reply_slot >= MAX_CAPS || occupied_slots[reply_slot] {
+            return Err(InitError::InvalidBootManifest);
+        }
+    }
+    if process.name == BLOCK_DRIVER_PROCESS_NAME
+        && runtime.generation_metadata_block_reply_endpoint.is_some()
+    {
+        if !boot_bootstrap_authority_allows(
+            config,
+            process.graph_node,
+            "endpoint:generation-metadata-block-request",
+            "generation-metadata-block-request",
+            capability::RIGHT_RECEIVE,
+        ) || !boot_bootstrap_authority_allows(
+            config,
+            process.graph_node,
+            "endpoint:generation-metadata-block-reply",
+            "generation-metadata-block-reply",
+            capability::RIGHT_SEND,
+        ) {
+            return Err(InitError::InvalidBootManifest);
+        }
+        let Ok(request_slot) = usize::try_from(BLOCK_DRIVER_GENERATION_METADATA_REQUEST_CAP_SLOT)
+        else {
+            return Err(InitError::CapabilityTableFull);
+        };
+        let Ok(reply_slot) = usize::try_from(BLOCK_DRIVER_GENERATION_METADATA_REPLY_CAP_SLOT)
+        else {
+            return Err(InitError::CapabilityTableFull);
+        };
+        if request_slot >= MAX_CAPS || occupied_slots[request_slot] {
+            return Err(InitError::InvalidBootManifest);
+        }
+        if reply_slot >= MAX_CAPS || occupied_slots[reply_slot] {
+            return Err(InitError::InvalidBootManifest);
+        }
+    }
+    if process.name == GENERATION_MANAGER_PROCESS_NAME
+        && runtime.generation_metadata_block_reply_endpoint.is_some()
+    {
+        if !boot_bootstrap_authority_allows(
+            config,
+            process.graph_node,
+            "endpoint:generation-metadata-block-request",
+            "generation-metadata-block-request",
+            capability::RIGHT_SEND,
+        ) || !boot_bootstrap_authority_allows(
+            config,
+            process.graph_node,
+            "endpoint:generation-metadata-block-reply",
+            "generation-metadata-block-reply",
+            capability::RIGHT_RECEIVE,
+        ) {
+            return Err(InitError::InvalidBootManifest);
+        }
+        let Ok(request_slot) = usize::try_from(GENERATION_MANAGER_METADATA_REQUEST_CAP_SLOT) else {
+            return Err(InitError::CapabilityTableFull);
+        };
+        let Ok(reply_slot) = usize::try_from(GENERATION_MANAGER_METADATA_REPLY_CAP_SLOT) else {
             return Err(InitError::CapabilityTableFull);
         };
         if request_slot >= MAX_CAPS || occupied_slots[request_slot] {
@@ -1630,6 +2457,15 @@ pub(super) fn grant_config_caps_to_process(
         return Err(InitError::InvalidBootManifest);
     };
     if process.name == "logd" {
+        if !boot_bootstrap_authority_allows(
+            config,
+            process.graph_node,
+            "secret:logd-token",
+            "native-secret",
+            capability::RIGHT_READ | capability::RIGHT_INSPECT_METADATA,
+        ) {
+            return Err(InitError::InvalidBootManifest);
+        }
         let secret_id = runtime.secret_id.ok_or(InitError::InvalidBootManifest)?;
         let cap = runtime
             .new_capability(
@@ -1648,6 +2484,15 @@ pub(super) fn grant_config_caps_to_process(
     if process.name == VERTEX_STATE_PROCESS_NAME
         && let Some(request_endpoint) = runtime.state_vfs_request_endpoint
     {
+        if !boot_bootstrap_authority_allows(
+            config,
+            process.graph_node,
+            "endpoint:state-vfs-request",
+            "state-vfs-request",
+            capability::RIGHT_RECEIVE,
+        ) {
+            return Err(InitError::InvalidBootManifest);
+        }
         let cap = runtime
             .new_capability(
                 request_endpoint,
@@ -1665,6 +2510,15 @@ pub(super) fn grant_config_caps_to_process(
     if process.name == VERTEX_STATE_PROCESS_NAME
         && let Some(reply_endpoint) = runtime.state_vfs_reply_endpoint
     {
+        if !boot_bootstrap_authority_allows(
+            config,
+            process.graph_node,
+            "endpoint:state-vfs-reply",
+            "state-vfs-reply",
+            capability::RIGHT_SEND,
+        ) {
+            return Err(InitError::InvalidBootManifest);
+        }
         let cap = runtime
             .new_capability(
                 reply_endpoint,
@@ -1682,6 +2536,15 @@ pub(super) fn grant_config_caps_to_process(
     if process.name == BLOCK_DRIVER_PROCESS_NAME
         && let Some(request_endpoint) = runtime.vertexfs_device_request_endpoint
     {
+        if !boot_bootstrap_authority_allows(
+            config,
+            process.graph_node,
+            "endpoint:vertexfs-device-request",
+            "vertexfs-device-request",
+            capability::RIGHT_RECEIVE,
+        ) {
+            return Err(InitError::InvalidBootManifest);
+        }
         let cap = runtime
             .new_capability(
                 request_endpoint,
@@ -1705,6 +2568,15 @@ pub(super) fn grant_config_caps_to_process(
     if process.name == BLOCK_DRIVER_PROCESS_NAME
         && let Some(reply_endpoint) = runtime.vertexfs_device_reply_endpoint
     {
+        if !boot_bootstrap_authority_allows(
+            config,
+            process.graph_node,
+            "endpoint:vertexfs-device-reply",
+            "vertexfs-device-reply",
+            capability::RIGHT_SEND,
+        ) {
+            return Err(InitError::InvalidBootManifest);
+        }
         let cap = runtime
             .new_capability(
                 reply_endpoint,
@@ -1728,6 +2600,15 @@ pub(super) fn grant_config_caps_to_process(
     if process.name == BLOCK_DRIVER_PROCESS_NAME
         && let Some(request_endpoint) = runtime.generation_metadata_block_request_endpoint
     {
+        if !boot_bootstrap_authority_allows(
+            config,
+            process.graph_node,
+            "endpoint:generation-metadata-block-request",
+            "generation-metadata-block-request",
+            capability::RIGHT_RECEIVE,
+        ) {
+            return Err(InitError::InvalidBootManifest);
+        }
         let cap = runtime
             .new_capability(
                 request_endpoint,
@@ -1751,6 +2632,15 @@ pub(super) fn grant_config_caps_to_process(
     if process.name == BLOCK_DRIVER_PROCESS_NAME
         && let Some(reply_endpoint) = runtime.generation_metadata_block_reply_endpoint
     {
+        if !boot_bootstrap_authority_allows(
+            config,
+            process.graph_node,
+            "endpoint:generation-metadata-block-reply",
+            "generation-metadata-block-reply",
+            capability::RIGHT_SEND,
+        ) {
+            return Err(InitError::InvalidBootManifest);
+        }
         let cap = runtime
             .new_capability(
                 reply_endpoint,
@@ -1774,6 +2664,15 @@ pub(super) fn grant_config_caps_to_process(
     if process.name == GENERATION_MANAGER_PROCESS_NAME
         && let Some(request_endpoint) = runtime.generation_metadata_block_request_endpoint
     {
+        if !boot_bootstrap_authority_allows(
+            config,
+            process.graph_node,
+            "endpoint:generation-metadata-block-request",
+            "generation-metadata-block-request",
+            capability::RIGHT_SEND,
+        ) {
+            return Err(InitError::InvalidBootManifest);
+        }
         let cap = runtime
             .new_capability(
                 request_endpoint,
@@ -1797,6 +2696,15 @@ pub(super) fn grant_config_caps_to_process(
     if process.name == GENERATION_MANAGER_PROCESS_NAME
         && let Some(reply_endpoint) = runtime.generation_metadata_block_reply_endpoint
     {
+        if !boot_bootstrap_authority_allows(
+            config,
+            process.graph_node,
+            "endpoint:generation-metadata-block-reply",
+            "generation-metadata-block-reply",
+            capability::RIGHT_RECEIVE,
+        ) {
+            return Err(InitError::InvalidBootManifest);
+        }
         let cap = runtime
             .new_capability(
                 reply_endpoint,

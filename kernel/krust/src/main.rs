@@ -1683,6 +1683,47 @@ fn build_boot_runtime_config(
         index += 1;
     }
 
+    index = 0;
+    while index < boot_manifest.policy_state_path_count() {
+        let state_path = boot_manifest.policy_state_path(index)?;
+        let rights = capability_rights_from_boot(state_path.rights);
+        if rights == 0 {
+            serial::write_str("KrustBoot runtime plan failed: empty policy state path rights\n");
+            return None;
+        }
+        if config
+            .add_policy_state_path(ipc::BootPolicyStatePathConfig {
+                service: state_path.service,
+                state: state_path.state,
+                root: state_path.root,
+                rights,
+            })
+            .is_err()
+        {
+            serial::write_str("KrustBoot runtime plan failed: policy state path table\n");
+            return None;
+        }
+        index += 1;
+    }
+
+    index = 0;
+    while index < boot_manifest.policy_bootstrap_count() {
+        let bootstrap = boot_manifest.policy_bootstrap(index)?;
+        if config
+            .add_policy_bootstrap(ipc::BootPolicyBootstrapConfig {
+                service: bootstrap.service,
+                authority: bootstrap.authority,
+                rule: bootstrap.rule,
+                rights: bootstrap.rights,
+            })
+            .is_err()
+        {
+            serial::write_str("KrustBoot runtime plan failed: policy bootstrap table\n");
+            return None;
+        }
+        index += 1;
+    }
+
     Some(())
 }
 
@@ -3124,6 +3165,12 @@ fn print_boot_manifest_error(error: boot_manifest::ParseError) {
         }
         boot_manifest::ParseError::TooManyPolicyMounts => {
             serial::write_str("too many policy mounts")
+        }
+        boot_manifest::ParseError::TooManyPolicyStatePaths => {
+            serial::write_str("too many policy state paths")
+        }
+        boot_manifest::ParseError::TooManyPolicyBootstraps => {
+            serial::write_str("too many policy bootstraps")
         }
         boot_manifest::ParseError::TooManyRuntimeObjects => {
             serial::write_str("too many runtime objects")

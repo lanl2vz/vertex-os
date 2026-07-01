@@ -39,6 +39,8 @@ const MAX_POLICY_CAPABILITIES: usize = 128;
 const MAX_POLICY_REQUIREMENTS: usize = 160;
 const MAX_POLICY_PROVIDES: usize = 64;
 const MAX_POLICY_MOUNTS: usize = 96;
+const MAX_POLICY_STATE_PATHS: usize = 96;
+const MAX_POLICY_BOOTSTRAPS: usize = 96;
 const POLICY_VERSION: u16 = krustboot_abi::POLICY_VERSION;
 const MAX_RUNTIME_OBJECTS: usize = 64;
 const FIXED_RUNTIME_OBJECTS: usize = 4;
@@ -75,6 +77,29 @@ pub const RIGHT_CREATE: u16 = 1 << 11;
 pub const RIGHT_UNLINK: u16 = 1 << 12;
 pub const RIGHT_RENAME: u16 = 1 << 13;
 pub const RIGHT_MOUNT: u16 = 1 << 14;
+const BOOTSTRAP_RIGHT_READ: u64 = 1 << 0;
+const BOOTSTRAP_RIGHT_WRITE: u64 = 1 << 1;
+const BOOTSTRAP_RIGHT_MAP: u64 = 1 << 2;
+const BOOTSTRAP_RIGHT_SEND: u64 = 1 << 4;
+const BOOTSTRAP_RIGHT_RECEIVE: u64 = 1 << 5;
+const BOOTSTRAP_RIGHT_CONTROL: u64 = 1 << 6;
+const BOOTSTRAP_RIGHT_ALLOCATE: u64 = 1 << 7;
+const BOOTSTRAP_RIGHT_SNAPSHOT: u64 = 1 << 8;
+const BOOTSTRAP_RIGHT_RESTORE: u64 = 1 << 9;
+const BOOTSTRAP_RIGHT_BIND: u64 = 1 << 10;
+const BOOTSTRAP_RIGHT_LISTEN: u64 = 1 << 11;
+const BOOTSTRAP_RIGHT_DELEGATE: u64 = 1 << 12;
+const BOOTSTRAP_RIGHT_REVOKE: u64 = 1 << 13;
+const BOOTSTRAP_RIGHT_INSPECT: u64 = 1 << 14;
+const BOOTSTRAP_RIGHT_CREATE: u64 = 1 << 15;
+const BOOTSTRAP_RIGHT_START: u64 = 1 << 16;
+const BOOTSTRAP_RIGHT_KILL: u64 = 1 << 17;
+const BOOTSTRAP_RIGHT_WAIT: u64 = 1 << 18;
+const BOOTSTRAP_RIGHT_INSPECT_METADATA: u64 = 1 << 22;
+const BOOTSTRAP_RIGHT_RESOLVE: u64 = 1 << 23;
+const BOOTSTRAP_RIGHT_UNLINK: u64 = 1 << 24;
+const BOOTSTRAP_RIGHT_RENAME: u64 = 1 << 25;
+const BOOTSTRAP_RIGHT_MOUNT: u64 = 1 << 26;
 
 pub const OBJECT_ENDPOINT: u16 = 1;
 pub const OBJECT_STORE: u16 = 2;
@@ -90,6 +115,7 @@ pub const OBJECT_VIRTIO_DEVICE: u16 = 11;
 pub const OBJECT_NAMESPACE: u16 = 12;
 pub const OBJECT_VFS_ROOT: u16 = 13;
 pub const OBJECT_FRAMEBUFFER: u16 = 14;
+pub const OBJECT_SECRET: u16 = 15;
 pub const PROCESS_MOUNT_FLAG_BIND: u16 = 1;
 pub const PROCESS_MOUNT_FLAG_READ_ONLY: u16 = 1 << 1;
 
@@ -277,6 +303,22 @@ pub struct PolicyMount<'a> {
     pub flags: u16,
 }
 
+#[derive(Clone, Copy)]
+pub struct PolicyStatePath<'a> {
+    pub service: &'a str,
+    pub state: &'a str,
+    pub root: &'a str,
+    pub rights: u16,
+}
+
+#[derive(Clone, Copy)]
+pub struct PolicyBootstrap<'a> {
+    pub service: &'a str,
+    pub authority: &'a str,
+    pub rule: &'a str,
+    pub rights: u64,
+}
+
 pub struct Manifest<'a> {
     generation_id: &'a str,
     parent_generation_id: &'a str,
@@ -333,6 +375,10 @@ pub struct Manifest<'a> {
     policy_provide_count: usize,
     policy_mounts: [Option<PolicyMount<'a>>; MAX_POLICY_MOUNTS],
     policy_mount_count: usize,
+    policy_state_paths: [Option<PolicyStatePath<'a>>; MAX_POLICY_STATE_PATHS],
+    policy_state_path_count: usize,
+    policy_bootstraps: [Option<PolicyBootstrap<'a>>; MAX_POLICY_BOOTSTRAPS],
+    policy_bootstrap_count: usize,
 }
 
 struct Global<T>(UnsafeCell<T>);
@@ -372,6 +418,8 @@ pub enum ParseError {
     TooManyPolicyRequirements,
     TooManyPolicyProvides,
     TooManyPolicyMounts,
+    TooManyPolicyStatePaths,
+    TooManyPolicyBootstraps,
     TooManyRuntimeObjects,
     InvalidString,
     InvalidReference,
@@ -446,6 +494,10 @@ impl<'a> Manifest<'a> {
             policy_provide_count: 0,
             policy_mounts: [None; MAX_POLICY_MOUNTS],
             policy_mount_count: 0,
+            policy_state_paths: [None; MAX_POLICY_STATE_PATHS],
+            policy_state_path_count: 0,
+            policy_bootstraps: [None; MAX_POLICY_BOOTSTRAPS],
+            policy_bootstrap_count: 0,
         }
     }
 
@@ -505,6 +557,10 @@ impl<'a> Manifest<'a> {
         self.policy_provide_count = 0;
         self.policy_mounts.fill(None);
         self.policy_mount_count = 0;
+        self.policy_state_paths.fill(None);
+        self.policy_state_path_count = 0;
+        self.policy_bootstraps.fill(None);
+        self.policy_bootstrap_count = 0;
     }
 
     pub fn generation_id(&self) -> &'a str {
@@ -637,6 +693,14 @@ impl<'a> Manifest<'a> {
 
     pub fn policy_mount_count(&self) -> usize {
         self.policy_mount_count
+    }
+
+    pub fn policy_state_path_count(&self) -> usize {
+        self.policy_state_path_count
+    }
+
+    pub fn policy_bootstrap_count(&self) -> usize {
+        self.policy_bootstrap_count
     }
 
     pub fn boot_module(&self, index: usize) -> Option<BootModule<'a>> {
@@ -810,6 +874,22 @@ impl<'a> Manifest<'a> {
     pub fn policy_mount(&self, index: usize) -> Option<PolicyMount<'a>> {
         if index < self.policy_mount_count {
             self.policy_mounts[index]
+        } else {
+            None
+        }
+    }
+
+    pub fn policy_state_path(&self, index: usize) -> Option<PolicyStatePath<'a>> {
+        if index < self.policy_state_path_count {
+            self.policy_state_paths[index]
+        } else {
+            None
+        }
+    }
+
+    pub fn policy_bootstrap(&self, index: usize) -> Option<PolicyBootstrap<'a>> {
+        if index < self.policy_bootstrap_count {
+            self.policy_bootstraps[index]
         } else {
             None
         }
@@ -1249,6 +1329,10 @@ fn parse_compact_into(
         reader.read_count(MAX_POLICY_PROVIDES, ParseError::TooManyPolicyProvides)?;
     let policy_mount_count =
         reader.read_count(MAX_POLICY_MOUNTS, ParseError::TooManyPolicyMounts)?;
+    let policy_state_path_count =
+        reader.read_count(MAX_POLICY_STATE_PATHS, ParseError::TooManyPolicyStatePaths)?;
+    let policy_bootstrap_count =
+        reader.read_count(MAX_POLICY_BOOTSTRAPS, ParseError::TooManyPolicyBootstraps)?;
     let policy_hash = reader.read_fixed_str()?;
     manifest.policy_version = policy_version;
     manifest.policy_hash = policy_hash;
@@ -1256,6 +1340,8 @@ fn parse_compact_into(
     manifest.policy_requirement_count = policy_requirement_count;
     manifest.policy_provide_count = policy_provide_count;
     manifest.policy_mount_count = policy_mount_count;
+    manifest.policy_state_path_count = policy_state_path_count;
+    manifest.policy_bootstrap_count = policy_bootstrap_count;
 
     let policy_records_start = reader.offset;
     index = 0;
@@ -1322,6 +1408,40 @@ fn parse_compact_into(
             path,
             source,
             flags,
+        });
+        index += 1;
+    }
+
+    index = 0;
+    while index < policy_state_path_count {
+        let service = reader.read_fixed_str()?;
+        let state = reader.read_fixed_str()?;
+        let root = reader.read_fixed_str()?;
+        let rights = reader.read_u16()?;
+        let reserved = reader.read_u16()?;
+        if reserved != 0 {
+            return Err(ParseError::InvalidPolicy);
+        }
+        manifest.policy_state_paths[index] = Some(PolicyStatePath {
+            service,
+            state,
+            root,
+            rights,
+        });
+        index += 1;
+    }
+
+    index = 0;
+    while index < policy_bootstrap_count {
+        let service = reader.read_fixed_str()?;
+        let authority = reader.read_fixed_str()?;
+        let rule = reader.read_fixed_str()?;
+        let rights = reader.read_u64()?;
+        manifest.policy_bootstraps[index] = Some(PolicyBootstrap {
+            service,
+            authority,
+            rule,
+            rights,
         });
         index += 1;
     }
@@ -1909,7 +2029,7 @@ fn validate_policy_facts(manifest: &Manifest<'_>) -> Result<(), ParseError> {
         {
             return Err(ParseError::InvalidPolicy);
         }
-        validate_object_ref(manifest, capability.object_kind, capability.object_index)?;
+        validate_policy_object_ref(manifest, capability.object_kind, capability.object_index)?;
         let mut prior = 0;
         while prior < index {
             let existing = manifest
@@ -1980,6 +2100,50 @@ fn validate_policy_facts(manifest: &Manifest<'_>) -> Result<(), ParseError> {
     }
 
     index = 0;
+    while index < manifest.policy_state_path_count {
+        let state_path = manifest
+            .policy_state_path(index)
+            .ok_or(ParseError::InvalidPolicy)?;
+        validate_policy_state_path_fact(manifest, state_path)?;
+        let mut prior = 0;
+        while prior < index {
+            let existing = manifest
+                .policy_state_path(prior)
+                .ok_or(ParseError::InvalidPolicy)?;
+            if existing.service == state_path.service
+                && existing.state == state_path.state
+                && existing.root == state_path.root
+            {
+                return Err(ParseError::InvalidPolicy);
+            }
+            prior += 1;
+        }
+        index += 1;
+    }
+
+    index = 0;
+    while index < manifest.policy_bootstrap_count {
+        let bootstrap = manifest
+            .policy_bootstrap(index)
+            .ok_or(ParseError::InvalidPolicy)?;
+        validate_policy_bootstrap_fact(manifest, bootstrap)?;
+        let mut prior = 0;
+        while prior < index {
+            let existing = manifest
+                .policy_bootstrap(prior)
+                .ok_or(ParseError::InvalidPolicy)?;
+            if existing.service == bootstrap.service
+                && existing.authority == bootstrap.authority
+                && existing.rule == bootstrap.rule
+            {
+                return Err(ParseError::InvalidPolicy);
+            }
+            prior += 1;
+        }
+        index += 1;
+    }
+
+    index = 0;
     while index < manifest.grant_count {
         let grant = manifest.grant(index).ok_or(ParseError::InvalidReference)?;
         if !grant_authorized_by_policy(manifest, grant)? {
@@ -1987,11 +2151,16 @@ fn validate_policy_facts(manifest: &Manifest<'_>) -> Result<(), ParseError> {
                 .process(grant.process_index)
                 .ok_or(ParseError::InvalidReference)?;
             let target = graph_object_node_id(manifest, grant).unwrap_or("<invalid>");
+            let rule = if grant_covers_state_volume_path(manifest, grant)? {
+                "state-path"
+            } else {
+                "grant-authorized"
+            };
             log_policy_denial(
                 manifest,
                 graph_process_node_id(process),
                 target,
-                "grant-authorized",
+                rule,
                 "no-policy-edge",
             );
             return Err(ParseError::InvalidPolicy);
@@ -2049,6 +2218,42 @@ fn validate_policy_facts(manifest: &Manifest<'_>) -> Result<(), ParseError> {
                 mount.service,
                 target,
                 "mount-fact",
+                "unused-policy-edge",
+            );
+            return Err(ParseError::InvalidPolicy);
+        }
+        index += 1;
+    }
+
+    index = 0;
+    while index < manifest.policy_state_path_count {
+        let state_path = manifest
+            .policy_state_path(index)
+            .ok_or(ParseError::InvalidPolicy)?;
+        if !policy_state_path_matches_grant(manifest, state_path)? {
+            log_policy_denial(
+                manifest,
+                state_path.service,
+                state_path.root,
+                "state-path-fact",
+                "unused-policy-edge",
+            );
+            return Err(ParseError::InvalidPolicy);
+        }
+        index += 1;
+    }
+
+    index = 0;
+    while index < manifest.policy_bootstrap_count {
+        let bootstrap = manifest
+            .policy_bootstrap(index)
+            .ok_or(ParseError::InvalidPolicy)?;
+        if !policy_bootstrap_matches_runtime(manifest, bootstrap)? {
+            log_policy_denial(
+                manifest,
+                bootstrap.service,
+                bootstrap.authority,
+                bootstrap.rule,
                 "unused-policy-edge",
             );
             return Err(ParseError::InvalidPolicy);
@@ -2156,6 +2361,431 @@ fn policy_mount_matches_process(
     Ok(false)
 }
 
+fn validate_policy_state_path_fact(
+    manifest: &Manifest<'_>,
+    state_path: PolicyStatePath<'_>,
+) -> Result<(), ParseError> {
+    let state = state_volume_by_id(manifest, state_path.state).ok_or(ParseError::InvalidPolicy)?;
+    if !manifest_has_service(manifest, state_path.service)
+        || state_path.rights == 0
+        || !known_policy_rights(state_path.rights)
+    {
+        return Err(ParseError::InvalidPolicy);
+    }
+    validate_vfs_root_path(state_path.root)?;
+    if state.sharing_policy == "owner-only" && state.owner != state_path.service {
+        return Err(ParseError::InvalidPolicy);
+    }
+    Ok(())
+}
+
+fn state_path_policy_allows_grant(
+    manifest: &Manifest<'_>,
+    service: &str,
+    grant: Grant,
+) -> Result<bool, ParseError> {
+    if grant.object_kind != OBJECT_VFS_ROOT {
+        return Ok(true);
+    }
+    let root = manifest
+        .vfs_root(grant.object_index)
+        .ok_or(ParseError::InvalidReference)?;
+    let mut index = 0;
+    while index < manifest.state_volume_count {
+        let state = manifest
+            .state_volume(index)
+            .ok_or(ParseError::InvalidReference)?;
+        if state_volume_covered_by_root_path(root.root_path, state)? {
+            if state.sharing_policy == "owner-only" && state.owner != service {
+                return Ok(false);
+            }
+            if !policy_state_path_allows(manifest, service, state.id, root.root_path, grant.rights)
+            {
+                return Ok(false);
+            }
+        }
+        index += 1;
+    }
+    Ok(true)
+}
+
+fn policy_state_path_allows(
+    manifest: &Manifest<'_>,
+    service: &str,
+    state_id: &str,
+    root: &str,
+    rights: u16,
+) -> bool {
+    let mut index = 0;
+    while index < manifest.policy_state_path_count {
+        if let Some(state_path) = manifest.policy_state_path(index)
+            && state_path.service == service
+            && state_path.state == state_id
+            && state_path.root == root
+            && rights & !state_path.rights == 0
+        {
+            return true;
+        }
+        index += 1;
+    }
+    false
+}
+
+fn policy_state_path_matches_grant(
+    manifest: &Manifest<'_>,
+    state_path: PolicyStatePath<'_>,
+) -> Result<bool, ParseError> {
+    let mut matched_rights = 0;
+    let mut grant_index = 0;
+    while grant_index < manifest.grant_count {
+        let grant = manifest
+            .grant(grant_index)
+            .ok_or(ParseError::InvalidReference)?;
+        if grant.object_kind == OBJECT_VFS_ROOT {
+            let process = manifest
+                .process(grant.process_index)
+                .ok_or(ParseError::InvalidReference)?;
+            if graph_process_node_id(process) == state_path.service {
+                let root = manifest
+                    .vfs_root(grant.object_index)
+                    .ok_or(ParseError::InvalidReference)?;
+                let state = state_volume_by_id(manifest, state_path.state)
+                    .ok_or(ParseError::InvalidPolicy)?;
+                if root.root_path == state_path.root
+                    && state_volume_covered_by_root_path(root.root_path, state)?
+                {
+                    matched_rights |= grant.rights;
+                }
+            }
+        }
+        grant_index += 1;
+    }
+    Ok(matched_rights != 0 && state_path.rights & !matched_rights == 0)
+}
+
+fn grant_covers_state_volume_path(
+    manifest: &Manifest<'_>,
+    grant: Grant,
+) -> Result<bool, ParseError> {
+    if grant.object_kind != OBJECT_VFS_ROOT {
+        return Ok(false);
+    }
+    let root = manifest
+        .vfs_root(grant.object_index)
+        .ok_or(ParseError::InvalidReference)?;
+    let mut index = 0;
+    while index < manifest.state_volume_count {
+        let state = manifest
+            .state_volume(index)
+            .ok_or(ParseError::InvalidReference)?;
+        if state_volume_covered_by_root_path(root.root_path, state)? {
+            return Ok(true);
+        }
+        index += 1;
+    }
+    Ok(false)
+}
+
+fn state_volume_covered_by_root_path(
+    root: &str,
+    state: StateVolume<'_>,
+) -> Result<bool, ParseError> {
+    if root == "/state" {
+        return Ok(true);
+    }
+    let Some(rest) = root.strip_prefix("/state/") else {
+        return Ok(false);
+    };
+    let component = rest.split('/').next().ok_or(ParseError::InvalidReference)?;
+    Ok(component == state_volume_mount_component(state.id)?)
+}
+
+fn state_volume_by_id<'a>(manifest: &'a Manifest<'a>, state_id: &str) -> Option<StateVolume<'a>> {
+    let mut index = 0;
+    while index < manifest.state_volume_count {
+        if let Some(state) = manifest.state_volume(index)
+            && state.id == state_id
+        {
+            return Some(state);
+        }
+        index += 1;
+    }
+    None
+}
+
+fn validate_policy_bootstrap_fact(
+    manifest: &Manifest<'_>,
+    bootstrap: PolicyBootstrap<'_>,
+) -> Result<(), ParseError> {
+    if !manifest_has_service(manifest, bootstrap.service)
+        || bootstrap.authority.is_empty()
+        || bootstrap.rule.is_empty()
+        || bootstrap.rights == 0
+        || !known_bootstrap_rights(bootstrap.rights)
+    {
+        return Err(ParseError::InvalidPolicy);
+    }
+    Ok(())
+}
+
+fn policy_bootstrap_matches_runtime(
+    manifest: &Manifest<'_>,
+    bootstrap: PolicyBootstrap<'_>,
+) -> Result<bool, ParseError> {
+    if bootstrap.authority == "boot-module:krustboot-manifest" {
+        return Ok(bootstrap.rule == "initial-manifest"
+            && bootstrap.rights == BOOTSTRAP_RIGHT_READ
+            && service_is_initial(manifest, bootstrap.service)?);
+    }
+    if bootstrap.authority == "process-control" {
+        return Ok(bootstrap.rule == "initial-process-control"
+            && bootstrap.rights == initial_process_control_rights()
+            && service_is_initial(manifest, bootstrap.service)?);
+    }
+    if bootstrap.authority == "timer:monotonic-timer" {
+        return Ok(bootstrap.rule == "initial-restart-timer"
+            && bootstrap.rights == BOOTSTRAP_RIGHT_CONTROL
+            && service_is_initial(manifest, bootstrap.service)?);
+    }
+    if bootstrap.authority == "secret:logd-token" {
+        return Ok(bootstrap.rule == "native-secret"
+            && bootstrap.rights == (BOOTSTRAP_RIGHT_READ | BOOTSTRAP_RIGHT_INSPECT_METADATA)
+            && service_process_name(manifest, bootstrap.service) == Some("logd")
+            && policy_requirement_allows(
+                manifest,
+                bootstrap.service,
+                "secret:logd-token",
+                RIGHT_READ,
+            ));
+    }
+    if let Some(endpoint) = bootstrap.authority.strip_prefix("endpoint:") {
+        if policy_bootstrap_matches_internal_endpoint(manifest, bootstrap, endpoint)? {
+            return Ok(true);
+        }
+        if !manifest_has_endpoint(manifest, endpoint) {
+            return Ok(false);
+        }
+        return policy_bootstrap_matches_builtin_grant(manifest, bootstrap, endpoint);
+    }
+    Ok(false)
+}
+
+fn policy_bootstrap_matches_builtin_grant(
+    manifest: &Manifest<'_>,
+    bootstrap: PolicyBootstrap<'_>,
+    endpoint: &str,
+) -> Result<bool, ParseError> {
+    let mut index = 0;
+    while index < manifest.grant_count {
+        let grant = manifest.grant(index).ok_or(ParseError::InvalidReference)?;
+        if grant.object_kind == OBJECT_ENDPOINT
+            && bootstrap_rights_from_compact(grant.rights) == bootstrap.rights
+        {
+            let process = manifest
+                .process(grant.process_index)
+                .ok_or(ParseError::InvalidReference)?;
+            let grant_endpoint = manifest
+                .endpoint(grant.object_index)
+                .ok_or(ParseError::InvalidReference)?;
+            if graph_process_node_id(process) == bootstrap.service
+                && grant_endpoint.name == endpoint
+                && builtin_endpoint_rule_for_grant(process, grant_endpoint.name, grant)
+                    == Some(bootstrap.rule)
+            {
+                return Ok(true);
+            }
+        }
+        index += 1;
+    }
+    Ok(false)
+}
+
+fn policy_bootstrap_matches_internal_endpoint(
+    manifest: &Manifest<'_>,
+    bootstrap: PolicyBootstrap<'_>,
+    endpoint: &str,
+) -> Result<bool, ParseError> {
+    let Some(process_name) = service_process_name(manifest, bootstrap.service) else {
+        return Ok(false);
+    };
+    let expected = match (process_name, endpoint, bootstrap.rule) {
+        ("vertex-state", "state-vfs-request", "state-vfs-request") => BOOTSTRAP_RIGHT_RECEIVE,
+        ("vertex-state", "state-vfs-reply", "state-vfs-reply") => BOOTSTRAP_RIGHT_SEND,
+        ("block-driver", "vertexfs-device-request", "vertexfs-device-request") => {
+            BOOTSTRAP_RIGHT_RECEIVE
+        }
+        ("block-driver", "vertexfs-device-reply", "vertexfs-device-reply") => BOOTSTRAP_RIGHT_SEND,
+        (
+            "block-driver",
+            "generation-metadata-block-request",
+            "generation-metadata-block-request",
+        ) => BOOTSTRAP_RIGHT_RECEIVE,
+        ("block-driver", "generation-metadata-block-reply", "generation-metadata-block-reply") => {
+            BOOTSTRAP_RIGHT_SEND
+        }
+        (
+            "gen-manager",
+            "generation-metadata-block-request",
+            "generation-metadata-block-request",
+        ) => BOOTSTRAP_RIGHT_SEND,
+        ("gen-manager", "generation-metadata-block-reply", "generation-metadata-block-reply") => {
+            BOOTSTRAP_RIGHT_RECEIVE
+        }
+        _ => return Ok(false),
+    };
+    Ok(bootstrap.rights == expected)
+}
+
+fn policy_bootstrap_allows_endpoint(
+    manifest: &Manifest<'_>,
+    service: &str,
+    endpoint: &str,
+    rule: &str,
+    rights: u16,
+) -> bool {
+    let mut index = 0;
+    while index < manifest.policy_bootstrap_count {
+        if let Some(bootstrap) = manifest.policy_bootstrap(index)
+            && bootstrap.service == service
+            && bootstrap.rule == rule
+            && bootstrap_rights_from_compact(rights) & !bootstrap.rights == 0
+            && authority_matches_endpoint(bootstrap.authority, endpoint)
+        {
+            return true;
+        }
+        index += 1;
+    }
+    false
+}
+
+fn authority_matches_endpoint(authority: &str, endpoint: &str) -> bool {
+    authority.strip_prefix("endpoint:") == Some(endpoint)
+}
+
+fn builtin_endpoint_rule_for_grant(
+    process: Process<'_>,
+    endpoint_name: &str,
+    grant: Grant,
+) -> Option<&'static str> {
+    if endpoint_name == SERIAL_LOG_ENDPOINT_NAME && grant.rights == RIGHT_SEND {
+        return Some("serial-log");
+    }
+    if endpoint_name == "readiness" {
+        if process.initial && grant.rights == RIGHT_RECEIVE {
+            return Some("readiness-receive");
+        }
+        if !process.initial && !process.health_kind.is_empty() && grant.rights == RIGHT_SEND {
+            return Some("readiness-send");
+        }
+    }
+    if process.initial && grant.rights == RIGHT_SEND {
+        return Some("init-endpoint-delegation");
+    }
+    None
+}
+
+fn service_is_initial(manifest: &Manifest<'_>, service: &str) -> Result<bool, ParseError> {
+    let mut index = 0;
+    while index < manifest.process_count {
+        let process = manifest
+            .process(index)
+            .ok_or(ParseError::InvalidReference)?;
+        if graph_process_node_id(process) == service {
+            return Ok(process.initial);
+        }
+        index += 1;
+    }
+    Ok(false)
+}
+
+fn service_process_name<'a>(manifest: &'a Manifest<'_>, service: &str) -> Option<&'a str> {
+    let mut index = 0;
+    while index < manifest.process_count {
+        if let Some(process) = manifest.process(index)
+            && graph_process_node_id(process) == service
+        {
+            return Some(process.name);
+        }
+        index += 1;
+    }
+    None
+}
+
+fn manifest_has_endpoint(manifest: &Manifest<'_>, endpoint: &str) -> bool {
+    let mut index = 0;
+    while index < manifest.endpoint_count {
+        if let Some(candidate) = manifest.endpoint(index)
+            && candidate.name == endpoint
+        {
+            return true;
+        }
+        index += 1;
+    }
+    false
+}
+
+fn initial_process_control_rights() -> u64 {
+    BOOTSTRAP_RIGHT_CONTROL
+        | BOOTSTRAP_RIGHT_ALLOCATE
+        | BOOTSTRAP_RIGHT_DELEGATE
+        | BOOTSTRAP_RIGHT_REVOKE
+        | BOOTSTRAP_RIGHT_INSPECT
+        | BOOTSTRAP_RIGHT_CREATE
+        | BOOTSTRAP_RIGHT_START
+        | BOOTSTRAP_RIGHT_KILL
+        | BOOTSTRAP_RIGHT_WAIT
+}
+
+fn bootstrap_rights_from_compact(rights: u16) -> u64 {
+    let mut out = 0;
+    if rights & RIGHT_SEND != 0 {
+        out |= BOOTSTRAP_RIGHT_SEND;
+    }
+    if rights & RIGHT_RECEIVE != 0 {
+        out |= BOOTSTRAP_RIGHT_RECEIVE;
+    }
+    if rights & RIGHT_READ != 0 {
+        out |= BOOTSTRAP_RIGHT_READ;
+    }
+    if rights & RIGHT_WRITE != 0 {
+        out |= BOOTSTRAP_RIGHT_WRITE;
+    }
+    if rights & RIGHT_SNAPSHOT != 0 {
+        out |= BOOTSTRAP_RIGHT_SNAPSHOT;
+    }
+    if rights & RIGHT_RESTORE != 0 {
+        out |= BOOTSTRAP_RIGHT_RESTORE;
+    }
+    if rights & RIGHT_CONTROL != 0 {
+        out |= BOOTSTRAP_RIGHT_CONTROL;
+    }
+    if rights & RIGHT_BIND != 0 {
+        out |= BOOTSTRAP_RIGHT_BIND;
+    }
+    if rights & RIGHT_LISTEN != 0 {
+        out |= BOOTSTRAP_RIGHT_LISTEN;
+    }
+    if rights & RIGHT_MAP != 0 {
+        out |= BOOTSTRAP_RIGHT_MAP;
+    }
+    if rights & RIGHT_RESOLVE != 0 {
+        out |= BOOTSTRAP_RIGHT_RESOLVE;
+    }
+    if rights & RIGHT_CREATE != 0 {
+        out |= BOOTSTRAP_RIGHT_CREATE;
+    }
+    if rights & RIGHT_UNLINK != 0 {
+        out |= BOOTSTRAP_RIGHT_UNLINK;
+    }
+    if rights & RIGHT_RENAME != 0 {
+        out |= BOOTSTRAP_RIGHT_RENAME;
+    }
+    if rights & RIGHT_MOUNT != 0 {
+        out |= BOOTSTRAP_RIGHT_MOUNT;
+    }
+    out
+}
+
 fn grant_authorized_by_policy(manifest: &Manifest<'_>, grant: Grant) -> Result<bool, ParseError> {
     let process = manifest
         .process(grant.process_index)
@@ -2181,7 +2811,7 @@ fn grant_authorized_by_policy(manifest: &Manifest<'_>, grant: Grant) -> Result<b
                     return Ok(true);
                 }
             } else if policy_requirement_allows(manifest, service, capability.id, grant.rights) {
-                return Ok(true);
+                return state_path_policy_allows_grant(manifest, service, grant);
             }
         }
         index += 1;
@@ -2200,21 +2830,16 @@ fn builtin_grant_authorized(
     let endpoint = manifest
         .endpoint(grant.object_index)
         .ok_or(ParseError::InvalidReference)?;
-    if endpoint.name == SERIAL_LOG_ENDPOINT_NAME && grant.rights == RIGHT_SEND {
-        return Ok(true);
-    }
-    if endpoint.name == "readiness" {
-        if process.initial && grant.rights == RIGHT_RECEIVE {
-            return Ok(true);
-        }
-        if !process.initial && !process.health_kind.is_empty() && grant.rights == RIGHT_SEND {
-            return Ok(true);
-        }
-    }
-    if process.initial && grant.rights == RIGHT_SEND {
-        return Ok(true);
-    }
-    Ok(false)
+    let Some(rule) = builtin_endpoint_rule_for_grant(process, endpoint.name, grant) else {
+        return Ok(false);
+    };
+    Ok(policy_bootstrap_allows_endpoint(
+        manifest,
+        graph_process_node_id(process),
+        endpoint.name,
+        rule,
+        grant.rights,
+    ))
 }
 
 fn policy_requirement_allows(
@@ -2297,6 +2922,34 @@ fn known_policy_rights(rights: u16) -> bool {
             | RIGHT_UNLINK
             | RIGHT_RENAME
             | RIGHT_MOUNT)
+        == 0
+}
+
+fn known_bootstrap_rights(rights: u64) -> bool {
+    rights
+        & !(BOOTSTRAP_RIGHT_SEND
+            | BOOTSTRAP_RIGHT_RECEIVE
+            | BOOTSTRAP_RIGHT_READ
+            | BOOTSTRAP_RIGHT_WRITE
+            | BOOTSTRAP_RIGHT_SNAPSHOT
+            | BOOTSTRAP_RIGHT_RESTORE
+            | BOOTSTRAP_RIGHT_CONTROL
+            | BOOTSTRAP_RIGHT_BIND
+            | BOOTSTRAP_RIGHT_LISTEN
+            | BOOTSTRAP_RIGHT_MAP
+            | BOOTSTRAP_RIGHT_RESOLVE
+            | BOOTSTRAP_RIGHT_CREATE
+            | BOOTSTRAP_RIGHT_UNLINK
+            | BOOTSTRAP_RIGHT_RENAME
+            | BOOTSTRAP_RIGHT_MOUNT
+            | BOOTSTRAP_RIGHT_ALLOCATE
+            | BOOTSTRAP_RIGHT_DELEGATE
+            | BOOTSTRAP_RIGHT_REVOKE
+            | BOOTSTRAP_RIGHT_INSPECT
+            | BOOTSTRAP_RIGHT_START
+            | BOOTSTRAP_RIGHT_KILL
+            | BOOTSTRAP_RIGHT_WAIT
+            | BOOTSTRAP_RIGHT_INSPECT_METADATA)
         == 0
 }
 
@@ -2661,6 +3314,20 @@ fn validate_object_ref(
         | OBJECT_VFS_ROOT => Err(ParseError::InvalidReference),
         _ => Err(ParseError::InvalidObjectKind),
     }
+}
+
+fn validate_policy_object_ref(
+    manifest: &Manifest<'_>,
+    object_kind: u16,
+    object_index: usize,
+) -> Result<(), ParseError> {
+    if object_kind == OBJECT_SECRET {
+        if object_index == 0 {
+            return Ok(());
+        }
+        return Err(ParseError::InvalidReference);
+    }
+    validate_object_ref(manifest, object_kind, object_index)
 }
 
 fn validate_endpoint_rights(

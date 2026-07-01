@@ -56,6 +56,8 @@ const POLICY_CAPABILITY_RECORD_LEN: usize = STRING_LEN * 2 + 8;
 const POLICY_REQUIREMENT_RECORD_LEN: usize = STRING_LEN * 2 + 4;
 const POLICY_PROVIDE_RECORD_LEN: usize = STRING_LEN * 2;
 const POLICY_MOUNT_RECORD_LEN: usize = STRING_LEN * 4 + 4;
+const POLICY_STATE_PATH_RECORD_LEN: usize = STRING_LEN * 3 + 4;
+const POLICY_BOOTSTRAP_RECORD_LEN: usize = STRING_LEN * 3 + 8;
 const MAX_BOOT_MODULES: usize = 16;
 const MAX_PROCESSES: usize = 16;
 const MAX_ENDPOINTS: usize = 16;
@@ -78,6 +80,8 @@ const MAX_POLICY_CAPABILITIES: usize = 128;
 const MAX_POLICY_REQUIREMENTS: usize = 160;
 const MAX_POLICY_PROVIDES: usize = 64;
 const MAX_POLICY_MOUNTS: usize = 96;
+const MAX_POLICY_STATE_PATHS: usize = 96;
+const MAX_POLICY_BOOTSTRAPS: usize = 96;
 const MAX_NAMESPACE_ENTRIES: usize = 4;
 const MAX_PROCESS_REFS: usize = 5;
 const MAX_PROCESS_MOUNTS: usize = 4;
@@ -100,6 +104,29 @@ const RIGHT_CREATE: u16 = 1 << 11;
 const RIGHT_UNLINK: u16 = 1 << 12;
 const RIGHT_RENAME: u16 = 1 << 13;
 const RIGHT_MOUNT: u16 = 1 << 14;
+const BOOTSTRAP_RIGHT_READ: u64 = 1 << 0;
+const BOOTSTRAP_RIGHT_WRITE: u64 = 1 << 1;
+const BOOTSTRAP_RIGHT_MAP: u64 = 1 << 2;
+const BOOTSTRAP_RIGHT_SEND: u64 = 1 << 4;
+const BOOTSTRAP_RIGHT_RECEIVE: u64 = 1 << 5;
+const BOOTSTRAP_RIGHT_CONTROL: u64 = 1 << 6;
+const BOOTSTRAP_RIGHT_ALLOCATE: u64 = 1 << 7;
+const BOOTSTRAP_RIGHT_SNAPSHOT: u64 = 1 << 8;
+const BOOTSTRAP_RIGHT_RESTORE: u64 = 1 << 9;
+const BOOTSTRAP_RIGHT_BIND: u64 = 1 << 10;
+const BOOTSTRAP_RIGHT_LISTEN: u64 = 1 << 11;
+const BOOTSTRAP_RIGHT_DELEGATE: u64 = 1 << 12;
+const BOOTSTRAP_RIGHT_REVOKE: u64 = 1 << 13;
+const BOOTSTRAP_RIGHT_INSPECT: u64 = 1 << 14;
+const BOOTSTRAP_RIGHT_CREATE: u64 = 1 << 15;
+const BOOTSTRAP_RIGHT_START: u64 = 1 << 16;
+const BOOTSTRAP_RIGHT_KILL: u64 = 1 << 17;
+const BOOTSTRAP_RIGHT_WAIT: u64 = 1 << 18;
+const BOOTSTRAP_RIGHT_INSPECT_METADATA: u64 = 1 << 22;
+const BOOTSTRAP_RIGHT_RESOLVE: u64 = 1 << 23;
+const BOOTSTRAP_RIGHT_UNLINK: u64 = 1 << 24;
+const BOOTSTRAP_RIGHT_RENAME: u64 = 1 << 25;
+const BOOTSTRAP_RIGHT_MOUNT: u64 = 1 << 26;
 const PROCESS_MOUNT_FLAG_BIND: u16 = 1;
 const PROCESS_MOUNT_FLAG_READ_ONLY: u16 = 1 << 1;
 const OBJECT_ENDPOINT: u16 = 1;
@@ -116,6 +143,7 @@ const OBJECT_VIRTIO_DEVICE: u16 = 11;
 const OBJECT_NAMESPACE: u16 = 12;
 const OBJECT_VFS_ROOT: u16 = 13;
 const OBJECT_FRAMEBUFFER: u16 = 14;
+const OBJECT_SECRET: u16 = 15;
 const RECORD_BOOT_MODULE: u16 = 1;
 const RECORD_PROCESS: u16 = 2;
 const RECORD_ENDPOINT: u16 = 3;
@@ -353,6 +381,12 @@ pub fn compile(manifest: &GenerationManifest) -> Result<Vec<u8>, String> {
     )?;
     push_count(&mut body, plan.policy_provides.len(), "policy_provides")?;
     push_count(&mut body, plan.policy_mounts.len(), "policy_mounts")?;
+    push_count(
+        &mut body,
+        plan.policy_state_paths.len(),
+        "policy_state_paths",
+    )?;
+    push_count(&mut body, plan.policy_bootstraps.len(), "policy_bootstraps")?;
     push_fixed_str(&mut body, &policy_hash)?;
     body.extend_from_slice(&policy_records);
 
@@ -484,9 +518,13 @@ pub fn corrupt(bytes: &[u8], mode: &str) -> Result<Vec<u8>, String> {
             corrupt_policy_mount_root(&mut out)?;
             rewrite_v1_checksum(&mut out)?;
         }
+        "policy-state-root" => {
+            corrupt_policy_state_root(&mut out)?;
+            rewrite_v1_checksum(&mut out)?;
+        }
         other => {
             return Err(format!(
-                "unknown KrustBoot corruption mode {other}; expected truncated, bad-magic, unsupported-version, out-of-bounds-record, raw-compact, old-compact-magic, graph-store-checksum, graph-store-record, missing-provider, policy-version, policy-hash, policy-excess-grant, or policy-mount-root"
+                "unknown KrustBoot corruption mode {other}; expected truncated, bad-magic, unsupported-version, out-of-bounds-record, raw-compact, old-compact-magic, graph-store-checksum, graph-store-record, missing-provider, policy-version, policy-hash, policy-excess-grant, policy-mount-root, or policy-state-root"
             ));
         }
     }
@@ -655,6 +693,8 @@ struct BootPlan {
     policy_requirements: Vec<PolicyRequirement>,
     policy_provides: Vec<PolicyProvide>,
     policy_mounts: Vec<PolicyMount>,
+    policy_state_paths: Vec<PolicyStatePath>,
+    policy_bootstraps: Vec<PolicyBootstrap>,
 }
 
 #[derive(Debug, Clone)]
@@ -839,6 +879,22 @@ struct PolicyMount {
     path: String,
     source: String,
     flags: u16,
+}
+
+#[derive(Debug, Clone)]
+struct PolicyStatePath {
+    service: String,
+    state: String,
+    root: String,
+    rights: u16,
+}
+
+#[derive(Debug, Clone)]
+struct PolicyBootstrap {
+    service: String,
+    authority: String,
+    rule: String,
+    rights: u64,
 }
 
 fn derive_plan(manifest: &GenerationManifest) -> Result<BootPlan, String> {
@@ -1376,6 +1432,8 @@ fn derive_plan(manifest: &GenerationManifest) -> Result<BootPlan, String> {
         policy_requirements: Vec::new(),
         policy_provides: Vec::new(),
         policy_mounts: Vec::new(),
+        policy_state_paths: Vec::new(),
+        policy_bootstraps: Vec::new(),
     };
     derive_graph_store(manifest, &mut plan)?;
     derive_policy_facts(manifest, &mut plan)?;
@@ -1785,6 +1843,10 @@ fn derive_policy_facts(manifest: &GenerationManifest, plan: &mut BootPlan) -> Re
         }
     }
 
+    add_state_path_policy(plan)?;
+    add_secret_policy(plan)?;
+    add_bootstrap_policy(plan)?;
+
     for device in &manifest.devices {
         if native_process_for_service(&plan.processes, &device.driver).is_none() {
             continue;
@@ -1813,6 +1875,293 @@ fn derive_policy_facts(manifest: &GenerationManifest, plan: &mut BootPlan) -> Re
 
     add_vertex_store_verifier_policy(plan)?;
     Ok(())
+}
+
+fn add_state_path_policy(plan: &mut BootPlan) -> Result<(), String> {
+    let grants = plan.grants.clone();
+    for grant in grants {
+        if grant.object_kind != OBJECT_VFS_ROOT {
+            continue;
+        }
+        let Some(process) = plan
+            .processes
+            .iter()
+            .find(|candidate| candidate.name == grant.process)
+        else {
+            continue;
+        };
+        let root = plan
+            .vfs_roots
+            .iter()
+            .find(|candidate| candidate.id == grant.object_name)
+            .ok_or_else(|| {
+                format!(
+                    "VFS-root grant references unknown root {}",
+                    grant.object_name
+                )
+            })?;
+        let effective_root = root.root_path.clone();
+        for state in state_volumes_covered_by_compact_root(&plan.state_volumes, &effective_root)? {
+            push_policy_state_path(
+                &mut plan.policy_state_paths,
+                PolicyStatePath {
+                    service: process_graph_node_id(process),
+                    state: state.id.clone(),
+                    root: effective_root.clone(),
+                    rights: grant.rights,
+                },
+            )?;
+        }
+    }
+    Ok(())
+}
+
+fn add_secret_policy(plan: &mut BootPlan) -> Result<(), String> {
+    let Some(logd) = plan.processes.iter().find(|process| process.name == "logd") else {
+        return Ok(());
+    };
+    let service = process_graph_node_id(logd);
+    let rights = RIGHT_READ;
+    push_policy_capability(
+        &mut plan.policy_capabilities,
+        PolicyCapability {
+            id: "secret:logd-token".to_owned(),
+            provider: service.clone(),
+            object_kind: OBJECT_SECRET,
+            object_index: 0,
+            rights,
+        },
+    )?;
+    push_policy_requirement(
+        &mut plan.policy_requirements,
+        PolicyRequirement {
+            service: service.clone(),
+            capability: "secret:logd-token".to_owned(),
+            rights,
+        },
+    )?;
+    push_policy_bootstrap(
+        &mut plan.policy_bootstraps,
+        PolicyBootstrap {
+            service,
+            authority: "secret:logd-token".to_owned(),
+            rule: "native-secret".to_owned(),
+            rights: BOOTSTRAP_RIGHT_READ | BOOTSTRAP_RIGHT_INSPECT_METADATA,
+        },
+    )
+}
+
+fn add_bootstrap_policy(plan: &mut BootPlan) -> Result<(), String> {
+    let grants = plan.grants.clone();
+    for grant in grants {
+        if grant.object_kind != OBJECT_ENDPOINT {
+            continue;
+        }
+        let Some(process) = plan
+            .processes
+            .iter()
+            .find(|candidate| candidate.name == grant.process)
+        else {
+            continue;
+        };
+        let rule = if grant.object_name == "serial-log" && grant.rights == RIGHT_SEND {
+            "serial-log"
+        } else if grant.object_name == "readiness"
+            && process.initial
+            && grant.rights == RIGHT_RECEIVE
+        {
+            "readiness-receive"
+        } else if grant.object_name == "readiness" && !process.initial && grant.rights == RIGHT_SEND
+        {
+            "readiness-send"
+        } else if process.initial && grant.rights == RIGHT_SEND {
+            "init-endpoint-delegation"
+        } else {
+            continue;
+        };
+        push_policy_bootstrap(
+            &mut plan.policy_bootstraps,
+            PolicyBootstrap {
+                service: process_graph_node_id(process),
+                authority: format!("endpoint:{}", grant.object_name),
+                rule: rule.to_owned(),
+                rights: bootstrap_rights_from_compact(grant.rights),
+            },
+        )?;
+    }
+
+    if let Some(init) = plan.processes.iter().find(|process| process.initial) {
+        let init_service = process_graph_node_id(init);
+        for (authority, rule, rights) in [
+            (
+                "boot-module:krustboot-manifest",
+                "initial-manifest",
+                RIGHT_READ,
+            ),
+            ("process-control", "initial-process-control", RIGHT_CONTROL),
+            (
+                "timer:monotonic-timer",
+                "initial-restart-timer",
+                RIGHT_CONTROL,
+            ),
+        ] {
+            push_policy_bootstrap(
+                &mut plan.policy_bootstraps,
+                PolicyBootstrap {
+                    service: init_service.clone(),
+                    authority: authority.to_owned(),
+                    rule: rule.to_owned(),
+                    rights: if rule == "initial-process-control" {
+                        BOOTSTRAP_RIGHT_CONTROL
+                            | BOOTSTRAP_RIGHT_ALLOCATE
+                            | BOOTSTRAP_RIGHT_DELEGATE
+                            | BOOTSTRAP_RIGHT_REVOKE
+                            | BOOTSTRAP_RIGHT_INSPECT
+                            | BOOTSTRAP_RIGHT_CREATE
+                            | BOOTSTRAP_RIGHT_START
+                            | BOOTSTRAP_RIGHT_KILL
+                            | BOOTSTRAP_RIGHT_WAIT
+                    } else {
+                        bootstrap_rights_from_compact(rights)
+                    },
+                },
+            )?;
+        }
+    }
+
+    if !plan.state_volumes.is_empty() {
+        add_service_bootstrap_pair(
+            plan,
+            "vertex-state",
+            "endpoint:state-vfs-request",
+            "state-vfs-request",
+            RIGHT_RECEIVE,
+        )?;
+        add_service_bootstrap_pair(
+            plan,
+            "vertex-state",
+            "endpoint:state-vfs-reply",
+            "state-vfs-reply",
+            RIGHT_SEND,
+        )?;
+    }
+    add_service_bootstrap_pair(
+        plan,
+        "block-driver",
+        "endpoint:vertexfs-device-request",
+        "vertexfs-device-request",
+        RIGHT_RECEIVE,
+    )?;
+    add_service_bootstrap_pair(
+        plan,
+        "block-driver",
+        "endpoint:vertexfs-device-reply",
+        "vertexfs-device-reply",
+        RIGHT_SEND,
+    )?;
+    add_service_bootstrap_pair(
+        plan,
+        "block-driver",
+        "endpoint:generation-metadata-block-request",
+        "generation-metadata-block-request",
+        RIGHT_RECEIVE,
+    )?;
+    add_service_bootstrap_pair(
+        plan,
+        "block-driver",
+        "endpoint:generation-metadata-block-reply",
+        "generation-metadata-block-reply",
+        RIGHT_SEND,
+    )?;
+    add_service_bootstrap_pair(
+        plan,
+        "gen-manager",
+        "endpoint:generation-metadata-block-request",
+        "generation-metadata-block-request",
+        RIGHT_SEND,
+    )?;
+    add_service_bootstrap_pair(
+        plan,
+        "gen-manager",
+        "endpoint:generation-metadata-block-reply",
+        "generation-metadata-block-reply",
+        RIGHT_RECEIVE,
+    )
+}
+
+fn add_service_bootstrap_pair(
+    plan: &mut BootPlan,
+    process_name: &str,
+    authority: &str,
+    rule: &str,
+    rights: u16,
+) -> Result<(), String> {
+    let Some(process) = plan
+        .processes
+        .iter()
+        .find(|candidate| candidate.name == process_name)
+    else {
+        return Ok(());
+    };
+    push_policy_bootstrap(
+        &mut plan.policy_bootstraps,
+        PolicyBootstrap {
+            service: process_graph_node_id(process),
+            authority: authority.to_owned(),
+            rule: rule.to_owned(),
+            rights: bootstrap_rights_from_compact(rights),
+        },
+    )
+}
+
+fn bootstrap_rights_from_compact(rights: u16) -> u64 {
+    let mut out = 0;
+    if rights & RIGHT_SEND != 0 {
+        out |= BOOTSTRAP_RIGHT_SEND;
+    }
+    if rights & RIGHT_RECEIVE != 0 {
+        out |= BOOTSTRAP_RIGHT_RECEIVE;
+    }
+    if rights & RIGHT_READ != 0 {
+        out |= BOOTSTRAP_RIGHT_READ;
+    }
+    if rights & RIGHT_WRITE != 0 {
+        out |= BOOTSTRAP_RIGHT_WRITE;
+    }
+    if rights & RIGHT_SNAPSHOT != 0 {
+        out |= BOOTSTRAP_RIGHT_SNAPSHOT;
+    }
+    if rights & RIGHT_RESTORE != 0 {
+        out |= BOOTSTRAP_RIGHT_RESTORE;
+    }
+    if rights & RIGHT_CONTROL != 0 {
+        out |= BOOTSTRAP_RIGHT_CONTROL;
+    }
+    if rights & RIGHT_BIND != 0 {
+        out |= BOOTSTRAP_RIGHT_BIND;
+    }
+    if rights & RIGHT_LISTEN != 0 {
+        out |= BOOTSTRAP_RIGHT_LISTEN;
+    }
+    if rights & RIGHT_MAP != 0 {
+        out |= BOOTSTRAP_RIGHT_MAP;
+    }
+    if rights & RIGHT_RESOLVE != 0 {
+        out |= BOOTSTRAP_RIGHT_RESOLVE;
+    }
+    if rights & RIGHT_CREATE != 0 {
+        out |= BOOTSTRAP_RIGHT_CREATE;
+    }
+    if rights & RIGHT_UNLINK != 0 {
+        out |= BOOTSTRAP_RIGHT_UNLINK;
+    }
+    if rights & RIGHT_RENAME != 0 {
+        out |= BOOTSTRAP_RIGHT_RENAME;
+    }
+    if rights & RIGHT_MOUNT != 0 {
+        out |= BOOTSTRAP_RIGHT_MOUNT;
+    }
+    out
 }
 
 fn policy_object_ref_for_capability(
@@ -1976,6 +2325,38 @@ fn push_policy_mount(mounts: &mut Vec<PolicyMount>, mount: PolicyMount) -> Resul
     Ok(())
 }
 
+fn push_policy_state_path(
+    state_paths: &mut Vec<PolicyStatePath>,
+    state_path: PolicyStatePath,
+) -> Result<(), String> {
+    if let Some(existing) = state_paths.iter_mut().find(|existing| {
+        existing.service == state_path.service
+            && existing.state == state_path.state
+            && existing.root == state_path.root
+    }) {
+        existing.rights |= state_path.rights;
+        return Ok(());
+    }
+    state_paths.push(state_path);
+    Ok(())
+}
+
+fn push_policy_bootstrap(
+    bootstraps: &mut Vec<PolicyBootstrap>,
+    bootstrap: PolicyBootstrap,
+) -> Result<(), String> {
+    if let Some(existing) = bootstraps.iter_mut().find(|existing| {
+        existing.service == bootstrap.service
+            && existing.authority == bootstrap.authority
+            && existing.rule == bootstrap.rule
+    }) {
+        existing.rights |= bootstrap.rights;
+        return Ok(());
+    }
+    bootstraps.push(bootstrap);
+    Ok(())
+}
+
 fn push_graph_device_node(
     nodes: &mut Vec<GraphNode>,
     object_kind: u16,
@@ -2093,6 +2474,26 @@ fn state_policy_label(state: &StateVolume) -> String {
 
 fn compact_service_label(service: &str) -> &str {
     service.strip_prefix("svc:").unwrap_or(service)
+}
+
+fn state_volumes_covered_by_compact_root<'a>(
+    states: &'a [StateVolume],
+    root: &str,
+) -> Result<Vec<&'a StateVolume>, String> {
+    if root == "/state" {
+        return Ok(states.iter().collect());
+    }
+    let Some(rest) = root.strip_prefix("/state/") else {
+        return Ok(Vec::new());
+    };
+    let component = rest.split('/').next().unwrap_or_default();
+    if component.is_empty() {
+        return Err(format!("state VFS root {root} has empty state component"));
+    }
+    Ok(states
+        .iter()
+        .filter(|state| state_mount_component(&state.id) == component)
+        .collect())
 }
 
 fn graph_target_id_for_grant(grant: &Grant) -> String {
@@ -3128,6 +3529,16 @@ fn validate_plan(plan: &BootPlan) -> Result<(), String> {
             "native policy exceeds {MAX_POLICY_MOUNTS} mount facts"
         ));
     }
+    if plan.policy_state_paths.len() > MAX_POLICY_STATE_PATHS {
+        return Err(format!(
+            "native policy exceeds {MAX_POLICY_STATE_PATHS} state path facts"
+        ));
+    }
+    if plan.policy_bootstraps.len() > MAX_POLICY_BOOTSTRAPS {
+        return Err(format!(
+            "native policy exceeds {MAX_POLICY_BOOTSTRAPS} bootstrap facts"
+        ));
+    }
     validate_hardware_authority(plan)?;
 
     let initial_count = plan
@@ -4119,12 +4530,24 @@ fn serialize_policy_records(plan: &BootPlan) -> Result<Vec<u8>, String> {
             "native policy exceeds {MAX_POLICY_MOUNTS} mount facts"
         ));
     }
+    if plan.policy_state_paths.len() > MAX_POLICY_STATE_PATHS {
+        return Err(format!(
+            "native policy exceeds {MAX_POLICY_STATE_PATHS} state path facts"
+        ));
+    }
+    if plan.policy_bootstraps.len() > MAX_POLICY_BOOTSTRAPS {
+        return Err(format!(
+            "native policy exceeds {MAX_POLICY_BOOTSTRAPS} bootstrap facts"
+        ));
+    }
 
     let mut bytes = Vec::with_capacity(
         plan.policy_capabilities.len() * POLICY_CAPABILITY_RECORD_LEN
             + plan.policy_requirements.len() * POLICY_REQUIREMENT_RECORD_LEN
             + plan.policy_provides.len() * POLICY_PROVIDE_RECORD_LEN
-            + plan.policy_mounts.len() * POLICY_MOUNT_RECORD_LEN,
+            + plan.policy_mounts.len() * POLICY_MOUNT_RECORD_LEN
+            + plan.policy_state_paths.len() * POLICY_STATE_PATH_RECORD_LEN
+            + plan.policy_bootstraps.len() * POLICY_BOOTSTRAP_RECORD_LEN,
     );
 
     for capability in &plan.policy_capabilities {
@@ -4155,6 +4578,21 @@ fn serialize_policy_records(plan: &BootPlan) -> Result<Vec<u8>, String> {
         push_fixed_str(&mut bytes, &mount.source)?;
         push_u16(&mut bytes, mount.flags);
         push_u16(&mut bytes, 0);
+    }
+
+    for state_path in &plan.policy_state_paths {
+        push_fixed_str(&mut bytes, &state_path.service)?;
+        push_fixed_str(&mut bytes, &state_path.state)?;
+        push_fixed_str(&mut bytes, &state_path.root)?;
+        push_u16(&mut bytes, state_path.rights);
+        push_u16(&mut bytes, 0);
+    }
+
+    for bootstrap in &plan.policy_bootstraps {
+        push_fixed_str(&mut bytes, &bootstrap.service)?;
+        push_fixed_str(&mut bytes, &bootstrap.authority)?;
+        push_fixed_str(&mut bytes, &bootstrap.rule)?;
+        push_u64(&mut bytes, bootstrap.rights);
     }
 
     Ok(bytes)
@@ -4457,7 +4895,7 @@ fn corrupt_policy_version(bytes: &mut [u8]) -> Result<(), String> {
 
 fn corrupt_policy_hash(bytes: &mut [u8]) -> Result<(), String> {
     let offset = compact_policy_header_offset(bytes)?
-        .checked_add(10)
+        .checked_add(14)
         .ok_or_else(|| "KrustBoot policy hash offset overflow".to_owned())?;
     if offset + STRING_LEN > bytes.len() {
         return Err("KrustBoot policy hash is out of bounds".to_owned());
@@ -4499,6 +4937,39 @@ fn corrupt_policy_mount_root(bytes: &mut [u8]) -> Result<(), String> {
         index += 1;
     }
     Err("KrustBoot manifest has no /fs/app mount root to corrupt".to_owned())
+}
+
+fn corrupt_policy_state_root(bytes: &mut [u8]) -> Result<(), String> {
+    let payload = V1_PAYLOAD_OFFSET;
+    if bytes.len() < payload + COMPACT_HEADER_SIZE {
+        return Err("KrustBoot manifest is too short to corrupt state root".to_owned());
+    }
+    let vfs_roots = read_u16_at(bytes, payload + 48)? as usize;
+    let root_base = compact_vfs_roots_offset(bytes)?;
+    let mut index = 0;
+    while index < vfs_roots {
+        let offset = root_base
+            .checked_add(
+                index
+                    .checked_mul(VFS_ROOT_RECORD_LEN)
+                    .ok_or_else(|| "KrustBoot VFS-root offset overflow".to_owned())?,
+            )
+            .ok_or_else(|| "KrustBoot VFS-root offset overflow".to_owned())?;
+        let root_offset = offset
+            .checked_add(STRING_LEN)
+            .ok_or_else(|| "KrustBoot VFS-root path offset overflow".to_owned())?;
+        if root_offset + STRING_LEN > bytes.len() {
+            return Err("KrustBoot VFS-root record is out of bounds".to_owned());
+        }
+        if fixed_str_equals(bytes, root_offset, "/state/a") {
+            let mut slot = [0u8; STRING_LEN];
+            slot[.."/state/counter".len()].copy_from_slice(b"/state/counter");
+            bytes[root_offset..root_offset + STRING_LEN].copy_from_slice(&slot);
+            return Ok(());
+        }
+        index += 1;
+    }
+    Err("KrustBoot manifest has no /state/a VFS root to corrupt".to_owned())
 }
 
 fn corrupt_policy_excess_grant(bytes: &mut [u8]) -> Result<(), String> {
@@ -4616,6 +5087,15 @@ fn corrupt_graph_store_record(bytes: &mut [u8]) -> Result<(), String> {
 }
 
 fn compact_graph_records_offset(bytes: &[u8]) -> Result<usize, String> {
+    let (offset, vfs_roots) = compact_vfs_roots_table(bytes)?;
+    checked_advance(offset, vfs_roots, VFS_ROOT_RECORD_LEN)
+}
+
+fn compact_vfs_roots_offset(bytes: &[u8]) -> Result<usize, String> {
+    compact_vfs_roots_table(bytes).map(|(offset, _)| offset)
+}
+
+fn compact_vfs_roots_table(bytes: &[u8]) -> Result<(usize, usize), String> {
     let payload = V1_PAYLOAD_OFFSET;
     if bytes.len() < payload + COMPACT_HEADER_SIZE {
         return Err("KrustBoot manifest is too short for compact header".to_owned());
@@ -4666,7 +5146,7 @@ fn compact_graph_records_offset(bytes: &[u8]) -> Result<usize, String> {
             .ok_or_else(|| "KrustBoot namespace record length overflow".to_owned())?;
         namespace_index += 1;
     }
-    checked_advance(offset, vfs_roots, VFS_ROOT_RECORD_LEN)
+    Ok((offset, vfs_roots))
 }
 
 fn compact_grants_offset(bytes: &[u8]) -> Result<usize, String> {
@@ -4835,6 +5315,8 @@ mod tests {
             policy_requirements: Vec::new(),
             policy_provides: Vec::new(),
             policy_mounts: Vec::new(),
+            policy_state_paths: Vec::new(),
+            policy_bootstraps: Vec::new(),
         }
     }
 

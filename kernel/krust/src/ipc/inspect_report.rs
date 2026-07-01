@@ -344,6 +344,10 @@ fn write_policy_validation_report(runtime: &RuntimeState, report: &mut InspectRe
     report.push_u64_dec(config.policy_provide_count as u64);
     report.push_str(" mounts=");
     report.push_u64_dec(config.policy_mount_count as u64);
+    report.push_str(" state_paths=");
+    report.push_u64_dec(config.policy_state_path_count as u64);
+    report.push_str(" bootstraps=");
+    report.push_u64_dec(config.policy_bootstrap_count as u64);
     report.push_byte(b'\n');
     write_policy_denial_report(report);
 }

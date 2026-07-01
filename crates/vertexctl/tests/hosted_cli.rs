@@ -405,7 +405,7 @@ fn release_profile_validates_current_krustboot_identity() {
         &kernel_path.to_string_lossy(),
         &vertexdisk_path.to_string_lossy(),
     ]));
-    assert!(profile.contains("krustboot=Manifest v1 compact KRUSTBOOTM86 version 18"));
+    assert!(profile.contains("krustboot=Manifest v1 compact KRUSTBOOTM86 version 19"));
 
     assert_success(run(&[
         "corrupt-boot-manifest",

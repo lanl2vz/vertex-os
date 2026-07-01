@@ -4,7 +4,7 @@ set -eu
 ROOT_DIR=$(CDPATH= cd "$(dirname "$0")/.." && pwd)
 KRUST_DIR=${KRUST_DIR:-"$ROOT_DIR/kernel/krust"}
 LOG_DIR=${LOG_DIR:-"$KRUST_DIR/build/release-gate"}
-KRUST_CASES=${KRUST_CASES:-"m14 manifest-cycle bad-cap readiness-timeout rollback store-state-services timer preemption user-fault restart manifest-v1 cap-lifecycle typed-arenas quotas m32 m33 m34 m35 m36 m37 m38 m40 m41 m42 m42-driver-fault m43 m43-bad-superblock m44 m45 m46 m47 m47-corrupt-executable m48 m49 m49-config-corrupt m50 m54 m55 m56 m57 m59 m60 m61 m62 m62-journal-replay m62-corrupt-journal m63 m64 m66 m67 m68 m69 m70 m71 m72 m73 m75 m76 m77 m78 m78-bad-superblock m78-journal-replay m78-journal-checkpoint-after-journal m78-journal-checkpoint-after-data m78-journal-checkpoint-after-inode m78-post-sync-remount m78-fsync-fault m79 m80 m81 m82 m82-vertexdisk-graph-corrupt m83 m83-hostless m83-power-prepare m83-power-commit m83-power-rollback m84 m85 m86 m86-policy-denial-report manifest-truncated manifest-bad-magic manifest-raw-compact manifest-old-compact-magic manifest-graph-store-checksum manifest-graph-store-record manifest-unsupported-version manifest-oob-record manifest-missing-provider manifest-policy-version manifest-policy-hash manifest-policy-excess-grant manifest-policy-mount-root"}
+KRUST_CASES=${KRUST_CASES:-"m14 manifest-cycle bad-cap readiness-timeout rollback store-state-services timer preemption user-fault restart manifest-v1 cap-lifecycle typed-arenas quotas m32 m33 m34 m35 m36 m37 m38 m40 m41 m42 m42-driver-fault m43 m43-bad-superblock m44 m45 m46 m47 m47-corrupt-executable m48 m49 m49-config-corrupt m50 m54 m55 m56 m57 m59 m60 m61 m62 m62-journal-replay m62-corrupt-journal m63 m64 m66 m67 m68 m69 m70 m71 m72 m73 m75 m76 m77 m78 m78-bad-superblock m78-journal-replay m78-journal-checkpoint-after-journal m78-journal-checkpoint-after-data m78-journal-checkpoint-after-inode m78-post-sync-remount m78-fsync-fault m79 m80 m81 m82 m82-vertexdisk-graph-corrupt m83 m83-hostless m83-power-prepare m83-power-commit m83-power-rollback m84 m85 m86 m86-policy-denial-report manifest-truncated manifest-bad-magic manifest-raw-compact manifest-old-compact-magic manifest-graph-store-checksum manifest-graph-store-record manifest-unsupported-version manifest-oob-record manifest-missing-provider manifest-policy-version manifest-policy-hash manifest-policy-excess-grant manifest-policy-mount-root manifest-policy-state-root"}
 
 fail() {
     echo "error: $*" >&2
@@ -129,7 +129,7 @@ require_doc_line docs/krust-milestones.md "done: M72 virtio queue reports, timeo
 require_doc_line docs/krust-milestones.md "done: M73 device-fault isolation, DMA/IRQ/virtio leak deltas, bad hardware"
 require_doc_line docs/krust-milestones.md "done: M80 advisory file locks, directory watch events, bounded pipe buffering,"
 require_doc_line docs/krust-milestones.md "done: M81 capability revocation with live handles, 100-cycle VFS churn,"
-require_doc_line docs/krust-milestones.md "The strict compact payload is version 18"
+require_doc_line docs/krust-milestones.md "The strict compact payload is version 19"
 require_doc_line docs/krust-milestones.md "done: scripts/krust-test.sh m83"
 require_doc_line docs/krust-milestones.md "done: scripts/krust-test.sh m83-hostless"
 require_doc_line docs/krust-milestones.md "done: scripts/krust-test.sh m83-power-prepare"
@@ -139,6 +139,7 @@ require_doc_line docs/krust-milestones.md "done: scripts/krust-test.sh m84"
 require_doc_line docs/krust-milestones.md "done: scripts/krust-test.sh m85"
 require_doc_line docs/krust-milestones.md "scripts/krust-test.sh m86"
 require_doc_line docs/krust-milestones.md "manifest-policy-mount-root"
+require_doc_line docs/krust-milestones.md "manifest-policy-state-root"
 require_doc_line docs/krust-milestones.md "## M42: Minimal Virtio-Block Driver"
 require_doc_line docs/krust-milestones.md "## M43: VertexDisk v1 Layout"
 require_doc_line docs/krust-milestones.md "done: unwrapped compact payload rejected"
@@ -198,7 +199,7 @@ release_profile="$LOG_DIR/m86-release-profile.txt"
 step "$ROOT_DIR/target/debug/vertexctl release-profile $ROOT_DIR/examples/hello-generation.vertex.json $KRUST_DIR/build/hello-generation.krustboot $KRUST_DIR/target/x86_64-unknown-none/debug/krust $KRUST_DIR/build/krust-block.img"
 "$ROOT_DIR/target/debug/vertexctl" release-profile "$ROOT_DIR/examples/hello-generation.vertex.json" "$KRUST_DIR/build/hello-generation.krustboot" "$KRUST_DIR/target/x86_64-unknown-none/debug/krust" "$KRUST_DIR/build/krust-block.img" >"$release_profile"
 cat "$release_profile"
-grep -Fq "krustboot=Manifest v1 compact KRUSTBOOTM86 version 18" "$release_profile" || fail "release profile missing M86 KrustBoot identity"
+grep -Fq "krustboot=Manifest v1 compact KRUSTBOOTM86 version 19" "$release_profile" || fail "release profile missing M86 KrustBoot identity"
 grep -Fq "base-profile=no POSIX personality, no legacy transport, no legacy payload" "$release_profile" || fail "release profile missing supported base profile"
 
 mkdir -p "$LOG_DIR/graph-link" "$LOG_DIR/build-import"

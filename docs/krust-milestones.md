@@ -175,6 +175,7 @@ scripts/krust-test.sh manifest-policy-version
 scripts/krust-test.sh manifest-policy-hash
 scripts/krust-test.sh manifest-policy-excess-grant
 scripts/krust-test.sh manifest-policy-mount-root
+scripts/krust-test.sh manifest-policy-state-root
 ```
 
 Next direction: move richer state lifecycle policy, durable policy-denial
@@ -2788,7 +2789,7 @@ Supported profile:
 ```text
 x86_64 one CPU
 Limine boot
-KrustBoot Manifest v1 / compact payload KRUSTBOOTM86 version 18
+KrustBoot Manifest v1 / compact payload KRUSTBOOTM86 version 19
 QEMU virtio-blk, virtio-rng, virtio-net, and virtio-console
 VertexDisk store/state/update layout
 no legacy transport or payload compatibility
@@ -2815,7 +2816,7 @@ Implementation notes:
 - Do not expand to SMP, USB, GPU, a full filesystem, or Linux/POSIX
   compatibility until the profile can boot, update, recover, and explain its
   authority graph repeatably.
-- The compact native payload identity is now `KRUSTBOOTM86` version 18. M85,
+- The compact native payload identity is now `KRUSTBOOTM86` version 19. M85,
   M82, M79, M75, M65, M61, and older compact payload identities are rejected
   rather than retained as compatibility formats.
 - The release gate records a supported profile artifact containing the exact
@@ -4024,7 +4025,7 @@ Scope:
 
 ```text
 done: native package-import service
-done: package import runs under the current `KRUSTBOOTM86` version 18 strict compact payload
+done: package import runs under the current `KRUSTBOOTM86` version 19 strict compact payload
 done: package graph fragment parser for the compact typed graph format
 done: store-object hash verification before materialization
 done: closure linking against existing graph-store objects
@@ -4159,11 +4160,13 @@ done: legacy or unknown policy versions are rejected rather than interpreted loo
 
 Implementation notes:
 
-- The strict compact payload is version 18. It appends a policy section after
+- The strict compact payload is version 19. It appends a policy section after
   graph records: capability facts, requirement facts, provide facts, mount-root
-  and declared-mount facts, and a BLAKE3 hash over the policy records.
+  facts, declared-mount facts, state-path facts, bootstrap-authority facts, and
+  a BLAKE3 hash over the policy records.
 - The boot parser verifies policy version/hash and rejects any grant,
-  `mount_root`, or declared bind mount that is only graph/config-backed but not
+  `mount_root`, declared bind mount, state-bearing VFS root, secret grant, or
+  synthetic bootstrap authority that is only graph/config-backed but not
   policy-backed. The installable-generation runtime validator repeats the same
   gate before generation-manager stage/install paths.
 - Native validation emits denial records naming source, target, rule, and
@@ -4177,7 +4180,8 @@ Implementation notes:
   when the validator and gate understand it.
 - Tests: `scripts/krust-test.sh m86`, `m86-policy-denial-report`,
   `manifest-policy-version`, `manifest-policy-hash`,
-  `manifest-policy-excess-grant`, and `manifest-policy-mount-root`.
+  `manifest-policy-excess-grant`, `manifest-policy-mount-root`, and
+  `manifest-policy-state-root`.
 
 ## M87: Operator Graph Shell
 

@@ -96,9 +96,10 @@ activation, and rollback. M85 carries declared state
 owner/schema/storage/migration/retention/sharing policy through the graph
 store, native boot config, runtime inspection, generation staging, rollback,
 and host validation. M86 updates the strict compact payload to
-`KRUSTBOOTM86` version 18, carries hashed policy facts for capability grants
-and service namespaces, rejects graph-consistent but policy-invalid authority
-before activation, and exposes native policy-denial records through runtime
+`KRUSTBOOTM86` version 19, carries hashed policy facts for capability grants,
+mount roots, declared mounts, state paths, bootstrap authorities, and service
+namespaces, rejects graph-consistent but policy-invalid authority before
+activation, and exposes native policy-denial records through runtime
 inspection.
 
 ```sh

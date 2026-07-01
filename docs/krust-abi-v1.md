@@ -45,9 +45,10 @@ install/rollback syscalls used by the generation-manager before it commits
 durable selected-generation metadata. M84 adds the fifth endpoint reference
 needed by native package import. M85 expands state-volume records with owner,
 schema, storage, migration, retention, and sharing policy. M86 keeps the
-`KRUSTBOOTM86` identity and updates the strict compact payload to version 18
-with a hashed native policy section used to reject unauthorized grants and
-namespace authority during boot and generation activation. The ABI is still intentionally small, but this
+`KRUSTBOOTM86` identity and updates the strict compact payload to version 19
+with a hashed native policy section used to reject unauthorized grants,
+state-path changes, bootstrap authority drift, and namespace authority during
+boot and generation activation. The ABI is still intentionally small, but this
 subset is the current native contract.
 
 ## Machine ABI
@@ -831,9 +832,11 @@ policy_capabilities
 policy_requirements
 policy_provides
 policy_mounts
+policy_state_paths
+policy_bootstraps
 ```
 
-The compact payload identity is `KRUSTBOOTM86` version 18. Older compact
+The compact payload identity is `KRUSTBOOTM86` version 19. Older compact
 payload identities or compact versions, including M85, M82, M79, M75, and M61,
 are rejected instead of being retained as compatibility formats.
 
@@ -859,20 +862,27 @@ The kernel validates the compact graph records before activation and uses their
 hash/checksum to cross-check the native VertexDisk graph-store object.
 
 M86 appends a native policy section immediately after the compact graph
-records. The policy header carries `policy_version=2`, counts for capability,
-requirement, provide, and mount records, and a 64-byte lowercase hex BLAKE3
-hash over the serialized policy records. Policy capability records bind a
+records. The policy header carries `policy_version=3`, counts for capability,
+requirement, provide, mount, state-path, and bootstrap records, and a 64-byte
+lowercase hex BLAKE3 hash over the serialized policy records. Policy capability records bind a
 capability id and provider to an object kind/index plus declared rights.
 Requirement records bind a service to a capability and requested rights.
 Provide records bind a service to a capability it may receive for provider-side
 endpoint authority. Mount records bind each service to its declared
-`mount_root` and each declared bind mount path/source/flag tuple.
+`mount_root` and each declared bind mount path/source/flag tuple. State-path
+records bind a service to a state id, effective VFS root, and state-access
+rights. Bootstrap records bind a service to a synthetic native authority,
+required rule name, and `u64` rights mask.
 
 The native boot parser verifies the policy version and hash, validates that
 requirement rights are subsets of declared capability rights, and rejects every
-compact grant that is not authorized by either a fixed bootstrap rule or a
-matching policy requirement/provide fact. It also rejects service mount roots
-or declared bind mounts that are not backed by exact policy mount facts. The
+compact grant that is not authorized by either an explicit bootstrap fact or a
+matching policy requirement/provide fact. It also rejects service mount roots,
+declared bind mounts, and state-bearing VFS roots that are not backed by exact
+policy facts. Synthetic native authorities such as the initial manifest module,
+process-control, restart timer, state-VFS endpoints, VertexFS device endpoints,
+generation-metadata endpoints, and the logd secret must also have exact
+bootstrap facts. The
 runtime installable-generation validator repeats the same policy gate for
 candidate generations before generation-manager stage/install/activate paths.
 `SYS_RUNTIME_INSPECT` exposes the accepted policy hash, policy version, and

@@ -14,6 +14,8 @@ pub(crate) const MAX_BOOT_POLICY_CAPABILITIES: usize = 128;
 pub(crate) const MAX_BOOT_POLICY_REQUIREMENTS: usize = 160;
 pub(crate) const MAX_BOOT_POLICY_PROVIDES: usize = 64;
 pub(crate) const MAX_BOOT_POLICY_MOUNTS: usize = 96;
+pub(crate) const MAX_BOOT_POLICY_STATE_PATHS: usize = 96;
+pub(crate) const MAX_BOOT_POLICY_BOOTSTRAPS: usize = 96;
 pub const BOOT_POLICY_VERSION: u16 = vertex_abi::krustboot::POLICY_VERSION;
 
 pub(crate) const BOOT_PROCESS_MOUNT_BIND: u16 = 1;
@@ -33,6 +35,7 @@ pub const BOOT_OBJECT_VIRTIO_DEVICE: u16 = 11;
 pub const BOOT_OBJECT_NAMESPACE: u16 = 12;
 pub const BOOT_OBJECT_VFS_ROOT: u16 = 13;
 pub const BOOT_OBJECT_FRAMEBUFFER: u16 = 14;
+pub const BOOT_OBJECT_SECRET: u16 = 15;
 
 #[derive(Clone, Copy)]
 pub struct BootProcessConfig {
@@ -213,6 +216,22 @@ pub struct BootPolicyMountConfig {
 }
 
 #[derive(Clone, Copy)]
+pub struct BootPolicyStatePathConfig {
+    pub service: &'static str,
+    pub state: &'static str,
+    pub root: &'static str,
+    pub rights: u64,
+}
+
+#[derive(Clone, Copy)]
+pub struct BootPolicyBootstrapConfig {
+    pub service: &'static str,
+    pub authority: &'static str,
+    pub rule: &'static str,
+    pub rights: u64,
+}
+
+#[derive(Clone, Copy)]
 pub struct BootRuntimeConfig {
     pub(crate) generation_id: &'static str,
     pub(crate) manifest_hash: [u8; 64],
@@ -266,6 +285,10 @@ pub struct BootRuntimeConfig {
     pub(crate) policy_provide_count: usize,
     pub(crate) policy_mounts: [Option<BootPolicyMountConfig>; MAX_BOOT_POLICY_MOUNTS],
     pub(crate) policy_mount_count: usize,
+    pub(crate) policy_state_paths: [Option<BootPolicyStatePathConfig>; MAX_BOOT_POLICY_STATE_PATHS],
+    pub(crate) policy_state_path_count: usize,
+    pub(crate) policy_bootstraps: [Option<BootPolicyBootstrapConfig>; MAX_BOOT_POLICY_BOOTSTRAPS],
+    pub(crate) policy_bootstrap_count: usize,
 }
 
 fn valid_boot_process_mounts(process: BootProcessConfig) -> bool {
@@ -357,6 +380,10 @@ impl BootRuntimeConfig {
             policy_provide_count: 0,
             policy_mounts: [None; MAX_BOOT_POLICY_MOUNTS],
             policy_mount_count: 0,
+            policy_state_paths: [None; MAX_BOOT_POLICY_STATE_PATHS],
+            policy_state_path_count: 0,
+            policy_bootstraps: [None; MAX_BOOT_POLICY_BOOTSTRAPS],
+            policy_bootstrap_count: 0,
         }
     }
 
@@ -390,6 +417,8 @@ impl BootRuntimeConfig {
         self.policy_requirement_count = 0;
         self.policy_provide_count = 0;
         self.policy_mount_count = 0;
+        self.policy_state_path_count = 0;
+        self.policy_bootstrap_count = 0;
     }
 
     pub fn set_generation_id(&mut self, generation_id: &'static str) {
@@ -666,7 +695,7 @@ impl BootRuntimeConfig {
             || capability.id.is_empty()
             || capability.provider.is_empty()
             || capability.rights == 0
-            || !self.object_ref_valid(capability.object_kind, capability.object_index)
+            || !self.policy_object_ref_valid(capability.object_kind, capability.object_index)
         {
             return Err(InitError::InvalidBootManifest);
         }
@@ -740,6 +769,42 @@ impl BootRuntimeConfig {
         Ok(())
     }
 
+    pub fn add_policy_state_path(
+        &mut self,
+        state_path: BootPolicyStatePathConfig,
+    ) -> Result<(), InitError> {
+        if self.policy_state_path_count == self.policy_state_paths.len()
+            || state_path.service.is_empty()
+            || state_path.state.is_empty()
+            || state_path.root.is_empty()
+            || state_path.rights == 0
+            || !valid_vfs_root_path(state_path.root.as_bytes())
+            || !self.state_volume_ref_valid(state_path.state)
+        {
+            return Err(InitError::InvalidBootManifest);
+        }
+        self.policy_state_paths[self.policy_state_path_count] = Some(state_path);
+        self.policy_state_path_count += 1;
+        Ok(())
+    }
+
+    pub fn add_policy_bootstrap(
+        &mut self,
+        bootstrap: BootPolicyBootstrapConfig,
+    ) -> Result<(), InitError> {
+        if self.policy_bootstrap_count == self.policy_bootstraps.len()
+            || bootstrap.service.is_empty()
+            || bootstrap.authority.is_empty()
+            || bootstrap.rule.is_empty()
+            || bootstrap.rights == 0
+        {
+            return Err(InitError::InvalidBootManifest);
+        }
+        self.policy_bootstraps[self.policy_bootstrap_count] = Some(bootstrap);
+        self.policy_bootstrap_count += 1;
+        Ok(())
+    }
+
     fn object_ref_valid(&self, object_kind: u16, object_index: usize) -> bool {
         match object_kind {
             BOOT_OBJECT_ENDPOINT => object_index < self.endpoint_count,
@@ -757,5 +822,25 @@ impl BootRuntimeConfig {
             BOOT_OBJECT_VFS_ROOT => object_index < self.vfs_root_count,
             _ => false,
         }
+    }
+
+    fn policy_object_ref_valid(&self, object_kind: u16, object_index: usize) -> bool {
+        match object_kind {
+            BOOT_OBJECT_SECRET => object_index == 0,
+            _ => self.object_ref_valid(object_kind, object_index),
+        }
+    }
+
+    fn state_volume_ref_valid(&self, state_id: &str) -> bool {
+        let mut index = 0;
+        while index < self.state_volume_count {
+            if let Some(state) = self.state_volumes[index]
+                && state.id == state_id
+            {
+                return true;
+            }
+            index += 1;
+        }
+        false
     }
 }
