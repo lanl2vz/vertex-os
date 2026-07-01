@@ -10,6 +10,10 @@ pub(crate) const MAX_BOOT_STATE_VOLUMES: usize = 4;
 pub(crate) const MAX_BOOT_PROCESS_MOUNTS: usize = 4;
 pub(crate) const MAX_BOOT_GRAPH_NODES: usize = 128;
 pub(crate) const MAX_BOOT_GRAPH_EDGES: usize = 224;
+pub(crate) const MAX_BOOT_POLICY_CAPABILITIES: usize = 128;
+pub(crate) const MAX_BOOT_POLICY_REQUIREMENTS: usize = 160;
+pub(crate) const MAX_BOOT_POLICY_PROVIDES: usize = 64;
+pub const BOOT_POLICY_VERSION: u16 = vertex_abi::krustboot::POLICY_VERSION;
 
 pub(crate) const BOOT_PROCESS_MOUNT_BIND: u16 = 1;
 pub(crate) const BOOT_PROCESS_MOUNT_READ_ONLY: u16 = 1 << 1;
@@ -177,12 +181,36 @@ pub struct BootGrantConfig {
 }
 
 #[derive(Clone, Copy)]
+pub struct BootPolicyCapabilityConfig {
+    pub id: &'static str,
+    pub provider: &'static str,
+    pub object_kind: u16,
+    pub object_index: usize,
+    pub rights: u64,
+}
+
+#[derive(Clone, Copy)]
+pub struct BootPolicyRequirementConfig {
+    pub service: &'static str,
+    pub capability: &'static str,
+    pub rights: u64,
+}
+
+#[derive(Clone, Copy)]
+pub struct BootPolicyProvideConfig {
+    pub service: &'static str,
+    pub capability: &'static str,
+}
+
+#[derive(Clone, Copy)]
 pub struct BootRuntimeConfig {
     pub(crate) generation_id: &'static str,
     pub(crate) manifest_hash: [u8; 64],
     pub(crate) graph_store_hash: [u8; 64],
     pub(crate) graph_store_checksum: u32,
     pub(crate) graph_store_source: &'static str,
+    pub(crate) policy_version: u16,
+    pub(crate) policy_hash: [u8; 64],
     pub(crate) processes: [Option<BootProcessConfig>; MAX_PROCESSES],
     pub(crate) process_count: usize,
     pub(crate) endpoints: [Option<BootEndpointConfig>; MAX_OBJECTS],
@@ -218,6 +246,14 @@ pub struct BootRuntimeConfig {
     pub(crate) graph_edge_count: usize,
     pub(crate) grants: [Option<BootGrantConfig>; MAX_BOOT_GRANTS],
     pub(crate) grant_count: usize,
+    pub(crate) policy_capabilities:
+        [Option<BootPolicyCapabilityConfig>; MAX_BOOT_POLICY_CAPABILITIES],
+    pub(crate) policy_capability_count: usize,
+    pub(crate) policy_requirements:
+        [Option<BootPolicyRequirementConfig>; MAX_BOOT_POLICY_REQUIREMENTS],
+    pub(crate) policy_requirement_count: usize,
+    pub(crate) policy_provides: [Option<BootPolicyProvideConfig>; MAX_BOOT_POLICY_PROVIDES],
+    pub(crate) policy_provide_count: usize,
 }
 
 fn valid_boot_process_mounts(process: BootProcessConfig) -> bool {
@@ -264,6 +300,8 @@ impl BootRuntimeConfig {
             graph_store_hash: [0; 64],
             graph_store_checksum: 0,
             graph_store_source: "",
+            policy_version: 0,
+            policy_hash: [0; 64],
             processes: [None; MAX_PROCESSES],
             process_count: 0,
             endpoints: [None; MAX_OBJECTS],
@@ -299,6 +337,12 @@ impl BootRuntimeConfig {
             graph_edge_count: 0,
             grants: [None; MAX_BOOT_GRANTS],
             grant_count: 0,
+            policy_capabilities: [None; MAX_BOOT_POLICY_CAPABILITIES],
+            policy_capability_count: 0,
+            policy_requirements: [None; MAX_BOOT_POLICY_REQUIREMENTS],
+            policy_requirement_count: 0,
+            policy_provides: [None; MAX_BOOT_POLICY_PROVIDES],
+            policy_provide_count: 0,
         }
     }
 
@@ -308,6 +352,8 @@ impl BootRuntimeConfig {
         self.graph_store_hash = [0; 64];
         self.graph_store_checksum = 0;
         self.graph_store_source = "";
+        self.policy_version = 0;
+        self.policy_hash = [0; 64];
         self.process_count = 0;
         self.endpoint_count = 0;
         self.manifest_module = None;
@@ -326,6 +372,9 @@ impl BootRuntimeConfig {
         self.graph_node_count = 0;
         self.graph_edge_count = 0;
         self.grant_count = 0;
+        self.policy_capability_count = 0;
+        self.policy_requirement_count = 0;
+        self.policy_provide_count = 0;
     }
 
     pub fn set_generation_id(&mut self, generation_id: &'static str) {
@@ -346,6 +395,14 @@ impl BootRuntimeConfig {
 
     pub fn set_graph_store_source(&mut self, source: &'static str) {
         self.graph_store_source = source;
+    }
+
+    pub fn set_policy_version(&mut self, version: u16) {
+        self.policy_version = version;
+    }
+
+    pub fn set_policy_hash(&mut self, hash: [u8; 64]) {
+        self.policy_hash = hash;
     }
 
     pub fn add_process(&mut self, process: BootProcessConfig) -> Result<(), InitError> {
@@ -584,5 +641,81 @@ impl BootRuntimeConfig {
         self.grants[self.grant_count] = Some(grant);
         self.grant_count += 1;
         Ok(())
+    }
+
+    pub fn add_policy_capability(
+        &mut self,
+        capability: BootPolicyCapabilityConfig,
+    ) -> Result<(), InitError> {
+        if self.policy_capability_count == self.policy_capabilities.len()
+            || capability.id.is_empty()
+            || capability.provider.is_empty()
+            || capability.rights == 0
+            || !self.object_ref_valid(capability.object_kind, capability.object_index)
+        {
+            return Err(InitError::InvalidBootManifest);
+        }
+        let mut index = 0;
+        while index < self.policy_capability_count {
+            if let Some(existing) = self.policy_capabilities[index]
+                && existing.id == capability.id
+            {
+                return Err(InitError::InvalidBootManifest);
+            }
+            index += 1;
+        }
+        self.policy_capabilities[self.policy_capability_count] = Some(capability);
+        self.policy_capability_count += 1;
+        Ok(())
+    }
+
+    pub fn add_policy_requirement(
+        &mut self,
+        requirement: BootPolicyRequirementConfig,
+    ) -> Result<(), InitError> {
+        if self.policy_requirement_count == self.policy_requirements.len()
+            || requirement.service.is_empty()
+            || requirement.capability.is_empty()
+            || requirement.rights == 0
+        {
+            return Err(InitError::InvalidBootManifest);
+        }
+        self.policy_requirements[self.policy_requirement_count] = Some(requirement);
+        self.policy_requirement_count += 1;
+        Ok(())
+    }
+
+    pub fn add_policy_provide(
+        &mut self,
+        provide: BootPolicyProvideConfig,
+    ) -> Result<(), InitError> {
+        if self.policy_provide_count == self.policy_provides.len()
+            || provide.service.is_empty()
+            || provide.capability.is_empty()
+        {
+            return Err(InitError::InvalidBootManifest);
+        }
+        self.policy_provides[self.policy_provide_count] = Some(provide);
+        self.policy_provide_count += 1;
+        Ok(())
+    }
+
+    fn object_ref_valid(&self, object_kind: u16, object_index: usize) -> bool {
+        match object_kind {
+            BOOT_OBJECT_ENDPOINT => object_index < self.endpoint_count,
+            BOOT_OBJECT_STORE => object_index < self.store_object_count,
+            BOOT_OBJECT_TIMER => object_index == 0,
+            BOOT_OBJECT_NETWORK_PORT => object_index < self.network_port_count,
+            BOOT_OBJECT_IO_PORT_RANGE => object_index < self.io_port_count,
+            BOOT_OBJECT_MMIO_REGION => object_index < self.mmio_region_count,
+            BOOT_OBJECT_FRAMEBUFFER => object_index < self.framebuffer_count,
+            BOOT_OBJECT_INTERRUPT_LINE => object_index < self.interrupt_line_count,
+            BOOT_OBJECT_DMA_REGION => object_index < self.dma_region_count,
+            BOOT_OBJECT_PCI_DEVICE => object_index < self.pci_device_count,
+            BOOT_OBJECT_VIRTIO_DEVICE => object_index < self.virtio_device_count,
+            BOOT_OBJECT_NAMESPACE => object_index < self.namespace_count,
+            BOOT_OBJECT_VFS_ROOT => object_index < self.vfs_root_count,
+            _ => false,
+        }
     }
 }

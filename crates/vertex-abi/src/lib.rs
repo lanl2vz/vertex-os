@@ -154,7 +154,8 @@ pub mod graph {
 
 pub mod krustboot {
     pub const COMPACT_MAGIC: &[u8; 16] = b"KRUSTBOOTM86\0\0\0\0";
-    pub const COMPACT_VERSION: u16 = 16;
+    pub const COMPACT_VERSION: u16 = 17;
+    pub const POLICY_VERSION: u16 = 1;
     pub const V1_MAGIC: &[u8; 16] = b"KRUSTBOOTV1\0\0\0\0\0";
     pub const V1_VERSION: u16 = 1;
     pub const V1_HEADER_SIZE: usize = 164;

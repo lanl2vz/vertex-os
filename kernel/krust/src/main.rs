@@ -909,6 +909,12 @@ fn prepare_native_boot_config(
     config.set_graph_store_hash(graph_store.hash);
     config.set_graph_store_checksum(graph_store.checksum);
     config.set_graph_store_source("vertexdisk");
+    config.set_policy_version(boot_manifest.policy_version());
+    let Some(policy_hash) = fixed_hash_bytes(boot_manifest.policy_hash()) else {
+        serial::write_str("KrustBoot runtime plan failed: policy hash invalid\n");
+        return None;
+    };
+    config.set_policy_hash(policy_hash);
     serial::write_str("KrustBoot native runtime manifest hash ready: ");
     serial::write_str(manifest_module_name);
     serial::write_str("\n");
@@ -1596,6 +1602,68 @@ fn build_boot_runtime_config(
         index += 1;
     }
 
+    index = 0;
+    while index < boot_manifest.policy_capability_count() {
+        let capability = boot_manifest.policy_capability(index)?;
+        let rights = capability_rights_from_boot(capability.rights);
+        if rights == 0 {
+            serial::write_str("KrustBoot runtime plan failed: empty policy capability rights\n");
+            return None;
+        }
+        if config
+            .add_policy_capability(ipc::BootPolicyCapabilityConfig {
+                id: capability.id,
+                provider: capability.provider,
+                object_kind: capability.object_kind,
+                object_index: capability.object_index,
+                rights,
+            })
+            .is_err()
+        {
+            serial::write_str("KrustBoot runtime plan failed: policy capability table\n");
+            return None;
+        }
+        index += 1;
+    }
+
+    index = 0;
+    while index < boot_manifest.policy_requirement_count() {
+        let requirement = boot_manifest.policy_requirement(index)?;
+        let rights = capability_rights_from_boot(requirement.rights);
+        if rights == 0 {
+            serial::write_str("KrustBoot runtime plan failed: empty policy requirement rights\n");
+            return None;
+        }
+        if config
+            .add_policy_requirement(ipc::BootPolicyRequirementConfig {
+                service: requirement.service,
+                capability: requirement.capability,
+                rights,
+            })
+            .is_err()
+        {
+            serial::write_str("KrustBoot runtime plan failed: policy requirement table\n");
+            return None;
+        }
+        index += 1;
+    }
+
+    index = 0;
+    while index < boot_manifest.policy_provide_count() {
+        let provide = boot_manifest.policy_provide(index)?;
+        if config
+            .add_policy_provide(ipc::BootPolicyProvideConfig {
+                service: provide.service,
+                capability: provide.capability,
+            })
+            .is_err()
+        {
+            serial::write_str("KrustBoot runtime plan failed: policy provide table\n");
+            return None;
+        }
+        index += 1;
+    }
+
     Some(())
 }
 
@@ -2236,6 +2304,23 @@ fn fixed_string_eq(buffer: &[u8], offset: usize, value: &[u8]) -> bool {
         index += 1;
     }
     value.len() == 64 || buffer[offset + value.len()] == 0
+}
+
+fn fixed_hash_bytes(value: &str) -> Option<[u8; 64]> {
+    if value.len() != 64 {
+        return None;
+    }
+    let bytes = value.as_bytes();
+    let mut out = [0u8; 64];
+    let mut index = 0;
+    while index < out.len() {
+        if !bytes[index].is_ascii_hexdigit() {
+            return None;
+        }
+        out[index] = bytes[index];
+        index += 1;
+    }
+    Some(out)
 }
 
 fn starts_with(bytes: &[u8], prefix: &[u8]) -> bool {
@@ -3009,6 +3094,15 @@ fn print_boot_manifest_error(error: boot_manifest::ParseError) {
         boot_manifest::ParseError::TooManyVfsRoots => serial::write_str("too many vfs roots"),
         boot_manifest::ParseError::TooManyGraphNodes => serial::write_str("too many graph nodes"),
         boot_manifest::ParseError::TooManyGraphEdges => serial::write_str("too many graph edges"),
+        boot_manifest::ParseError::TooManyPolicyCapabilities => {
+            serial::write_str("too many policy capabilities")
+        }
+        boot_manifest::ParseError::TooManyPolicyRequirements => {
+            serial::write_str("too many policy requirements")
+        }
+        boot_manifest::ParseError::TooManyPolicyProvides => {
+            serial::write_str("too many policy provides")
+        }
         boot_manifest::ParseError::TooManyRuntimeObjects => {
             serial::write_str("too many runtime objects")
         }
@@ -3025,6 +3119,8 @@ fn print_boot_manifest_error(error: boot_manifest::ParseError) {
         boot_manifest::ParseError::BadGraphStoreChecksum => {
             serial::write_str("graph-store checksum mismatch")
         }
+        boot_manifest::ParseError::BadPolicyHash => serial::write_str("policy hash mismatch"),
+        boot_manifest::ParseError::InvalidPolicy => serial::write_str("invalid policy"),
         boot_manifest::ParseError::BadRecordTable => serial::write_str("bad record table"),
         boot_manifest::ParseError::OutOfBoundsRecord => serial::write_str("out-of-bounds record"),
     }

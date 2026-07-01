@@ -7,6 +7,7 @@ pub(super) fn build_inspect_report(runtime: &RuntimeState, report: &mut InspectR
     report.push_byte(b'\n');
     write_generation_manager_report(report);
     write_graph_store_report(runtime, report);
+    write_policy_validation_report(runtime, report);
     write_state_policy_report(runtime, report);
     report.push_str("processes=");
     report.push_u64_dec(runtime.processes.count as u64);
@@ -321,6 +322,26 @@ fn write_graph_store_report(runtime: &RuntimeState, report: &mut InspectReport) 
         }
         index += 1;
     }
+}
+
+fn write_policy_validation_report(runtime: &RuntimeState, report: &mut InspectReport) {
+    let Some(config) = runtime.active_config else {
+        report.push_str("policy-validation v=1 status=unavailable\n");
+        return;
+    };
+    report.push_str("policy-validation v=1 generation=");
+    report.push_str(config.generation_id);
+    report.push_str(" status=accepted version=");
+    report.push_u64_dec(config.policy_version as u64);
+    report.push_str(" hash=");
+    report.push_bytes(&config.policy_hash);
+    report.push_str(" capabilities=");
+    report.push_u64_dec(config.policy_capability_count as u64);
+    report.push_str(" requirements=");
+    report.push_u64_dec(config.policy_requirement_count as u64);
+    report.push_str(" provides=");
+    report.push_u64_dec(config.policy_provide_count as u64);
+    report.push_byte(b'\n');
 }
 
 fn graph_node_kind_count(config: &BootRuntimeConfig, kind: u16) -> u64 {

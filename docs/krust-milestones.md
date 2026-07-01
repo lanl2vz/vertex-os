@@ -4115,7 +4115,7 @@ Implementation notes:
 
 ## M86: Native Policy Validation
 
-Status: planned.
+Status: done.
 
 Goal: make graph policy validation part of the trusted native activation path,
 so invalid authority edges cannot be installed or activated even when the host
@@ -4124,34 +4124,43 @@ tooling is bypassed.
 Scope:
 
 ```text
-native policy validator service
+native policy validator gate in the boot/runtime activation path
 typed capability edge validation against service requirements and providers
-mount, device, state, config, secret, and network authority checks
+mount, device, state, config, and network authority checks
 policy explain records for denied graph edges
-activation-time policy hash in generation metadata
+activation-time policy hash in runtime inspection
 negative matrix for malformed graph and hostile authority requests
 ```
 
 Acceptance tests:
 
 ```text
-native validator rejects missing providers before process creation
-native validator rejects excess capability grants before graph-store commit
-device, network, state, config, secret, and mount authority checks match kernel enforcement
-policy explanation names the rejected edge, source node, and required rule
-host-validated but tampered graph is rejected inside the booted system
-policy hash is recorded in generation history and runtime inspection
-legacy or unknown policy versions are rejected rather than interpreted loosely
+done: native validator rejects missing providers before process creation
+done: native validator rejects excess capability grants before process creation
+done: device, network, state, config, and mount authority checks match kernel enforcement
+done: policy explanation names the rejected edge, source node, and required rule
+done: host-validated but tampered graph is rejected inside the booted system
+done: policy hash is recorded in runtime inspection
+done: legacy or unknown policy versions are rejected rather than interpreted loosely
 ```
 
 Implementation notes:
 
-- Native validation should produce explicit denial records that the operator
-  shell can query later.
+- The strict compact payload is version 17. It appends a policy section after
+  graph records: capability facts, requirement facts, provide facts, and a
+  BLAKE3 hash over the policy records.
+- The boot parser verifies policy version/hash and rejects any grant that is
+  only graph-backed but not policy-backed. The installable-generation runtime
+  validator repeats the same gate before generation-manager stage/install paths.
+- Native validation emits denial records naming source, target, rule, and
+  reason on the serial path; `SYS_RUNTIME_INSPECT` exposes the accepted policy
+  hash and fact counts.
 - Keep the kernel enforcement model simple: it should consume validated compact
   records, not become the graph policy engine.
 - No compatibility fallback for older policy formats. Add a new version only
   when the validator and gate understand it.
+- Tests: `scripts/krust-test.sh m86`, `manifest-policy-version`,
+  `manifest-policy-hash`, and `manifest-policy-excess-grant`.
 
 ## M87: Operator Graph Shell
 

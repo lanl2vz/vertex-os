@@ -1,6 +1,8 @@
 use core::{cell::UnsafeCell, str};
 use vertex_abi::{graph as graph_abi, krustboot as krustboot_abi};
 
+use crate::serial;
+
 pub const MODULE_STRING: &[u8] = b"krustboot-manifest";
 pub const FALLBACK_MODULE_STRING: &[u8] = b"krustboot-fallback-manifest";
 pub const BAD_GENERATION_MODULE_STRING: &[u8] = b"krustboot-bad-generation-manifest";
@@ -33,6 +35,10 @@ const MAX_NAMESPACES: usize = 4;
 const MAX_VFS_ROOTS: usize = 8;
 const MAX_GRAPH_NODES: usize = 128;
 const MAX_GRAPH_EDGES: usize = 224;
+const MAX_POLICY_CAPABILITIES: usize = 128;
+const MAX_POLICY_REQUIREMENTS: usize = 160;
+const MAX_POLICY_PROVIDES: usize = 64;
+const POLICY_VERSION: u16 = krustboot_abi::POLICY_VERSION;
 const MAX_RUNTIME_OBJECTS: usize = 64;
 const FIXED_RUNTIME_OBJECTS: usize = 4;
 const SERIAL_LOG_ENDPOINT_NAME: &str = "serial-log";
@@ -239,6 +245,28 @@ pub struct GraphEdge<'a> {
     pub id: &'a str,
 }
 
+#[derive(Clone, Copy)]
+pub struct PolicyCapability<'a> {
+    pub id: &'a str,
+    pub provider: &'a str,
+    pub object_kind: u16,
+    pub object_index: usize,
+    pub rights: u16,
+}
+
+#[derive(Clone, Copy)]
+pub struct PolicyRequirement<'a> {
+    pub service: &'a str,
+    pub capability: &'a str,
+    pub rights: u16,
+}
+
+#[derive(Clone, Copy)]
+pub struct PolicyProvide<'a> {
+    pub service: &'a str,
+    pub capability: &'a str,
+}
+
 pub struct Manifest<'a> {
     generation_id: &'a str,
     parent_generation_id: &'a str,
@@ -285,6 +313,14 @@ pub struct Manifest<'a> {
     graph_node_count: usize,
     graph_edges: [Option<GraphEdge<'a>>; MAX_GRAPH_EDGES],
     graph_edge_count: usize,
+    policy_version: u16,
+    policy_hash: &'a str,
+    policy_capabilities: [Option<PolicyCapability<'a>>; MAX_POLICY_CAPABILITIES],
+    policy_capability_count: usize,
+    policy_requirements: [Option<PolicyRequirement<'a>>; MAX_POLICY_REQUIREMENTS],
+    policy_requirement_count: usize,
+    policy_provides: [Option<PolicyProvide<'a>>; MAX_POLICY_PROVIDES],
+    policy_provide_count: usize,
 }
 
 struct Global<T>(UnsafeCell<T>);
@@ -320,6 +356,9 @@ pub enum ParseError {
     TooManyVfsRoots,
     TooManyGraphNodes,
     TooManyGraphEdges,
+    TooManyPolicyCapabilities,
+    TooManyPolicyRequirements,
+    TooManyPolicyProvides,
     TooManyRuntimeObjects,
     InvalidString,
     InvalidReference,
@@ -330,6 +369,8 @@ pub enum ParseError {
     TrailingBytes,
     BadChecksum,
     BadGraphStoreChecksum,
+    BadPolicyHash,
+    InvalidPolicy,
     BadRecordTable,
     OutOfBoundsRecord,
 }
@@ -382,6 +423,14 @@ impl<'a> Manifest<'a> {
             graph_node_count: 0,
             graph_edges: [None; MAX_GRAPH_EDGES],
             graph_edge_count: 0,
+            policy_version: 0,
+            policy_hash: "",
+            policy_capabilities: [None; MAX_POLICY_CAPABILITIES],
+            policy_capability_count: 0,
+            policy_requirements: [None; MAX_POLICY_REQUIREMENTS],
+            policy_requirement_count: 0,
+            policy_provides: [None; MAX_POLICY_PROVIDES],
+            policy_provide_count: 0,
         }
     }
 
@@ -431,6 +480,14 @@ impl<'a> Manifest<'a> {
         self.graph_node_count = 0;
         self.graph_edges.fill(None);
         self.graph_edge_count = 0;
+        self.policy_version = 0;
+        self.policy_hash = "";
+        self.policy_capabilities.fill(None);
+        self.policy_capability_count = 0;
+        self.policy_requirements.fill(None);
+        self.policy_requirement_count = 0;
+        self.policy_provides.fill(None);
+        self.policy_provide_count = 0;
     }
 
     pub fn generation_id(&self) -> &'a str {
@@ -539,6 +596,26 @@ impl<'a> Manifest<'a> {
 
     pub fn graph_edge_count(&self) -> usize {
         self.graph_edge_count
+    }
+
+    pub fn policy_version(&self) -> u16 {
+        self.policy_version
+    }
+
+    pub fn policy_hash(&self) -> &'a str {
+        self.policy_hash
+    }
+
+    pub fn policy_capability_count(&self) -> usize {
+        self.policy_capability_count
+    }
+
+    pub fn policy_requirement_count(&self) -> usize {
+        self.policy_requirement_count
+    }
+
+    pub fn policy_provide_count(&self) -> usize {
+        self.policy_provide_count
     }
 
     pub fn boot_module(&self, index: usize) -> Option<BootModule<'a>> {
@@ -680,6 +757,30 @@ impl<'a> Manifest<'a> {
     pub fn graph_edge(&self, index: usize) -> Option<GraphEdge<'a>> {
         if index < self.graph_edge_count {
             self.graph_edges[index]
+        } else {
+            None
+        }
+    }
+
+    pub fn policy_capability(&self, index: usize) -> Option<PolicyCapability<'a>> {
+        if index < self.policy_capability_count {
+            self.policy_capabilities[index]
+        } else {
+            None
+        }
+    }
+
+    pub fn policy_requirement(&self, index: usize) -> Option<PolicyRequirement<'a>> {
+        if index < self.policy_requirement_count {
+            self.policy_requirements[index]
+        } else {
+            None
+        }
+    }
+
+    pub fn policy_provide(&self, index: usize) -> Option<PolicyProvide<'a>> {
+        if index < self.policy_provide_count {
+            self.policy_provides[index]
         } else {
             None
         }
@@ -1103,6 +1204,82 @@ fn parse_compact_into(
         return Err(ParseError::BadGraphStoreChecksum);
     }
 
+    let policy_version = reader.read_u16()?;
+    if policy_version != POLICY_VERSION {
+        return Err(ParseError::InvalidPolicy);
+    }
+    let policy_capability_count = reader.read_count(
+        MAX_POLICY_CAPABILITIES,
+        ParseError::TooManyPolicyCapabilities,
+    )?;
+    let policy_requirement_count = reader.read_count(
+        MAX_POLICY_REQUIREMENTS,
+        ParseError::TooManyPolicyRequirements,
+    )?;
+    let policy_provide_count =
+        reader.read_count(MAX_POLICY_PROVIDES, ParseError::TooManyPolicyProvides)?;
+    let policy_hash = reader.read_fixed_str()?;
+    manifest.policy_version = policy_version;
+    manifest.policy_hash = policy_hash;
+    manifest.policy_capability_count = policy_capability_count;
+    manifest.policy_requirement_count = policy_requirement_count;
+    manifest.policy_provide_count = policy_provide_count;
+
+    let policy_records_start = reader.offset;
+    index = 0;
+    while index < policy_capability_count {
+        let id = reader.read_fixed_str()?;
+        let provider = reader.read_fixed_str()?;
+        let object_kind = reader.read_u16()?;
+        let object_index = reader.read_u16()? as usize;
+        let rights = reader.read_u16()?;
+        let reserved = reader.read_u16()?;
+        if reserved != 0 {
+            return Err(ParseError::InvalidPolicy);
+        }
+        manifest.policy_capabilities[index] = Some(PolicyCapability {
+            id,
+            provider,
+            object_kind,
+            object_index,
+            rights,
+        });
+        index += 1;
+    }
+
+    index = 0;
+    while index < policy_requirement_count {
+        let service = reader.read_fixed_str()?;
+        let capability = reader.read_fixed_str()?;
+        let rights = reader.read_u16()?;
+        let reserved = reader.read_u16()?;
+        if reserved != 0 {
+            return Err(ParseError::InvalidPolicy);
+        }
+        manifest.policy_requirements[index] = Some(PolicyRequirement {
+            service,
+            capability,
+            rights,
+        });
+        index += 1;
+    }
+
+    index = 0;
+    while index < policy_provide_count {
+        manifest.policy_provides[index] = Some(PolicyProvide {
+            service: reader.read_fixed_str()?,
+            capability: reader.read_fixed_str()?,
+        });
+        index += 1;
+    }
+    let policy_records_end = reader.offset;
+    if !policy_hash_matches(
+        &bytes[policy_records_start..policy_records_end],
+        policy_hash,
+    ) {
+        return Err(ParseError::BadPolicyHash);
+    }
+
     validate_manifest(manifest)?;
 
     if !reader.finished() {
@@ -1496,6 +1673,8 @@ fn validate_manifest(manifest: &Manifest<'_>) -> Result<(), ParseError> {
         index += 1;
     }
 
+    validate_policy_facts(manifest)?;
+
     Ok(())
 }
 
@@ -1658,6 +1837,247 @@ fn valid_state_volume_policy(state: StateVolume<'_>) -> bool {
             "retain-while-referenced" | "retain-forever"
         )
         && matches!(state.sharing_policy, "owner-only" | "explicit")
+}
+
+fn validate_policy_facts(manifest: &Manifest<'_>) -> Result<(), ParseError> {
+    if manifest.policy_version != POLICY_VERSION || manifest.policy_hash.is_empty() {
+        return Err(ParseError::InvalidPolicy);
+    }
+
+    let mut index = 0;
+    while index < manifest.policy_capability_count {
+        let capability = manifest
+            .policy_capability(index)
+            .ok_or(ParseError::InvalidPolicy)?;
+        if capability.id.is_empty()
+            || capability.provider.is_empty()
+            || capability.rights == 0
+            || !known_policy_rights(capability.rights)
+        {
+            return Err(ParseError::InvalidPolicy);
+        }
+        validate_object_ref(manifest, capability.object_kind, capability.object_index)?;
+        let mut prior = 0;
+        while prior < index {
+            let existing = manifest
+                .policy_capability(prior)
+                .ok_or(ParseError::InvalidPolicy)?;
+            if existing.id == capability.id {
+                return Err(ParseError::InvalidPolicy);
+            }
+            prior += 1;
+        }
+        index += 1;
+    }
+
+    index = 0;
+    while index < manifest.policy_requirement_count {
+        let requirement = manifest
+            .policy_requirement(index)
+            .ok_or(ParseError::InvalidPolicy)?;
+        let capability = policy_capability_by_id(manifest, requirement.capability)
+            .ok_or(ParseError::InvalidPolicy)?;
+        if !manifest_has_service(manifest, requirement.service)
+            || requirement.rights == 0
+            || !known_policy_rights(requirement.rights)
+            || requirement.rights & !capability.rights != 0
+        {
+            return Err(ParseError::InvalidPolicy);
+        }
+        index += 1;
+    }
+
+    index = 0;
+    while index < manifest.policy_provide_count {
+        let provide = manifest
+            .policy_provide(index)
+            .ok_or(ParseError::InvalidPolicy)?;
+        let capability = policy_capability_by_id(manifest, provide.capability)
+            .ok_or(ParseError::InvalidPolicy)?;
+        if !manifest_has_service(manifest, provide.service)
+            || capability.provider != provide.service
+        {
+            return Err(ParseError::InvalidPolicy);
+        }
+        index += 1;
+    }
+
+    index = 0;
+    while index < manifest.grant_count {
+        let grant = manifest.grant(index).ok_or(ParseError::InvalidReference)?;
+        if !grant_authorized_by_policy(manifest, grant)? {
+            let process = manifest
+                .process(grant.process_index)
+                .ok_or(ParseError::InvalidReference)?;
+            let target = graph_object_node_id(manifest, grant).unwrap_or("<invalid>");
+            log_policy_denial(
+                graph_process_node_id(process),
+                target,
+                "grant-authorized",
+                "no-policy-edge",
+            );
+            return Err(ParseError::InvalidPolicy);
+        }
+        index += 1;
+    }
+
+    Ok(())
+}
+
+fn grant_authorized_by_policy(manifest: &Manifest<'_>, grant: Grant) -> Result<bool, ParseError> {
+    let process = manifest
+        .process(grant.process_index)
+        .ok_or(ParseError::InvalidReference)?;
+    if builtin_grant_authorized(manifest, process, grant)? {
+        return Ok(true);
+    }
+
+    let service = graph_process_node_id(process);
+    let mut index = 0;
+    while index < manifest.policy_capability_count {
+        let capability = manifest
+            .policy_capability(index)
+            .ok_or(ParseError::InvalidPolicy)?;
+        if capability.object_kind == grant.object_kind
+            && capability.object_index == grant.object_index
+            && grant.rights & !capability.rights == 0
+        {
+            if grant.object_kind == OBJECT_ENDPOINT && grant.rights == RIGHT_RECEIVE {
+                if policy_provides(manifest, service, capability.id)
+                    && capability.provider == service
+                {
+                    return Ok(true);
+                }
+            } else if policy_requirement_allows(manifest, service, capability.id, grant.rights) {
+                return Ok(true);
+            }
+        }
+        index += 1;
+    }
+    Ok(false)
+}
+
+fn builtin_grant_authorized(
+    manifest: &Manifest<'_>,
+    process: Process<'_>,
+    grant: Grant,
+) -> Result<bool, ParseError> {
+    if grant.object_kind != OBJECT_ENDPOINT {
+        return Ok(false);
+    }
+    let endpoint = manifest
+        .endpoint(grant.object_index)
+        .ok_or(ParseError::InvalidReference)?;
+    if endpoint.name == SERIAL_LOG_ENDPOINT_NAME && grant.rights == RIGHT_SEND {
+        return Ok(true);
+    }
+    if endpoint.name == "readiness" {
+        if process.initial && grant.rights == RIGHT_RECEIVE {
+            return Ok(true);
+        }
+        if !process.initial && !process.health_kind.is_empty() && grant.rights == RIGHT_SEND {
+            return Ok(true);
+        }
+    }
+    if process.initial && grant.rights == RIGHT_SEND {
+        return Ok(true);
+    }
+    Ok(false)
+}
+
+fn policy_requirement_allows(
+    manifest: &Manifest<'_>,
+    service: &str,
+    capability: &str,
+    rights: u16,
+) -> bool {
+    let mut index = 0;
+    while index < manifest.policy_requirement_count {
+        if let Some(requirement) = manifest.policy_requirement(index)
+            && requirement.service == service
+            && requirement.capability == capability
+            && rights & !requirement.rights == 0
+        {
+            return true;
+        }
+        index += 1;
+    }
+    false
+}
+
+fn policy_provides(manifest: &Manifest<'_>, service: &str, capability: &str) -> bool {
+    let mut index = 0;
+    while index < manifest.policy_provide_count {
+        if let Some(provide) = manifest.policy_provide(index)
+            && provide.service == service
+            && provide.capability == capability
+        {
+            return true;
+        }
+        index += 1;
+    }
+    false
+}
+
+fn policy_capability_by_id<'a>(
+    manifest: &'a Manifest<'a>,
+    capability: &str,
+) -> Option<PolicyCapability<'a>> {
+    let mut index = 0;
+    while index < manifest.policy_capability_count {
+        if let Some(candidate) = manifest.policy_capability(index)
+            && candidate.id == capability
+        {
+            return Some(candidate);
+        }
+        index += 1;
+    }
+    None
+}
+
+fn manifest_has_service(manifest: &Manifest<'_>, service: &str) -> bool {
+    let mut index = 0;
+    while index < manifest.process_count {
+        if let Some(process) = manifest.process(index)
+            && graph_process_node_id(process) == service
+        {
+            return true;
+        }
+        index += 1;
+    }
+    false
+}
+
+fn known_policy_rights(rights: u16) -> bool {
+    rights
+        & !(RIGHT_SEND
+            | RIGHT_RECEIVE
+            | RIGHT_READ
+            | RIGHT_WRITE
+            | RIGHT_SNAPSHOT
+            | RIGHT_RESTORE
+            | RIGHT_CONTROL
+            | RIGHT_BIND
+            | RIGHT_LISTEN
+            | RIGHT_MAP
+            | RIGHT_RESOLVE
+            | RIGHT_CREATE
+            | RIGHT_UNLINK
+            | RIGHT_RENAME
+            | RIGHT_MOUNT)
+        == 0
+}
+
+fn log_policy_denial(source: &str, target: &str, rule: &str, reason: &str) {
+    serial::write_str("native policy validation rejected: source=");
+    serial::write_str(source);
+    serial::write_str(" target=");
+    serial::write_str(target);
+    serial::write_str(" rule=");
+    serial::write_str(rule);
+    serial::write_str(" reason=");
+    serial::write_str(reason);
+    serial::write_str("\n");
 }
 
 fn validate_graph_device_nodes(manifest: &Manifest<'_>) -> Result<(), ParseError> {
@@ -2250,4 +2670,29 @@ fn checksum32(bytes: &[u8]) -> u32 {
         index += 1;
     }
     checksum
+}
+
+fn policy_hash_matches(records: &[u8], expected: &str) -> bool {
+    if expected.len() != 64
+        || !expected
+            .as_bytes()
+            .iter()
+            .all(|byte| byte.is_ascii_hexdigit())
+    {
+        return false;
+    }
+    let digest = blake3::hash(records);
+    let mut actual = [0u8; 64];
+    store_hash_hex(digest.as_bytes(), &mut actual);
+    actual == expected.as_bytes()
+}
+
+fn store_hash_hex(bytes: &[u8; 32], out: &mut [u8; 64]) {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut index = 0;
+    while index < bytes.len() {
+        out[index * 2] = HEX[(bytes[index] >> 4) as usize];
+        out[index * 2 + 1] = HEX[(bytes[index] & 0x0f) as usize];
+        index += 1;
+    }
 }

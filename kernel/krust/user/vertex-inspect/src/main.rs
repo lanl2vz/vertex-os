@@ -49,6 +49,7 @@ pub extern "C" fn _start() -> ! {
     );
     explain_native_graph_store(report, &generation);
     log(b"vertex-inspect graph-store proof parsed");
+    explain_policy_validation(report);
     explain_echo_to_logd(report);
     explain_state_counter(report);
     explain_vertex_inspect_generation(report, &generation.id[..generation.id_len]);
@@ -59,6 +60,28 @@ pub extern "C" fn _start() -> ! {
 
     log(b"Native introspection service ok");
     sys::exit(0)
+}
+
+fn explain_policy_validation(report: &[u8]) {
+    let policy_needles: [&[u8]; 5] = [
+        b"policy-validation v=1",
+        b"status=accepted",
+        b"version=1",
+        b"hash=",
+        b"capabilities=",
+    ];
+    let Some(policy) = find_line_contains_all(report, &policy_needles) else {
+        log(b"vertex-inspect policy-validation query failed");
+        sys::exit(1);
+    };
+    if field_u64(policy, b"capabilities=").unwrap_or(0) == 0
+        || field_u64(policy, b"requirements=").unwrap_or(0) == 0
+    {
+        log(b"vertex-inspect policy-validation facts missing");
+        sys::exit(1);
+    }
+    log(b"vertex-inspect policy-validation proof parsed");
+    log(b"native policy validation hash visible");
 }
 
 fn report_buffer() -> &'static mut [u8; REPORT_BUFFER_LEN] {

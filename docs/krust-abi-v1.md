@@ -5,7 +5,7 @@ native Krust QEMU/Limine milestone. It is intentionally small and unstable. Its
 current job is to boot native `vertex-init`, create services from verified
 process templates, and enforce explicit process-local capabilities.
 
-Milestone status: ABI v1 now covers the M14-M85 native activation and substrate
+Milestone status: ABI v1 now covers the M14-M86 native activation and substrate
 proof. M25 adds the release gate. M26-M29 add Manifest v1 parsing, capability
 provenance/revocation, typed arena allocation checks, and resource quotas.
 M30-M31 add PIT-backed preemption and user page-fault containment. M32-M36 add
@@ -43,10 +43,12 @@ native typed graph-store header plus graph node/edge records used for runtime
 graph provenance. M83 adds native generation verification and staged
 install/rollback syscalls used by the generation-manager before it commits
 durable selected-generation metadata. M84 adds the fifth endpoint reference
-needed by native package import. M85 updates the compact payload identity to
-`KRUSTBOOTM85` version 15 and expands state-volume records with owner, schema,
-storage, migration, retention, and sharing policy. The ABI is still
-intentionally small, but this subset is the current native contract.
+needed by native package import. M85 expands state-volume records with owner,
+schema, storage, migration, retention, and sharing policy. M86 keeps the
+`KRUSTBOOTM86` identity and updates the strict compact payload to version 17
+with a hashed native policy section used to reject unauthorized grants during
+boot and generation activation. The ABI is still intentionally small, but this
+subset is the current native contract.
 
 ## Machine ABI
 
@@ -814,6 +816,7 @@ state_volumes (installed as explicit VFS state-volume mount roots; direct state 
 network_ports
 io_port_ranges
 mmio_regions
+framebuffers
 interrupt_lines
 dma_regions
 pci_devices
@@ -823,11 +826,15 @@ vfs_roots
 graph_store_header
 graph_nodes
 graph_edges
+policy_header
+policy_capabilities
+policy_requirements
+policy_provides
 ```
 
-The compact payload identity is `KRUSTBOOTM85` version 15. Older compact
-payload identities, including M82, M79, M75, and M61, are rejected instead of
-being retained as compatibility formats.
+The compact payload identity is `KRUSTBOOTM86` version 17. Older compact
+payload identities or compact versions, including M85, M82, M79, M75, and M61,
+are rejected instead of being retained as compatibility formats.
 
 Manifest v1 adds a fixed header, record table, checksum, and record bounds
 validation. The current record kinds are boot modules, process templates,
@@ -849,6 +856,25 @@ generation, service, endpoint, store-object, config, state-volume, device,
 namespace, VFS-root, timer, secret, activation, and capability-edge objects.
 The kernel validates the compact graph records before activation and uses their
 hash/checksum to cross-check the native VertexDisk graph-store object.
+
+M86 appends a native policy section immediately after the compact graph
+records. The policy header carries `policy_version=1`, counts for capability,
+requirement, and provide records, and a 64-byte lowercase hex BLAKE3 hash over
+the serialized policy records. Policy capability records bind a capability id
+and provider to an object kind/index plus declared rights. Requirement records
+bind a service to a capability and requested rights. Provide records bind a
+service to a capability it may receive for provider-side endpoint authority.
+
+The native boot parser verifies the policy version and hash, validates that
+requirement rights are subsets of declared capability rights, and rejects every
+compact grant that is not authorized by either a fixed bootstrap rule or a
+matching policy requirement/provide fact. The runtime installable-generation
+validator repeats the same policy gate for candidate generations before
+generation-manager stage/install/activate paths. `SYS_RUNTIME_INSPECT` exposes
+the accepted policy hash, policy version, and policy fact counts in a
+`policy-validation v=1` report line. Unknown policy versions, malformed policy
+hashes, and graph-consistent but policy-excess grants are rejected without a
+legacy fallback.
 
 M82 also extends the native VertexDisk image with a required graph-store object
 section. That section carries `VDISKGRAPHV0`, generation identity, node/edge

@@ -7,6 +7,7 @@ use vertex_ir::{GenerationManifest, Service};
 
 const COMPACT_MAGIC: &[u8; 16] = krustboot_abi::COMPACT_MAGIC;
 const COMPACT_VERSION: u16 = krustboot_abi::COMPACT_VERSION;
+const POLICY_VERSION: u16 = krustboot_abi::POLICY_VERSION;
 const V1_MAGIC: &[u8; 16] = krustboot_abi::V1_MAGIC;
 const V1_VERSION: u16 = krustboot_abi::V1_VERSION;
 const V1_HEADER_SIZE: usize = krustboot_abi::V1_HEADER_SIZE;
@@ -50,6 +51,9 @@ const NAMESPACE_ENTRY_RECORD_LEN: usize = STRING_LEN + 8;
 const VFS_ROOT_RECORD_LEN: usize = STRING_LEN * 2;
 const GRAPH_NODE_RECORD_LEN: usize = graph_abi::NODE_RECORD_LEN;
 const GRAPH_EDGE_RECORD_LEN: usize = graph_abi::EDGE_RECORD_LEN;
+const POLICY_CAPABILITY_RECORD_LEN: usize = STRING_LEN * 2 + 8;
+const POLICY_REQUIREMENT_RECORD_LEN: usize = STRING_LEN * 2 + 4;
+const POLICY_PROVIDE_RECORD_LEN: usize = STRING_LEN * 2;
 const MAX_BOOT_MODULES: usize = 16;
 const MAX_PROCESSES: usize = 16;
 const MAX_ENDPOINTS: usize = 16;
@@ -68,6 +72,9 @@ const MAX_NAMESPACES: usize = 4;
 const MAX_VFS_ROOTS: usize = 8;
 const MAX_GRAPH_NODES: usize = 128;
 const MAX_GRAPH_EDGES: usize = 224;
+const MAX_POLICY_CAPABILITIES: usize = 128;
+const MAX_POLICY_REQUIREMENTS: usize = 160;
+const MAX_POLICY_PROVIDES: usize = 64;
 const MAX_NAMESPACE_ENTRIES: usize = 4;
 const MAX_PROCESS_REFS: usize = 5;
 const MAX_PROCESS_MOUNTS: usize = 4;
@@ -188,6 +195,8 @@ pub fn compile(manifest: &GenerationManifest) -> Result<Vec<u8>, String> {
     validate_plan(&plan)?;
     let graph_records = serialize_graph_records(&plan)?;
     let graph_checksum = checksum32(&graph_records);
+    let policy_records = serialize_policy_records(&plan)?;
+    let policy_hash = store_hash_hex(&policy_records);
 
     let mut body = Vec::new();
     body.extend_from_slice(COMPACT_MAGIC);
@@ -328,6 +337,20 @@ pub fn compile(manifest: &GenerationManifest) -> Result<Vec<u8>, String> {
     }
 
     body.extend_from_slice(&graph_records);
+    push_u16(&mut body, POLICY_VERSION);
+    push_count(
+        &mut body,
+        plan.policy_capabilities.len(),
+        "policy_capabilities",
+    )?;
+    push_count(
+        &mut body,
+        plan.policy_requirements.len(),
+        "policy_requirements",
+    )?;
+    push_count(&mut body, plan.policy_provides.len(), "policy_provides")?;
+    push_fixed_str(&mut body, &policy_hash)?;
+    body.extend_from_slice(&policy_records);
 
     wrap_v1(manifest, &plan, &body)
 }
@@ -441,9 +464,21 @@ pub fn corrupt(bytes: &[u8], mode: &str) -> Result<Vec<u8>, String> {
             corrupt_missing_provider(&mut out)?;
             rewrite_v1_checksum(&mut out)?;
         }
+        "policy-version" => {
+            corrupt_policy_version(&mut out)?;
+            rewrite_v1_checksum(&mut out)?;
+        }
+        "policy-hash" => {
+            corrupt_policy_hash(&mut out)?;
+            rewrite_v1_checksum(&mut out)?;
+        }
+        "policy-excess-grant" => {
+            corrupt_policy_excess_grant(&mut out)?;
+            rewrite_v1_checksum(&mut out)?;
+        }
         other => {
             return Err(format!(
-                "unknown KrustBoot corruption mode {other}; expected truncated, bad-magic, unsupported-version, out-of-bounds-record, raw-compact, old-compact-magic, graph-store-checksum, graph-store-record, or missing-provider"
+                "unknown KrustBoot corruption mode {other}; expected truncated, bad-magic, unsupported-version, out-of-bounds-record, raw-compact, old-compact-magic, graph-store-checksum, graph-store-record, missing-provider, policy-version, policy-hash, or policy-excess-grant"
             ));
         }
     }
@@ -608,6 +643,9 @@ struct BootPlan {
     vfs_roots: Vec<VfsRoot>,
     graph_nodes: Vec<GraphNode>,
     graph_edges: Vec<GraphEdge>,
+    policy_capabilities: Vec<PolicyCapability>,
+    policy_requirements: Vec<PolicyRequirement>,
+    policy_provides: Vec<PolicyProvide>,
 }
 
 #[derive(Debug, Clone)]
@@ -761,6 +799,28 @@ struct GraphEdge {
     to: String,
     rights: u16,
     id: String,
+}
+
+#[derive(Debug, Clone)]
+struct PolicyCapability {
+    id: String,
+    provider: String,
+    object_kind: u16,
+    object_index: usize,
+    rights: u16,
+}
+
+#[derive(Debug, Clone)]
+struct PolicyRequirement {
+    service: String,
+    capability: String,
+    rights: u16,
+}
+
+#[derive(Debug, Clone)]
+struct PolicyProvide {
+    service: String,
+    capability: String,
 }
 
 fn derive_plan(manifest: &GenerationManifest) -> Result<BootPlan, String> {
@@ -1294,8 +1354,12 @@ fn derive_plan(manifest: &GenerationManifest) -> Result<BootPlan, String> {
         vfs_roots,
         graph_nodes: Vec::new(),
         graph_edges: Vec::new(),
+        policy_capabilities: Vec::new(),
+        policy_requirements: Vec::new(),
+        policy_provides: Vec::new(),
     };
     derive_graph_store(manifest, &mut plan)?;
+    derive_policy_facts(manifest, &mut plan)?;
     Ok(plan)
 }
 
@@ -1537,6 +1601,319 @@ fn derive_graph_store(manifest: &GenerationManifest, plan: &mut BootPlan) -> Res
         )?;
     }
 
+    Ok(())
+}
+
+fn derive_policy_facts(manifest: &GenerationManifest, plan: &mut BootPlan) -> Result<(), String> {
+    for capability in &manifest.capabilities {
+        let Some((object_kind, object_index)) = policy_object_ref_for_capability(plan, capability)
+        else {
+            continue;
+        };
+        let rights = declared_rights_mask(&capability.rights, &capability.id)?;
+        push_policy_capability(
+            &mut plan.policy_capabilities,
+            PolicyCapability {
+                id: capability.id.clone(),
+                provider: capability.provider.clone(),
+                object_kind,
+                object_index,
+                rights,
+            },
+        )?;
+
+        if capability.kind == "network-port"
+            && native_process_for_service(&plan.processes, &capability.provider).is_some()
+        {
+            push_policy_capability(
+                &mut plan.policy_capabilities,
+                PolicyCapability {
+                    id: capability.id.clone(),
+                    provider: capability.provider.clone(),
+                    object_kind,
+                    object_index,
+                    rights: RIGHT_CONTROL,
+                },
+            )?;
+            push_policy_requirement(
+                &mut plan.policy_requirements,
+                PolicyRequirement {
+                    service: capability.provider.clone(),
+                    capability: capability.id.clone(),
+                    rights: RIGHT_CONTROL,
+                },
+            )?;
+        }
+    }
+
+    for object in &plan.store_objects {
+        let object_index = store_index(plan, &object.id)?;
+        push_policy_capability(
+            &mut plan.policy_capabilities,
+            PolicyCapability {
+                id: object.id.clone(),
+                provider: object.id.clone(),
+                object_kind: OBJECT_STORE,
+                object_index,
+                rights: RIGHT_READ,
+            },
+        )?;
+    }
+
+    for service in &manifest.services {
+        if native_process_for_service(&plan.processes, &service.id).is_none() {
+            continue;
+        }
+
+        for requirement in &service.requires {
+            let Some(capability) = manifest.capability(&requirement.capability) else {
+                return Err(format!(
+                    "service {} requires unknown capability {}",
+                    service.id, requirement.capability
+                ));
+            };
+            if policy_object_ref_for_capability(plan, capability).is_none() {
+                continue;
+            }
+            let rights = if capability.kind == "ipc-endpoint" {
+                endpoint_rights_mask(&requirement.rights, &capability.rights, &capability.id)?
+            } else {
+                rights_mask(&requirement.rights, &capability.rights, &capability.id)?
+            };
+            push_policy_requirement(
+                &mut plan.policy_requirements,
+                PolicyRequirement {
+                    service: service.id.clone(),
+                    capability: capability.id.clone(),
+                    rights,
+                },
+            )?;
+        }
+
+        for config_id in &service.configs {
+            if plan
+                .store_objects
+                .iter()
+                .any(|object| object.id == *config_id)
+            {
+                push_policy_requirement(
+                    &mut plan.policy_requirements,
+                    PolicyRequirement {
+                        service: service.id.clone(),
+                        capability: config_id.clone(),
+                        rights: RIGHT_READ,
+                    },
+                )?;
+            }
+        }
+
+        for provided in &service.provides {
+            let Some(capability) = manifest.capability(provided) else {
+                return Err(format!(
+                    "service {} provides unknown capability {}",
+                    service.id, provided
+                ));
+            };
+            if capability.kind == "ipc-endpoint"
+                && capability.provider == service.id
+                && let Some((object_kind, object_index)) =
+                    policy_object_ref_for_capability(plan, capability)
+            {
+                push_policy_capability(
+                    &mut plan.policy_capabilities,
+                    PolicyCapability {
+                        id: capability.id.clone(),
+                        provider: capability.provider.clone(),
+                        object_kind,
+                        object_index,
+                        rights: RIGHT_RECEIVE,
+                    },
+                )?;
+                push_policy_provide(
+                    &mut plan.policy_provides,
+                    PolicyProvide {
+                        service: service.id.clone(),
+                        capability: provided.clone(),
+                    },
+                )?;
+            }
+        }
+    }
+
+    for device in &manifest.devices {
+        if native_process_for_service(&plan.processes, &device.driver).is_none() {
+            continue;
+        }
+        if let Some(index) = plan
+            .pci_devices
+            .iter()
+            .position(|candidate| candidate.id == device.id)
+        {
+            push_driver_policy_fact(plan, &device.driver, &device.id, OBJECT_PCI_DEVICE, index)?;
+        }
+        if let Some(index) = plan
+            .virtio_devices
+            .iter()
+            .position(|candidate| candidate.id == device.id)
+        {
+            push_driver_policy_fact(
+                plan,
+                &device.driver,
+                &device.id,
+                OBJECT_VIRTIO_DEVICE,
+                index,
+            )?;
+        }
+    }
+
+    add_vertex_store_verifier_policy(plan)?;
+    Ok(())
+}
+
+fn policy_object_ref_for_capability(
+    plan: &BootPlan,
+    capability: &vertex_ir::Capability,
+) -> Option<(u16, usize)> {
+    let (kind, object_name) = match capability.kind.as_str() {
+        "ipc-endpoint" => (OBJECT_ENDPOINT, endpoint_name(&capability.id)),
+        "store-object" => (OBJECT_STORE, capability.provider.clone()),
+        "timer" => (OBJECT_TIMER, "monotonic-timer".to_owned()),
+        "network-port" => (OBJECT_NETWORK_PORT, capability.id.clone()),
+        "io-port" => (OBJECT_IO_PORT_RANGE, capability.id.clone()),
+        "mmio-region" => (OBJECT_MMIO_REGION, capability.id.clone()),
+        "framebuffer" => (OBJECT_FRAMEBUFFER, capability.id.clone()),
+        "interrupt-line" => (OBJECT_INTERRUPT_LINE, capability.id.clone()),
+        "dma-region" => (OBJECT_DMA_REGION, capability.id.clone()),
+        "pci-device" => (OBJECT_PCI_DEVICE, capability.provider.clone()),
+        "virtio-device" => (OBJECT_VIRTIO_DEVICE, capability.provider.clone()),
+        "namespace" => (OBJECT_NAMESPACE, capability.id.clone()),
+        "vfs-root" => (OBJECT_VFS_ROOT, capability.id.clone()),
+        "clock" | "state-volume" => return None,
+        _ => return None,
+    };
+    object_index_for_kind(plan, kind, &object_name)
+        .ok()
+        .map(|index| (kind, index))
+}
+
+fn push_driver_policy_fact(
+    plan: &mut BootPlan,
+    service: &str,
+    device_id: &str,
+    object_kind: u16,
+    object_index: usize,
+) -> Result<(), String> {
+    let capability_id = policy_device_capability_id(device_id, object_kind)?;
+    push_policy_capability(
+        &mut plan.policy_capabilities,
+        PolicyCapability {
+            id: capability_id.clone(),
+            provider: service.to_owned(),
+            object_kind,
+            object_index,
+            rights: RIGHT_CONTROL,
+        },
+    )?;
+    push_policy_requirement(
+        &mut plan.policy_requirements,
+        PolicyRequirement {
+            service: service.to_owned(),
+            capability: capability_id,
+            rights: RIGHT_CONTROL,
+        },
+    )
+}
+
+fn policy_device_capability_id(device_id: &str, object_kind: u16) -> Result<String, String> {
+    let suffix = match object_kind {
+        OBJECT_PCI_DEVICE => "pci",
+        OBJECT_VIRTIO_DEVICE => "virtio",
+        other => return Err(format!("unsupported policy device object kind {other}")),
+    };
+    let id = format!("{device_id}#{suffix}");
+    if id.len() > STRING_LEN {
+        return Err(format!(
+            "synthetic policy capability id {id} exceeds compact string length"
+        ));
+    }
+    Ok(id)
+}
+
+fn add_vertex_store_verifier_policy(plan: &mut BootPlan) -> Result<(), String> {
+    if native_process_for_service(&plan.processes, "svc:vertex-store").is_none() {
+        return Ok(());
+    }
+    for object_id in [
+        "store:logd-demo",
+        "store:echo-server-demo",
+        "store:echo-demo",
+    ] {
+        if plan
+            .store_objects
+            .iter()
+            .any(|object| object.id == object_id)
+        {
+            push_policy_requirement(
+                &mut plan.policy_requirements,
+                PolicyRequirement {
+                    service: "svc:vertex-store".to_owned(),
+                    capability: object_id.to_owned(),
+                    rights: RIGHT_READ,
+                },
+            )?;
+        }
+    }
+    Ok(())
+}
+
+fn push_policy_capability(
+    capabilities: &mut Vec<PolicyCapability>,
+    capability: PolicyCapability,
+) -> Result<(), String> {
+    if let Some(existing) = capabilities
+        .iter_mut()
+        .find(|existing| existing.id == capability.id)
+    {
+        if existing.provider != capability.provider
+            || existing.object_kind != capability.object_kind
+            || existing.object_index != capability.object_index
+        {
+            return Err(format!(
+                "policy capability {} has conflicting object/provider facts",
+                capability.id
+            ));
+        }
+        existing.rights |= capability.rights;
+        return Ok(());
+    }
+    capabilities.push(capability);
+    Ok(())
+}
+
+fn push_policy_requirement(
+    requirements: &mut Vec<PolicyRequirement>,
+    requirement: PolicyRequirement,
+) -> Result<(), String> {
+    if let Some(existing) = requirements.iter_mut().find(|existing| {
+        existing.service == requirement.service && existing.capability == requirement.capability
+    }) {
+        existing.rights |= requirement.rights;
+        return Ok(());
+    }
+    requirements.push(requirement);
+    Ok(())
+}
+
+fn push_policy_provide(
+    provides: &mut Vec<PolicyProvide>,
+    provide: PolicyProvide,
+) -> Result<(), String> {
+    if provides.iter().any(|existing| {
+        existing.service == provide.service && existing.capability == provide.capability
+    }) {
+        return Ok(());
+    }
+    provides.push(provide);
     Ok(())
 }
 
@@ -2672,6 +3049,21 @@ fn validate_plan(plan: &BootPlan) -> Result<(), String> {
             "native graph store exceeds {MAX_GRAPH_EDGES} edges"
         ));
     }
+    if plan.policy_capabilities.len() > MAX_POLICY_CAPABILITIES {
+        return Err(format!(
+            "native policy exceeds {MAX_POLICY_CAPABILITIES} capability facts"
+        ));
+    }
+    if plan.policy_requirements.len() > MAX_POLICY_REQUIREMENTS {
+        return Err(format!(
+            "native policy exceeds {MAX_POLICY_REQUIREMENTS} requirement facts"
+        ));
+    }
+    if plan.policy_provides.len() > MAX_POLICY_PROVIDES {
+        return Err(format!(
+            "native policy exceeds {MAX_POLICY_PROVIDES} provide facts"
+        ));
+    }
     validate_hardware_authority(plan)?;
 
     let initial_count = plan
@@ -3146,12 +3538,35 @@ fn endpoint_rights_mask(
 }
 
 fn rights_mask(required: &[String], capability: &[String], context: &str) -> Result<u16, String> {
-    let rights = if required.is_empty() {
-        capability
+    let capability_mask = declared_rights_mask(capability, context)?;
+    let mask = if required.is_empty() {
+        capability_mask
     } else {
-        required
+        let required_mask = raw_rights_mask(required, context)?;
+        if required_mask & !capability_mask != 0 {
+            return Err(format!(
+                "capability {context} requirement exceeds declared rights"
+            ));
+        }
+        required_mask
     };
 
+    if mask == 0 {
+        return Err(format!("capability {context} has no native rights"));
+    }
+
+    Ok(mask)
+}
+
+fn declared_rights_mask(rights: &[String], context: &str) -> Result<u16, String> {
+    let mask = raw_rights_mask(rights, context)?;
+    if mask == 0 {
+        return Err(format!("capability {context} has no native rights"));
+    }
+    Ok(mask)
+}
+
+fn raw_rights_mask(rights: &[String], context: &str) -> Result<u16, String> {
     let mut mask = 0;
     for right in rights {
         match right.as_str() {
@@ -3173,10 +3588,6 @@ fn rights_mask(required: &[String], capability: &[String], context: &str) -> Res
             "mount" => mask |= RIGHT_MOUNT,
             other => return Err(format!("unsupported native right {other} for {context}")),
         }
-    }
-
-    if mask == 0 {
-        return Err(format!("capability {context} has no native rights"));
     }
 
     Ok(mask)
@@ -3623,6 +4034,53 @@ fn serialize_graph_records(plan: &BootPlan) -> Result<Vec<u8>, String> {
     Ok(bytes)
 }
 
+fn serialize_policy_records(plan: &BootPlan) -> Result<Vec<u8>, String> {
+    if plan.policy_capabilities.len() > MAX_POLICY_CAPABILITIES {
+        return Err(format!(
+            "native policy exceeds {MAX_POLICY_CAPABILITIES} capability facts"
+        ));
+    }
+    if plan.policy_requirements.len() > MAX_POLICY_REQUIREMENTS {
+        return Err(format!(
+            "native policy exceeds {MAX_POLICY_REQUIREMENTS} requirement facts"
+        ));
+    }
+    if plan.policy_provides.len() > MAX_POLICY_PROVIDES {
+        return Err(format!(
+            "native policy exceeds {MAX_POLICY_PROVIDES} provide facts"
+        ));
+    }
+
+    let mut bytes = Vec::with_capacity(
+        plan.policy_capabilities.len() * POLICY_CAPABILITY_RECORD_LEN
+            + plan.policy_requirements.len() * POLICY_REQUIREMENT_RECORD_LEN
+            + plan.policy_provides.len() * POLICY_PROVIDE_RECORD_LEN,
+    );
+
+    for capability in &plan.policy_capabilities {
+        push_fixed_str(&mut bytes, &capability.id)?;
+        push_fixed_str(&mut bytes, &capability.provider)?;
+        push_u16(&mut bytes, capability.object_kind);
+        push_u16(&mut bytes, capability.object_index as u16);
+        push_u16(&mut bytes, capability.rights);
+        push_u16(&mut bytes, 0);
+    }
+
+    for requirement in &plan.policy_requirements {
+        push_fixed_str(&mut bytes, &requirement.service)?;
+        push_fixed_str(&mut bytes, &requirement.capability)?;
+        push_u16(&mut bytes, requirement.rights);
+        push_u16(&mut bytes, 0);
+    }
+
+    for provide in &plan.policy_provides {
+        push_fixed_str(&mut bytes, &provide.service)?;
+        push_fixed_str(&mut bytes, &provide.capability)?;
+    }
+
+    Ok(bytes)
+}
+
 fn push_count(bytes: &mut Vec<u8>, count: usize, label: &str) -> Result<(), String> {
     let count =
         u16::try_from(count).map_err(|_| format!("KrustBoot {label} count does not fit in u16"))?;
@@ -3909,6 +4367,112 @@ fn corrupt_missing_provider(bytes: &mut [u8]) -> Result<(), String> {
     Ok(())
 }
 
+fn corrupt_policy_version(bytes: &mut [u8]) -> Result<(), String> {
+    let offset = compact_policy_header_offset(bytes)?;
+    if offset + 2 > bytes.len() {
+        return Err("KrustBoot policy header is out of bounds".to_owned());
+    }
+    bytes[offset..offset + 2].copy_from_slice(&u16::MAX.to_le_bytes());
+    Ok(())
+}
+
+fn corrupt_policy_hash(bytes: &mut [u8]) -> Result<(), String> {
+    let offset = compact_policy_header_offset(bytes)?
+        .checked_add(8)
+        .ok_or_else(|| "KrustBoot policy hash offset overflow".to_owned())?;
+    if offset + STRING_LEN > bytes.len() {
+        return Err("KrustBoot policy hash is out of bounds".to_owned());
+    }
+    bytes[offset] ^= 0x01;
+    Ok(())
+}
+
+fn corrupt_policy_excess_grant(bytes: &mut [u8]) -> Result<(), String> {
+    let payload = V1_PAYLOAD_OFFSET;
+    if bytes.len() < payload + COMPACT_HEADER_SIZE {
+        return Err("KrustBoot manifest is too short to corrupt policy grant".to_owned());
+    }
+    let grants = read_u16_at(bytes, payload + 24)? as usize;
+    let grant_base = compact_grants_offset(bytes)?;
+    let mut grant_index = 0;
+    while grant_index < grants {
+        let offset = grant_base
+            .checked_add(
+                grant_index
+                    .checked_mul(GRANT_RECORD_LEN)
+                    .ok_or_else(|| "KrustBoot grant offset overflow".to_owned())?,
+            )
+            .ok_or_else(|| "KrustBoot grant offset overflow".to_owned())?;
+        if offset + GRANT_RECORD_LEN > bytes.len() {
+            return Err("KrustBoot grant record is out of bounds".to_owned());
+        }
+        let process_index = read_u16_at(bytes, offset)?;
+        let object_kind = read_u16_at(bytes, offset + 2)?;
+        let rights = read_u16_at(bytes, offset + 8)?;
+        if process_index != 0 && object_kind == OBJECT_ENDPOINT && rights == RIGHT_RECEIVE {
+            bytes[offset + 8..offset + 10].copy_from_slice(&RIGHT_SEND.to_le_bytes());
+            rewrite_grant_graph_edge_rights(bytes, grant_index, RIGHT_SEND)?;
+            return Ok(());
+        }
+        grant_index += 1;
+    }
+    Err("KrustBoot manifest has no endpoint receive grant to corrupt".to_owned())
+}
+
+fn rewrite_grant_graph_edge_rights(
+    bytes: &mut [u8],
+    grant_index: usize,
+    rights: u16,
+) -> Result<(), String> {
+    let payload = V1_PAYLOAD_OFFSET;
+    let graph_nodes = read_u16_at(bytes, payload + COMPACT_GRAPH_NODE_COUNT_OFFSET)? as usize;
+    let graph_edges = read_u16_at(bytes, payload + COMPACT_GRAPH_EDGE_COUNT_OFFSET)? as usize;
+    let graph_offset = compact_graph_records_offset(bytes)?;
+    let graph_len = graph_nodes
+        .checked_mul(GRAPH_NODE_RECORD_LEN)
+        .and_then(|len| len.checked_add(graph_edges.checked_mul(GRAPH_EDGE_RECORD_LEN)?))
+        .ok_or_else(|| "KrustBoot graph store length overflow".to_owned())?;
+    let graph_end = graph_offset
+        .checked_add(graph_len)
+        .ok_or_else(|| "KrustBoot graph store end overflow".to_owned())?;
+    if graph_end > bytes.len() {
+        return Err("KrustBoot graph store is out of bounds".to_owned());
+    }
+    let edge_base = graph_offset
+        .checked_add(
+            graph_nodes
+                .checked_mul(GRAPH_NODE_RECORD_LEN)
+                .ok_or_else(|| "KrustBoot graph node length overflow".to_owned())?,
+        )
+        .ok_or_else(|| "KrustBoot graph edge offset overflow".to_owned())?;
+    let edge_id = format!("grant:{grant_index}");
+    let mut edge_index = 0;
+    while edge_index < graph_edges {
+        let offset = edge_base
+            .checked_add(
+                edge_index
+                    .checked_mul(GRAPH_EDGE_RECORD_LEN)
+                    .ok_or_else(|| "KrustBoot graph edge offset overflow".to_owned())?,
+            )
+            .ok_or_else(|| "KrustBoot graph edge offset overflow".to_owned())?;
+        if offset + GRAPH_EDGE_RECORD_LEN > bytes.len() {
+            return Err("KrustBoot graph edge is out of bounds".to_owned());
+        }
+        if fixed_str_equals(bytes, offset + 8, &edge_id) {
+            bytes[offset + 6..offset + 8].copy_from_slice(&rights.to_le_bytes());
+            let graph_checksum = checksum32(&bytes[graph_offset..graph_end]);
+            let checksum_offset = payload + COMPACT_GRAPH_CHECKSUM_OFFSET;
+            bytes[checksum_offset..checksum_offset + 4]
+                .copy_from_slice(&graph_checksum.to_le_bytes());
+            return Ok(());
+        }
+        edge_index += 1;
+    }
+    Err(format!(
+        "KrustBoot graph store lacks edge grant:{grant_index}"
+    ))
+}
+
 fn corrupt_graph_store_record(bytes: &mut [u8]) -> Result<(), String> {
     let payload = V1_PAYLOAD_OFFSET;
     if bytes.len() < payload + COMPACT_HEADER_SIZE {
@@ -3991,6 +4555,36 @@ fn compact_graph_records_offset(bytes: &[u8]) -> Result<usize, String> {
     checked_advance(offset, vfs_roots, VFS_ROOT_RECORD_LEN)
 }
 
+fn compact_grants_offset(bytes: &[u8]) -> Result<usize, String> {
+    let payload = V1_PAYLOAD_OFFSET;
+    if bytes.len() < payload + COMPACT_HEADER_SIZE {
+        return Err("KrustBoot manifest is too short for compact header".to_owned());
+    }
+    let boot_modules = read_u16_at(bytes, payload + 18)? as usize;
+    let processes = read_u16_at(bytes, payload + 20)? as usize;
+    let endpoints = read_u16_at(bytes, payload + 22)? as usize;
+
+    let mut offset = payload + COMPACT_HEADER_SIZE;
+    offset = checked_advance(offset, boot_modules, BOOT_MODULE_RECORD_LEN)?;
+    offset = checked_advance(offset, processes, PROCESS_RECORD_LEN)?;
+    checked_advance(offset, endpoints, ENDPOINT_RECORD_LEN)
+}
+
+fn compact_policy_header_offset(bytes: &[u8]) -> Result<usize, String> {
+    let payload = V1_PAYLOAD_OFFSET;
+    let graph_nodes = read_u16_at(bytes, payload + COMPACT_GRAPH_NODE_COUNT_OFFSET)? as usize;
+    let graph_edges = read_u16_at(bytes, payload + COMPACT_GRAPH_EDGE_COUNT_OFFSET)? as usize;
+    let graph_offset = compact_graph_records_offset(bytes)?;
+    graph_offset
+        .checked_add(
+            graph_nodes
+                .checked_mul(GRAPH_NODE_RECORD_LEN)
+                .and_then(|len| len.checked_add(graph_edges.checked_mul(GRAPH_EDGE_RECORD_LEN)?))
+                .ok_or_else(|| "KrustBoot graph store length overflow".to_owned())?,
+        )
+        .ok_or_else(|| "KrustBoot policy header offset overflow".to_owned())
+}
+
 fn checked_advance(offset: usize, count: usize, record_len: usize) -> Result<usize, String> {
     offset
         .checked_add(
@@ -3999,6 +4593,21 @@ fn checked_advance(offset: usize, count: usize, record_len: usize) -> Result<usi
                 .ok_or_else(|| "KrustBoot compact section length overflow".to_owned())?,
         )
         .ok_or_else(|| "KrustBoot compact section offset overflow".to_owned())
+}
+
+fn fixed_str_equals(bytes: &[u8], offset: usize, value: &str) -> bool {
+    if offset + STRING_LEN > bytes.len() || value.len() > STRING_LEN {
+        return false;
+    }
+    let value = value.as_bytes();
+    let mut index = 0;
+    while index < value.len() {
+        if bytes[offset + index] != value[index] {
+            return false;
+        }
+        index += 1;
+    }
+    value.len() == STRING_LEN || bytes[offset + value.len()] == 0
 }
 
 fn read_u16_at(bytes: &[u8], offset: usize) -> Result<u16, String> {

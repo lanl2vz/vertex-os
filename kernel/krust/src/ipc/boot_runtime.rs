@@ -536,6 +536,9 @@ pub(super) fn validate_boot_config_installable(
     validate_counted_config_entries(&config.graph_nodes, config.graph_node_count)?;
     validate_counted_config_entries(&config.graph_edges, config.graph_edge_count)?;
     validate_counted_config_entries(&config.grants, config.grant_count)?;
+    validate_counted_config_entries(&config.policy_capabilities, config.policy_capability_count)?;
+    validate_counted_config_entries(&config.policy_requirements, config.policy_requirement_count)?;
+    validate_counted_config_entries(&config.policy_provides, config.policy_provide_count)?;
 
     if config.endpoint_count == 0 {
         return Err(InitError::InvalidBootManifest);
@@ -566,6 +569,7 @@ pub(super) fn validate_boot_config_installable(
     }
     validate_boot_config_hardware_authority(config)?;
     validate_boot_config_graph_store(config)?;
+    validate_boot_config_policy(config)?;
 
     let mut namespace_index = 0;
     while namespace_index < config.namespace_count {
@@ -716,6 +720,309 @@ fn boot_graph_has_node(config: &BootRuntimeConfig, kind: u16, id: &str) -> bool 
         index += 1;
     }
     false
+}
+
+fn validate_boot_config_policy(config: &BootRuntimeConfig) -> Result<(), InitError> {
+    if config.policy_version != BOOT_POLICY_VERSION || config.policy_hash[0] == 0 {
+        log_policy_denial("<boot>", "<policy>", "policy-version", "unknown-or-empty");
+        return Err(InitError::InvalidBootManifest);
+    }
+
+    let mut index = 0;
+    while index < config.policy_capability_count {
+        let capability = config.policy_capabilities[index].ok_or(InitError::InvalidBootManifest)?;
+        if capability.id.is_empty()
+            || capability.provider.is_empty()
+            || capability.rights == 0
+            || !known_policy_rights(capability.rights)
+            || !boot_object_config_ref_valid(
+                config,
+                capability.object_kind,
+                capability.object_index,
+            )
+        {
+            log_policy_denial(
+                capability.provider,
+                capability.id,
+                "capability-fact",
+                "invalid-capability",
+            );
+            return Err(InitError::InvalidBootManifest);
+        }
+        let mut prior = 0;
+        while prior < index {
+            let existing =
+                config.policy_capabilities[prior].ok_or(InitError::InvalidBootManifest)?;
+            if existing.id == capability.id {
+                log_policy_denial(
+                    capability.provider,
+                    capability.id,
+                    "capability-fact",
+                    "duplicate-capability",
+                );
+                return Err(InitError::InvalidBootManifest);
+            }
+            prior += 1;
+        }
+        index += 1;
+    }
+
+    index = 0;
+    while index < config.policy_requirement_count {
+        let requirement =
+            config.policy_requirements[index].ok_or(InitError::InvalidBootManifest)?;
+        let Some(capability) = boot_policy_capability_by_id(config, requirement.capability) else {
+            log_policy_denial(
+                requirement.service,
+                requirement.capability,
+                "requirement-fact",
+                "unknown-capability",
+            );
+            return Err(InitError::InvalidBootManifest);
+        };
+        if !boot_config_has_service(config, requirement.service)?
+            || requirement.rights == 0
+            || !known_policy_rights(requirement.rights)
+            || requirement.rights & !capability.rights != 0
+        {
+            log_policy_denial(
+                requirement.service,
+                requirement.capability,
+                "requirement-fact",
+                "excess-or-invalid-rights",
+            );
+            return Err(InitError::InvalidBootManifest);
+        }
+        index += 1;
+    }
+
+    index = 0;
+    while index < config.policy_provide_count {
+        let provide = config.policy_provides[index].ok_or(InitError::InvalidBootManifest)?;
+        let Some(capability) = boot_policy_capability_by_id(config, provide.capability) else {
+            log_policy_denial(
+                provide.service,
+                provide.capability,
+                "provide-fact",
+                "unknown-capability",
+            );
+            return Err(InitError::InvalidBootManifest);
+        };
+        if !boot_config_has_service(config, provide.service)?
+            || capability.provider != provide.service
+        {
+            log_policy_denial(
+                provide.service,
+                provide.capability,
+                "provide-fact",
+                "provider-mismatch",
+            );
+            return Err(InitError::InvalidBootManifest);
+        }
+        index += 1;
+    }
+
+    index = 0;
+    while index < config.grant_count {
+        let grant = config.grants[index].ok_or(InitError::InvalidBootManifest)?;
+        if !boot_grant_authorized_by_policy(config, grant)? {
+            let source = config.processes[grant.process_index]
+                .map(|process| process.graph_node)
+                .unwrap_or("<invalid>");
+            let target = boot_config_object_label(config, grant).unwrap_or("<invalid>");
+            log_policy_denial(source, target, "grant-authorized", "no-policy-edge");
+            return Err(InitError::InvalidBootManifest);
+        }
+        index += 1;
+    }
+
+    Ok(())
+}
+
+fn boot_grant_authorized_by_policy(
+    config: &BootRuntimeConfig,
+    grant: BootGrantConfig,
+) -> Result<bool, InitError> {
+    let process = config.processes[grant.process_index].ok_or(InitError::InvalidBootManifest)?;
+    if boot_builtin_grant_authorized(config, process, grant)? {
+        return Ok(true);
+    }
+
+    let mut index = 0;
+    while index < config.policy_capability_count {
+        let capability = config.policy_capabilities[index].ok_or(InitError::InvalidBootManifest)?;
+        if capability.object_kind == grant.object_kind
+            && capability.object_index == grant.object_index
+            && grant.rights & !capability.rights == 0
+        {
+            if grant.object_kind == BOOT_OBJECT_ENDPOINT
+                && grant.rights == capability::RIGHT_RECEIVE
+            {
+                if boot_policy_provides(config, process.graph_node, capability.id)
+                    && capability.provider == process.graph_node
+                {
+                    return Ok(true);
+                }
+            } else if boot_policy_requirement_allows(
+                config,
+                process.graph_node,
+                capability.id,
+                grant.rights,
+            ) {
+                return Ok(true);
+            }
+        }
+        index += 1;
+    }
+    Ok(false)
+}
+
+fn boot_builtin_grant_authorized(
+    config: &BootRuntimeConfig,
+    process: BootProcessConfig,
+    grant: BootGrantConfig,
+) -> Result<bool, InitError> {
+    if grant.object_kind != BOOT_OBJECT_ENDPOINT {
+        return Ok(false);
+    }
+    let endpoint = config.endpoints[grant.object_index].ok_or(InitError::InvalidBootManifest)?;
+    if endpoint.name == LOG_ENDPOINT_NAME && grant.rights == capability::RIGHT_SEND {
+        return Ok(true);
+    }
+    if endpoint.name == "readiness" {
+        if process.initial && grant.rights == capability::RIGHT_RECEIVE {
+            return Ok(true);
+        }
+        if !process.initial && grant.rights == capability::RIGHT_SEND {
+            return Ok(true);
+        }
+    }
+    if process.initial && grant.rights == capability::RIGHT_SEND {
+        return Ok(true);
+    }
+    Ok(false)
+}
+
+fn boot_policy_requirement_allows(
+    config: &BootRuntimeConfig,
+    service: &str,
+    capability: &str,
+    rights: u64,
+) -> bool {
+    let mut index = 0;
+    while index < config.policy_requirement_count {
+        if let Some(requirement) = config.policy_requirements[index]
+            && requirement.service == service
+            && requirement.capability == capability
+            && rights & !requirement.rights == 0
+        {
+            return true;
+        }
+        index += 1;
+    }
+    false
+}
+
+fn boot_policy_provides(config: &BootRuntimeConfig, service: &str, capability: &str) -> bool {
+    let mut index = 0;
+    while index < config.policy_provide_count {
+        if let Some(provide) = config.policy_provides[index]
+            && provide.service == service
+            && provide.capability == capability
+        {
+            return true;
+        }
+        index += 1;
+    }
+    false
+}
+
+fn boot_policy_capability_by_id(
+    config: &BootRuntimeConfig,
+    capability: &str,
+) -> Option<BootPolicyCapabilityConfig> {
+    let mut index = 0;
+    while index < config.policy_capability_count {
+        if let Some(candidate) = config.policy_capabilities[index]
+            && candidate.id == capability
+        {
+            return Some(candidate);
+        }
+        index += 1;
+    }
+    None
+}
+
+fn boot_config_has_service(config: &BootRuntimeConfig, service: &str) -> Result<bool, InitError> {
+    let mut index = 0;
+    while index < config.process_count {
+        let process = config.processes[index].ok_or(InitError::InvalidBootManifest)?;
+        if process.graph_node == service {
+            return Ok(true);
+        }
+        index += 1;
+    }
+    Ok(false)
+}
+
+fn known_policy_rights(rights: u64) -> bool {
+    rights
+        & !(capability::RIGHT_SEND
+            | capability::RIGHT_RECEIVE
+            | capability::RIGHT_READ
+            | capability::RIGHT_WRITE
+            | capability::RIGHT_SNAPSHOT
+            | capability::RIGHT_RESTORE
+            | capability::RIGHT_CONTROL
+            | capability::RIGHT_BIND
+            | capability::RIGHT_LISTEN
+            | capability::RIGHT_MAP
+            | capability::RIGHT_RESOLVE
+            | capability::RIGHT_CREATE
+            | capability::RIGHT_UNLINK
+            | capability::RIGHT_RENAME
+            | capability::RIGHT_MOUNT)
+        == 0
+}
+
+fn boot_config_object_label(
+    config: &BootRuntimeConfig,
+    grant: BootGrantConfig,
+) -> Option<&'static str> {
+    match grant.object_kind {
+        BOOT_OBJECT_ENDPOINT => config.endpoints[grant.object_index].map(|object| object.name),
+        BOOT_OBJECT_STORE => config.store_objects[grant.object_index].map(|object| object.id),
+        BOOT_OBJECT_TIMER => Some("monotonic-timer"),
+        BOOT_OBJECT_NETWORK_PORT => {
+            config.network_ports[grant.object_index].map(|object| object.id)
+        }
+        BOOT_OBJECT_IO_PORT_RANGE => config.io_ports[grant.object_index].map(|object| object.id),
+        BOOT_OBJECT_MMIO_REGION => config.mmio_regions[grant.object_index].map(|object| object.id),
+        BOOT_OBJECT_FRAMEBUFFER => config.framebuffers[grant.object_index].map(|object| object.id),
+        BOOT_OBJECT_INTERRUPT_LINE => {
+            config.interrupt_lines[grant.object_index].map(|object| object.id)
+        }
+        BOOT_OBJECT_DMA_REGION => config.dma_regions[grant.object_index].map(|object| object.id),
+        BOOT_OBJECT_PCI_DEVICE => config.pci_devices[grant.object_index].map(|object| object.id),
+        BOOT_OBJECT_VIRTIO_DEVICE => {
+            config.virtio_devices[grant.object_index].map(|object| object.id)
+        }
+        BOOT_OBJECT_NAMESPACE => config.namespaces[grant.object_index].map(|object| object.id),
+        BOOT_OBJECT_VFS_ROOT => config.vfs_roots[grant.object_index].map(|object| object.id),
+        _ => None,
+    }
+}
+
+fn log_policy_denial(source: &str, target: &str, rule: &str, reason: &str) {
+    serial::write_str("native policy validation rejected: source=");
+    serial::write_str(source);
+    serial::write_str(" target=");
+    serial::write_str(target);
+    serial::write_str(" rule=");
+    serial::write_str(rule);
+    serial::write_str(" reason=");
+    serial::write_str(reason);
+    serial::write_str("\n");
 }
 
 fn boot_config_has_process(config: &BootRuntimeConfig, name: &str) -> Result<bool, InitError> {
