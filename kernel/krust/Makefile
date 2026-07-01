@@ -53,6 +53,7 @@ FLAKY_ELF := $(FLAKY_TARGET_DIR)/flaky
 HOG_ELF := $(HOG_TARGET_DIR)/hog
 FAULTY_ELF := $(FAULTY_TARGET_DIR)/faulty
 VERTEX_MANIFEST ?= ../../examples/hello-generation.vertex.json
+GUI_VERTEX_MANIFEST ?= ../../examples/krust-gui-console-generation.vertex.json
 FALLBACK_MANIFEST ?=
 BAD_GENERATION_MANIFEST ?=
 BOOT_FALLBACK_MANIFEST ?= $(FALLBACK_MANIFEST)
@@ -69,7 +70,7 @@ QEMU_EXTRA ?= -object rng-random,filename=/dev/urandom,id=vertexrng -device virt
 QEMU_MACHINE ?=
 QEMU_BLOCK ?= -drive if=none,id=vertexblk,file=$(BLOCK_IMAGE),format=raw -device virtio-blk-pci,drive=vertexblk,disable-modern=on,queue-size=8
 QEMU_DISPLAY ?= cocoa
-QEMU_SERIAL_WINDOW ?= vc:80Cx30C
+QEMU_GUI_SERIAL ?= file:$(BUILD_DIR)/serial-gui.log
 LIMINE ?= limine
 XORRISO ?= xorriso
 CARGO ?= cargo
@@ -78,7 +79,7 @@ RUSTFMT ?= rustfmt
 VERTEXCTL ?= $(CARGO) run --locked --quiet --manifest-path ../../crates/vertexctl/Cargo.toml --target $(HOST_TARGET) --
 LIMINE_DIR ?= $(firstword $(wildcard /opt/homebrew/share/limine /usr/local/share/limine /usr/share/limine))
 
-.PHONY: build kernel user boot-manifest block-image vertexfs-image iso run run-window smoke doctor release-gate clean check-tools check-tool-versions check-cargo-locks check-rust-target check-limine-dir
+.PHONY: build kernel user boot-manifest block-image vertexfs-image iso run run-gui run-window smoke doctor release-gate clean check-tools check-tool-versions check-cargo-locks check-rust-target check-limine-dir
 
 build: kernel user
 
@@ -158,9 +159,10 @@ run: KRUST_INTERACTIVE_QUIET=1
 run: iso
 	$(QEMU) $(QEMU_MACHINE) $(QEMU_EXTRA) $(QEMU_BLOCK) -m 256M -serial stdio -monitor none -display none -no-reboot -no-shutdown -cdrom $(ISO_IMAGE)
 
-run-window: KRUST_INTERACTIVE_QUIET=1
-run-window: iso
-	$(QEMU) $(QEMU_MACHINE) $(QEMU_EXTRA) $(QEMU_BLOCK) -m 256M -display $(QEMU_DISPLAY) -serial $(QEMU_SERIAL_WINDOW) -monitor none -no-reboot -no-shutdown -cdrom $(ISO_IMAGE)
+run-gui run-window: KRUST_INTERACTIVE_QUIET=1
+run-gui run-window: VERTEX_MANIFEST=$(GUI_VERTEX_MANIFEST)
+run-gui run-window: iso
+	$(QEMU) $(QEMU_MACHINE) $(QEMU_EXTRA) $(QEMU_BLOCK) -m 256M -display $(QEMU_DISPLAY) -serial $(QEMU_GUI_SERIAL) -monitor none -no-reboot -no-shutdown -cdrom $(ISO_IMAGE)
 
 smoke: iso
 	@QEMU="$(QEMU)" \

@@ -91,6 +91,17 @@ pub(super) fn mmio_region_from_cap(
         .ok_or(IpcError::BadCapability)
 }
 
+pub(super) fn framebuffer_from_cap(
+    cap_slot: u64,
+    required_right: u64,
+) -> Result<FramebufferObject, IpcError> {
+    let cap = lookup_capability(cap_slot, required_right)?;
+    runtime()
+        .objects
+        .get_framebuffer(cap.object)
+        .ok_or(IpcError::BadCapability)
+}
+
 pub(super) fn interrupt_line_from_cap(
     cap_slot: u64,
     required_right: u64,

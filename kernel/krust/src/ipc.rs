@@ -5,15 +5,16 @@ use core::{
 };
 
 pub use crate::kernel::{
-    BOOT_OBJECT_DMA_REGION, BOOT_OBJECT_ENDPOINT, BOOT_OBJECT_INTERRUPT_LINE,
-    BOOT_OBJECT_IO_PORT_RANGE, BOOT_OBJECT_MMIO_REGION, BOOT_OBJECT_NAMESPACE,
-    BOOT_OBJECT_NETWORK_PORT, BOOT_OBJECT_PCI_DEVICE, BOOT_OBJECT_STATE, BOOT_OBJECT_STORE,
-    BOOT_OBJECT_TIMER, BOOT_OBJECT_VFS_ROOT, BOOT_OBJECT_VIRTIO_DEVICE, BootDmaRegionConfig,
-    BootEndpointConfig, BootGrantConfig, BootGraphEdgeConfig, BootGraphNodeConfig,
-    BootInterruptLineConfig, BootIoPortRangeConfig, BootMmioRegionConfig, BootModuleConfig,
-    BootNamespaceConfig, BootNamespaceEntryConfig, BootNetworkPortConfig, BootPciDeviceConfig,
-    BootProcessConfig, BootProcessMountConfig, BootRuntimeConfig, BootStateVolumeConfig,
-    BootStoreObjectConfig, BootVfsRootConfig, BootVirtioDeviceConfig,
+    BOOT_OBJECT_DMA_REGION, BOOT_OBJECT_ENDPOINT, BOOT_OBJECT_FRAMEBUFFER,
+    BOOT_OBJECT_INTERRUPT_LINE, BOOT_OBJECT_IO_PORT_RANGE, BOOT_OBJECT_MMIO_REGION,
+    BOOT_OBJECT_NAMESPACE, BOOT_OBJECT_NETWORK_PORT, BOOT_OBJECT_PCI_DEVICE, BOOT_OBJECT_STATE,
+    BOOT_OBJECT_STORE, BOOT_OBJECT_TIMER, BOOT_OBJECT_VFS_ROOT, BOOT_OBJECT_VIRTIO_DEVICE,
+    BootDmaRegionConfig, BootEndpointConfig, BootFramebufferConfig, BootGrantConfig,
+    BootGraphEdgeConfig, BootGraphNodeConfig, BootInterruptLineConfig, BootIoPortRangeConfig,
+    BootMmioRegionConfig, BootModuleConfig, BootNamespaceConfig, BootNamespaceEntryConfig,
+    BootNetworkPortConfig, BootPciDeviceConfig, BootProcessConfig, BootProcessMountConfig,
+    BootRuntimeConfig, BootStateVolumeConfig, BootStoreObjectConfig, BootVfsRootConfig,
+    BootVirtioDeviceConfig,
 };
 use crate::kernel::{
     BOOT_PROCESS_MOUNT_BIND, BOOT_PROCESS_MOUNT_READ_ONLY, BootModuleObject, Capability,
@@ -31,9 +32,9 @@ pub use crate::kernel::{
 use crate::{
     capability,
     device::{
-        DmaRegionObject, InterruptLineObject, IoPortRangeObject, MmioRegionObject,
-        NetworkPortObject, TimerObject, VirtioDeviceObject, VirtioNetState, VirtioQueueState,
-        VirtioRngState,
+        DmaRegionObject, FramebufferObject, InterruptLineObject, IoPortRangeObject,
+        MmioRegionObject, NetworkPortObject, TimerObject, VirtioDeviceObject, VirtioNetState,
+        VirtioQueueState, VirtioRngState,
     },
     gdt,
     inspect::InspectReport,
@@ -96,9 +97,10 @@ pub use core_syscalls::{
     receive_timeout, runtime_inspect, secret_read, send,
 };
 pub use device_syscalls::{
-    dma_map, io_read, io_read16, io_read32, io_write, io_write16, io_write32, irq_wait, mmio_map,
-    network_recv_udp, network_send_udp, record_hardware_irq, virtio_device_probe,
-    virtio_device_report, virtio_net_rx, virtio_net_tx, virtio_rng_read,
+    dma_map, framebuffer_info, framebuffer_map, io_read, io_read16, io_read32, io_write,
+    io_write16, io_write32, irq_wait, mmio_map, network_recv_udp, network_send_udp,
+    record_hardware_irq, virtio_device_probe, virtio_device_report, virtio_net_rx, virtio_net_tx,
+    virtio_rng_read,
 };
 use device_syscalls::{
     interrupt_owner_name, interrupt_waiter_count, release_all_runtime_dma_mappings,
@@ -123,10 +125,10 @@ use memory_mapping::{
 use object_lookup::{
     boot_module_from_cap, capability_has_revoked_ancestor, current_process_label,
     dma_region_from_cap, endpoint_cap_from_slot, endpoint_from_cap, frame_allocator,
-    interrupt_line_from_cap, io_port_from_cap, lookup_capability, mmio_region_from_cap,
-    namespace_from_cap, network_port_from_cap, port_span_in_range, process_control_from_cap,
-    restart_policy_label, runtime, secret_from_cap, serial_log_endpoint_from_cap, staging_runtime,
-    timer_from_cap, virtio_device_from_cap,
+    framebuffer_from_cap, interrupt_line_from_cap, io_port_from_cap, lookup_capability,
+    mmio_region_from_cap, namespace_from_cap, network_port_from_cap, port_span_in_range,
+    process_control_from_cap, restart_policy_label, runtime, secret_from_cap,
+    serial_log_endpoint_from_cap, staging_runtime, timer_from_cap, virtio_device_from_cap,
 };
 pub use process_syscalls::{
     create_process, exit_current_process, fault_current_process, kill_process,
@@ -177,6 +179,7 @@ const MAX_REVOKED_CAPS: usize = MAX_CAP_LINEAGE;
 const MAX_GENERATION_CONFIGS: usize = 4;
 const MAX_SERVICE_LIFECYCLE_EVENTS: usize = 128;
 const DMA_MAPPING_INFO_BYTES: usize = 24;
+const FRAMEBUFFER_INFO_BYTES: usize = 64;
 const PROTOCOL_HEALTH_V0: u16 = 2;
 const MESSAGE_READY: u16 = 1;
 const READY_ENVELOPE_LEN: usize = 16;
@@ -250,6 +253,7 @@ const VFS_SERVICE_REPORT_BYTES: &[u8] = b"servicefs:vertex-state-report\n";
 const MAX_STATE_VOLUME_VALUE_BYTES: usize = 16;
 const USER_MMIO_MAPPING_BASE: u64 = 0x0000_5000_0000_0000;
 const USER_DMA_MAPPING_BASE: u64 = 0x0000_6000_0000_0000;
+const USER_FRAMEBUFFER_MAPPING_BASE: u64 = 0x0000_7000_0000_0000;
 const USER_DEVICE_MAPPING_STRIDE: u64 = 1 << 30;
 const PCI_CONFIG_ADDRESS: u16 = 0x0cf8;
 const PCI_CONFIG_DATA: u16 = 0x0cfc;

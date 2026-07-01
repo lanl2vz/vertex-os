@@ -1,7 +1,7 @@
 use crate::{
     device::{
-        DmaRegionObject, InterruptLineObject, IoPortRangeObject, MmioRegionObject,
-        NetworkPortObject, PciDeviceObject, TimerObject, VirtioDeviceObject,
+        DmaRegionObject, FramebufferObject, InterruptLineObject, IoPortRangeObject,
+        MmioRegionObject, NetworkPortObject, PciDeviceObject, TimerObject, VirtioDeviceObject,
     },
     vfs::{NamespaceObject, VfsMountObject, VfsRootObject},
 };
@@ -122,6 +122,7 @@ pub(crate) enum KernelObject {
     NetworkPort(NetworkPortObject),
     IoPortRange(IoPortRangeObject),
     MmioRegion(MmioRegionObject),
+    Framebuffer(FramebufferObject),
     InterruptLine(InterruptLineObject),
     DmaRegion(DmaRegionObject),
     PciDevice(PciDeviceObject),
@@ -144,6 +145,7 @@ impl KernelObject {
             Self::NetworkPort(object) => object.id,
             Self::IoPortRange(object) => object.id,
             Self::MmioRegion(object) => object.id,
+            Self::Framebuffer(object) => object.id,
             Self::InterruptLine(object) => object.id,
             Self::DmaRegion(object) => object.id,
             Self::PciDevice(object) => object.id,

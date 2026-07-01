@@ -61,6 +61,61 @@ impl MmioRegionObject {
 }
 
 #[derive(Clone, Copy)]
+pub(crate) struct FramebufferObject {
+    pub(crate) id: KernelObjectId,
+    pub(crate) name: &'static str,
+    pub(crate) physical_base: u64,
+    pub(crate) length: u64,
+    pub(crate) width: u64,
+    pub(crate) height: u64,
+    pub(crate) pitch: u64,
+    pub(crate) bpp: u16,
+    pub(crate) red_mask_size: u8,
+    pub(crate) red_mask_shift: u8,
+    pub(crate) green_mask_size: u8,
+    pub(crate) green_mask_shift: u8,
+    pub(crate) blue_mask_size: u8,
+    pub(crate) blue_mask_shift: u8,
+}
+
+impl FramebufferObject {
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) const fn new(
+        id: KernelObjectId,
+        name: &'static str,
+        physical_base: u64,
+        length: u64,
+        width: u64,
+        height: u64,
+        pitch: u64,
+        bpp: u16,
+        red_mask_size: u8,
+        red_mask_shift: u8,
+        green_mask_size: u8,
+        green_mask_shift: u8,
+        blue_mask_size: u8,
+        blue_mask_shift: u8,
+    ) -> Self {
+        Self {
+            id,
+            name,
+            physical_base,
+            length,
+            width,
+            height,
+            pitch,
+            bpp,
+            red_mask_size,
+            red_mask_shift,
+            green_mask_size,
+            green_mask_shift,
+            blue_mask_size,
+            blue_mask_shift,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
 pub(crate) struct InterruptLineObject {
     pub(crate) id: KernelObjectId,
     pub(crate) name: &'static str,

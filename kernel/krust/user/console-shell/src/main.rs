@@ -443,7 +443,11 @@ fn console_write_state_health(report: &[u8]) {
     append(&mut payload, &mut len, error);
     log(&payload[..len]);
     len = 0;
-    append(&mut payload, &mut len, b"state-policy state:counter storage=");
+    append(
+        &mut payload,
+        &mut len,
+        b"state-policy state:counter storage=",
+    );
     append(&mut payload, &mut len, storage);
     append(&mut payload, &mut len, b" migration=");
     append(&mut payload, &mut len, migration);

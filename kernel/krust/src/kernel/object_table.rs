@@ -1,7 +1,7 @@
 use crate::{
     device::{
-        DmaRegionObject, InterruptLineObject, IoPortRangeObject, MmioRegionObject,
-        NetworkPortObject, PciDeviceObject, TimerObject, VirtioDeviceObject,
+        DmaRegionObject, FramebufferObject, InterruptLineObject, IoPortRangeObject,
+        MmioRegionObject, NetworkPortObject, PciDeviceObject, TimerObject, VirtioDeviceObject,
     },
     vfs::{
         MAX_NAMESPACE_ENTRIES, NamespaceEntry, NamespaceObject, VfsMountObject, VfsNodeId, VfsPath,
@@ -166,6 +166,49 @@ impl ObjectTable {
         self.next_id += 1;
         self.objects[self.count] = Some(KernelObject::MmioRegion(MmioRegionObject::new(
             id, name, base, length,
+        )));
+        self.count += 1;
+        Ok(id)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn add_framebuffer(
+        &mut self,
+        name: &'static str,
+        physical_base: u64,
+        length: u64,
+        width: u64,
+        height: u64,
+        pitch: u64,
+        bpp: u16,
+        red_mask_size: u8,
+        red_mask_shift: u8,
+        green_mask_size: u8,
+        green_mask_shift: u8,
+        blue_mask_size: u8,
+        blue_mask_shift: u8,
+    ) -> Result<KernelObjectId, InitError> {
+        if self.count == self.objects.len() {
+            return Err(InitError::ObjectTableFull);
+        }
+
+        let id = KernelObjectId::new(self.next_id);
+        self.next_id += 1;
+        self.objects[self.count] = Some(KernelObject::Framebuffer(FramebufferObject::new(
+            id,
+            name,
+            physical_base,
+            length,
+            width,
+            height,
+            pitch,
+            bpp,
+            red_mask_size,
+            red_mask_shift,
+            green_mask_size,
+            green_mask_shift,
+            blue_mask_size,
+            blue_mask_shift,
         )));
         self.count += 1;
         Ok(id)
@@ -640,6 +683,20 @@ impl ObjectTable {
                 && region.id == id
             {
                 return Some(region);
+            }
+            index += 1;
+        }
+
+        None
+    }
+
+    pub(crate) fn get_framebuffer(&self, id: KernelObjectId) -> Option<FramebufferObject> {
+        let mut index = 0;
+        while index < self.count {
+            if let Some(KernelObject::Framebuffer(framebuffer)) = self.objects[index]
+                && framebuffer.id == id
+            {
+                return Some(framebuffer);
             }
             index += 1;
         }

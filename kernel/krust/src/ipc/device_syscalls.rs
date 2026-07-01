@@ -1189,6 +1189,115 @@ pub fn mmio_map(cap_slot: u64) -> Result<u64, IpcError> {
     Ok(user_base)
 }
 
+pub fn framebuffer_info(
+    cap_slot: u64,
+    destination: *mut u8,
+    max_len: usize,
+) -> Result<usize, IpcError> {
+    let framebuffer = framebuffer_from_cap(cap_slot, capability::RIGHT_READ)?;
+    write_framebuffer_info(destination, max_len, framebuffer, 0)?;
+    Ok(FRAMEBUFFER_INFO_BYTES)
+}
+
+pub fn framebuffer_map(
+    cap_slot: u64,
+    destination: *mut u8,
+    max_len: usize,
+) -> Result<usize, IpcError> {
+    let framebuffer =
+        framebuffer_from_cap(cap_slot, capability::RIGHT_WRITE | capability::RIGHT_MAP)?;
+    let physical_base = align_down(framebuffer.physical_base, memory::FRAME_SIZE);
+    let page_offset = framebuffer
+        .physical_base
+        .checked_sub(physical_base)
+        .ok_or(IpcError::BadCapability)?;
+    let map_len = align_up(
+        framebuffer
+            .length
+            .checked_add(page_offset)
+            .ok_or(IpcError::BadCapability)?,
+        memory::FRAME_SIZE,
+    )
+    .ok_or(IpcError::BadCapability)?;
+    let virtual_base =
+        device_user_mapping_base(USER_FRAMEBUFFER_MAPPING_BASE, framebuffer.id, map_len)?;
+    let user_base = virtual_base
+        .checked_add(page_offset)
+        .ok_or(IpcError::BadCapability)?;
+    map_current_process_physical_range(
+        virtual_base,
+        physical_base,
+        map_len,
+        paging::PageFlags::user_device(),
+    )?;
+    write_framebuffer_info(destination, max_len, framebuffer, user_base)?;
+    serial::write_str("Framebuffer map accepted: proc=");
+    serial::write_str(current_process_name());
+    serial::write_str(" framebuffer=");
+    serial::write_str(framebuffer.name);
+    serial::write_str(" virt=");
+    serial::write_u64_hex(user_base);
+    serial::write_str(" length=");
+    serial::write_u64_hex(framebuffer.length);
+    serial::write_str(" width=");
+    serial::write_u64_dec(framebuffer.width);
+    serial::write_str(" height=");
+    serial::write_u64_dec(framebuffer.height);
+    serial::write_str("\n");
+    Ok(FRAMEBUFFER_INFO_BYTES)
+}
+
+fn write_framebuffer_info(
+    destination: *mut u8,
+    max_len: usize,
+    framebuffer: FramebufferObject,
+    user_base: u64,
+) -> Result<(), IpcError> {
+    if max_len < FRAMEBUFFER_INFO_BYTES {
+        return Err(IpcError::InvalidUserBuffer);
+    }
+    usercopy::validate_user_buffer(
+        UserPtr::new(destination as u64),
+        FRAMEBUFFER_INFO_BYTES,
+        paging::UserAccess::Write,
+    )
+    .map_err(|_| IpcError::InvalidUserBuffer)?;
+
+    let mut info = [0u8; FRAMEBUFFER_INFO_BYTES];
+    write_framebuffer_info_u64(&mut info, 0, user_base);
+    write_framebuffer_info_u64(&mut info, 8, framebuffer.length);
+    write_framebuffer_info_u64(&mut info, 16, framebuffer.width);
+    write_framebuffer_info_u64(&mut info, 24, framebuffer.height);
+    write_framebuffer_info_u64(&mut info, 32, framebuffer.pitch);
+    write_framebuffer_info_u64(&mut info, 40, framebuffer.bpp as u64);
+    write_framebuffer_info_u64(
+        &mut info,
+        48,
+        framebuffer.red_mask_size as u64
+            | ((framebuffer.red_mask_shift as u64) << 8)
+            | ((framebuffer.green_mask_size as u64) << 16)
+            | ((framebuffer.green_mask_shift as u64) << 24)
+            | ((framebuffer.blue_mask_size as u64) << 32)
+            | ((framebuffer.blue_mask_shift as u64) << 40),
+    );
+    write_framebuffer_info_u64(&mut info, 56, 0);
+    usercopy::copy_to_user(UserPtr::new(destination as u64), &info)
+        .map_err(|_| IpcError::InvalidUserBuffer)
+}
+
+fn write_framebuffer_info_u64(
+    buffer: &mut [u8; FRAMEBUFFER_INFO_BYTES],
+    offset: usize,
+    value: u64,
+) {
+    let bytes = value.to_le_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        buffer[offset + index] = bytes[index];
+        index += 1;
+    }
+}
+
 pub fn dma_map(cap_slot: u64, destination: *mut u8, max_len: usize) -> Result<(), IpcError> {
     if max_len < DMA_MAPPING_INFO_BYTES {
         return Err(IpcError::InvalidUserBuffer);

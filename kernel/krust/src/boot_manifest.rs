@@ -24,6 +24,7 @@ const MAX_STATE_VOLUMES: usize = 4;
 const MAX_NETWORK_PORTS: usize = 4;
 const MAX_IO_PORT_RANGES: usize = 4;
 const MAX_MMIO_REGIONS: usize = 4;
+const MAX_FRAMEBUFFERS: usize = 1;
 const MAX_INTERRUPT_LINES: usize = 4;
 const MAX_DMA_REGIONS: usize = 4;
 const MAX_PCI_DEVICES: usize = 4;
@@ -81,6 +82,7 @@ pub const OBJECT_PCI_DEVICE: u16 = 10;
 pub const OBJECT_VIRTIO_DEVICE: u16 = 11;
 pub const OBJECT_NAMESPACE: u16 = 12;
 pub const OBJECT_VFS_ROOT: u16 = 13;
+pub const OBJECT_FRAMEBUFFER: u16 = 14;
 pub const PROCESS_MOUNT_FLAG_BIND: u16 = 1;
 pub const PROCESS_MOUNT_FLAG_READ_ONLY: u16 = 1 << 1;
 
@@ -167,6 +169,11 @@ pub struct MmioRegion<'a> {
     pub id: &'a str,
     pub base: u64,
     pub length: u64,
+}
+
+#[derive(Clone, Copy)]
+pub struct Framebuffer<'a> {
+    pub id: &'a str,
 }
 
 #[derive(Clone, Copy)]
@@ -260,6 +267,8 @@ pub struct Manifest<'a> {
     io_port_count: usize,
     mmio_regions: [Option<MmioRegion<'a>>; MAX_MMIO_REGIONS],
     mmio_region_count: usize,
+    framebuffers: [Option<Framebuffer<'a>>; MAX_FRAMEBUFFERS],
+    framebuffer_count: usize,
     interrupt_lines: [Option<InterruptLine<'a>>; MAX_INTERRUPT_LINES],
     interrupt_line_count: usize,
     dma_regions: [Option<DmaRegion<'a>>; MAX_DMA_REGIONS],
@@ -301,6 +310,7 @@ pub enum ParseError {
     TooManyNetworkPorts,
     TooManyIoPortRanges,
     TooManyMmioRegions,
+    TooManyFramebuffers,
     TooManyInterruptLines,
     TooManyDmaRegions,
     TooManyPciDevices,
@@ -354,6 +364,8 @@ impl<'a> Manifest<'a> {
             io_port_count: 0,
             mmio_regions: [None; MAX_MMIO_REGIONS],
             mmio_region_count: 0,
+            framebuffers: [None; MAX_FRAMEBUFFERS],
+            framebuffer_count: 0,
             interrupt_lines: [None; MAX_INTERRUPT_LINES],
             interrupt_line_count: 0,
             dma_regions: [None; MAX_DMA_REGIONS],
@@ -401,6 +413,8 @@ impl<'a> Manifest<'a> {
         self.io_port_count = 0;
         self.mmio_regions.fill(None);
         self.mmio_region_count = 0;
+        self.framebuffers.fill(None);
+        self.framebuffer_count = 0;
         self.interrupt_lines.fill(None);
         self.interrupt_line_count = 0;
         self.dma_regions.fill(None);
@@ -493,6 +507,10 @@ impl<'a> Manifest<'a> {
 
     pub fn interrupt_line_count(&self) -> usize {
         self.interrupt_line_count
+    }
+
+    pub fn framebuffer_count(&self) -> usize {
+        self.framebuffer_count
     }
 
     pub fn dma_region_count(&self) -> usize {
@@ -590,6 +608,14 @@ impl<'a> Manifest<'a> {
     pub fn mmio_region(&self, index: usize) -> Option<MmioRegion<'a>> {
         if index < self.mmio_region_count {
             self.mmio_regions[index]
+        } else {
+            None
+        }
+    }
+
+    pub fn framebuffer(&self, index: usize) -> Option<Framebuffer<'a>> {
+        if index < self.framebuffer_count {
+            self.framebuffers[index]
         } else {
             None
         }
@@ -785,6 +811,7 @@ fn parse_compact_into(
         reader.read_count(MAX_NETWORK_PORTS, ParseError::TooManyNetworkPorts)?;
     let io_port_count = reader.read_count(MAX_IO_PORT_RANGES, ParseError::TooManyIoPortRanges)?;
     let mmio_region_count = reader.read_count(MAX_MMIO_REGIONS, ParseError::TooManyMmioRegions)?;
+    let framebuffer_count = reader.read_count(MAX_FRAMEBUFFERS, ParseError::TooManyFramebuffers)?;
     let interrupt_line_count =
         reader.read_count(MAX_INTERRUPT_LINES, ParseError::TooManyInterruptLines)?;
     let dma_region_count = reader.read_count(MAX_DMA_REGIONS, ParseError::TooManyDmaRegions)?;
@@ -800,6 +827,7 @@ fn parse_compact_into(
         network_port_count,
         io_port_count,
         mmio_region_count,
+        framebuffer_count,
         interrupt_line_count,
         dma_region_count,
         pci_device_count,
@@ -828,6 +856,7 @@ fn parse_compact_into(
     manifest.network_port_count = network_port_count;
     manifest.io_port_count = io_port_count;
     manifest.mmio_region_count = mmio_region_count;
+    manifest.framebuffer_count = framebuffer_count;
     manifest.interrupt_line_count = interrupt_line_count;
     manifest.dma_region_count = dma_region_count;
     manifest.pci_device_count = pci_device_count;
@@ -964,6 +993,14 @@ fn parse_compact_into(
     }
 
     index = 0;
+    while index < framebuffer_count {
+        manifest.framebuffers[index] = Some(Framebuffer {
+            id: reader.read_fixed_str()?,
+        });
+        index += 1;
+    }
+
+    index = 0;
     while index < interrupt_line_count {
         manifest.interrupt_lines[index] = Some(InterruptLine {
             id: reader.read_fixed_str()?,
@@ -1082,6 +1119,7 @@ fn validate_runtime_object_budget(
     network_port_count: usize,
     io_port_count: usize,
     mmio_region_count: usize,
+    framebuffer_count: usize,
     interrupt_line_count: usize,
     dma_region_count: usize,
     pci_device_count: usize,
@@ -1097,6 +1135,7 @@ fn validate_runtime_object_budget(
         .and_then(|count| count.checked_add(network_port_count))
         .and_then(|count| count.checked_add(io_port_count))
         .and_then(|count| count.checked_add(mmio_region_count))
+        .and_then(|count| count.checked_add(framebuffer_count))
         .and_then(|count| count.checked_add(interrupt_line_count))
         .and_then(|count| count.checked_add(dma_region_count))
         .and_then(|count| count.checked_add(pci_device_count))
@@ -1142,6 +1181,24 @@ fn validate_hardware_authority(manifest: &Manifest<'_>) -> Result<(), ParseError
                 .mmio_region(previous)
                 .ok_or(ParseError::InvalidReference)?;
             if ranges_overlap(region.base, region.length, prior.base, prior.length)? {
+                return Err(ParseError::InvalidReference);
+            }
+            previous += 1;
+        }
+        index += 1;
+    }
+
+    index = 0;
+    while index < manifest.framebuffer_count {
+        let framebuffer = manifest
+            .framebuffer(index)
+            .ok_or(ParseError::InvalidReference)?;
+        let mut previous = 0;
+        while previous < index {
+            let prior = manifest
+                .framebuffer(previous)
+                .ok_or(ParseError::InvalidReference)?;
+            if prior.id == framebuffer.id {
                 return Err(ParseError::InvalidReference);
             }
             previous += 1;
@@ -1344,6 +1401,7 @@ fn validate_manifest(manifest: &Manifest<'_>) -> Result<(), ParseError> {
             OBJECT_NETWORK_PORT if grant.object_index < manifest.network_port_count => {}
             OBJECT_IO_PORT_RANGE if grant.object_index < manifest.io_port_count => {}
             OBJECT_MMIO_REGION if grant.object_index < manifest.mmio_region_count => {}
+            OBJECT_FRAMEBUFFER if grant.object_index < manifest.framebuffer_count => {}
             OBJECT_INTERRUPT_LINE if grant.object_index < manifest.interrupt_line_count => {}
             OBJECT_DMA_REGION if grant.object_index < manifest.dma_region_count => {}
             OBJECT_PCI_DEVICE if grant.object_index < manifest.pci_device_count => {}
@@ -1355,6 +1413,7 @@ fn validate_manifest(manifest: &Manifest<'_>) -> Result<(), ParseError> {
             }
             OBJECT_IO_PORT_RANGE
             | OBJECT_MMIO_REGION
+            | OBJECT_FRAMEBUFFER
             | OBJECT_INTERRUPT_LINE
             | OBJECT_DMA_REGION
             | OBJECT_PCI_DEVICE
@@ -1633,6 +1692,16 @@ fn validate_graph_device_nodes(manifest: &Manifest<'_>) -> Result<(), ParseError
         index += 1;
     }
     index = 0;
+    while index < manifest.framebuffer_count {
+        let object = manifest
+            .framebuffer(index)
+            .ok_or(ParseError::InvalidReference)?;
+        if !graph_has_device_node(manifest, OBJECT_FRAMEBUFFER, object.id) {
+            return Err(ParseError::InvalidGraphRecord);
+        }
+        index += 1;
+    }
+    index = 0;
     while index < manifest.interrupt_line_count {
         let object = manifest
             .interrupt_line(index)
@@ -1707,6 +1776,10 @@ fn graph_object_node_id<'a>(
             .ok_or(ParseError::InvalidReference),
         OBJECT_MMIO_REGION => manifest
             .mmio_region(grant.object_index)
+            .map(|object| object.id)
+            .ok_or(ParseError::InvalidReference),
+        OBJECT_FRAMEBUFFER => manifest
+            .framebuffer(grant.object_index)
             .map(|object| object.id)
             .ok_or(ParseError::InvalidReference),
         OBJECT_INTERRUPT_LINE => manifest
@@ -1901,6 +1974,7 @@ fn validate_object_ref(
         OBJECT_NETWORK_PORT if object_index < manifest.network_port_count => Ok(()),
         OBJECT_IO_PORT_RANGE if object_index < manifest.io_port_count => Ok(()),
         OBJECT_MMIO_REGION if object_index < manifest.mmio_region_count => Ok(()),
+        OBJECT_FRAMEBUFFER if object_index < manifest.framebuffer_count => Ok(()),
         OBJECT_INTERRUPT_LINE if object_index < manifest.interrupt_line_count => Ok(()),
         OBJECT_DMA_REGION if object_index < manifest.dma_region_count => Ok(()),
         OBJECT_PCI_DEVICE if object_index < manifest.pci_device_count => Ok(()),
@@ -1912,6 +1986,7 @@ fn validate_object_ref(
         }
         OBJECT_IO_PORT_RANGE
         | OBJECT_MMIO_REGION
+        | OBJECT_FRAMEBUFFER
         | OBJECT_INTERRUPT_LINE
         | OBJECT_DMA_REGION
         | OBJECT_PCI_DEVICE

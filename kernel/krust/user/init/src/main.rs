@@ -20,13 +20,14 @@ const OFFSET_STATE_VOLUMES: usize = 28;
 const OFFSET_NETWORK_PORTS: usize = 30;
 const OFFSET_IO_PORTS: usize = 32;
 const OFFSET_MMIO_REGIONS: usize = 34;
-const OFFSET_INTERRUPT_LINES: usize = 36;
-const OFFSET_DMA_REGIONS: usize = 38;
-const OFFSET_PCI_DEVICES: usize = 40;
-const OFFSET_VIRTIO_DEVICES: usize = 42;
-const OFFSET_NAMESPACES: usize = 44;
-const OFFSET_VFS_ROOTS: usize = 46;
-const OFFSET_GENERATION_ID: usize = 48;
+const OFFSET_FRAMEBUFFERS: usize = 36;
+const OFFSET_INTERRUPT_LINES: usize = 38;
+const OFFSET_DMA_REGIONS: usize = 40;
+const OFFSET_PCI_DEVICES: usize = 42;
+const OFFSET_VIRTIO_DEVICES: usize = 44;
+const OFFSET_NAMESPACES: usize = 46;
+const OFFSET_VFS_ROOTS: usize = 48;
+const OFFSET_GENERATION_ID: usize = 50;
 const STRING_LEN: usize = graph_abi::STRING_LEN;
 const OFFSET_PARENT_GENERATION_ID: usize = OFFSET_GENERATION_ID + STRING_LEN;
 const GRAPH_HEADER_LEN: usize = 8;
@@ -142,6 +143,7 @@ pub extern "C" fn _start() -> ! {
     let network_ports = read_u16(manifest, OFFSET_NETWORK_PORTS);
     let io_ports = read_u16(manifest, OFFSET_IO_PORTS);
     let mmio_regions = read_u16(manifest, OFFSET_MMIO_REGIONS);
+    let framebuffers = read_u16(manifest, OFFSET_FRAMEBUFFERS);
     let interrupt_lines = read_u16(manifest, OFFSET_INTERRUPT_LINES);
     let dma_regions = read_u16(manifest, OFFSET_DMA_REGIONS);
     let pci_devices = read_u16(manifest, OFFSET_PCI_DEVICES);
@@ -158,6 +160,7 @@ pub extern "C" fn _start() -> ! {
     log_count(b"vertex-init network ports: ", network_ports);
     log_count(b"vertex-init io ports: ", io_ports);
     log_count(b"vertex-init mmio regions: ", mmio_regions);
+    log_count(b"vertex-init framebuffers: ", framebuffers);
     log_count(b"vertex-init interrupt lines: ", interrupt_lines);
     log_count(b"vertex-init dma regions: ", dma_regions);
     log_count(b"vertex-init pci devices: ", pci_devices);
@@ -248,7 +251,11 @@ pub extern "C" fn _start() -> ! {
         order_len,
         &pids,
         parent_generation,
-        interrupt_lines > 0 || dma_regions > 0 || pci_devices > 0 || virtio_devices > 0,
+        framebuffers > 0
+            || interrupt_lines > 0
+            || dma_regions > 0
+            || pci_devices > 0
+            || virtio_devices > 0,
     );
     if bytes_eq(generation, b"gen:hello-0001") {
         run_m69_memory_pressure_gate(

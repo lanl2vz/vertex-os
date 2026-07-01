@@ -26,15 +26,16 @@ pub(crate) use process_runtime::{
 };
 pub use runtime::ScheduleResult;
 pub use runtime_config::{
-    BOOT_OBJECT_DMA_REGION, BOOT_OBJECT_ENDPOINT, BOOT_OBJECT_INTERRUPT_LINE,
-    BOOT_OBJECT_IO_PORT_RANGE, BOOT_OBJECT_MMIO_REGION, BOOT_OBJECT_NAMESPACE,
-    BOOT_OBJECT_NETWORK_PORT, BOOT_OBJECT_PCI_DEVICE, BOOT_OBJECT_STATE, BOOT_OBJECT_STORE,
-    BOOT_OBJECT_TIMER, BOOT_OBJECT_VFS_ROOT, BOOT_OBJECT_VIRTIO_DEVICE, BootDmaRegionConfig,
-    BootEndpointConfig, BootGrantConfig, BootGraphEdgeConfig, BootGraphNodeConfig,
-    BootInterruptLineConfig, BootIoPortRangeConfig, BootMmioRegionConfig, BootModuleConfig,
-    BootNamespaceConfig, BootNamespaceEntryConfig, BootNetworkPortConfig, BootPciDeviceConfig,
-    BootProcessConfig, BootProcessMountConfig, BootRuntimeConfig, BootStateVolumeConfig,
-    BootStoreObjectConfig, BootVfsRootConfig, BootVirtioDeviceConfig,
+    BOOT_OBJECT_DMA_REGION, BOOT_OBJECT_ENDPOINT, BOOT_OBJECT_FRAMEBUFFER,
+    BOOT_OBJECT_INTERRUPT_LINE, BOOT_OBJECT_IO_PORT_RANGE, BOOT_OBJECT_MMIO_REGION,
+    BOOT_OBJECT_NAMESPACE, BOOT_OBJECT_NETWORK_PORT, BOOT_OBJECT_PCI_DEVICE, BOOT_OBJECT_STATE,
+    BOOT_OBJECT_STORE, BOOT_OBJECT_TIMER, BOOT_OBJECT_VFS_ROOT, BOOT_OBJECT_VIRTIO_DEVICE,
+    BootDmaRegionConfig, BootEndpointConfig, BootFramebufferConfig, BootGrantConfig,
+    BootGraphEdgeConfig, BootGraphNodeConfig, BootInterruptLineConfig, BootIoPortRangeConfig,
+    BootMmioRegionConfig, BootModuleConfig, BootNamespaceConfig, BootNamespaceEntryConfig,
+    BootNetworkPortConfig, BootPciDeviceConfig, BootProcessConfig, BootProcessMountConfig,
+    BootRuntimeConfig, BootStateVolumeConfig, BootStoreObjectConfig, BootVfsRootConfig,
+    BootVirtioDeviceConfig,
 };
 pub(crate) use runtime_config::{
     BOOT_PROCESS_MOUNT_BIND, BOOT_PROCESS_MOUNT_READ_ONLY, MAX_BOOT_NAMESPACES,

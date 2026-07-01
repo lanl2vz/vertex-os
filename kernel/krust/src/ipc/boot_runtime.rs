@@ -205,6 +205,15 @@ fn build_boot_config_runtime(
         mmio_index += 1;
     }
 
+    let mut framebuffer_index = 0;
+    while framebuffer_index < config.framebuffer_count {
+        let framebuffer =
+            config.framebuffers[framebuffer_index].ok_or(InitError::InvalidBootManifest)?;
+        runtime.framebuffer_ids[framebuffer_index] =
+            Some(add_boot_framebuffer(runtime, framebuffer.id)?);
+        framebuffer_index += 1;
+    }
+
     let mut irq_index = 0;
     while irq_index < config.interrupt_line_count {
         let line = config.interrupt_lines[irq_index].ok_or(InitError::InvalidBootManifest)?;
@@ -354,6 +363,132 @@ fn build_boot_config_runtime(
     Ok(())
 }
 
+fn add_boot_framebuffer(
+    runtime: &mut RuntimeState,
+    name: &'static str,
+) -> Result<KernelObjectId, InitError> {
+    let framebuffer = limine::primary_framebuffer().ok_or(InitError::InvalidBootManifest)?;
+    validate_boot_framebuffer(framebuffer)?;
+    let length = framebuffer
+        .pitch
+        .checked_mul(framebuffer.height)
+        .ok_or(InitError::InvalidBootManifest)?;
+    let virtual_base = framebuffer.address as u64;
+    let physical_base = framebuffer_physical_base(virtual_base, length)?;
+
+    let id = runtime.objects.add_framebuffer(
+        name,
+        physical_base,
+        length,
+        framebuffer.width,
+        framebuffer.height,
+        framebuffer.pitch,
+        framebuffer.bpp,
+        framebuffer.red_mask_size,
+        framebuffer.red_mask_shift,
+        framebuffer.green_mask_size,
+        framebuffer.green_mask_shift,
+        framebuffer.blue_mask_size,
+        framebuffer.blue_mask_shift,
+    )?;
+    serial::write_str("Boot framebuffer registered: framebuffer=");
+    serial::write_str(name);
+    serial::write_str(" physical=");
+    serial::write_u64_hex(physical_base);
+    serial::write_str(" virtual=");
+    serial::write_u64_hex(virtual_base);
+    serial::write_str(" width=");
+    serial::write_u64_dec(framebuffer.width);
+    serial::write_str(" height=");
+    serial::write_u64_dec(framebuffer.height);
+    serial::write_str(" pitch=");
+    serial::write_u64_dec(framebuffer.pitch);
+    serial::write_str(" bpp=");
+    serial::write_u64_dec(framebuffer.bpp as u64);
+    serial::write_str("\n");
+    Ok(id)
+}
+
+fn validate_boot_framebuffer(framebuffer: &limine::Framebuffer) -> Result<(), InitError> {
+    if framebuffer.address.is_null()
+        || framebuffer.width == 0
+        || framebuffer.height == 0
+        || framebuffer.pitch == 0
+        || framebuffer.bpp != 32
+        || framebuffer.memory_model != 1
+        || framebuffer.red_mask_size != 8
+        || framebuffer.green_mask_size != 8
+        || framebuffer.blue_mask_size != 8
+    {
+        return Err(InitError::InvalidBootManifest);
+    }
+    let bytes_per_pixel = (framebuffer.bpp as u64)
+        .checked_div(8)
+        .ok_or(InitError::InvalidBootManifest)?;
+    let min_pitch = framebuffer
+        .width
+        .checked_mul(bytes_per_pixel)
+        .ok_or(InitError::InvalidBootManifest)?;
+    let length = framebuffer
+        .pitch
+        .checked_mul(framebuffer.height)
+        .ok_or(InitError::InvalidBootManifest)?;
+    if framebuffer.pitch < min_pitch || length == 0 || length > USER_DEVICE_MAPPING_STRIDE {
+        return Err(InitError::InvalidBootManifest);
+    }
+    Ok(())
+}
+
+fn framebuffer_physical_base(virtual_base: u64, length: u64) -> Result<u64, InitError> {
+    if let Some(hhdm_offset) = limine::hhdm_offset()
+        && virtual_base >= hhdm_offset
+    {
+        let candidate = virtual_base
+            .checked_sub(hhdm_offset)
+            .ok_or(InitError::InvalidBootManifest)?;
+        if framebuffer_memmap_covers(candidate, length)? {
+            return Ok(candidate);
+        }
+    }
+
+    let memory_map = limine::memory_map().ok_or(InitError::InvalidBootManifest)?;
+    let mut index = 0;
+    while index < memory_map.entry_count() {
+        if let Some(entry) = memory_map.entry(index)
+            && entry.entry_type == limine::MEMMAP_FRAMEBUFFER
+            && entry.length >= length
+        {
+            return Ok(entry.base);
+        }
+        index += 1;
+    }
+
+    Err(InitError::InvalidBootManifest)
+}
+
+fn framebuffer_memmap_covers(base: u64, length: u64) -> Result<bool, InitError> {
+    let end = base
+        .checked_add(length)
+        .ok_or(InitError::InvalidBootManifest)?;
+    let memory_map = limine::memory_map().ok_or(InitError::InvalidBootManifest)?;
+    let mut index = 0;
+    while index < memory_map.entry_count() {
+        if let Some(entry) = memory_map.entry(index)
+            && entry.entry_type == limine::MEMMAP_FRAMEBUFFER
+        {
+            let entry_end = entry
+                .base
+                .checked_add(entry.length)
+                .ok_or(InitError::InvalidBootManifest)?;
+            if base >= entry.base && end <= entry_end {
+                return Ok(true);
+            }
+        }
+        index += 1;
+    }
+    Ok(false)
+}
+
 fn commit_staging_runtime() {
     unsafe {
         core::ptr::copy_nonoverlapping(
@@ -391,6 +526,7 @@ pub(super) fn validate_boot_config_installable(
     validate_counted_config_entries(&config.network_ports, config.network_port_count)?;
     validate_counted_config_entries(&config.io_ports, config.io_port_count)?;
     validate_counted_config_entries(&config.mmio_regions, config.mmio_region_count)?;
+    validate_counted_config_entries(&config.framebuffers, config.framebuffer_count)?;
     validate_counted_config_entries(&config.interrupt_lines, config.interrupt_line_count)?;
     validate_counted_config_entries(&config.dma_regions, config.dma_region_count)?;
     validate_counted_config_entries(&config.pci_devices, config.pci_device_count)?;
@@ -668,6 +804,7 @@ fn boot_config_object_count(config: &BootRuntimeConfig) -> Option<usize> {
     count = count.checked_add(config.network_port_count)?;
     count = count.checked_add(config.io_port_count)?;
     count = count.checked_add(config.mmio_region_count)?;
+    count = count.checked_add(config.framebuffer_count)?;
     count = count.checked_add(config.interrupt_line_count)?;
     count = count.checked_add(config.dma_region_count)?;
     count = count.checked_add(config.pci_device_count)?;
@@ -698,6 +835,7 @@ fn boot_object_config_ref_valid(
         BOOT_OBJECT_NETWORK_PORT => object_index < config.network_port_count,
         BOOT_OBJECT_IO_PORT_RANGE => object_index < config.io_port_count,
         BOOT_OBJECT_MMIO_REGION => object_index < config.mmio_region_count,
+        BOOT_OBJECT_FRAMEBUFFER => object_index < config.framebuffer_count,
         BOOT_OBJECT_INTERRUPT_LINE => object_index < config.interrupt_line_count,
         BOOT_OBJECT_DMA_REGION => object_index < config.dma_region_count,
         BOOT_OBJECT_PCI_DEVICE => object_index < config.pci_device_count,
@@ -1645,6 +1783,9 @@ pub(super) fn grant_object_id(
         }
         BOOT_OBJECT_MMIO_REGION => {
             runtime.mmio_region_ids[grant.object_index].ok_or(InitError::InvalidBootManifest)
+        }
+        BOOT_OBJECT_FRAMEBUFFER => {
+            runtime.framebuffer_ids[grant.object_index].ok_or(InitError::InvalidBootManifest)
         }
         BOOT_OBJECT_INTERRUPT_LINE => {
             runtime.interrupt_line_ids[grant.object_index].ok_or(InitError::InvalidBootManifest)

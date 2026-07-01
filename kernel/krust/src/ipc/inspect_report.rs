@@ -382,6 +382,7 @@ fn boot_object_kind_label(kind: u16) -> &'static str {
         BOOT_OBJECT_NETWORK_PORT => "network-port",
         BOOT_OBJECT_IO_PORT_RANGE => "io-port",
         BOOT_OBJECT_MMIO_REGION => "mmio-region",
+        BOOT_OBJECT_FRAMEBUFFER => "framebuffer",
         BOOT_OBJECT_INTERRUPT_LINE => "interrupt-line",
         BOOT_OBJECT_DMA_REGION => "dma-region",
         BOOT_OBJECT_PCI_DEVICE => "pci-device",
@@ -896,6 +897,7 @@ fn object_reachable_by_config(runtime: &RuntimeState, object_id: KernelObjectId)
         || id_list_contains(&runtime.network_port_ids, object_id)
         || id_list_contains(&runtime.io_port_ids, object_id)
         || id_list_contains(&runtime.mmio_region_ids, object_id)
+        || id_list_contains(&runtime.framebuffer_ids, object_id)
         || id_list_contains(&runtime.interrupt_line_ids, object_id)
         || id_list_contains(&runtime.dma_region_ids, object_id)
         || id_list_contains(&runtime.pci_device_ids, object_id)
@@ -1112,6 +1114,9 @@ fn graph_node_for_object(runtime: &RuntimeState, object: KernelObjectId) -> Opti
                 KernelObject::MmioRegion(region) if region.id == object => {
                     return Some(region.name);
                 }
+                KernelObject::Framebuffer(framebuffer) if framebuffer.id == object => {
+                    return Some(framebuffer.name);
+                }
                 KernelObject::InterruptLine(line) if line.id == object => {
                     return Some(line.name);
                 }
@@ -1210,6 +1215,11 @@ fn write_capability_object_report(
                 KernelObject::MmioRegion(region) if region.id == object => {
                     report.push_str("mmio-region=");
                     report.push_str(region.name);
+                    return;
+                }
+                KernelObject::Framebuffer(framebuffer) if framebuffer.id == object => {
+                    report.push_str("framebuffer=");
+                    report.push_str(framebuffer.name);
                     return;
                 }
                 KernelObject::InterruptLine(line) if line.id == object => {
@@ -1467,6 +1477,11 @@ fn print_capability_object(object: KernelObjectId) {
                 KernelObject::MmioRegion(region) if region.id == object => {
                     serial::write_str("mmio-region=");
                     serial::write_str(region.name);
+                    return;
+                }
+                KernelObject::Framebuffer(framebuffer) if framebuffer.id == object => {
+                    serial::write_str("framebuffer=");
+                    serial::write_str(framebuffer.name);
                     return;
                 }
                 KernelObject::InterruptLine(line) if line.id == object => {

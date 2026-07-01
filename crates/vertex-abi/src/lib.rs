@@ -153,8 +153,8 @@ pub mod graph {
 }
 
 pub mod krustboot {
-    pub const COMPACT_MAGIC: &[u8; 16] = b"KRUSTBOOTM85\0\0\0\0";
-    pub const COMPACT_VERSION: u16 = 15;
+    pub const COMPACT_MAGIC: &[u8; 16] = b"KRUSTBOOTM86\0\0\0\0";
+    pub const COMPACT_VERSION: u16 = 16;
     pub const V1_MAGIC: &[u8; 16] = b"KRUSTBOOTV1\0\0\0\0\0";
     pub const V1_VERSION: u16 = 1;
     pub const V1_HEADER_SIZE: usize = 164;
@@ -164,10 +164,10 @@ pub mod krustboot {
     pub const V1_PAYLOAD_OFFSET: usize = V1_HEADER_SIZE + V1_RECORD_COUNT * V1_RECORD_SIZE;
 
     pub const GRAPH_HEADER_SIZE: usize = 8;
-    pub const COMPACT_GRAPH_NODE_COUNT_OFFSET: usize = 176;
-    pub const COMPACT_GRAPH_EDGE_COUNT_OFFSET: usize = 178;
-    pub const COMPACT_GRAPH_CHECKSUM_OFFSET: usize = 180;
-    pub const COMPACT_HEADER_SIZE: usize = 176 + GRAPH_HEADER_SIZE;
+    pub const COMPACT_GRAPH_NODE_COUNT_OFFSET: usize = 178;
+    pub const COMPACT_GRAPH_EDGE_COUNT_OFFSET: usize = 180;
+    pub const COMPACT_GRAPH_CHECKSUM_OFFSET: usize = 182;
+    pub const COMPACT_HEADER_SIZE: usize = 178 + GRAPH_HEADER_SIZE;
 }
 
 pub mod vertexdisk {

@@ -30,6 +30,12 @@ const MODULE_REQUEST_ID: [u64; 4] = [
     0x3e7e279702be32af,
     0xca1c4f3bd1280cee,
 ];
+const FRAMEBUFFER_REQUEST_ID: [u64; 4] = [
+    COMMON_MAGIC_0,
+    COMMON_MAGIC_1,
+    0x9d5827dcd881dd75,
+    0xa3148604f6fab11b,
+];
 
 pub const MEMMAP_USABLE: u64 = 0;
 pub const MEMMAP_RESERVED: u64 = 1;
@@ -60,6 +66,10 @@ static HHDM_REQUEST: Request<HhdmResponse> = Request::new(HHDM_REQUEST_ID);
 #[used]
 #[unsafe(link_section = ".requests")]
 static MODULE_REQUEST: ModuleRequest = ModuleRequest::new();
+
+#[used]
+#[unsafe(link_section = ".requests")]
+static FRAMEBUFFER_REQUEST: Request<FramebufferResponse> = Request::new(FRAMEBUFFER_REQUEST_ID);
 
 #[used]
 #[unsafe(link_section = ".requests_end_marker")]
@@ -175,6 +185,34 @@ struct ModuleResponse {
 }
 
 #[repr(C)]
+pub struct Framebuffer {
+    pub address: *mut u8,
+    pub width: u64,
+    pub height: u64,
+    pub pitch: u64,
+    pub bpp: u16,
+    pub memory_model: u8,
+    pub red_mask_size: u8,
+    pub red_mask_shift: u8,
+    pub green_mask_size: u8,
+    pub green_mask_shift: u8,
+    pub blue_mask_size: u8,
+    pub blue_mask_shift: u8,
+    unused: [u8; 7],
+    pub edid_size: u64,
+    pub edid: *const u8,
+    pub mode_count: u64,
+    pub modes: *const *const u8,
+}
+
+#[repr(C)]
+struct FramebufferResponse {
+    revision: u64,
+    framebuffer_count: u64,
+    framebuffers: *const *const Framebuffer,
+}
+
+#[repr(C)]
 struct ModuleRequest {
     id: [u64; 4],
     revision: u64,
@@ -239,6 +277,21 @@ impl Modules {
     }
 }
 
+pub struct Framebuffers {
+    response: &'static FramebufferResponse,
+}
+
+impl Framebuffers {
+    pub fn framebuffer(&self, index: u64) -> Option<&'static Framebuffer> {
+        if index >= self.response.framebuffer_count {
+            return None;
+        }
+
+        let framebuffer_ptr = unsafe { self.response.framebuffers.add(index as usize).read() };
+        unsafe { framebuffer_ptr.as_ref() }
+    }
+}
+
 pub fn base_revision_supported() -> bool {
     BASE_REVISION.is_supported()
 }
@@ -257,6 +310,16 @@ pub fn modules() -> Option<Modules> {
     MODULE_REQUEST
         .response()
         .map(|response| Modules { response })
+}
+
+pub fn framebuffers() -> Option<Framebuffers> {
+    FRAMEBUFFER_REQUEST
+        .response()
+        .map(|response| Framebuffers { response })
+}
+
+pub fn primary_framebuffer() -> Option<&'static Framebuffer> {
+    framebuffers().and_then(|framebuffers| framebuffers.framebuffer(0))
 }
 
 pub fn memmap_type_name(entry_type: u64) -> &'static str {

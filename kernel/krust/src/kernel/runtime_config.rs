@@ -27,6 +27,7 @@ pub const BOOT_OBJECT_PCI_DEVICE: u16 = 10;
 pub const BOOT_OBJECT_VIRTIO_DEVICE: u16 = 11;
 pub const BOOT_OBJECT_NAMESPACE: u16 = 12;
 pub const BOOT_OBJECT_VFS_ROOT: u16 = 13;
+pub const BOOT_OBJECT_FRAMEBUFFER: u16 = 14;
 
 #[derive(Clone, Copy)]
 pub struct BootProcessConfig {
@@ -96,6 +97,11 @@ pub struct BootMmioRegionConfig {
     pub id: &'static str,
     pub base: u64,
     pub length: u64,
+}
+
+#[derive(Clone, Copy)]
+pub struct BootFramebufferConfig {
+    pub id: &'static str,
 }
 
 #[derive(Clone, Copy)]
@@ -192,6 +198,8 @@ pub struct BootRuntimeConfig {
     pub(crate) io_port_count: usize,
     pub(crate) mmio_regions: [Option<BootMmioRegionConfig>; MAX_OBJECTS],
     pub(crate) mmio_region_count: usize,
+    pub(crate) framebuffers: [Option<BootFramebufferConfig>; MAX_OBJECTS],
+    pub(crate) framebuffer_count: usize,
     pub(crate) interrupt_lines: [Option<BootInterruptLineConfig>; MAX_OBJECTS],
     pub(crate) interrupt_line_count: usize,
     pub(crate) dma_regions: [Option<BootDmaRegionConfig>; MAX_OBJECTS],
@@ -271,6 +279,8 @@ impl BootRuntimeConfig {
             io_port_count: 0,
             mmio_regions: [None; MAX_OBJECTS],
             mmio_region_count: 0,
+            framebuffers: [None; MAX_OBJECTS],
+            framebuffer_count: 0,
             interrupt_lines: [None; MAX_OBJECTS],
             interrupt_line_count: 0,
             dma_regions: [None; MAX_OBJECTS],
@@ -306,6 +316,7 @@ impl BootRuntimeConfig {
         self.network_port_count = 0;
         self.io_port_count = 0;
         self.mmio_region_count = 0;
+        self.framebuffer_count = 0;
         self.interrupt_line_count = 0;
         self.dma_region_count = 0;
         self.pci_device_count = 0;
@@ -409,6 +420,15 @@ impl BootRuntimeConfig {
         }
         self.mmio_regions[self.mmio_region_count] = Some(region);
         self.mmio_region_count += 1;
+        Ok(())
+    }
+
+    pub fn add_framebuffer(&mut self, framebuffer: BootFramebufferConfig) -> Result<(), InitError> {
+        if self.framebuffer_count == self.framebuffers.len() {
+            return Err(InitError::ObjectTableFull);
+        }
+        self.framebuffers[self.framebuffer_count] = Some(framebuffer);
+        self.framebuffer_count += 1;
         Ok(())
     }
 
@@ -538,6 +558,7 @@ impl BootRuntimeConfig {
             BOOT_OBJECT_NETWORK_PORT if grant.object_index < self.network_port_count => {}
             BOOT_OBJECT_IO_PORT_RANGE if grant.object_index < self.io_port_count => {}
             BOOT_OBJECT_MMIO_REGION if grant.object_index < self.mmio_region_count => {}
+            BOOT_OBJECT_FRAMEBUFFER if grant.object_index < self.framebuffer_count => {}
             BOOT_OBJECT_INTERRUPT_LINE if grant.object_index < self.interrupt_line_count => {}
             BOOT_OBJECT_DMA_REGION if grant.object_index < self.dma_region_count => {}
             BOOT_OBJECT_PCI_DEVICE if grant.object_index < self.pci_device_count => {}
@@ -551,6 +572,7 @@ impl BootRuntimeConfig {
             | BOOT_OBJECT_NETWORK_PORT
             | BOOT_OBJECT_IO_PORT_RANGE
             | BOOT_OBJECT_MMIO_REGION
+            | BOOT_OBJECT_FRAMEBUFFER
             | BOOT_OBJECT_INTERRUPT_LINE
             | BOOT_OBJECT_DMA_REGION
             | BOOT_OBJECT_PCI_DEVICE

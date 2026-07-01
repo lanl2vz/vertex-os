@@ -38,6 +38,7 @@ pub(super) struct RuntimeState {
     pub(super) network_port_ids: [Option<KernelObjectId>; MAX_OBJECTS],
     pub(super) io_port_ids: [Option<KernelObjectId>; MAX_OBJECTS],
     pub(super) mmio_region_ids: [Option<KernelObjectId>; MAX_OBJECTS],
+    pub(super) framebuffer_ids: [Option<KernelObjectId>; MAX_OBJECTS],
     pub(super) interrupt_line_ids: [Option<KernelObjectId>; MAX_OBJECTS],
     pub(super) dma_region_ids: [Option<KernelObjectId>; MAX_OBJECTS],
     pub(super) pci_device_ids: [Option<KernelObjectId>; MAX_OBJECTS],
@@ -114,6 +115,7 @@ impl RuntimeState {
             network_port_ids: [None; MAX_OBJECTS],
             io_port_ids: [None; MAX_OBJECTS],
             mmio_region_ids: [None; MAX_OBJECTS],
+            framebuffer_ids: [None; MAX_OBJECTS],
             interrupt_line_ids: [None; MAX_OBJECTS],
             dma_region_ids: [None; MAX_OBJECTS],
             pci_device_ids: [None; MAX_OBJECTS],
@@ -225,6 +227,7 @@ impl RuntimeState {
             self.network_port_ids[index] = None;
             self.io_port_ids[index] = None;
             self.mmio_region_ids[index] = None;
+            self.framebuffer_ids[index] = None;
             self.interrupt_line_ids[index] = None;
             self.dma_region_ids[index] = None;
             self.pci_device_ids[index] = None;

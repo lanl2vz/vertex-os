@@ -1399,6 +1399,19 @@ fn build_boot_runtime_config(
     }
 
     index = 0;
+    while index < boot_manifest.framebuffer_count() {
+        let framebuffer = boot_manifest.framebuffer(index)?;
+        if config
+            .add_framebuffer(ipc::BootFramebufferConfig { id: framebuffer.id })
+            .is_err()
+        {
+            serial::write_str("KrustBoot runtime plan failed: framebuffer table\n");
+            return None;
+        }
+        index += 1;
+    }
+
+    index = 0;
     while index < boot_manifest.interrupt_line_count() {
         let line = boot_manifest.interrupt_line(index)?;
         if config
@@ -2570,6 +2583,21 @@ fn print_boot_manifest(manifest: &boot_manifest::Manifest<'static>) {
         index += 1;
     }
 
+    serial::write_str("KrustBoot framebuffers: ");
+    serial::write_u64_dec(manifest.framebuffer_count() as u64);
+    serial::write_str("\n");
+    index = 0;
+    while index < manifest.framebuffer_count() {
+        if let Some(framebuffer) = manifest.framebuffer(index) {
+            serial::write_str("  framebuffer[");
+            serial::write_u64_dec(index as u64);
+            serial::write_str("] id=");
+            serial::write_str(framebuffer.id);
+            serial::write_str("\n");
+        }
+        index += 1;
+    }
+
     serial::write_str("KrustBoot interrupt lines: ");
     serial::write_u64_dec(manifest.interrupt_line_count() as u64);
     serial::write_str("\n");
@@ -2743,6 +2771,15 @@ fn print_boot_grant_object(
                 manifest
                     .mmio_region(object_index)
                     .map(|region| region.id)
+                    .unwrap_or("<bad>"),
+            );
+        }
+        boot_manifest::OBJECT_FRAMEBUFFER => {
+            serial::write_str("framebuffer=");
+            serial::write_str(
+                manifest
+                    .framebuffer(object_index)
+                    .map(|framebuffer| framebuffer.id)
                     .unwrap_or("<bad>"),
             );
         }
@@ -2953,6 +2990,9 @@ fn print_boot_manifest_error(error: boot_manifest::ParseError) {
             serial::write_str("too many io port ranges")
         }
         boot_manifest::ParseError::TooManyMmioRegions => serial::write_str("too many mmio regions"),
+        boot_manifest::ParseError::TooManyFramebuffers => {
+            serial::write_str("too many framebuffers")
+        }
         boot_manifest::ParseError::TooManyInterruptLines => {
             serial::write_str("too many interrupt lines")
         }

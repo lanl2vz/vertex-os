@@ -41,6 +41,7 @@ const STATE_VOLUME_RECORD_LEN: usize = STRING_LEN * 7;
 const NETWORK_PORT_RECORD_LEN: usize = STRING_LEN;
 const IO_PORT_RECORD_LEN: usize = STRING_LEN + 16;
 const MMIO_REGION_RECORD_LEN: usize = STRING_LEN + 16;
+const FRAMEBUFFER_RECORD_LEN: usize = STRING_LEN;
 const INTERRUPT_LINE_RECORD_LEN: usize = STRING_LEN + 8;
 const DMA_REGION_RECORD_LEN: usize = STRING_LEN + 16;
 const PCI_DEVICE_RECORD_LEN: usize = STRING_LEN * 2;
@@ -58,6 +59,7 @@ const MAX_STATE_VOLUMES: usize = 4;
 const MAX_NETWORK_PORTS: usize = 4;
 const MAX_IO_PORT_RANGES: usize = 4;
 const MAX_MMIO_REGIONS: usize = 4;
+const MAX_FRAMEBUFFERS: usize = 1;
 const MAX_INTERRUPT_LINES: usize = 4;
 const MAX_DMA_REGIONS: usize = 4;
 const MAX_PCI_DEVICES: usize = 4;
@@ -103,6 +105,7 @@ const OBJECT_PCI_DEVICE: u16 = 10;
 const OBJECT_VIRTIO_DEVICE: u16 = 11;
 const OBJECT_NAMESPACE: u16 = 12;
 const OBJECT_VFS_ROOT: u16 = 13;
+const OBJECT_FRAMEBUFFER: u16 = 14;
 const RECORD_BOOT_MODULE: u16 = 1;
 const RECORD_PROCESS: u16 = 2;
 const RECORD_ENDPOINT: u16 = 3;
@@ -198,6 +201,7 @@ pub fn compile(manifest: &GenerationManifest) -> Result<Vec<u8>, String> {
     push_count(&mut body, plan.network_ports.len(), "network_ports")?;
     push_count(&mut body, plan.io_ports.len(), "io_ports")?;
     push_count(&mut body, plan.mmio_regions.len(), "mmio_regions")?;
+    push_count(&mut body, plan.framebuffers.len(), "framebuffers")?;
     push_count(&mut body, plan.interrupt_lines.len(), "interrupt_lines")?;
     push_count(&mut body, plan.dma_regions.len(), "dma_regions")?;
     push_count(&mut body, plan.pci_devices.len(), "pci_devices")?;
@@ -278,6 +282,10 @@ pub fn compile(manifest: &GenerationManifest) -> Result<Vec<u8>, String> {
         push_u64(&mut body, region.length);
     }
 
+    for framebuffer in &plan.framebuffers {
+        push_fixed_str(&mut body, &framebuffer.id)?;
+    }
+
     for line in &plan.interrupt_lines {
         push_fixed_str(&mut body, &line.id)?;
         push_u64(&mut body, line.line);
@@ -341,6 +349,7 @@ pub fn summary(manifest: &GenerationManifest, output_path: &str, byte_len: usize
          network_ports: {}\n\
          io_ports: {}\n\
          mmio_regions: {}\n\
+         framebuffers: {}\n\
          interrupt_lines: {}\n\
          dma_regions: {}\n\
          pci_devices: {}\n\
@@ -361,6 +370,7 @@ pub fn summary(manifest: &GenerationManifest, output_path: &str, byte_len: usize
         plan.network_ports.len(),
         plan.io_ports.len(),
         plan.mmio_regions.len(),
+        plan.framebuffers.len(),
         plan.interrupt_lines.len(),
         plan.dma_regions.len(),
         plan.pci_devices.len(),
@@ -589,6 +599,7 @@ struct BootPlan {
     network_ports: Vec<NetworkPort>,
     io_ports: Vec<IoPortRange>,
     mmio_regions: Vec<MmioRegion>,
+    framebuffers: Vec<Framebuffer>,
     interrupt_lines: Vec<InterruptLine>,
     dma_regions: Vec<DmaRegion>,
     pci_devices: Vec<PciDevice>,
@@ -683,6 +694,11 @@ struct MmioRegion {
     id: String,
     base: u64,
     length: u64,
+}
+
+#[derive(Debug, Clone)]
+struct Framebuffer {
+    id: String,
 }
 
 #[derive(Debug, Clone)]
@@ -1012,6 +1028,7 @@ fn derive_plan(manifest: &GenerationManifest) -> Result<BootPlan, String> {
     let mut network_ports = Vec::new();
     let mut io_ports = Vec::new();
     let mut mmio_regions = Vec::new();
+    let mut framebuffers = Vec::new();
     let mut interrupt_lines = Vec::new();
     let mut dma_regions = Vec::new();
     let mut pci_devices = Vec::new();
@@ -1151,6 +1168,20 @@ fn derive_plan(manifest: &GenerationManifest) -> Result<BootPlan, String> {
                         )?,
                     });
                 }
+                "framebuffer" => {
+                    push_unique_framebuffer(&mut framebuffers, manifest, capability)?;
+                    grants.push(Grant {
+                        process: process_name.clone(),
+                        object_kind: OBJECT_FRAMEBUFFER,
+                        object_name: capability.id.clone(),
+                        cap_slot: next_object_cap_slot(&mut next_object_slots, &process_name)?,
+                        rights: rights_mask(
+                            &requirement.rights,
+                            &capability.rights,
+                            &capability.id,
+                        )?,
+                    });
+                }
                 "interrupt-line" => {
                     push_unique_interrupt_line(&mut interrupt_lines, manifest, capability)?;
                     grants.push(Grant {
@@ -1254,6 +1285,7 @@ fn derive_plan(manifest: &GenerationManifest) -> Result<BootPlan, String> {
         network_ports,
         io_ports,
         mmio_regions,
+        framebuffers,
         interrupt_lines,
         dma_regions,
         pci_devices,
@@ -1351,6 +1383,14 @@ fn derive_graph_store(manifest: &GenerationManifest, plan: &mut BootPlan) -> Res
             OBJECT_MMIO_REGION,
             &region.id,
             &region.id,
+        )?;
+    }
+    for framebuffer in &plan.framebuffers {
+        push_graph_device_node(
+            &mut plan.graph_nodes,
+            OBJECT_FRAMEBUFFER,
+            &framebuffer.id,
+            "limine-boot-framebuffer",
         )?;
     }
     for line in &plan.interrupt_lines {
@@ -1983,8 +2023,8 @@ fn object_kind_for_namespace_entry(capability: &vertex_ir::Capability) -> Result
         "store-object" => Ok(OBJECT_STORE),
         "timer" => Ok(OBJECT_TIMER),
         "network-port" => Ok(OBJECT_NETWORK_PORT),
-        "io-port" | "mmio-region" | "interrupt-line" | "dma-region" | "pci-device"
-        | "virtio-device" => Err(format!(
+        "io-port" | "mmio-region" | "framebuffer" | "interrupt-line" | "dma-region"
+        | "pci-device" | "virtio-device" => Err(format!(
             "namespace entries cannot resolve hardware capability kind {}",
             capability.kind
         )),
@@ -2115,9 +2155,8 @@ fn validate_manifest_vfs_path(context: &str, path: &str) -> Result<(), String> {
 fn object_name_for_capability(capability: &vertex_ir::Capability) -> String {
     match capability.kind.as_str() {
         "timer" => "monotonic-timer".to_owned(),
-        "store-object" | "io-port" | "mmio-region" | "interrupt-line" | "dma-region" => {
-            capability.id.clone()
-        }
+        "store-object" | "io-port" | "mmio-region" | "framebuffer" | "interrupt-line"
+        | "dma-region" => capability.id.clone(),
         "ipc-endpoint" => endpoint_name(&capability.id),
         "network-port" | "virtio-device" | "namespace" | "vfs-root" => capability.id.clone(),
         _ => capability.id.clone(),
@@ -2204,6 +2243,49 @@ fn push_unique_mmio_region(
         length: value_u64(&capability.properties, "length")
             .or_else(|| value_u64(&device.selector, "length"))
             .unwrap_or(4096),
+    });
+    Ok(())
+}
+
+fn push_unique_framebuffer(
+    framebuffers: &mut Vec<Framebuffer>,
+    manifest: &GenerationManifest,
+    capability: &vertex_ir::Capability,
+) -> Result<(), String> {
+    if framebuffers
+        .iter()
+        .any(|framebuffer| framebuffer.id == capability.id)
+    {
+        return Ok(());
+    }
+    let device = manifest
+        .devices
+        .iter()
+        .find(|device| device.id == capability.provider)
+        .ok_or_else(|| {
+            format!(
+                "capability {} references unknown framebuffer device {}",
+                capability.id, capability.provider
+            )
+        })?;
+    if device.kind != "framebuffer" {
+        return Err(format!(
+            "framebuffer capability {} provider {} has device kind {}; expected framebuffer",
+            capability.id, device.id, device.kind
+        ));
+    }
+    if value_u64(&capability.properties, "base").is_some()
+        || value_u64(&capability.properties, "length").is_some()
+        || value_u64(&device.selector, "base").is_some()
+        || value_u64(&device.selector, "length").is_some()
+    {
+        return Err(format!(
+            "framebuffer capability {} must not declare base/length; Krust maps the Limine boot framebuffer",
+            capability.id
+        ));
+    }
+    framebuffers.push(Framebuffer {
+        id: capability.id.clone(),
     });
     Ok(())
 }
@@ -2545,6 +2627,11 @@ fn validate_plan(plan: &BootPlan) -> Result<(), String> {
             "native boot plan exceeds {MAX_MMIO_REGIONS} mmio regions"
         ));
     }
+    if plan.framebuffers.len() > MAX_FRAMEBUFFERS {
+        return Err(format!(
+            "native boot plan exceeds {MAX_FRAMEBUFFERS} framebuffers"
+        ));
+    }
     if plan.interrupt_lines.len() > MAX_INTERRUPT_LINES {
         return Err(format!(
             "native boot plan exceeds {MAX_INTERRUPT_LINES} interrupt lines"
@@ -2834,6 +2921,16 @@ fn validate_hardware_authority(plan: &BootPlan) -> Result<(), String> {
                     region.id, previous.id
                 ));
             }
+        }
+    }
+
+    let mut framebuffer_ids = BTreeSet::new();
+    for framebuffer in &plan.framebuffers {
+        if !framebuffer_ids.insert(framebuffer.id.as_str()) {
+            return Err(format!(
+                "duplicate framebuffer capability {}",
+                framebuffer.id
+            ));
         }
     }
 
@@ -3320,6 +3417,13 @@ fn mmio_region_index(plan: &BootPlan, id: &str) -> Result<usize, String> {
         .ok_or_else(|| format!("unknown mmio region {id}"))
 }
 
+fn framebuffer_index(plan: &BootPlan, id: &str) -> Result<usize, String> {
+    plan.framebuffers
+        .iter()
+        .position(|framebuffer| framebuffer.id == id)
+        .ok_or_else(|| format!("unknown framebuffer {id}"))
+}
+
 fn interrupt_line_index(plan: &BootPlan, id: &str) -> Result<usize, String> {
     plan.interrupt_lines
         .iter()
@@ -3368,6 +3472,7 @@ fn object_index_for_kind(
         OBJECT_NETWORK_PORT => network_port_index(plan, object_name),
         OBJECT_IO_PORT_RANGE => io_port_index(plan, object_name),
         OBJECT_MMIO_REGION => mmio_region_index(plan, object_name),
+        OBJECT_FRAMEBUFFER => framebuffer_index(plan, object_name),
         OBJECT_INTERRUPT_LINE => interrupt_line_index(plan, object_name),
         OBJECT_DMA_REGION => dma_region_index(plan, object_name),
         OBJECT_PCI_DEVICE => pci_device_index(plan, object_name),
@@ -3544,6 +3649,7 @@ struct BodySections {
     network_ports: (usize, usize),
     io_ports: (usize, usize),
     mmio_regions: (usize, usize),
+    framebuffers: (usize, usize),
     interrupt_lines: (usize, usize),
     dma_regions: (usize, usize),
     pci_devices: (usize, usize),
@@ -3636,6 +3742,7 @@ fn wrap_v1(manifest: &GenerationManifest, plan: &BootPlan, body: &[u8]) -> Resul
         sections.network_ports.1
             + sections.io_ports.1
             + sections.mmio_regions.1
+            + sections.framebuffers.1
             + sections.interrupt_lines.1
             + sections.dma_regions.1
             + sections.pci_devices.1
@@ -3689,8 +3796,12 @@ impl BodySections {
             io_ports.0 + io_ports.1,
             plan.mmio_regions.len() * MMIO_REGION_RECORD_LEN,
         );
-        let interrupt_lines = (
+        let framebuffers = (
             mmio_regions.0 + mmio_regions.1,
+            plan.framebuffers.len() * FRAMEBUFFER_RECORD_LEN,
+        );
+        let interrupt_lines = (
+            framebuffers.0 + framebuffers.1,
             plan.interrupt_lines.len() * INTERRUPT_LINE_RECORD_LEN,
         );
         let dma_regions = (
@@ -3727,6 +3838,7 @@ impl BodySections {
             network_ports,
             io_ports,
             mmio_regions,
+            framebuffers,
             interrupt_lines,
             dma_regions,
             pci_devices,
@@ -3839,12 +3951,13 @@ fn compact_graph_records_offset(bytes: &[u8]) -> Result<usize, String> {
     let network_ports = read_u16_at(bytes, payload + 30)? as usize;
     let io_ports = read_u16_at(bytes, payload + 32)? as usize;
     let mmio_regions = read_u16_at(bytes, payload + 34)? as usize;
-    let interrupt_lines = read_u16_at(bytes, payload + 36)? as usize;
-    let dma_regions = read_u16_at(bytes, payload + 38)? as usize;
-    let pci_devices = read_u16_at(bytes, payload + 40)? as usize;
-    let virtio_devices = read_u16_at(bytes, payload + 42)? as usize;
-    let namespaces = read_u16_at(bytes, payload + 44)? as usize;
-    let vfs_roots = read_u16_at(bytes, payload + 46)? as usize;
+    let framebuffers = read_u16_at(bytes, payload + 36)? as usize;
+    let interrupt_lines = read_u16_at(bytes, payload + 38)? as usize;
+    let dma_regions = read_u16_at(bytes, payload + 40)? as usize;
+    let pci_devices = read_u16_at(bytes, payload + 42)? as usize;
+    let virtio_devices = read_u16_at(bytes, payload + 44)? as usize;
+    let namespaces = read_u16_at(bytes, payload + 46)? as usize;
+    let vfs_roots = read_u16_at(bytes, payload + 48)? as usize;
 
     let mut offset = payload + COMPACT_HEADER_SIZE;
     offset = checked_advance(offset, boot_modules, BOOT_MODULE_RECORD_LEN)?;
@@ -3856,6 +3969,7 @@ fn compact_graph_records_offset(bytes: &[u8]) -> Result<usize, String> {
     offset = checked_advance(offset, network_ports, NETWORK_PORT_RECORD_LEN)?;
     offset = checked_advance(offset, io_ports, IO_PORT_RECORD_LEN)?;
     offset = checked_advance(offset, mmio_regions, MMIO_REGION_RECORD_LEN)?;
+    offset = checked_advance(offset, framebuffers, FRAMEBUFFER_RECORD_LEN)?;
     offset = checked_advance(offset, interrupt_lines, INTERRUPT_LINE_RECORD_LEN)?;
     offset = checked_advance(offset, dma_regions, DMA_REGION_RECORD_LEN)?;
     offset = checked_advance(offset, pci_devices, PCI_DEVICE_RECORD_LEN)?;
@@ -3985,6 +4099,7 @@ mod tests {
             network_ports: Vec::new(),
             io_ports: Vec::new(),
             mmio_regions: Vec::new(),
+            framebuffers: Vec::new(),
             interrupt_lines: Vec::new(),
             dma_regions: Vec::new(),
             pci_devices: Vec::new(),
