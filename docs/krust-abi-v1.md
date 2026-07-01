@@ -5,7 +5,7 @@ native Krust QEMU/Limine milestone. It is intentionally small and unstable. Its
 current job is to boot native `vertex-init`, create services from verified
 process templates, and enforce explicit process-local capabilities.
 
-Milestone status: ABI v1 now covers the M14-M86 native activation and substrate
+Milestone status: ABI v1 now covers the M14-M87 native activation and substrate
 proof. M25 adds the release gate. M26-M29 add Manifest v1 parsing, capability
 provenance/revocation, typed arena allocation checks, and resource quotas.
 M30-M31 add PIT-backed preemption and user page-fault containment. M32-M36 add
@@ -48,8 +48,10 @@ schema, storage, migration, retention, and sharing policy. M86 keeps the
 `KRUSTBOOTM86` identity and updates the strict compact payload to version 19
 with a hashed native policy section used to reject unauthorized grants,
 state-path changes, bootstrap authority drift, and namespace authority during
-boot and generation activation. The ABI is still intentionally small, but this
-subset is the current native contract.
+boot and generation activation. M87 adds operator graph-shell report facts and
+`SYS_MARK_KNOWN_GOOD` for generation-manager-verified active generations. The
+ABI is still intentionally small, but this subset is the current native
+contract.
 
 ## Machine ABI
 
@@ -164,6 +166,7 @@ process frame, switch CR3, and return into another userspace process through
 | 72 | `SYS_VERIFY_GENERATION` | `arg0 = process_control_cap_slot`, `arg1 = generation_ptr`, `arg2 = len` | status |
 | 73 | `SYS_STAGE_GENERATION` | `arg0 = process_control_cap_slot`, `arg1 = generation_ptr`, `arg2 = len` | status |
 | 74 | `SYS_STAGE_ROLLBACK_GENERATION` | `arg0 = process_control_cap_slot`, `arg1 = generation_ptr`, `arg2 = len` | status |
+| 78 | `SYS_MARK_KNOWN_GOOD` | `arg0 = process_control_cap_slot`, `arg1 = generation_ptr`, `arg2 = len` | status |
 
 ## Return Status Values
 
@@ -337,7 +340,9 @@ to the provider and attenuates its local cap to `receive` before waiting.
 The native activation path uses the same rule:
 
 ```text
-SYS_BOOT_READ requires cap[0] read rights to the manifest boot module.
+SYS_BOOT_READ requires cap[0] read rights to the manifest boot module and
+copies only a complete boot module into a caller-provided buffer of at most
+128 KiB.
 SYS_LOG_WRITE requires cap[1] send rights to the serial-log endpoint.
 SYS_ACTIVATE_GENERATION requires caller-supplied control and revoke rights to
 process-control. If a matching staged runtime exists, activation enters that
@@ -353,6 +358,10 @@ failed-generation status for a registered native generation. SYS_STAGE_GENERATIO
 builds the requested runtime and records it as pending without committing durable
 selected-generation metadata. SYS_STAGE_ROLLBACK_GENERATION builds the prepared
 rollback runtime and records it as pending without entering it.
+SYS_MARK_KNOWN_GOOD requires control and revoke authority on process-control,
+accepts only a registered generation that is also the active runtime generation,
+revalidates manifest hash/store closure/installability, and then marks that
+generation as known-good in native boot-manager state.
 SYS_RUNTIME_INSPECT requires inspect rights on process-control.
 SYS_CAP_TRANSFER requires a caller-supplied process-control cap slot and applies the packed rights mask.
 SYS_ENDPOINT_CREATE requires allocate rights on process-control and available endpoint quota.
@@ -899,6 +908,27 @@ denials from the compact policy parser and the runtime installable-generation
 gate with generation, policy hash, source, target, rule, and reason. Unknown
 policy versions, malformed policy hashes, and graph-consistent but
 policy-excess grants are rejected without a legacy fallback.
+
+M87 adds generation-scoped operator facts to `SYS_RUNTIME_INSPECT`. These lines
+are consumed by `console-shell` operator commands and are treated as structured
+native report records:
+
+```text
+operator-report v=1 active=<generation> registered=<n> policy_hash=<hash> graph_hash=<hash>
+operator-generation[...] id=<generation> active=<yes|no> selected=<yes|no> previous=<yes|no> known_good=<yes|no> policy_hash=<hash> graph_hash=<hash> services=<n> capabilities=<n> states=<n> devices=<n> packages=0 package_facts=absent
+operator-service[...] generation=<generation> id=<service> process=<process> restart=<policy> mount_root=<path>
+operator-node[...] generation=<generation> kind=<kind> id=<id> object_kind=<kind> label=<label>
+operator-edge[...] generation=<generation> kind=<kind> id=<id> from=<node> to=<node> rights=<rights>
+operator-capability[...] generation=<generation> id=<capability> provider=<service> object_kind=<kind> object=<object> rights=<rights>
+operator-requirement[...] generation=<generation> service=<service> capability=<capability> rights=<rights>
+operator-state[...] generation=<generation> id=<state> owner=<service> schema=<schema> storage=<class> migration=<policy> retention=<policy> sharing=<policy>
+operator-state-path[...] generation=<generation> service=<service> state=<state> root=<path> rights=<rights>
+```
+
+The operator shell treats these as structured records: generation deltas report
+added, removed, and same-ID changed service, capability, state, and device
+records, and `why` binds a policy capability to a live non-revoked runtime cap
+with the same `graph_target`.
 
 M82 also extends the native VertexDisk image with a required graph-store object
 section. That section carries `VDISKGRAPHV0`, generation identity, node/edge

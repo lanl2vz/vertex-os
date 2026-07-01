@@ -8,6 +8,7 @@ pub(super) fn build_inspect_report(runtime: &RuntimeState, report: &mut InspectR
     write_generation_manager_report(report);
     write_graph_store_report(runtime, report);
     write_policy_validation_report(runtime, report);
+    write_operator_report(runtime, report);
     write_state_policy_report(runtime, report);
     report.push_str("processes=");
     report.push_u64_dec(runtime.processes.count as u64);
@@ -385,6 +386,248 @@ fn write_policy_denial_report(report: &mut InspectReport) {
     }
 }
 
+fn write_operator_report(runtime: &RuntimeState, report: &mut InspectReport) {
+    let manager = boot_manager_state();
+    report.push_str("operator-report v=1 active=");
+    report.push_str(runtime.generation_id);
+    report.push_str(" registered=");
+    report.push_u64_dec(registered_generation_count() as u64);
+    if let Some(config) = runtime.active_config {
+        report.push_str(" policy_hash=");
+        report.push_bytes(&config.policy_hash);
+        report.push_str(" graph_hash=");
+        report.push_bytes(&config.graph_store_hash);
+    } else {
+        report.push_str(" policy_hash=<none> graph_hash=<none>");
+    }
+    report.push_byte(b'\n');
+
+    let mut generation_index = 0;
+    while generation_index < registered_generation_count() {
+        if let Some(config) = registered_generation_config_at(generation_index) {
+            write_operator_generation_report(
+                runtime,
+                report,
+                manager,
+                generation_index,
+                config,
+            );
+        }
+        generation_index += 1;
+    }
+}
+
+fn write_operator_generation_report(
+    runtime: &RuntimeState,
+    report: &mut InspectReport,
+    manager: &BootManagerState,
+    generation_index: usize,
+    config: &BootRuntimeConfig,
+) {
+    report.push_str("operator-generation[");
+    report.push_u64_dec(generation_index as u64);
+    report.push_str("] id=");
+    report.push_str(config.generation_id);
+    report.push_str(" active=");
+    write_yes_no(report, config.generation_id == runtime.generation_id);
+    report.push_str(" selected=");
+    write_yes_no(report, config.generation_id == manager.selected_generation);
+    report.push_str(" previous=");
+    write_yes_no(report, config.generation_id == manager.previous_generation);
+    report.push_str(" known_good=");
+    write_yes_no(report, config.generation_id == manager.known_good_generation);
+    report.push_str(" policy_hash=");
+    report.push_bytes(&config.policy_hash);
+    report.push_str(" graph_hash=");
+    report.push_bytes(&config.graph_store_hash);
+    report.push_str(" services=");
+    report.push_u64_dec(graph_node_kind_count(config, GRAPH_NODE_SERVICE));
+    report.push_str(" capabilities=");
+    report.push_u64_dec(config.policy_capability_count as u64);
+    report.push_str(" states=");
+    report.push_u64_dec(config.state_volume_count as u64);
+    report.push_str(" devices=");
+    report.push_u64_dec(operator_device_count(config));
+    report.push_str(" packages=0 package_facts=absent");
+    report.push_byte(b'\n');
+
+    let mut index = 0;
+    while index < config.process_count {
+        if let Some(process) = config.processes[index] {
+            report.push_str("operator-service[");
+            report.push_u64_dec(generation_index as u64);
+            report.push_str(".");
+            report.push_u64_dec(index as u64);
+            report.push_str("] generation=");
+            report.push_str(config.generation_id);
+            report.push_str(" id=");
+            report.push_str(process.graph_node);
+            report.push_str(" process=");
+            report.push_str(process.name);
+            report.push_str(" restart=");
+            report.push_str(restart_policy_label(process.restart_policy));
+            report.push_str(" mount_root=");
+            report.push_str(process.mount_root);
+            report.push_byte(b'\n');
+        }
+        index += 1;
+    }
+
+    index = 0;
+    while index < config.graph_node_count {
+        if let Some(node) = config.graph_nodes[index] {
+            report.push_str("operator-node[");
+            report.push_u64_dec(generation_index as u64);
+            report.push_str(".");
+            report.push_u64_dec(index as u64);
+            report.push_str("] generation=");
+            report.push_str(config.generation_id);
+            report.push_str(" kind=");
+            report.push_str(graph_node_kind_label(node.kind));
+            report.push_str(" id=");
+            report.push_str(node.id);
+            report.push_str(" object_kind=");
+            report.push_str(boot_object_kind_label(node.object_kind));
+            report.push_str(" label=");
+            report.push_str(node.label);
+            report.push_byte(b'\n');
+        }
+        index += 1;
+    }
+
+    index = 0;
+    while index < config.graph_edge_count {
+        if let Some(edge) = config.graph_edges[index] {
+            report.push_str("operator-edge[");
+            report.push_u64_dec(generation_index as u64);
+            report.push_str(".");
+            report.push_u64_dec(index as u64);
+            report.push_str("] generation=");
+            report.push_str(config.generation_id);
+            report.push_str(" kind=");
+            report.push_str(graph_edge_kind_label(edge.kind));
+            report.push_str(" id=");
+            report.push_str(edge.id);
+            report.push_str(" from=");
+            report.push_str(graph_node_id(config, edge.from_index));
+            report.push_str(" to=");
+            report.push_str(graph_node_id(config, edge.to_index));
+            report.push_str(" rights=");
+            write_rights_report(report, edge.rights);
+            report.push_byte(b'\n');
+        }
+        index += 1;
+    }
+
+    index = 0;
+    while index < config.policy_capability_count {
+        if let Some(capability) = config.policy_capabilities[index] {
+            report.push_str("operator-capability[");
+            report.push_u64_dec(generation_index as u64);
+            report.push_str(".");
+            report.push_u64_dec(index as u64);
+            report.push_str("] generation=");
+            report.push_str(config.generation_id);
+            report.push_str(" id=");
+            report.push_str(capability.id);
+            report.push_str(" provider=");
+            report.push_str(capability.provider);
+            report.push_str(" object_kind=");
+            report.push_str(boot_object_kind_label(capability.object_kind));
+            report.push_str(" object=");
+            report.push_str(boot_policy_object_id(
+                config,
+                capability.object_kind,
+                capability.object_index,
+            ));
+            report.push_str(" rights=");
+            write_rights_report(report, capability.rights);
+            report.push_byte(b'\n');
+        }
+        index += 1;
+    }
+
+    index = 0;
+    while index < config.policy_requirement_count {
+        if let Some(requirement) = config.policy_requirements[index] {
+            report.push_str("operator-requirement[");
+            report.push_u64_dec(generation_index as u64);
+            report.push_str(".");
+            report.push_u64_dec(index as u64);
+            report.push_str("] generation=");
+            report.push_str(config.generation_id);
+            report.push_str(" service=");
+            report.push_str(requirement.service);
+            report.push_str(" capability=");
+            report.push_str(requirement.capability);
+            report.push_str(" rights=");
+            write_rights_report(report, requirement.rights);
+            report.push_byte(b'\n');
+        }
+        index += 1;
+    }
+
+    index = 0;
+    while index < config.state_volume_count {
+        if let Some(state) = config.state_volumes[index] {
+            report.push_str("operator-state[");
+            report.push_u64_dec(generation_index as u64);
+            report.push_str(".");
+            report.push_u64_dec(index as u64);
+            report.push_str("] generation=");
+            report.push_str(config.generation_id);
+            report.push_str(" id=");
+            report.push_str(state.id);
+            report.push_str(" owner=");
+            report.push_str(state.owner);
+            report.push_str(" schema=");
+            report.push_str(state.schema_version);
+            report.push_str(" storage=");
+            report.push_str(state.storage_class);
+            report.push_str(" migration=");
+            report.push_str(state.migration_policy);
+            report.push_str(" retention=");
+            report.push_str(state.retention_policy);
+            report.push_str(" sharing=");
+            report.push_str(state.sharing_policy);
+            report.push_byte(b'\n');
+        }
+        index += 1;
+    }
+
+    index = 0;
+    while index < config.policy_state_path_count {
+        if let Some(path) = config.policy_state_paths[index] {
+            report.push_str("operator-state-path[");
+            report.push_u64_dec(generation_index as u64);
+            report.push_str(".");
+            report.push_u64_dec(index as u64);
+            report.push_str("] generation=");
+            report.push_str(config.generation_id);
+            report.push_str(" service=");
+            report.push_str(path.service);
+            report.push_str(" state=");
+            report.push_str(path.state);
+            report.push_str(" root=");
+            report.push_str(path.root);
+            report.push_str(" rights=");
+            write_rights_report(report, path.rights);
+            report.push_byte(b'\n');
+        }
+        index += 1;
+    }
+}
+
+fn operator_device_count(config: &BootRuntimeConfig) -> u64 {
+    graph_node_kind_count(config, GRAPH_NODE_DEVICE)
+        + config.io_port_count as u64
+        + config.mmio_region_count as u64
+        + config.interrupt_line_count as u64
+        + config.dma_region_count as u64
+        + config.pci_device_count as u64
+        + config.virtio_device_count as u64
+}
+
 fn graph_node_kind_count(config: &BootRuntimeConfig, kind: u16) -> u64 {
     let mut count = 0;
     let mut index = 0;
@@ -452,6 +695,53 @@ fn boot_object_kind_label(kind: u16) -> &'static str {
         BOOT_OBJECT_NAMESPACE => "namespace",
         BOOT_OBJECT_VFS_ROOT => "vfs-root",
         _ => "unknown",
+    }
+}
+
+fn boot_policy_object_id(config: &BootRuntimeConfig, object_kind: u16, index: usize) -> &'static str {
+    match object_kind {
+        BOOT_OBJECT_ENDPOINT if index < config.endpoint_count => {
+            config.endpoints[index].map_or("<invalid>", |object| object.name)
+        }
+        BOOT_OBJECT_STORE if index < config.store_object_count => {
+            config.store_objects[index].map_or("<invalid>", |object| object.id)
+        }
+        BOOT_OBJECT_STATE if index < config.state_volume_count => {
+            config.state_volumes[index].map_or("<invalid>", |object| object.id)
+        }
+        BOOT_OBJECT_TIMER if index == 0 => "monotonic-timer",
+        BOOT_OBJECT_NETWORK_PORT if index < config.network_port_count => {
+            config.network_ports[index].map_or("<invalid>", |object| object.id)
+        }
+        BOOT_OBJECT_IO_PORT_RANGE if index < config.io_port_count => {
+            config.io_ports[index].map_or("<invalid>", |object| object.id)
+        }
+        BOOT_OBJECT_MMIO_REGION if index < config.mmio_region_count => {
+            config.mmio_regions[index].map_or("<invalid>", |object| object.id)
+        }
+        BOOT_OBJECT_FRAMEBUFFER if index < config.framebuffer_count => {
+            config.framebuffers[index].map_or("<invalid>", |object| object.id)
+        }
+        BOOT_OBJECT_INTERRUPT_LINE if index < config.interrupt_line_count => {
+            config.interrupt_lines[index].map_or("<invalid>", |object| object.id)
+        }
+        BOOT_OBJECT_DMA_REGION if index < config.dma_region_count => {
+            config.dma_regions[index].map_or("<invalid>", |object| object.id)
+        }
+        BOOT_OBJECT_PCI_DEVICE if index < config.pci_device_count => {
+            config.pci_devices[index].map_or("<invalid>", |object| object.id)
+        }
+        BOOT_OBJECT_VIRTIO_DEVICE if index < config.virtio_device_count => {
+            config.virtio_devices[index].map_or("<invalid>", |object| object.id)
+        }
+        BOOT_OBJECT_NAMESPACE if index < config.namespace_count => {
+            config.namespaces[index].map_or("<invalid>", |object| object.id)
+        }
+        BOOT_OBJECT_VFS_ROOT if index < config.vfs_root_count => {
+            config.vfs_roots[index].map_or("<invalid>", |object| object.id)
+        }
+        BOOT_OBJECT_SECRET if index == 0 => "secret:logd-token",
+        _ => "<invalid>",
     }
 }
 

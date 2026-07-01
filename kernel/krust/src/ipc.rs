@@ -111,10 +111,14 @@ use device_syscalls::{
 pub use endpoint::run_fifo_regression;
 pub use generation::{
     activate_generation, generation_config_by_id, install_generation_recovery,
-    register_generation_config, rollback_generation, set_failed_generation_id,
+    mark_known_good_generation, register_generation_config, rollback_generation,
+    set_failed_generation_id,
     set_rollback_boot_config, stage_generation, stage_rollback_generation, verify_generation,
 };
-use generation::{boot_manager, boot_manager_state, store_hash_matches};
+use generation::{
+    boot_manager, boot_manager_state, registered_generation_config_at, registered_generation_count,
+    store_hash_matches, BootManagerState,
+};
 use inspect_report::{
     build_inspect_report, inspect_report, object_reachable_by_cap, print_boot_tables,
     print_negative, print_process_by_pid, print_rights, process_name_by_pid,
@@ -160,7 +164,7 @@ pub use vfs_syscalls::{
     vfs_rename, vfs_rmdir, vfs_seek, vfs_stat, vfs_sync, vfs_unlink, vfs_unlock, vfs_unmount,
     vfs_watch, vfs_write,
 };
-const MAX_BOOT_READ_BYTES: usize = 64 * 1024;
+const MAX_BOOT_READ_BYTES: usize = 128 * 1024;
 const MAX_VFS_NODES: usize = 96;
 const MAX_VFS_MEM_FILES: usize = 8;
 const BLOCK_PROTOCOL_V1: u16 = 1;

@@ -1022,6 +1022,86 @@ reason=no-policy-edge
 Native introspection service ok
 '
 	        ;;
+	    m87|operator-graph-shell)
+		        MANIFEST="$ROOT_DIR/examples/krust-console-generation.vertex.json"
+		        FALLBACK_MANIFEST="$ROOT_DIR/examples/krust-console-new-generation.vertex.json"
+	        EXPECT_ACTIVATION_SUCCESS=1
+	        USE_SERIAL_PIPE=1
+	        SERIAL_INPUT_DELAYED=1
+	        SERIAL_INPUT_DELAY_SECONDS=6
+	        QEMU_ATTEMPTS=${QEMU_M87_ATTEMPTS:-150}
+	        SERIAL_INPUT='current-generation
+	generations
+	generation-status
+	diff-generation gen:console-0001 gen:console-new-0002
+	planned-authority-delta gen:console-0001 gen:console-new-0002
+	why svc:echo-server cap:log.sink
+	who-can state:counter
+	which-generation svc:console-shell
+	package-list
+	activation-log
+	mark-known-good gen:console-0001
+	activate gen:console-new-0002
+	current-generation
+	rollback gen:console-0001
+	generation-status
+	halt
+	'
+	        required_lines='
+	Boot generation: gen:console-0001
+	generation-manager ready
+	Vertex shell ready
+	console-driver forwarded serial command: current-generation
+	operator current-generation generation=gen:console-0001
+	console-driver forwarded serial command: generations
+	operator-generation[0] id=gen:console-0001 active=yes
+	operator-generation[1] id=gen:console-new-0002 active=no
+	operator generations listed=2
+	console-driver forwarded serial command: generation-status
+	operator generation-status selected=gen:console-0001
+	console-driver forwarded serial command: diff-generation gen:console-0001 gen:console-new-0002
+	operator diff-generation from=gen:console-0001 to=gen:console-new-0002 services=+0-0 changed_services=0
+	capabilities=+0-0 changed_capabilities=0
+	changed_state=0 devices=+0-0 changed_devices=0
+	console-driver forwarded serial command: planned-authority-delta gen:console-0001 gen:console-new-0002
+	operator planned-authority-delta from=gen:console-0001 to=gen:console-new-0002 capabilities=+0-0 changed_capabilities=0
+	console-driver forwarded serial command: why svc:echo-server cap:log.sink
+	operator why service=svc:echo-server capability=cap:log.sink provider=svc:logd rights=send
+	console-driver forwarded serial command: who-can state:counter
+	operator who-can object=state:counter writer_count=
+	console-driver forwarded serial command: which-generation svc:console-shell
+	operator which-generation selector=svc:console-shell process=console-shell generation=gen:console-0001
+	console-driver forwarded serial command: package-list
+	operator package-list unavailable: no native package facts
+	console-driver forwarded serial command: activation-log
+	operator activation-log records=
+	console-driver forwarded serial command: mark-known-good gen:console-0001
+	operator mark-known-good queues generation-manager command: generation=gen:console-0001
+	generation-manager mark-known-good committed: generation=gen:console-0001
+	Native mark-known-good accepted: generation=gen:console-0001
+	console-driver forwarded serial command: activate gen:console-new-0002
+	operator activate queues generation-manager install: generation=gen:console-new-0002
+	generation-manager install candidate from native graph-store: generation=gen:console-new-0002
+	Krust generation switch accepted: from=gen:console-0001 to=gen:console-new-0002
+	Krust generation switch entering generation: gen:console-new-0002
+	Boot generation: gen:console-new-0002
+	operator current-generation generation=gen:console-new-0002
+	console-driver forwarded serial command: rollback gen:console-0001
+	operator rollback queues generation-manager rollback: generation=gen:console-0001
+	generation-manager transaction rollback prepare: target=gen:console-0001
+	Krust rollback generation accepted: target=gen:console-0001
+	Krust rollback entering generation: gen:console-0001
+	Boot generation: gen:console-0001
+	operator generation-status selected=gen:console-0001
+	console-driver forwarded serial command: halt
+	Native console shell ok
+	'
+	        case_forbidden_lines='
+	operator rejected:
+	operator mark-known-good rejected:
+	generation-manager mark-known-good abort:
+	'
+	        ;;
 	    m55|driver-framework)
         MANIFEST="$ROOT_DIR/examples/hello-generation.vertex.json"
         EXPECT_ACTIVATION_SUCCESS=1
@@ -1827,7 +1907,7 @@ KrustBoot manifest unavailable
 '
         ;;
     *)
-        echo "usage: scripts/krust-test.sh <m13|m14|valid-activation|manifest-cycle|bad-cap|readiness|readiness-timeout|rollback|store-state-services|timer|preemption|m30|user-fault|m31|restart|manifest-v1|cap-lifecycle|typed-arenas|quotas|m32|io-substrate|m33|serial-driver|m34|block-driver|m35|store-service|m36|state-service|m37|generation-switch|m38|introspection|m40|directed-ipc|m41|console-shell|m42|virtio-block|m42-driver-fault|block-driver-fault|m43|vertexdisk|m43-bad-superblock|vertexdisk-bad-superblock|m44|boot-manager|m45|store-verification|m46|native-update|m47|store-executables|m47-corrupt-executable|store-executable-corruption|m48|dynamic-process|m49|config-objects|m49-config-corrupt|config-hash-mismatch|m50|secrets|m54|appliance|m55|driver-framework|m56|virtio-device-stack|m57|networking-v0|m59|namespace-service|m60|policy-typed|m61|abi-authority-hardening|m62|storage-durability|m62-journal-replay|storage-journal-replay|m62-corrupt-journal|storage-corrupt-journal|m63|network-boundary|m64|supervisor-lifecycle|m66|memory-lifecycle|m67|address-space-teardown|m68|failure-atomicity|m69|memory-pressure|m70|interrupt-routing|m71|dma-ownership|m72|virtio-recovery|m73|device-fault-gate|m75|vfs-blocking|m76|directory-metadata|m77|cache-writeback|m78|vertexfs-v1|m78-bad-superblock|vertexfs-bad-superblock|m78-journal-replay|vertexfs-journal-replay|m78-journal-checkpoint-after-journal|vertexfs-journal-checkpoint-after-journal|m78-journal-checkpoint-after-data|vertexfs-journal-checkpoint-after-data|m78-journal-checkpoint-after-inode|vertexfs-journal-checkpoint-after-inode|m78-post-sync-remount|vertexfs-post-sync-remount|m78-fsync-fault|vertexfs-fsync-fault|m79|mount-namespaces|m80|vfs-coordination|m81|vfs-crash-security-soak|m82|native-graph-store|m82-vertexdisk-graph-corrupt|vertexdisk-graph-store-corrupt|m83|generation-manager|m83-hostless|generation-manager-hostless|m83-power-prepare|m83-power-commit|m83-power-rollback|m84|package-import|m85|state-migration|m86|native-policy-validation|m86-policy-denial-report|policy-denial-report|manifest-truncated|manifest-bad-magic|manifest-raw-compact|manifest-old-compact-magic|manifest-graph-store-checksum|manifest-graph-store-record|manifest-unsupported-version|manifest-oob-record|manifest-missing-provider|manifest-policy-version|manifest-policy-hash|manifest-policy-excess-grant|manifest-policy-mount-root|manifest-policy-state-root>" >&2
+        echo "usage: scripts/krust-test.sh <m13|m14|valid-activation|manifest-cycle|bad-cap|readiness|readiness-timeout|rollback|store-state-services|timer|preemption|m30|user-fault|m31|restart|manifest-v1|cap-lifecycle|typed-arenas|quotas|m32|io-substrate|m33|serial-driver|m34|block-driver|m35|store-service|m36|state-service|m37|generation-switch|m38|introspection|m40|directed-ipc|m41|console-shell|m42|virtio-block|m42-driver-fault|block-driver-fault|m43|vertexdisk|m43-bad-superblock|vertexdisk-bad-superblock|m44|boot-manager|m45|store-verification|m46|native-update|m47|store-executables|m47-corrupt-executable|store-executable-corruption|m48|dynamic-process|m49|config-objects|m49-config-corrupt|config-hash-mismatch|m50|secrets|m54|appliance|m55|driver-framework|m56|virtio-device-stack|m57|networking-v0|m59|namespace-service|m60|policy-typed|m61|abi-authority-hardening|m62|storage-durability|m62-journal-replay|storage-journal-replay|m62-corrupt-journal|storage-corrupt-journal|m63|network-boundary|m64|supervisor-lifecycle|m66|memory-lifecycle|m67|address-space-teardown|m68|failure-atomicity|m69|memory-pressure|m70|interrupt-routing|m71|dma-ownership|m72|virtio-recovery|m73|device-fault-gate|m75|vfs-blocking|m76|directory-metadata|m77|cache-writeback|m78|vertexfs-v1|m78-bad-superblock|vertexfs-bad-superblock|m78-journal-replay|vertexfs-journal-replay|m78-journal-checkpoint-after-journal|vertexfs-journal-checkpoint-after-journal|m78-journal-checkpoint-after-data|vertexfs-journal-checkpoint-after-data|m78-journal-checkpoint-after-inode|vertexfs-journal-checkpoint-after-inode|m78-post-sync-remount|vertexfs-post-sync-remount|m78-fsync-fault|vertexfs-fsync-fault|m79|mount-namespaces|m80|vfs-coordination|m81|vfs-crash-security-soak|m82|native-graph-store|m82-vertexdisk-graph-corrupt|vertexdisk-graph-store-corrupt|m83|generation-manager|m83-hostless|generation-manager-hostless|m83-power-prepare|m83-power-commit|m83-power-rollback|m84|package-import|m85|state-migration|m86|native-policy-validation|m86-policy-denial-report|policy-denial-report|m87|operator-graph-shell|manifest-truncated|manifest-bad-magic|manifest-raw-compact|manifest-old-compact-magic|manifest-graph-store-checksum|manifest-graph-store-record|manifest-unsupported-version|manifest-oob-record|manifest-missing-provider|manifest-policy-version|manifest-policy-hash|manifest-policy-excess-grant|manifest-policy-mount-root|manifest-policy-state-root>" >&2
         exit 2
         ;;
 esac

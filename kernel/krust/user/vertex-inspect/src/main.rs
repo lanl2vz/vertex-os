@@ -7,7 +7,7 @@ use core::{cell::UnsafeCell, panic::PanicInfo};
 
 const CAP_INSPECT: u64 = 0;
 const CAP_SERIAL_LOG: u64 = 1;
-const REPORT_BUFFER_LEN: usize = 128 * 1024;
+const REPORT_BUFFER_LEN: usize = 256 * 1024;
 const STRING_LEN: usize = 64;
 
 struct ReportBuffer(UnsafeCell<[u8; REPORT_BUFFER_LEN]>);

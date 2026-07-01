@@ -7,7 +7,7 @@ runtime layered over a host kernel.
 
 ## Status Summary
 
-Current status: M14-M86 are implemented and smoke-tested under
+Current status: M14-M87 are implemented and smoke-tested under
 `qemu-system-x86_64` with Limine. The current tree has an image-backed VertexFS
 v1 mount, a strict VertexDisk v1 section carrying the current VertexFS image,
 fixed journal replay, kernel-owned device-backed fsync transactions,
@@ -73,6 +73,11 @@ capability grants and service namespace authority before boot/runtime
 activation, reports the accepted policy hash plus a bounded native denial ring
 through runtime inspection, and rejects unknown policy versions or
 graph-consistent policy-excess payloads.
+M87 adds a native operator graph shell over the console command path, using
+runtime inspect graph/policy facts to answer current-generation, generation
+status, generation diff, authority delta, `why`, `who-can`, package-list,
+activation-log, mark-known-good, activate, and rollback commands without
+falling back to transcript guesses.
 
 M74-M82 are implemented as the current VFS, open-file, directory, block-cache,
 VertexFS/mount-namespace, coordination, and security/soak substrate. The
@@ -93,9 +98,11 @@ journals, checkpoint remount verification, fsync faults, live-handle revocation
 semantics, a 100-cycle VFS churn probe, native graph-store checksum rejection,
 invalid graph-record rejection, and native package closure import through
 generation-manager activation/rollback, plus M85 state migration,
-bad-migration rollback, sharing-policy, retention, state-health reporting, and
-M86 native policy validation with grant and mount-root tamper rejection plus
-inspectable policy-denial records.
+bad-migration rollback, sharing-policy, retention, state-health reporting, M86
+native policy validation with grant and mount-root tamper rejection plus
+inspectable policy-denial records, and M87 operator graph-shell commands with
+policy-provenance answers plus generic generation-manager activation and
+rollback.
 General vnode page cache integration, broader synthetic/device filesystem
 breadth, durable graph-store mutation, and durable policy-denial history
 remain later work.
@@ -171,6 +178,7 @@ scripts/krust-test.sh m83-power-rollback
 scripts/krust-test.sh m84
 scripts/krust-test.sh m85
 scripts/krust-test.sh m86
+scripts/krust-test.sh m87
 scripts/krust-test.sh manifest-policy-version
 scripts/krust-test.sh manifest-policy-hash
 scripts/krust-test.sh manifest-policy-excess-grant
@@ -179,10 +187,10 @@ scripts/krust-test.sh manifest-policy-state-root
 ```
 
 Next direction: move richer state lifecycle policy, durable policy-denial
-history, the operator graph shell, appliance update loop, and the graph soak gate into
-first-class Vertex OS surfaces on top of the M82 graph store, M83
-generation-manager substrate, and M84 package-import path while keeping Krust
-small and capability-mediated.
+history, the appliance update loop, and the graph soak gate into first-class
+Vertex OS surfaces on top of the M82 graph store, M83 generation-manager
+substrate, M84 package-import path, and M87 operator graph shell while keeping
+Krust small and capability-mediated.
 
 ## M0: Serial Boot
 
@@ -1589,7 +1597,7 @@ done: locked Cargo dependencies for the top-level host-tool workspace, Krust ker
 done: kernel/krust/rust-toolchain.toml pins Rust 1.95.0, rustfmt, and x86_64-unknown-none
 done: make doctor checks every required tool and reports actionable fixes
 done: legacy hello/ipc userspace crates are removed instead of carried forward
-done: single release-gate script runs the clean-clone M14-M86 substrate proof with the current QEMU matrix
+done: single release-gate script runs the clean-clone M14-M87 substrate proof with the current QEMU matrix
 ```
 
 Acceptance tests:
@@ -4185,7 +4193,7 @@ Implementation notes:
 
 ## M87: Operator Graph Shell
 
-Status: planned.
+Status: done.
 
 Goal: build the native operator surface for an ideal NixOS-like graph OS:
 asking what is running, why authority exists, what changed between generations,
@@ -4211,7 +4219,30 @@ why command explains a live capability through graph policy provenance
 who-can command lists all graph-authorized writers for a state object
 activate command queues a candidate generation through generation-manager IPC
 rollback command restores previous generation and reports state policy outcome
-unauthorized service cannot invoke operator-only graph commands
+mark-known-good verifies the active generation and commits durable metadata
+```
+
+Done:
+
+```text
+done: runtime inspect emits operator-report, operator-generation,
+      operator-service, operator-node, operator-edge, operator-capability,
+      operator-requirement, operator-state, and operator-state-path facts for
+      every registered generation
+done: console-shell current-generation, generations, generation-status,
+      diff-generation, planned-authority-delta, why, who-can,
+      which-generation, package-list, activation-log, activate, rollback, and
+      mark-known-good are backed by native graph/policy/runtime facts
+done: diff-generation and planned-authority-delta report same-ID semantic
+      changes instead of collapsing changed authorities or graph nodes into
+      unchanged entries
+done: why requires policy requirement, policy capability, graph edge, and a
+      live non-revoked runtime capability whose graph target is the exact
+      policy capability object with sufficient rights
+done: mark-known-good rejects non-active or unverifiable generations and uses
+      SYS_MARK_KNOWN_GOOD after generation-manager writes clean metadata
+done: scripts/krust-test.sh m87
+done: scripts/krust-release-gate.sh includes m87 in the default QEMU matrix
 ```
 
 Implementation notes:

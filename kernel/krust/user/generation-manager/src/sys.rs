@@ -14,6 +14,7 @@ const SYS_ROLLBACK_GENERATION: u64 = 18;
 const SYS_VERIFY_GENERATION: u64 = 72;
 const SYS_STAGE_GENERATION: u64 = 73;
 const SYS_STAGE_ROLLBACK_GENERATION: u64 = 74;
+const SYS_MARK_KNOWN_GOOD: u64 = 78;
 
 pub fn ipc_send(cap_slot: u64, message: &[u8]) -> u64 {
     syscall3(
@@ -81,6 +82,15 @@ pub fn stage_rollback_generation(cap_slot: u64, generation: &[u8]) -> u64 {
 pub fn rollback_generation(cap_slot: u64, generation: &[u8]) -> u64 {
     syscall3(
         SYS_ROLLBACK_GENERATION,
+        cap_slot,
+        generation.as_ptr() as u64,
+        generation.len() as u64,
+    )
+}
+
+pub fn mark_known_good(cap_slot: u64, generation: &[u8]) -> u64 {
+    syscall3(
+        SYS_MARK_KNOWN_GOOD,
         cap_slot,
         generation.as_ptr() as u64,
         generation.len() as u64,

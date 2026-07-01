@@ -8,8 +8,8 @@ use vertex_abi::{graph as graph_abi, krustboot as krustboot_abi};
 
 const KRUSTBOOT_MAGIC: &[u8; 16] = krustboot_abi::COMPACT_MAGIC;
 const KRUSTBOOT_VERSION: u16 = krustboot_abi::COMPACT_VERSION;
-const MANIFEST_BUFFER_LEN: usize = 64 * 1024;
-const REPORT_BUFFER_LEN: usize = 128 * 1024;
+const MANIFEST_BUFFER_LEN: usize = 128 * 1024;
+const REPORT_BUFFER_LEN: usize = 256 * 1024;
 const OFFSET_VERSION: usize = 16;
 const OFFSET_BOOT_MODULES: usize = 18;
 const OFFSET_PROCESSES: usize = 20;

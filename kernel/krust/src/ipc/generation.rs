@@ -451,6 +451,18 @@ pub fn generation_config_by_id(generation_id: &[u8]) -> Option<&'static BootRunt
         .map(|runtime| runtime.config)
 }
 
+pub(super) fn registered_generation_count() -> usize {
+    generation_runtimes().count
+}
+
+pub(super) fn registered_generation_config_at(index: usize) -> Option<&'static BootRuntimeConfig> {
+    let table = generation_runtimes();
+    if index >= table.count {
+        return None;
+    }
+    table.entries[index].map(|entry| entry.config)
+}
+
 pub fn set_rollback_boot_config(config: &'static BootRuntimeConfig) {
     set_rollback_runtime(GenerationRuntime {
         generation_id: config.generation_id,
@@ -691,6 +703,40 @@ pub fn verify_generation(cap_slot: u64, generation: *const u8, len: usize) -> Re
 
     verify_generation_transaction(target)?;
     serial::write_str("Native generation verification accepted: generation=");
+    serial::write_str(target.generation_id);
+    serial::write_str("\n");
+    Ok(())
+}
+
+pub fn mark_known_good_generation(
+    cap_slot: u64,
+    generation: *const u8,
+    len: usize,
+) -> Result<(), IpcError> {
+    let (generation_id, len) = read_generation_request(cap_slot, generation, len)?;
+    let requested = &generation_id[..len];
+    let target = match generation_runtimes().find(requested) {
+        Some(target) => target,
+        None => {
+            serial::write_str("Native mark-known-good rejected: requested=");
+            serial::write_ascii_bytes(requested);
+            serial::write_str(" reason=unknown-generation\n");
+            return Err(IpcError::BadCapability);
+        }
+    };
+    let active_generation = runtime().generation_id;
+    if target.generation_id != active_generation {
+        serial::write_str("Native mark-known-good rejected: requested=");
+        serial::write_str(target.generation_id);
+        serial::write_str(" active=");
+        serial::write_str(active_generation);
+        serial::write_str(" reason=not-active\n");
+        return Err(IpcError::BadCapability);
+    }
+
+    verify_generation_transaction(target)?;
+    boot_manager().mark_known_good(target.generation_id);
+    serial::write_str("Native mark-known-good accepted: generation=");
     serial::write_str(target.generation_id);
     serial::write_str("\n");
     Ok(())

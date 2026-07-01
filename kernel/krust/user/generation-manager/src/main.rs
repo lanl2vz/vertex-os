@@ -16,6 +16,7 @@ const COMMAND_BUFFER_LEN: usize = 96;
 const INSTALL_PREFIX: &[u8] = b"install ";
 const REGISTER_IMPORT_PREFIX: &[u8] = b"register-import ";
 const ROLLBACK_PREFIX: &[u8] = b"rollback ";
+const MARK_KNOWN_GOOD_PREFIX: &[u8] = b"mark-known-good ";
 const SHUTDOWN_COMMAND: &[u8] = b"shutdown";
 const PROTOCOL_HEALTH_V0: u16 = 2;
 const MESSAGE_READY: u16 = 1;
@@ -47,6 +48,7 @@ const GENERATION_METADATA_TRANSACTION_TARGET_OFFSET: usize =
     vdisk_abi::GENERATION_METADATA_TRANSACTION_TARGET_OFFSET;
 const GENERATION_METADATA_ENTRY_OFFSET: usize = vdisk_abi::GENERATION_METADATA_ENTRY_OFFSET;
 const GENERATION_METADATA_ENTRY_LEN: usize = vdisk_abi::GENERATION_METADATA_ENTRY_LEN;
+const GENERATION_TRANSACTION_CLEAN: u16 = vdisk_abi::GENERATION_TRANSACTION_CLEAN;
 const GENERATION_TRANSACTION_PREPARE: u16 = vdisk_abi::GENERATION_TRANSACTION_PREPARE;
 const GENERATION_TRANSACTION_COMMIT: u16 = vdisk_abi::GENERATION_TRANSACTION_COMMIT;
 const GENERATION_TRANSACTION_ROLLBACK: u16 = vdisk_abi::GENERATION_TRANSACTION_ROLLBACK;
@@ -90,6 +92,10 @@ pub extern "C" fn _start() -> ! {
         }
         if let Some(generation) = strip_prefix(command, ROLLBACK_PREFIX) {
             rollback_generation(generation);
+            continue;
+        }
+        if let Some(generation) = strip_prefix(command, MARK_KNOWN_GOOD_PREFIX) {
+            mark_known_good(generation);
             continue;
         }
         if bytes_eq(command, SHUTDOWN_COMMAND) {
@@ -338,6 +344,74 @@ fn rollback_generation(generation: &[u8]) {
     );
 }
 
+fn mark_known_good(generation: &[u8]) {
+    log_generation(
+        b"generation-manager mark-known-good requested: generation=",
+        generation,
+    );
+    let Some(mut metadata) = load_generation_metadata() else {
+        log_generation(
+            b"generation-manager mark-known-good abort: reason=metadata-unavailable generation=",
+            generation,
+        );
+        return;
+    };
+    let Some(selected) = metadata.selected_generation() else {
+        log_generation(
+            b"generation-manager mark-known-good abort: reason=selected-generation-invalid generation=",
+            generation,
+        );
+        return;
+    };
+    if selected.as_slice() != generation {
+        log_generation(
+            b"generation-manager mark-known-good abort: reason=not-selected generation=",
+            generation,
+        );
+        return;
+    }
+    if !metadata.contains_generation(generation) {
+        log_generation(
+            b"generation-manager mark-known-good abort: reason=unknown-generation generation=",
+            generation,
+        );
+        return;
+    }
+    if sys::verify_generation(CAP_UPDATE_CONTROL, generation) != sys::STATUS_OK {
+        log_generation(
+            b"generation-manager mark-known-good abort: reason=verification-failed generation=",
+            generation,
+        );
+        return;
+    }
+    let previous = metadata.previous_generation().unwrap_or(selected);
+    if !metadata.write_checkpoint(
+        GENERATION_TRANSACTION_CLEAN,
+        GENERATION_FAILURE_NONE,
+        selected.as_slice(),
+        previous.as_slice(),
+        generation,
+        generation,
+    ) {
+        log_generation(
+            b"generation-manager mark-known-good abort: reason=metadata-write-failed generation=",
+            generation,
+        );
+        return;
+    }
+    if sys::mark_known_good(CAP_UPDATE_CONTROL, generation) != sys::STATUS_OK {
+        log_generation(
+            b"generation-manager mark-known-good abort: reason=kernel-rejected generation=",
+            generation,
+        );
+        return;
+    }
+    log_generation(
+        b"generation-manager mark-known-good committed: generation=",
+        generation,
+    );
+}
+
 #[derive(Clone, Copy)]
 struct FixedString {
     bytes: [u8; graph_abi::STRING_LEN],
@@ -359,6 +433,15 @@ impl GenerationMetadata {
     fn selected_generation(&self) -> Option<FixedString> {
         read_fixed_string(&self.sector, GENERATION_METADATA_SELECTED_OFFSET, false)
             .or_else(|| self.entry_generation(0))
+    }
+
+    fn previous_generation(&self) -> Option<FixedString> {
+        let previous = read_fixed_string(&self.sector, GENERATION_METADATA_PREVIOUS_OFFSET, true)?;
+        if previous.len == 0 {
+            self.selected_generation()
+        } else {
+            Some(previous)
+        }
     }
 
     fn known_good_generation(&self) -> Option<FixedString> {

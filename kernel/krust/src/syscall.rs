@@ -86,6 +86,7 @@ const SYS_STAGE_ROLLBACK_GENERATION: u64 = 74;
 const SYS_FRAMEBUFFER_INFO: u64 = 75;
 const SYS_FRAMEBUFFER_MAP: u64 = 76;
 const SYS_POWER_OFF: u64 = 77;
+const SYS_MARK_KNOWN_GOOD: u64 = 78;
 
 const STATUS_OK: u64 = 0;
 const STATUS_BAD_CAPABILITY: u64 = u64::MAX - 1;
@@ -652,6 +653,14 @@ pub extern "C" fn krust_syscall_dispatch(
             serial::write_str("SYS_POWER_OFF rejected: bad capability\n");
             frame.rax = STATUS_BAD_CAPABILITY;
         }
+        SYS_MARK_KNOWN_GOOD => match ipc::mark_known_good_generation(
+            arg0,
+            arg1 as *const u8,
+            usize::try_from(arg2).unwrap_or(usize::MAX),
+        ) {
+            Ok(()) => frame.rax = STATUS_OK,
+            Err(error) => frame.rax = ipc_error_status("SYS_MARK_KNOWN_GOOD", error),
+        },
         _ => {
             serial::write_str("Unknown userspace syscall: ");
             serial::write_u64_dec(number);

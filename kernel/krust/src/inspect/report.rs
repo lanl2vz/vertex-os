@@ -1,4 +1,4 @@
-const MAX_INSPECT_REPORT_BYTES: usize = 128 * 1024;
+const MAX_INSPECT_REPORT_BYTES: usize = 256 * 1024;
 
 pub(crate) struct InspectReport {
     bytes: [u8; MAX_INSPECT_REPORT_BYTES],
