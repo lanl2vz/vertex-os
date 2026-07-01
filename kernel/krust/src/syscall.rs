@@ -1,6 +1,6 @@
 use core::arch::{asm, global_asm};
 
-use crate::{gdt, ipc, serial};
+use crate::{acpi, gdt, ipc, serial};
 
 const IA32_EFER: u32 = 0xc000_0080;
 const IA32_STAR: u32 = 0xc000_0081;
@@ -85,6 +85,7 @@ const SYS_STAGE_GENERATION: u64 = 73;
 const SYS_STAGE_ROLLBACK_GENERATION: u64 = 74;
 const SYS_FRAMEBUFFER_INFO: u64 = 75;
 const SYS_FRAMEBUFFER_MAP: u64 = 76;
+const SYS_POWER_OFF: u64 = 77;
 
 const STATUS_OK: u64 = 0;
 const STATUS_BAD_CAPABILITY: u64 = u64::MAX - 1;
@@ -643,6 +644,14 @@ pub extern "C" fn krust_syscall_dispatch(
             Ok(len) => frame.rax = len as u64,
             Err(error) => frame.rax = ipc_error_status("SYS_FRAMEBUFFER_MAP", error),
         },
+        SYS_POWER_OFF => {
+            if ipc::current_process_name() == "vertex-init" {
+                serial::write_str("Poweroff requested: proc=vertex-init\n");
+                acpi::poweroff();
+            }
+            serial::write_str("SYS_POWER_OFF rejected: bad capability\n");
+            frame.rax = STATUS_BAD_CAPABILITY;
+        }
         _ => {
             serial::write_str("Unknown userspace syscall: ");
             serial::write_u64_dec(number);
@@ -664,6 +673,7 @@ fn exit_current_process(status: u64, frame: &mut ipc::SyscallFrame) {
         ipc::ScheduleResult::Halt { ok } => {
             if ok {
                 serial::write_str("Native service activation ok\n");
+                acpi::poweroff();
             } else {
                 serial::write_str("Native service activation failed\n");
             }
@@ -678,6 +688,7 @@ fn schedule_yield(frame: &mut ipc::SyscallFrame) {
         ipc::ScheduleResult::Halt { ok } => {
             if ok {
                 serial::write_str("Native service activation ok\n");
+                acpi::poweroff();
             } else {
                 serial::write_str("Native service activation failed\n");
             }

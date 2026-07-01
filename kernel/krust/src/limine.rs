@@ -30,6 +30,12 @@ const MODULE_REQUEST_ID: [u64; 4] = [
     0x3e7e279702be32af,
     0xca1c4f3bd1280cee,
 ];
+const RSDP_REQUEST_ID: [u64; 4] = [
+    COMMON_MAGIC_0,
+    COMMON_MAGIC_1,
+    0xc5e77b6b397e7b43,
+    0x27637845accdcf3c,
+];
 const FRAMEBUFFER_REQUEST_ID: [u64; 4] = [
     COMMON_MAGIC_0,
     COMMON_MAGIC_1,
@@ -66,6 +72,10 @@ static HHDM_REQUEST: Request<HhdmResponse> = Request::new(HHDM_REQUEST_ID);
 #[used]
 #[unsafe(link_section = ".requests")]
 static MODULE_REQUEST: ModuleRequest = ModuleRequest::new();
+
+#[used]
+#[unsafe(link_section = ".requests")]
+static RSDP_REQUEST: Request<RsdpResponse> = Request::new(RSDP_REQUEST_ID);
 
 #[used]
 #[unsafe(link_section = ".requests")]
@@ -182,6 +192,12 @@ struct ModuleResponse {
     revision: u64,
     module_count: u64,
     modules: *const *const File,
+}
+
+#[repr(C)]
+struct RsdpResponse {
+    revision: u64,
+    address: *const u8,
 }
 
 #[repr(C)]
@@ -310,6 +326,10 @@ pub fn modules() -> Option<Modules> {
     MODULE_REQUEST
         .response()
         .map(|response| Modules { response })
+}
+
+pub fn rsdp_address() -> Option<*const u8> {
+    RSDP_REQUEST.response().map(|response| response.address)
 }
 
 pub fn framebuffers() -> Option<Framebuffers> {

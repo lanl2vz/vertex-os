@@ -1,7 +1,7 @@
 use core::arch::{asm, global_asm};
 use core::cell::UnsafeCell;
 
-use crate::{gdt, ipc, serial, timer};
+use crate::{acpi, gdt, ipc, serial, timer};
 
 const IDT_ENTRY_COUNT: usize = 256;
 const IDT_PRESENT_INTERRUPT_GATE: u16 = 0x8e00;
@@ -312,6 +312,9 @@ extern "C" fn krust_timer_user_dispatch(frame: &mut ipc::SyscallFrame) {
     timer::eoi();
     if let ipc::ScheduleResult::Halt { ok } = result {
         print_halt_status(ok);
+        if ok {
+            acpi::poweroff();
+        }
         halt_loop();
     }
 }
@@ -388,6 +391,9 @@ extern "C" fn krust_user_exception_dispatch(
     let result = ipc::fault_current_process(reason, address, error_code, frame);
     if let ipc::ScheduleResult::Halt { ok } = result {
         print_halt_status(ok);
+        if ok {
+            acpi::poweroff();
+        }
         halt_loop();
     }
 }

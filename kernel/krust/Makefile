@@ -157,12 +157,12 @@ iso: build boot-manifest block-image vertexfs-image check-tools check-limine-dir
 
 run: KRUST_INTERACTIVE_QUIET=1
 run: iso
-	$(QEMU) $(QEMU_MACHINE) $(QEMU_EXTRA) $(QEMU_BLOCK) -m 256M -serial stdio -monitor none -display none -no-reboot -no-shutdown -cdrom $(ISO_IMAGE)
+	$(QEMU) $(QEMU_MACHINE) $(QEMU_EXTRA) $(QEMU_BLOCK) -m 256M -serial stdio -monitor none -display none -no-reboot -cdrom $(ISO_IMAGE)
 
 run-gui run-window: KRUST_INTERACTIVE_QUIET=1
 run-gui run-window: VERTEX_MANIFEST=$(GUI_VERTEX_MANIFEST)
 run-gui run-window: iso
-	$(QEMU) $(QEMU_MACHINE) $(QEMU_EXTRA) $(QEMU_BLOCK) -m 256M -display $(QEMU_DISPLAY) -serial $(QEMU_GUI_SERIAL) -monitor none -no-reboot -no-shutdown -cdrom $(ISO_IMAGE)
+	$(QEMU) $(QEMU_MACHINE) $(QEMU_EXTRA) $(QEMU_BLOCK) -m 256M -display $(QEMU_DISPLAY) -serial $(QEMU_GUI_SERIAL) -monitor none -no-reboot -cdrom $(ISO_IMAGE)
 
 smoke: iso
 	@QEMU="$(QEMU)" \

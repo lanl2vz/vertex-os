@@ -1,6 +1,7 @@
 #![no_std]
 #![no_main]
 
+mod acpi;
 mod arena;
 mod boot_manifest;
 mod capability;

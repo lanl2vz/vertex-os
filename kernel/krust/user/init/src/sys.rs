@@ -43,6 +43,7 @@ const SYS_QUOTA_DELEGATE: u64 = 26;
 const SYS_RUNTIME_INSPECT: u64 = 31;
 const SYS_PROCESS_START: u64 = 37;
 const SYS_PROCESS_KILL: u64 = 38;
+const SYS_POWER_OFF: u64 = 77;
 
 pub fn read_manifest(buffer: &mut [u8]) -> u64 {
     syscall3(
@@ -190,6 +191,10 @@ pub fn quota_delegate(target_pid: u64, max_endpoints: u64) -> u64 {
 
 pub fn yield_now() -> u64 {
     syscall3(SYS_YIELD, 0, 0, 0)
+}
+
+pub fn power_off() -> u64 {
+    syscall3(SYS_POWER_OFF, 0, 0, 0)
 }
 
 pub fn pause() {

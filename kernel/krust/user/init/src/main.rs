@@ -829,6 +829,10 @@ fn supervise_services(
             if status == 0 {
                 log(b"vertex-init waits for service exit status");
                 log_prefix(b"service lifecycle exited: ", name);
+                if bytes_eq(name, M41_PROCESS_NAME) {
+                    log(b"operator halt requested; powering off");
+                    let _ = sys::power_off();
+                }
                 complete[process_index] = true;
                 complete_count += 1;
                 made_progress = true;
