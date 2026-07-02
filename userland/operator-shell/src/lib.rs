@@ -909,6 +909,7 @@ where
 }
 
 pub fn verify_system(report: &[u8]) -> Result<SystemVerification<'_>> {
+    let operator_report = operator_report_line(report)?;
     let generation = active_generation(report)?;
     let generation_line = require_operator_generation(report, generation)?;
     require_field_value(
@@ -929,6 +930,28 @@ pub fn verify_system(report: &[u8]) -> Result<SystemVerification<'_>> {
         b"graph-v1",
         b"operator verifier rejected: missing package facts",
     )?;
+    let policy_hash = required_field(
+        generation_line,
+        b"policy_hash=",
+        b"operator verifier missing policy hash",
+    )?;
+    let graph_hash = required_field(
+        generation_line,
+        b"graph_hash=",
+        b"operator verifier missing graph hash",
+    )?;
+    require_field_value(
+        operator_report,
+        b"policy_hash=",
+        policy_hash,
+        b"operator verifier rejected: operator policy hash mismatch",
+    )?;
+    require_field_value(
+        operator_report,
+        b"graph_hash=",
+        graph_hash,
+        b"operator verifier rejected: operator graph hash mismatch",
+    )?;
     let manager = generation_manager_line(report)?;
     require_field_value(
         manager,
@@ -945,36 +968,57 @@ pub fn verify_system(report: &[u8]) -> Result<SystemVerification<'_>> {
         generation,
         b"operator verifier rejected: graph store generation mismatch",
     )?;
+    require_field_value(
+        graph_store,
+        b"hash=",
+        graph_hash,
+        b"operator verifier rejected: graph store hash mismatch",
+    )?;
     let policy = find_line_contains_all(report, &[b"policy-validation v=1", b"generation="])
         .ok_or(Error::new(
             b"operator verifier rejected: policy report missing",
         ))?;
     require_field_value(
         policy,
+        b"generation=",
+        generation,
+        b"operator verifier rejected: policy generation mismatch",
+    )?;
+    require_field_value(
+        policy,
         b"status=",
         b"accepted",
         b"operator verifier rejected: policy not accepted",
+    )?;
+    require_field_value(
+        policy,
+        b"hash=",
+        policy_hash,
+        b"operator verifier rejected: policy hash mismatch",
+    )?;
+    require_field_value(
+        policy,
+        b"capabilities=",
+        required_field(
+            generation_line,
+            b"capabilities=",
+            b"operator verifier missing capability count",
+        )?,
+        b"operator verifier rejected: policy capability count mismatch",
     )?;
     require_zero_field(
         report,
         b"objects_unreachable=",
         b"operator verifier rejected: unreachable objects",
     )?;
+    verify_package_facts(report, generation, generation_line, graph_hash)?;
     verify_active_services(report, generation)?;
     verify_active_capabilities(report, generation)?;
     verify_state_health(report, generation)?;
     Ok(SystemVerification {
         generation,
-        policy_hash: required_field(
-            generation_line,
-            b"policy_hash=",
-            b"operator verifier missing policy hash",
-        )?,
-        graph_hash: required_field(
-            generation_line,
-            b"graph_hash=",
-            b"operator verifier missing graph hash",
-        )?,
+        policy_hash,
+        graph_hash,
         services: parse_u64_field(
             generation_line,
             b"services=",
@@ -1645,6 +1689,89 @@ fn require_zero_field(report: &[u8], prefix: &[u8], message: &'static [u8]) -> R
     }
 }
 
+fn verify_package_facts(
+    report: &[u8],
+    generation: &[u8],
+    generation_line: &[u8],
+    graph_hash: &[u8],
+) -> Result<()> {
+    let declared = parse_u64_field(
+        generation_line,
+        b"packages=",
+        b"operator verifier missing package count",
+    )?;
+    let mut count = 0;
+    let mut error = None;
+    for_each_line(report, |line| {
+        if error.is_some() {
+            return;
+        }
+        if starts_with(line, b"operator-package[") && field_eq(line, b"generation=", generation) {
+            let id = match required_field(
+                line,
+                b"id=",
+                b"operator verifier rejected: package fact missing id",
+            ) {
+                Ok(value) => value,
+                Err(err) => {
+                    error = Some(err);
+                    return;
+                }
+            };
+            if required_field(
+                line,
+                b"label=",
+                b"operator verifier rejected: package fact missing label",
+            )
+            .is_err()
+            {
+                error = Some(Error::new(
+                    b"operator verifier rejected: package fact missing label",
+                ));
+                return;
+            }
+            if !field_eq(line, b"graph_hash=", graph_hash) {
+                error = Some(Error::new(
+                    b"operator verifier rejected: package graph hash mismatch",
+                ));
+                return;
+            }
+            if operator_package_id_count(report, generation, id) != 1 {
+                error = Some(Error::new(
+                    b"operator verifier rejected: duplicate package fact",
+                ));
+                return;
+            }
+            count += 1;
+        }
+    });
+    if let Some(err) = error {
+        return Err(err);
+    }
+    if declared == 0 || count == 0 {
+        return Err(Error::new(b"operator verifier rejected: no package facts"));
+    }
+    if count != declared {
+        return Err(Error::new(
+            b"operator verifier rejected: package count mismatch",
+        ));
+    }
+    Ok(())
+}
+
+fn operator_package_id_count(report: &[u8], generation: &[u8], id: &[u8]) -> u64 {
+    let mut count = 0;
+    for_each_line(report, |line| {
+        if starts_with(line, b"operator-package[")
+            && field_eq(line, b"generation=", generation)
+            && field_eq(line, b"id=", id)
+        {
+            count += 1;
+        }
+    });
+    count
+}
+
 fn verify_active_services(report: &[u8], generation: &[u8]) -> Result<()> {
     let mut count = 0;
     let mut error = None;
@@ -1676,6 +1803,26 @@ fn verify_active_services(report: &[u8], generation: &[u8]) -> Result<()> {
                 ));
                 return;
             }
+            let state = match required_field(
+                process_line,
+                b"state=",
+                b"operator verifier rejected: process missing state",
+            ) {
+                Ok(value) => value,
+                Err(err) => {
+                    error = Some(err);
+                    return;
+                }
+            };
+            if !process_state_is_live(state) {
+                return;
+            }
+            if !field_eq(process_line, b"context_reaped=", b"no") {
+                error = Some(Error::new(
+                    b"operator verifier rejected: service process context reaped",
+                ));
+                return;
+            }
             count += 1;
         }
     });
@@ -1690,8 +1837,24 @@ fn verify_active_services(report: &[u8], generation: &[u8]) -> Result<()> {
     Ok(())
 }
 
+fn process_state_is_live(state: &[u8]) -> bool {
+    bytes_eq(state, b"ready")
+        || bytes_eq(state, b"running")
+        || bytes_eq(state, b"blocked")
+        || bytes_eq(state, b"blocked-irq")
+        || bytes_eq(state, b"blocked-vfs")
+        || bytes_eq(state, b"blocked-vfs-state")
+        || bytes_eq(state, b"blocked-vertexfs-sync")
+        || bytes_eq(state, b"blocked-net")
+        || bytes_eq(state, b"sleeping")
+}
+
 fn verify_active_capabilities(report: &[u8], generation: &[u8]) -> Result<()> {
-    let mut count = 0;
+    verify_live_capability_provenance(report, generation)?;
+    verify_required_capabilities(report, generation)
+}
+
+fn verify_live_capability_provenance(report: &[u8], generation: &[u8]) -> Result<()> {
     let mut error = None;
     for_each_line(report, |line| {
         if error.is_some() {
@@ -1700,19 +1863,36 @@ fn verify_active_capabilities(report: &[u8], generation: &[u8]) -> Result<()> {
         if starts_with(line, b"space=")
             && field_eq(line, b"generation=", generation)
             && field_eq(line, b"revoked=", b"no")
+            && live_capability_has_graph_backed_object(line)
+            && (field_eq(line, b"graph_from=", b"<unknown>")
+                || field_eq(line, b"graph_target=", b"<unknown>"))
         {
-            if !live_capability_has_graph_backed_object(line) {
-                return;
+            error = Some(Error::new(
+                b"operator verifier rejected: live cap missing graph provenance",
+            ));
+        }
+    });
+    if let Some(err) = error {
+        Err(err)
+    } else {
+        Ok(())
+    }
+}
+
+fn verify_required_capabilities(report: &[u8], generation: &[u8]) -> Result<()> {
+    let mut count = 0;
+    let mut error = None;
+    for_each_line(report, |line| {
+        if error.is_some() {
+            return;
+        }
+        if starts_with(line, b"operator-requirement[") && field_eq(line, b"generation=", generation)
+        {
+            match verify_required_capability(report, generation, line) {
+                Ok(true) => count += 1,
+                Ok(false) => {}
+                Err(err) => error = Some(err),
             }
-            if field_eq(line, b"graph_from=", b"<unknown>")
-                || field_eq(line, b"graph_target=", b"<unknown>")
-            {
-                error = Some(Error::new(
-                    b"operator verifier rejected: live cap missing graph provenance",
-                ));
-                return;
-            }
-            count += 1;
         }
     });
     if let Some(err) = error {
@@ -1720,10 +1900,104 @@ fn verify_active_capabilities(report: &[u8], generation: &[u8]) -> Result<()> {
     }
     if count == 0 {
         return Err(Error::new(
-            b"operator verifier rejected: no active live capabilities",
+            b"operator verifier rejected: no active policy requirements",
         ));
     }
     Ok(())
+}
+
+fn verify_required_capability(
+    report: &[u8],
+    generation: &[u8],
+    requirement: &[u8],
+) -> Result<bool> {
+    let service = required_field(
+        requirement,
+        b"service=",
+        b"operator verifier rejected: requirement missing service",
+    )?;
+    let Some(process) = live_service_process(report, generation, service)? else {
+        return Ok(false);
+    };
+    let capability = required_field(
+        requirement,
+        b"capability=",
+        b"operator verifier rejected: requirement missing capability",
+    )?;
+    let requirement_rights = required_field(
+        requirement,
+        b"rights=",
+        b"operator verifier rejected: requirement missing rights",
+    )?;
+    let capability_line = require_operator_capability(report, generation, capability)
+        .map_err(|_| Error::new(b"operator verifier rejected: missing policy capability"))?;
+    let capability_rights = required_field(
+        capability_line,
+        b"rights=",
+        b"operator verifier rejected: capability missing rights",
+    )?;
+    if !rights_cover(capability_rights, requirement_rights) {
+        return Err(Error::new(
+            b"operator verifier rejected: requirement rights exceed capability rights",
+        ));
+    }
+    let object = required_field(
+        capability_line,
+        b"object=",
+        b"operator verifier rejected: capability missing object",
+    )?;
+    if !operator_edge_exists(report, generation, object, requirement_rights) {
+        return Err(Error::new(
+            b"operator verifier rejected: missing graph capability edge",
+        ));
+    }
+    if live_capability_matches(
+        report,
+        generation,
+        process,
+        service,
+        object,
+        requirement_rights,
+    ) {
+        Ok(true)
+    } else {
+        Err(Error::new(
+            b"operator verifier rejected: required live capability missing",
+        ))
+    }
+}
+
+fn live_service_process<'a>(
+    report: &'a [u8],
+    generation: &[u8],
+    service: &[u8],
+) -> Result<Option<&'a [u8]>> {
+    let process = operator_service_process(report, generation, service)
+        .map_err(|_| Error::new(b"operator verifier rejected: requirement service missing"))?;
+    let Some(process_line) = find_process_line(report, process) else {
+        return Err(Error::new(
+            b"operator verifier rejected: graph service has no process",
+        ));
+    };
+    if !field_eq(process_line, b"generation=", generation) {
+        return Err(Error::new(
+            b"operator verifier rejected: process generation mismatch",
+        ));
+    }
+    let state = required_field(
+        process_line,
+        b"state=",
+        b"operator verifier rejected: process missing state",
+    )?;
+    if !process_state_is_live(state) {
+        return Ok(None);
+    }
+    if !field_eq(process_line, b"context_reaped=", b"no") {
+        return Err(Error::new(
+            b"operator verifier rejected: service process context reaped",
+        ));
+    }
+    Ok(Some(process))
 }
 
 fn live_capability_has_graph_backed_object(line: &[u8]) -> bool {
@@ -1810,19 +2084,40 @@ fn require_operator_edge<'a>(
     required_rights: &[u8],
 ) -> Result<&'a [u8]> {
     find_line_where(report, |line| {
-        if !(starts_with(line, b"operator-edge[")
-            && field_eq(line, b"generation=", generation)
-            && field_eq(line, b"kind=", b"capability")
-            && field_eq(line, b"to=", object))
-        {
-            return false;
-        }
-        field_slice(line, b"rights=")
-            .is_some_and(|edge_rights| rights_cover(edge_rights, required_rights))
+        operator_edge_line_matches(line, generation, object, required_rights)
     })
     .ok_or(Error::new(
         b"operator rejected: missing graph capability edge",
     ))
+}
+
+fn operator_edge_exists(
+    report: &[u8],
+    generation: &[u8],
+    object: &[u8],
+    required_rights: &[u8],
+) -> bool {
+    find_line_where(report, |line| {
+        operator_edge_line_matches(line, generation, object, required_rights)
+    })
+    .is_some()
+}
+
+fn operator_edge_line_matches(
+    line: &[u8],
+    generation: &[u8],
+    object: &[u8],
+    required_rights: &[u8],
+) -> bool {
+    if !(starts_with(line, b"operator-edge[")
+        && field_eq(line, b"generation=", generation)
+        && field_eq(line, b"kind=", b"capability")
+        && field_eq(line, b"to=", object))
+    {
+        return false;
+    }
+    field_slice(line, b"rights=")
+        .is_some_and(|edge_rights| rights_cover(edge_rights, required_rights))
 }
 
 fn operator_service_process<'a>(
@@ -1847,6 +2142,30 @@ fn require_live_capability(
     required_rights: &[u8],
 ) -> Result<()> {
     let generation = active_generation(report)?;
+    if live_capability_matches(
+        report,
+        generation,
+        process,
+        service,
+        object,
+        required_rights,
+    ) {
+        Ok(())
+    } else {
+        Err(Error::new(
+            b"operator rejected: live capability missing or insufficient",
+        ))
+    }
+}
+
+fn live_capability_matches(
+    report: &[u8],
+    generation: &[u8],
+    process: &[u8],
+    service: &[u8],
+    object: &[u8],
+    required_rights: &[u8],
+) -> bool {
     let mut accepted = false;
     for_each_line(report, |line| {
         if starts_with(line, b"space=")
@@ -1861,13 +2180,7 @@ fn require_live_capability(
             accepted = true;
         }
     });
-    if accepted {
-        Ok(())
-    } else {
-        Err(Error::new(
-            b"operator rejected: live capability missing or insufficient",
-        ))
-    }
+    accepted
 }
 
 fn for_state_writers<'report, F>(
@@ -2541,6 +2854,24 @@ operator-state-path[0] generation=gen:a service=svc:echo-server state=state:coun
 operator-node[0] generation=gen:a kind=device id=device:virtio-blk0 object_kind=virtio-device label=device:virtio-blk0
 ";
 
+    const VERIFY_OK_REPORT: &[u8] = b"native-runtime-report v=1
+generation=gen:a
+generation-manager v=1 selected=gen:a previous=none known_good=gen:a last_failed=none transaction=idle target=none failure_reason=none
+graph-store v=1 generation=gen:a hash=hash:graph checksum=1 nodes=1 edges=1 source=test
+policy-validation v=1 generation=gen:a status=accepted version=1 hash=hash:policy capabilities=1 requirements=1 provides=0 mounts=0 state_paths=0 bootstraps=0
+operator-report v=1 active=gen:a registered=1 policy_hash=hash:policy graph_hash=hash:graph
+operator-generation[0] id=gen:a active=yes selected=yes previous=no known_good=yes policy_hash=hash:policy graph_hash=hash:graph services=1 capabilities=1 states=1 devices=0 packages=1 package_facts=graph-v1
+operator-package[0.0] generation=gen:a id=pkg:logd label=pkg:logd graph_hash=hash:graph
+operator-service[0] generation=gen:a id=svc:echo-server process=echo restart=on-failure mount_root=/state
+process[0] name=echo pid=2 state=running restart_policy=on-failure mount_root=/state context_reaped=no cr3=0 generation=gen:a graph_node=svc:echo-server
+operator-requirement[0] generation=gen:a service=svc:echo-server capability=cap:log.sink rights=send
+operator-capability[0] generation=gen:a id=cap:log.sink provider=svc:logd object_kind=endpoint object=log-sink rights=send
+operator-edge[0] generation=gen:a kind=capability id=edge:echo-log from=svc:echo-server to=log-sink rights=send
+objects_unreachable=0
+state-health[0] generation=gen:a state=state:counter owner=svc:echo-server schema=counter.v1 migration_status=clean last_error=none
+space=initial proc=echo cap[0] endpoint=log-sink rights=send cap_id=1 parent_cap_id=0 generation=gen:a graph_from=svc:echo-server graph_target=log-sink graph_edge=edge:echo-log owner_pid=2 owner=echo delegated_by_pid=1 delegated_by=vertex-init revoked=no
+";
+
     #[test]
     fn why_rejects_live_capability_with_wrong_graph_target() {
         let error = why(WRONG_TARGET_REPORT, b"why svc:echo-server cap:log.sink")
@@ -2625,6 +2956,82 @@ operator-node[0] generation=gen:a kind=device id=device:virtio-blk0 object_kind=
         assert!(
             lines.iter().any(|line| line
                 == b"device:virtio-blk0 object_kind=virtio-device label=device:virtio-blk0")
+        );
+    }
+
+    #[test]
+    fn verify_system_accepts_fully_bound_report() {
+        let answer = verify_system(VERIFY_OK_REPORT).expect("bound report should verify");
+        assert_eq!(answer.generation, b"gen:a");
+        assert_eq!(answer.policy_hash, b"hash:policy");
+        assert_eq!(answer.graph_hash, b"hash:graph");
+        assert_eq!(answer.packages, 1);
+    }
+
+    #[test]
+    fn verify_system_rejects_missing_required_live_capability() {
+        let report = std::str::from_utf8(VERIFY_OK_REPORT)
+            .unwrap()
+            .replace("graph_target=log-sink", "graph_target=other-log");
+        let error = verify_system(report.as_bytes())
+            .expect_err("wrong live graph_target must not satisfy active requirement");
+        assert_eq!(
+            error.message,
+            b"operator verifier rejected: required live capability missing"
+        );
+    }
+
+    #[test]
+    fn verify_system_rejects_dead_service_process() {
+        let report = std::str::from_utf8(VERIFY_OK_REPORT)
+            .unwrap()
+            .replace("state=running", "state=exited");
+        let error = verify_system(report.as_bytes())
+            .expect_err("exited process must not verify as active service");
+        assert_eq!(
+            error.message,
+            b"operator verifier rejected: no active graph services"
+        );
+    }
+
+    #[test]
+    fn verify_system_rejects_reaped_service_process() {
+        let report = std::str::from_utf8(VERIFY_OK_REPORT)
+            .unwrap()
+            .replace("context_reaped=no", "context_reaped=yes");
+        let error = verify_system(report.as_bytes())
+            .expect_err("reaped process context must not verify as active service");
+        assert_eq!(
+            error.message,
+            b"operator verifier rejected: service process context reaped"
+        );
+    }
+
+    #[test]
+    fn verify_system_rejects_graph_hash_mismatch() {
+        let report = std::str::from_utf8(VERIFY_OK_REPORT).unwrap().replace(
+            "graph-store v=1 generation=gen:a hash=hash:graph checksum=1",
+            "graph-store v=1 generation=gen:a hash=hash:wrong checksum=1",
+        );
+        let error =
+            verify_system(report.as_bytes()).expect_err("graph-store hash must bind to generation");
+        assert_eq!(
+            error.message,
+            b"operator verifier rejected: graph store hash mismatch"
+        );
+    }
+
+    #[test]
+    fn verify_system_rejects_package_count_mismatch() {
+        let report = std::str::from_utf8(VERIFY_OK_REPORT).unwrap().replace(
+            "packages=1 package_facts=graph-v1",
+            "packages=2 package_facts=graph-v1",
+        );
+        let error =
+            verify_system(report.as_bytes()).expect_err("package count must match package rows");
+        assert_eq!(
+            error.message,
+            b"operator verifier rejected: package count mismatch"
         );
     }
 }

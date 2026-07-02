@@ -1168,8 +1168,8 @@ Native introspection service ok
 	current-generation
 	package-list
 	services
-	capabilities for svc:echo-server
-	why svc:echo-server cap:log.sink
+	capabilities for svc:console-shell
+	why svc:console-shell cap:package-import.request
 	state-health
 	mark-known-good gen:package-import-new-0002
 	activate gen:appliance-bad-0003
@@ -1213,10 +1213,10 @@ Native introspection service ok
 	console-driver forwarded serial command: services
 	services generation=gen:package-import-new-0002
 	svc:echo-server process=echo state=
-	console-driver forwarded serial command: capabilities for svc:echo-server
-	capabilities for svc:echo-server generation=gen:package-import-new-0002
-	console-driver forwarded serial command: why svc:echo-server cap:log.sink
-	operator why service=svc:echo-server capability=cap:log.sink provider=svc:logd rights=send
+	console-driver forwarded serial command: capabilities for svc:console-shell
+	capabilities for svc:console-shell generation=gen:package-import-new-0002
+	console-driver forwarded serial command: why svc:console-shell cap:package-import.request
+	operator why service=svc:console-shell capability=cap:package-import.request provider=svc:package-import rights=send
 	console-driver forwarded serial command: state-health
 	state-health state:counter owner=svc:echo-server schema=counter.v1 generation=gen:package-import-new-0002 migration_status=clean last_error=none
 	console-driver forwarded serial command: mark-known-good gen:package-import-new-0002
