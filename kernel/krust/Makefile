@@ -65,6 +65,7 @@ BAD_GENERATION_KRUSTBOOT_CORRUPT ?=
 VERTEX_DISK_CORRUPT ?=
 VERTEXFS_CORRUPT ?=
 VERTEXFS_UPDATE_APP_A_PAYLOAD ?=
+VERTEXFS_FORMAT ?= v2
 KRUST_BUILD_ENV = $(if $(KRUST_INTERACTIVE_QUIET),KRUST_INTERACTIVE_QUIET=$(KRUST_INTERACTIVE_QUIET),)
 
 QEMU ?= qemu-system-x86_64
@@ -113,14 +114,14 @@ boot-manifest: user
 
 block-image: user
 	mkdir -p $(BUILD_DIR)
-	$(VERTEXCTL) create-vertex-disk $(BLOCK_IMAGE) $(VERTEX_MANIFEST) $(FALLBACK_MANIFEST) $(BAD_GENERATION_MANIFEST) $(if $(VERTEX_DISK_GRAPH_ONLY_MANIFESTS),--graph-store-only $(VERTEX_DISK_GRAPH_ONLY_MANIFESTS),)
+	$(VERTEXCTL) create-vertex-disk $(BLOCK_IMAGE) $(VERTEX_MANIFEST) $(FALLBACK_MANIFEST) $(BAD_GENERATION_MANIFEST) --vertexfs-format $(VERTEXFS_FORMAT) $(if $(VERTEX_DISK_GRAPH_ONLY_MANIFESTS),--graph-store-only $(VERTEX_DISK_GRAPH_ONLY_MANIFESTS),)
 	@if [ -n "$(VERTEX_DISK_CORRUPT)" ]; then \
 		$(VERTEXCTL) corrupt-vertex-disk $(VERTEX_DISK_CORRUPT) $(BLOCK_IMAGE) $(BLOCK_IMAGE); \
 	fi
 
 vertexfs-image: user
 	mkdir -p $(BUILD_DIR)
-	$(VERTEXCTL) create-vertexfs $(VERTEXFS_IMAGE) $(VERTEX_MANIFEST)
+	$(VERTEXCTL) create-vertexfs $(VERTEXFS_IMAGE) $(VERTEX_MANIFEST) --format $(VERTEXFS_FORMAT)
 	@if [ -n "$(VERTEXFS_UPDATE_APP_A_PAYLOAD)" ]; then \
 		$(VERTEXCTL) update-vertexfs-file $(VERTEXFS_IMAGE) $(VERTEXFS_IMAGE) /app/a $(VERTEXFS_UPDATE_APP_A_PAYLOAD); \
 	fi
@@ -187,7 +188,7 @@ doctor: check-tools check-tool-versions check-cargo-locks check-rust-target chec
 	@echo "limine: $$(command -v $(LIMINE)) ($$($(LIMINE) --version | sed -n '1p'))"
 	@echo "xorriso: $$(command -v $(XORRISO)) ($$($(XORRISO) --version 2>/dev/null | sed -n '1p'))"
 	@echo "LIMINE_DIR: $(LIMINE_DIR)"
-	@echo "Krust M14-M87 plus M87-1/M87-3 toolchain is ready."
+	@echo "Krust M14-M88 plus M90-M91 and M87-1/M87-4 toolchain is ready."
 
 release-gate:
 	../../scripts/krust-release-gate.sh

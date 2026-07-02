@@ -47,16 +47,17 @@ use crate::{
         FileDescriptionId, FileHandle, MAX_NAMESPACE_ENTRIES, MAX_VERTEXFS_FILE_BYTES,
         MAX_VERTEXFS_FILES, MAX_VFS_MEM_FILE_BYTES, MAX_VFS_NAME_BYTES, MAX_VFS_PATH_BYTES,
         MAX_VFS_PIPE_BYTES, NamespaceEntry, NamespaceObject, OpenFileDescription,
-        VERTEXFS_DIRECTORY_SECTOR, VERTEXFS_DIRECTORY_SECTORS, VERTEXFS_DYNAMIC_FILE_CAPACITY,
-        VERTEXFS_FREE_MAP_SECTOR, VERTEXFS_IMAGE_BYTES, VERTEXFS_INODE_APP_DIR,
-        VERTEXFS_INODE_TABLE_SECTOR, VERTEXFS_INODE_TABLE_SECTORS, VERTEXFS_JOURNAL_PAYLOAD_OFFSET,
-        VERTEXFS_JOURNAL_SECTOR, VERTEXFS_MODULE_STRING, VERTEXFS_SECTOR_SIZE,
-        VERTEXFS_SYNC_MAX_DEVICE_WRITES, VertexFsDeviceWrite, VertexFsInode, VertexFsSyncResult,
-        VfsBacking, VfsEvent, VfsLock, VfsLockMode, VfsMemoryFile, VfsName, VfsNode, VfsNodeId,
-        VfsNodeKind, VfsPath, VfsPipeBuffer, VfsStateOperation, VfsVertexFsFile,
+        VERTEXFS_IMAGE_BYTES, VERTEXFS_INODE_APP_DIR, VERTEXFS_JOURNAL_PAYLOAD_OFFSET,
+        VERTEXFS_MODULE_STRING, VERTEXFS_MODULE_STRING_V1, VERTEXFS_MODULE_STRING_V2,
+        VERTEXFS_SECTOR_SIZE, VERTEXFS_SYNC_MAX_DEVICE_WRITES, VertexFsDeviceWrite,
+        VertexFsInode, VertexFsSyncResult, VfsBacking, VfsEvent, VfsLock, VfsLockMode,
+        VfsMemoryFile, VfsName, VfsNode, VfsNodeId, VfsNodeKind, VfsPath, VfsPipeBuffer,
+        VfsStateOperation, VfsVertexFsFile, vfs_mount_source_kind_label,
         parse_vertexfs_image, state_volume_mount_component, valid_vfs_root_path,
-        vertexfs_checksum32, vertexfs_device_absolute_sector, vertexfs_dynamic_data_sector_at,
-        vertexfs_dynamic_inode_at, vertexfs_image_has_inode, vertexfs_image_sector,
+        vertexfs_checksum32, vertexfs_device_absolute_sector, vertexfs_directory_section,
+        vertexfs_dynamic_data_sector_at, vertexfs_dynamic_inode_at, vertexfs_feature_label,
+        vertexfs_format_label, vertexfs_free_map_sector, vertexfs_image_has_inode,
+        vertexfs_image_sector, vertexfs_inode_table_section, vertexfs_journal_sector,
         vfs_authority_path_covers, write_vertexfs_dynamic_metadata, write_vertexfs_file_extent,
         write_vertexfs_inode_record, write_vertexfs_journal_clean, write_vertexfs_journal_pending,
     },
@@ -179,7 +180,7 @@ const VFS_RENAME_REQUEST_MAX_BYTES: usize =
 const MAX_VFS_LOCKS: usize = MAX_OPEN_FILE_DESCRIPTIONS;
 const MAX_VFS_EVENTS: usize = 64;
 const MAX_VFS_MOUNTS: usize = 16;
-const BUILTIN_VFS_MOUNTS: usize = 6;
+const BUILTIN_VFS_MOUNTS: usize = 7;
 const MAX_CAP_LINEAGE: usize = 1024;
 const MAX_REVOKED_CAPS: usize = MAX_CAP_LINEAGE;
 const MAX_GENERATION_CONFIGS: usize = 4;
@@ -271,9 +272,10 @@ const VFS_STATE_OP_WRITE_VALUE: u8 = b'W';
 const VFS_STATE_OP_STAT_VALUE: u8 = b'S';
 const VFS_STATE_OP_CONTROL: u8 = b'C';
 const VFS_SERVICE_REQUEST_MAGIC: &[u8; 2] = b"FS";
-const VFS_SERVICE_REQUEST_VERSION: u8 = 1;
+const VFS_SERVICE_REQUEST_VERSION: u8 = 2;
 const VFS_SERVICE_OP_READ_REPORT: u8 = b'R';
-const VFS_SERVICE_REQUEST_BYTES: usize = 12;
+const VFS_SERVICE_SOURCE_SERVICEFS: u8 = 7;
+const VFS_SERVICE_REQUEST_BYTES: usize = 32;
 const VFS_SERVICE_REPORT_BYTES: &[u8] = b"servicefs:vertex-state-report\n";
 const MAX_STATE_VOLUME_VALUE_BYTES: usize = 16;
 const USER_MMIO_MAPPING_BASE: u64 = 0x0000_5000_0000_0000;

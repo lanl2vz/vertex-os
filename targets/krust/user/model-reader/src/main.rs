@@ -27,6 +27,7 @@ const VERTEXFS_CREATED8: &[u8] = b"created-v8\n";
 const VERTEXFS_CREATED9: &[u8] = b"created-v9\n";
 const VERTEXFS_CREATED10: &[u8] = b"created-v10\n";
 const VERTEXFS_CREATED11: &[u8] = b"created-v11\n";
+const VERTEXFS_CREATED12: &[u8] = b"created-v12\n";
 
 #[unsafe(link_section = ".text._start")]
 #[unsafe(no_mangle)]
@@ -169,18 +170,24 @@ fn prove_vertexfs() {
     create_sync_readback(b"/created10", VERTEXFS_CREATED10, &mut buffer);
     create_sync_readback(b"/created11", VERTEXFS_CREATED11, &mut buffer);
     log(b"VertexFS v1 expanded metadata fills dynamic inode 15");
-    if sys::vfs_open_path_create_trunc_readwrite(CAP_VERTEXFS_ROOT, b"/created12")
-        == sys::STATUS_VFS_NO_SPACE
-    {
+    let created12 = sys::vfs_open_path_create_trunc_readwrite(CAP_VERTEXFS_ROOT, b"/created12");
+    if created12 == sys::STATUS_VFS_NO_SPACE {
         log(b"VertexFS v1 dynamic create returns no space at expanded metadata capacity");
-    } else {
+    } else if status_is_error(created12) {
         log(b"model-reader VertexFS dynamic capacity denial failed");
         sys::exit(1);
+    } else {
+        finish_created_file(created12, b"/created12", VERTEXFS_CREATED12, &mut buffer);
+        log(b"VertexFS v2 dynamic create grows beyond v1 inode capacity ok");
     }
 }
 
 fn create_sync_readback(path: &[u8], payload: &[u8], buffer: &mut [u8; 32]) {
     let writer = sys::vfs_open_path_create_trunc_readwrite(CAP_VERTEXFS_ROOT, path);
+    finish_created_file(writer, path, payload, buffer);
+}
+
+fn finish_created_file(writer: u64, path: &[u8], payload: &[u8], buffer: &mut [u8; 32]) {
     if status_is_error(writer)
         || sys::vfs_write(writer, payload) != payload.len() as u64
         || sys::vfs_sync(writer) != sys::STATUS_OK

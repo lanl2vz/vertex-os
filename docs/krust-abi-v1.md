@@ -39,8 +39,9 @@ metadata syscalls, 64-byte stat metadata, open-unlink lifetime, hard-link
 policy, and bounded state-volume block-cache writeback. M78-M79 add the strict
 VertexFS v1 boot image, mandatory service mount roots, declared bind-mount
 snapshots, and kernel-owned VertexFS fsync writeback through block-driver
-device endpoints, plus the current read-only `servicefs` request/reply file
-route. M80-M81 add VFS coordination and filesystem security/soak coverage. M82
+device endpoints. M90-M91 add the typed `servicefs` request/reply route and the
+default VertexFS v2 durable image format while preserving explicit v1
+regression gates. M80-M81 add VFS coordination and filesystem security/soak coverage. M82
 updates the compact payload identity to `KRUSTBOOTM82` version 13 and adds the
 native typed graph-store header plus graph node/edge records used for runtime
 graph provenance. M83 adds native generation verification and staged
@@ -448,7 +449,7 @@ mount root when the caller has `resolve` and `mount` authority over that root;
 built-in roots are unsupported, volatile roots with live handles or children
 return `STATUS_VFS_BUSY`, and read-only bind paths reject write-capable opens
 and metadata mutation.
-SYS_VFS_SYNC on a dirty VertexFS v1 file prepares a strict journaled image
+SYS_VFS_SYNC on a dirty VertexFS v1 or v2 file prepares a strict journaled image
 transaction, queues the ordered journal, data, metadata, and clean-journal
 sectors through the kernel-owned `vertexfs-device-request` endpoint, waits for
 matching block-driver replies on `vertexfs-device-reply`, and clears the dirty
@@ -458,7 +459,7 @@ accept older VertexDisk identities or short compatibility block commands. If the
 block-driver exits while a VertexFS fsync is blocked on device replies, the
 kernel aborts the transaction with `STATUS_VFS_UNSUPPORTED`, drops the pending
 device writes, and leaves the dirty runtime file readable. On mount, a pending
-VertexFS v1 journal record can recover only the exact target inode and payload
+VertexFS journal record can recover only the exact target inode and payload
 encoded in that record; unrelated file checksum mismatches still reject the
 image before `/fs` is mounted.
 SYS_VFS_RENAME takes a native request buffer:

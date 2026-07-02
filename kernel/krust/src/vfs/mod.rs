@@ -12,7 +12,7 @@ pub(crate) use handle::{
 };
 pub(crate) use namespace::{
     MAX_NAMESPACE_ENTRIES, NamespaceEntry, NamespaceObject, VfsMountObject, VfsRootObject,
-    vfs_authority_path_covers,
+    vfs_authority_path_covers, vfs_mount_source_kind_label,
 };
 pub(crate) use node::{VfsBacking, VfsNode, VfsNodeKind};
 pub(crate) use path::{
@@ -23,14 +23,14 @@ pub(crate) use storage::{
     MAX_VFS_MEM_FILE_BYTES, MAX_VFS_PIPE_BYTES, VfsMemoryFile, VfsPipeBuffer,
 };
 pub(crate) use vertexfs::{
-    MAX_VERTEXFS_FILE_BYTES, MAX_VERTEXFS_FILES, VERTEXFS_DIRECTORY_SECTOR,
-    VERTEXFS_DIRECTORY_SECTORS, VERTEXFS_DYNAMIC_FILE_CAPACITY, VERTEXFS_FREE_MAP_SECTOR,
-    VERTEXFS_IMAGE_BYTES, VERTEXFS_INODE_APP_DIR, VERTEXFS_INODE_TABLE_SECTOR,
-    VERTEXFS_INODE_TABLE_SECTORS, VERTEXFS_JOURNAL_PAYLOAD_OFFSET, VERTEXFS_JOURNAL_SECTOR,
-    VERTEXFS_MODULE_STRING, VERTEXFS_SECTOR_SIZE, VERTEXFS_SYNC_MAX_DEVICE_WRITES,
+    MAX_VERTEXFS_FILE_BYTES, MAX_VERTEXFS_FILES, VERTEXFS_IMAGE_BYTES, VERTEXFS_INODE_APP_DIR,
+    VERTEXFS_JOURNAL_PAYLOAD_OFFSET, VERTEXFS_MODULE_STRING, VERTEXFS_MODULE_STRING_V1,
+    VERTEXFS_MODULE_STRING_V2, VERTEXFS_SECTOR_SIZE, VERTEXFS_SYNC_MAX_DEVICE_WRITES,
     VertexFsDeviceWrite, VertexFsInode, VertexFsSyncResult, VfsVertexFsFile, parse_vertexfs_image,
-    vertexfs_checksum32, vertexfs_device_absolute_sector, vertexfs_dynamic_data_sector_at,
-    vertexfs_dynamic_inode_at, vertexfs_image_has_inode, vertexfs_image_sector,
+    vertexfs_checksum32, vertexfs_device_absolute_sector, vertexfs_directory_section,
+    vertexfs_dynamic_data_sector_at, vertexfs_dynamic_inode_at, vertexfs_feature_label,
+    vertexfs_format_label, vertexfs_free_map_sector, vertexfs_image_has_inode,
+    vertexfs_image_sector, vertexfs_inode_table_section, vertexfs_journal_sector,
     write_vertexfs_dynamic_metadata, write_vertexfs_file_extent, write_vertexfs_inode_record,
     write_vertexfs_journal_clean, write_vertexfs_journal_pending,
 };

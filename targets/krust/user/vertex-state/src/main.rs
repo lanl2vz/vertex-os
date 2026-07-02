@@ -46,9 +46,10 @@ const VFS_STATE_OP_READ_VALUE: u8 = b'R';
 const VFS_STATE_OP_WRITE_VALUE: u8 = b'W';
 const VFS_STATE_OP_STAT_VALUE: u8 = b'S';
 const VFS_STATE_OP_CONTROL: u8 = b'C';
-const VFS_SERVICE_REQUEST_HEADER_BYTES: usize = 4;
-const VFS_SERVICE_REQUEST_VERSION: u8 = 1;
+const VFS_SERVICE_REQUEST_HEADER_BYTES: usize = 24;
+const VFS_SERVICE_REQUEST_VERSION: u8 = 2;
 const VFS_SERVICE_OP_READ_REPORT: u8 = b'R';
+const VFS_SERVICE_SOURCE_SERVICEFS: u8 = 7;
 const VFS_SERVICE_REPORT: &[u8] = b"servicefs:vertex-state-report\n";
 const MAX_VFS_RESPONSE_VALUE_BYTES: usize = 64;
 const PROTOCOL_HEALTH_V0: u16 = 2;
@@ -78,7 +79,8 @@ pub extern "C" fn _start() -> ! {
         let received_len = received as usize;
         if let Some(transaction_id) = parse_vfs_service_request(&request, received_len) {
             send_vfs_response(transaction_id, VFS_SERVICE_REPORT);
-            log(b"vertex-state serves VFS filesystem service report");
+            log(b"vertex-state accepts VFS filesystem service request v2");
+            log(b"vertex-state serves VFS filesystem service report v2");
             continue;
         }
         let parsed = match parse_vfs_state_request(&request, received_len) {
@@ -519,7 +521,13 @@ fn parse_vfs_service_request(
         || buffer[header_offset + 1] != b'S'
         || buffer[header_offset + 2] != VFS_SERVICE_REQUEST_VERSION
         || buffer[header_offset + 3] != VFS_SERVICE_OP_READ_REPORT
+        || buffer[header_offset + 4] != VFS_SERVICE_SOURCE_SERVICEFS
     {
+        return None;
+    }
+    let node_id = read_u64(buffer, header_offset + 8);
+    let description_id = read_u64(buffer, header_offset + 16);
+    if node_id == 0 || description_id == 0 {
         return None;
     }
     Some(read_u64(buffer, 0))

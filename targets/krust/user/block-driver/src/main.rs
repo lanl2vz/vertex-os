@@ -54,6 +54,7 @@ const VERTEX_DISK_JOURNAL_SECTION: usize = vdisk_abi::SECTION_JOURNAL;
 const VERTEX_DISK_VERTEXFS_SECTION: usize = vdisk_abi::SECTION_VERTEXFS;
 const VERTEX_DISK_GRAPH_STORE_SECTION: usize = vdisk_abi::SECTION_GRAPH_STORE;
 const VERTEXFS_SUPERBLOCK_MAGIC: &[u8; 16] = b"VERTEXFSV1\0\0\0\0\0\0";
+const VERTEXFS_V2_SUPERBLOCK_MAGIC: &[u8; 16] = b"VERTEXFSV2\0\0\0\0\0\0";
 const GRAPH_STORE_MAGIC: &[u8; 16] = vdisk_abi::GRAPH_STORE_MAGIC;
 
 const PCI_CONFIG_ADDRESS: u16 = 0x0cf8;
@@ -621,7 +622,9 @@ fn validate_vertexfs_device_section(device: &mut VirtioBlock, layout: VertexDisk
         log(b"block-driver VertexFS section read failed");
         sys::exit(1);
     }
-    if !starts_with(&sector, VERTEXFS_SUPERBLOCK_MAGIC) {
+    if !starts_with(&sector, VERTEXFS_SUPERBLOCK_MAGIC)
+        && !starts_with(&sector, VERTEXFS_V2_SUPERBLOCK_MAGIC)
+    {
         log(b"block-driver VertexFS section magic rejected");
         sys::exit(1);
     }

@@ -49,6 +49,70 @@ impl NamespaceObject {
 }
 
 #[derive(Clone, Copy)]
+pub(crate) enum VfsMountSourceKind {
+    Root,
+    Store,
+    State,
+    Device,
+    Proc,
+    VertexFs,
+    ServiceFs,
+    Volatile,
+    Unknown,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct VfsMountSource {
+    pub(crate) kind: VfsMountSourceKind,
+    pub(crate) id: u64,
+}
+
+impl VfsMountSource {
+    pub(crate) fn from_label(source: &'static str, root_node: VfsNodeId) -> Self {
+        Self {
+            kind: vfs_mount_source_kind(source),
+            id: root_node.raw(),
+        }
+    }
+}
+
+pub(crate) fn vfs_mount_source_kind(source: &'static str) -> VfsMountSourceKind {
+    if source == "rootfs" {
+        VfsMountSourceKind::Root
+    } else if source == "storefs" {
+        VfsMountSourceKind::Store
+    } else if source == "devfs" {
+        VfsMountSourceKind::Device
+    } else if source == "procfs" {
+        VfsMountSourceKind::Proc
+    } else if source == "vertexfs" {
+        VfsMountSourceKind::VertexFs
+    } else if source == "servicefs" {
+        VfsMountSourceKind::ServiceFs
+    } else if source == "volatilefs" || source == "state:volatile" {
+        VfsMountSourceKind::Volatile
+    } else if source.starts_with("state:") {
+        VfsMountSourceKind::State
+    } else {
+        VfsMountSourceKind::Unknown
+    }
+}
+
+pub(crate) fn vfs_mount_source_kind_label(kind: VfsMountSourceKind) -> &'static str {
+    match kind {
+        VfsMountSourceKind::Root => "root",
+        VfsMountSourceKind::Store => "store",
+        VfsMountSourceKind::State => "state",
+        VfsMountSourceKind::Device => "device",
+        VfsMountSourceKind::Proc => "proc",
+        VfsMountSourceKind::VertexFs => "vertexfs",
+        VfsMountSourceKind::ServiceFs => "servicefs",
+        VfsMountSourceKind::Volatile => "volatile",
+        VfsMountSourceKind::Unknown => "unknown",
+    }
+}
+
+#[derive(Clone, Copy)]
 pub(crate) struct VfsRootObject {
     pub(crate) id: KernelObjectId,
     pub(crate) name: &'static str,
@@ -79,13 +143,14 @@ pub(crate) struct VfsMountObject {
     pub(crate) root_node: VfsNodeId,
     pub(crate) root_path: VfsPath,
     pub(crate) source: &'static str,
+    pub(crate) source_info: VfsMountSource,
     pub(crate) flags: u64,
     pub(crate) dynamic: bool,
     pub(crate) owner: ProcessId,
 }
 
 impl VfsMountObject {
-    pub(crate) const fn new(
+    pub(crate) fn new(
         id: KernelObjectId,
         name: &'static str,
         root_node: VfsNodeId,
@@ -101,6 +166,7 @@ impl VfsMountObject {
             root_node,
             root_path,
             source,
+            source_info: VfsMountSource::from_label(source, root_node),
             flags,
             dynamic,
             owner,

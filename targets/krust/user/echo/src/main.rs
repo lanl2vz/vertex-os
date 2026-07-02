@@ -1112,7 +1112,8 @@ fn prove_filesystem_service_report() {
         log(b"VFS filesystem service report read failed");
         sys::exit(1);
     }
-    if sys::vfs_open_path_write(CAP_VFS_WRITER, SERVICE_REPORT_PATH) == sys::STATUS_VFS_UNSUPPORTED
+    let write_status = sys::vfs_open_path_write(CAP_VFS_WRITER, SERVICE_REPORT_PATH);
+    if write_status == sys::STATUS_VFS_PERMISSION || write_status == sys::STATUS_VFS_UNSUPPORTED
     {
         log(b"service-backed filesystem file rejects write opens");
     } else {

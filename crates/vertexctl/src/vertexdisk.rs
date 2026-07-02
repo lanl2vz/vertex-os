@@ -76,6 +76,18 @@ pub fn create_image_with_graph_only(
     manifests: &[GenerationManifest],
     graph_only_manifests: &[GenerationManifest],
 ) -> Result<Vec<u8>, String> {
+    create_image_with_graph_only_and_vertexfs_format(
+        manifests,
+        graph_only_manifests,
+        vertexfs::VertexFsFormat::V1,
+    )
+}
+
+pub fn create_image_with_graph_only_and_vertexfs_format(
+    manifests: &[GenerationManifest],
+    graph_only_manifests: &[GenerationManifest],
+    vertexfs_format: vertexfs::VertexFsFormat,
+) -> Result<Vec<u8>, String> {
     if manifests.is_empty() {
         return Err("usage: vertexctl create-vertex-disk <output> <manifest>...".to_owned());
     }
@@ -96,7 +108,7 @@ pub fn create_image_with_graph_only(
     write_store_index(&mut image, &objects)?;
     write_state_index(&mut image, &states)?;
     write_store_payloads(&mut image, &objects);
-    write_vertexfs_image(&mut image, &manifests[0])?;
+    write_vertexfs_image(&mut image, &manifests[0], vertexfs_format)?;
     write_graph_stores(&mut image, &graph_stores)?;
     Ok(image)
 }
@@ -384,8 +396,12 @@ fn write_store_payloads(image: &mut [u8], objects: &[StorePayload]) {
     }
 }
 
-fn write_vertexfs_image(image: &mut [u8], manifest: &GenerationManifest) -> Result<(), String> {
-    let vertexfs_image = vertexfs::create_image(manifest)?;
+fn write_vertexfs_image(
+    image: &mut [u8],
+    manifest: &GenerationManifest,
+    format: vertexfs::VertexFsFormat,
+) -> Result<(), String> {
+    let vertexfs_image = vertexfs::create_image_with_format(manifest, format)?;
     let expected_len = VERTEXFS_IMAGE_SECTORS as usize * SECTOR_SIZE;
     if vertexfs_image.len() != expected_len {
         return Err(format!(

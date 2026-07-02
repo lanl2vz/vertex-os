@@ -51,9 +51,27 @@ pub fn vfs_open(cap_slot: u64, path: *const u8, packed_len_flags: u64) -> Result
     let path = &path_bytes[..path_len];
     if flags & (VFS_OPEN_WRITE | VFS_OPEN_CREATE | VFS_OPEN_TRUNC | VFS_OPEN_APPEND) != 0
         && runtime().objects.get_vfs_root(cap.object).is_some()
-        && vfs_request_path_is_read_only(path)?
     {
-        return Err(IpcError::VfsPermission);
+        let canonical_path = if path.is_empty() {
+            resolve_process_vfs_path(b"/")?
+        } else {
+            resolve_process_vfs_path(path)?
+        };
+        let canonical = canonical_path.as_bytes();
+        if vfs_path_is_read_only(canonical) {
+            if let Some(node) = runtime().vfs_node_by_path(canonical)
+                && matches!(node.backing, VfsBacking::FsServiceReport)
+            {
+                serial::write_str(
+                    "VFS filesystem service write-open denied before service request: proc=",
+                );
+                serial::write_str(current_process_name());
+                serial::write_str(" file=");
+                serial_write_vfs_name(node.name);
+                serial::write_str(" source_kind=servicefs\n");
+            }
+            return Err(IpcError::VfsPermission);
+        }
     }
     let mut created_node = None;
     let (node, available_rights) = match resolve_vfs_node_from_cap(cap, path) {
@@ -875,7 +893,10 @@ pub fn vfs_sync(handle: u64, frame: &mut SyscallFrame) -> Result<(), IpcError> {
                 );
             }
             VertexFsSyncResult::Cached { checksum } => {
-                serial::write_str("VertexFS v1 fsync cached runtime file=");
+                let format = vertexfs_format_label(&runtime().vertexfs_image).unwrap_or("v1");
+                serial::write_str("VertexFS ");
+                serial::write_str(format);
+                serial::write_str(" fsync cached runtime file=");
                 serial_write_vfs_name(node.name);
                 serial::write_str(" checksum=");
                 serial::write_u64_dec(checksum as u64);

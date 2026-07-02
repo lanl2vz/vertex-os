@@ -198,6 +198,9 @@ pub(super) fn start_vfs_service_read_transaction(
     queued_request[9] = VFS_SERVICE_REQUEST_MAGIC[1];
     queued_request[10] = VFS_SERVICE_REQUEST_VERSION;
     queued_request[11] = VFS_SERVICE_OP_READ_REPORT;
+    queued_request[12] = VFS_SERVICE_SOURCE_SERVICEFS;
+    write_u64_le(&mut queued_request, 16, node.id.raw());
+    write_u64_le(&mut queued_request, 24, description.id.raw());
     let enqueue_result = {
         let runtime = runtime();
         runtime
@@ -219,6 +222,12 @@ pub(super) fn start_vfs_service_read_transaction(
     serial::write_str(current);
     serial::write_str(" file=");
     serial_write_vfs_name(node.name);
+    serial::write_str(" op=read-report version=");
+    serial::write_u64_dec(VFS_SERVICE_REQUEST_VERSION as u64);
+    serial::write_str(" source_kind=servicefs vnode=");
+    serial::write_u64_dec(node.id.raw());
+    serial::write_str(" description=");
+    serial::write_u64_dec(description.id.raw());
     serial::write_str(" tx=");
     serial::write_u64_dec(transaction_id);
     serial::write_str("\n");
@@ -263,7 +272,7 @@ pub(super) fn start_vertexfs_sync_transaction(
     if write_count == 0 || write_count > VERTEXFS_SYNC_MAX_DEVICE_WRITES {
         return Err(IpcError::VfsUnsupported);
     }
-    let (request_endpoint, reply_endpoint, first_sector) = {
+    let (request_endpoint, reply_endpoint, first_sector, format) = {
         let runtime = runtime();
         let request_endpoint = runtime
             .vertexfs_device_request_endpoint
@@ -275,7 +284,8 @@ pub(super) fn start_vertexfs_sync_transaction(
             return Err(IpcError::VfsBusy);
         }
         let first_sector = vertexfs_device_absolute_sector(runtime.vertexfs_sync_writes[0].sector)?;
-        (request_endpoint, reply_endpoint, first_sector)
+        let format = vertexfs_format_label(&runtime.vertexfs_image).unwrap_or("v1");
+        (request_endpoint, reply_endpoint, first_sector, format)
     };
 
     let current = {
@@ -304,7 +314,9 @@ pub(super) fn start_vertexfs_sync_transaction(
     }
     wake_blocked_receiver(request_endpoint);
 
-    serial::write_str("VertexFS v1 fsync device transaction started: proc=");
+    serial::write_str("VertexFS ");
+    serial::write_str(format);
+    serial::write_str(" fsync device transaction started: proc=");
     serial::write_str(current);
     serial::write_str(" inode=");
     serial::write_u64_dec(inode_id as u64);
@@ -465,6 +477,7 @@ pub(super) fn abort_vertexfs_sync_transactions(status: u64) {
         return;
     };
     let runtime = runtime();
+    let format = vertexfs_format_label(&runtime.vertexfs_image).unwrap_or("v1");
     let mut index = 0;
     while index < runtime.processes.count {
         if let Some(process) = runtime.processes.processes[index].as_mut()
@@ -476,7 +489,9 @@ pub(super) fn abort_vertexfs_sync_transactions(status: u64) {
         {
             process.saved_frame.rax = status;
             process.state = ProcessState::Ready;
-            serial::write_str("VertexFS v1 fsync device transaction aborted: proc=");
+            serial::write_str("VertexFS ");
+            serial::write_str(format);
+            serial::write_str(" fsync device transaction aborted: proc=");
             serial::write_str(process.name);
             serial::write_str("\n");
         }
@@ -945,12 +960,15 @@ pub(super) fn wake_blocked_vertexfs_sync_reply(endpoint: KernelObjectId) {
         return;
     };
 
+    let format = vertexfs_format_label(&runtime().vertexfs_image).unwrap_or("v1");
     if !vertexfs_device_ack_ok(message, expected_sector) {
         if let Some(waiter) = runtime().processes.processes[waiter_index].as_mut() {
             waiter.saved_frame.rax = STATUS_VFS_UNSUPPORTED;
             waiter.state = ProcessState::Ready;
         }
-        serial::write_str("VertexFS v1 fsync device write rejected: proc=");
+        serial::write_str("VertexFS ");
+        serial::write_str(format);
+        serial::write_str(" fsync device write rejected: proc=");
         serial::write_str(name);
         serial::write_str(" sector=");
         serial::write_u64_dec(expected_sector);
@@ -964,7 +982,9 @@ pub(super) fn wake_blocked_vertexfs_sync_reply(endpoint: KernelObjectId) {
                 waiter.saved_frame.rax = STATUS_VFS_UNSUPPORTED;
                 waiter.state = ProcessState::Ready;
             }
-            serial::write_str("VertexFS v1 fsync device queue failed: proc=");
+            serial::write_str("VertexFS ");
+            serial::write_str(format);
+            serial::write_str(" fsync device queue failed: proc=");
             serial::write_str(name);
             serial::write_str("\n");
             return;
@@ -992,7 +1012,9 @@ pub(super) fn wake_blocked_vertexfs_sync_reply(endpoint: KernelObjectId) {
         };
         waiter.state = ProcessState::Ready;
     }
-    serial::write_str("VertexFS v1 fsync device transaction committed: proc=");
+    serial::write_str("VertexFS ");
+    serial::write_str(format);
+    serial::write_str(" fsync device transaction committed: proc=");
     serial::write_str(name);
     serial::write_str(" inode=");
     serial::write_u64_dec(inode_id as u64);

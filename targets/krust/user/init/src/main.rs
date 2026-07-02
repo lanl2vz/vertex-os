@@ -931,6 +931,7 @@ fn verify_lifecycle_inspect_states(parent_generation: &[u8], device_report_requi
     verify_lifecycle_state(report, b"restarting", parent_generation);
     verify_lifecycle_state(report, b"exited", parent_generation);
     verify_memory_lifecycle_report(report, parent_generation);
+    verify_m90_vfs_report(report, parent_generation);
     if device_report_required {
         verify_device_hardening_report(report, parent_generation);
     }
@@ -1005,6 +1006,36 @@ fn verify_memory_lifecycle_report(report: &[u8], parent_generation: &[u8]) {
         log(b"inspect reports no live mappings for reaped pids");
     } else {
         log(b"inspect reaped process mapping state missing");
+        activation_failed(parent_generation);
+    }
+}
+
+fn verify_m90_vfs_report(report: &[u8], parent_generation: &[u8]) {
+    let mount_needles: [&[u8]; 5] = [
+        b"vfs-mount[",
+        b"source=servicefs",
+        b"source_kind=servicefs",
+        b"source_id=",
+        b"flags=read-only",
+    ];
+    if find_line_contains_all(report, &mount_needles).is_some() {
+        log(b"runtime inspect reports typed VFS mount sources");
+    } else {
+        log(b"M90 typed VFS mount source report missing");
+        activation_failed(parent_generation);
+    }
+
+    let service_needles: [&[u8]; 5] = [
+        b"vfs-filesystem-service v=2",
+        b"source=servicefs",
+        b"status=ready",
+        b"active_transactions=",
+        b"writeback_errors=0",
+    ];
+    if find_line_contains_all(report, &service_needles).is_some() {
+        log(b"runtime inspect reports filesystem service health");
+    } else {
+        log(b"M90 filesystem service health report missing");
         activation_failed(parent_generation);
     }
 }

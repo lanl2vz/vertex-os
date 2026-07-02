@@ -648,18 +648,21 @@ impl RuntimeState {
         let mut dynamic_index = 0;
         let mut inode_id = 0;
         let mut first_sector = 0;
-        while dynamic_index < VERTEXFS_DYNAMIC_FILE_CAPACITY {
-            let candidate_inode = vertexfs_dynamic_inode_at(dynamic_index)?;
+        while dynamic_index < MAX_VERTEXFS_FILES {
+            let Ok(candidate_inode) = vertexfs_dynamic_inode_at(&self.vertexfs_image, dynamic_index)
+            else {
+                break;
+            };
             if !self.vertexfs_dynamic_inode_in_use(candidate_inode)
                 && !vertexfs_image_has_inode(&self.vertexfs_image, candidate_inode)?
             {
                 inode_id = candidate_inode;
-                first_sector = vertexfs_dynamic_data_sector_at(dynamic_index)?;
+                first_sector = vertexfs_dynamic_data_sector_at(&self.vertexfs_image, dynamic_index)?;
                 break;
             }
             dynamic_index += 1;
         }
-        if dynamic_index == VERTEXFS_DYNAMIC_FILE_CAPACITY {
+        if inode_id == 0 {
             return Err(IpcError::VfsNoSpace);
         }
 
@@ -789,12 +792,13 @@ impl RuntimeState {
             return Err(IpcError::VfsNoSpace);
         }
         self.vertexfs_sync_write_count = 0;
+        let journal_sector = vertexfs_journal_sector(&self.vertexfs_image)?;
         write_vertexfs_journal_pending(
             &mut self.vertexfs_image,
             file.inode_id,
             &file.bytes[..file.len],
         )?;
-        self.record_vertexfs_sync_sector(VERTEXFS_JOURNAL_SECTOR)?;
+        self.record_vertexfs_sync_sector(journal_sector)?;
         write_vertexfs_file_extent(&mut self.vertexfs_image, file)?;
         let mut sector = 0;
         while sector < file.sector_count {
@@ -802,25 +806,21 @@ impl RuntimeState {
             sector += 1;
         }
         if vertexfs_image_has_inode(&self.vertexfs_image, file.inode_id)? {
+            let (inode_sector, inode_sectors) = vertexfs_inode_table_section(&self.vertexfs_image)?;
             write_vertexfs_inode_record(&mut self.vertexfs_image, file, checksum)?;
-            self.record_vertexfs_sync_section(
-                VERTEXFS_INODE_TABLE_SECTOR,
-                VERTEXFS_INODE_TABLE_SECTORS,
-            )?;
+            self.record_vertexfs_sync_section(inode_sector, inode_sectors)?;
         } else {
+            let (inode_sector, inode_sectors) = vertexfs_inode_table_section(&self.vertexfs_image)?;
+            let (directory_sector, directory_sectors) =
+                vertexfs_directory_section(&self.vertexfs_image)?;
+            let free_map_sector = vertexfs_free_map_sector(&self.vertexfs_image)?;
             write_vertexfs_dynamic_metadata(&mut self.vertexfs_image, file, checksum)?;
-            self.record_vertexfs_sync_section(
-                VERTEXFS_INODE_TABLE_SECTOR,
-                VERTEXFS_INODE_TABLE_SECTORS,
-            )?;
-            self.record_vertexfs_sync_section(
-                VERTEXFS_DIRECTORY_SECTOR,
-                VERTEXFS_DIRECTORY_SECTORS,
-            )?;
-            self.record_vertexfs_sync_sector(VERTEXFS_FREE_MAP_SECTOR)?;
+            self.record_vertexfs_sync_section(inode_sector, inode_sectors)?;
+            self.record_vertexfs_sync_section(directory_sector, directory_sectors)?;
+            self.record_vertexfs_sync_sector(free_map_sector)?;
         }
         write_vertexfs_journal_clean(&mut self.vertexfs_image)?;
-        self.record_vertexfs_sync_sector(VERTEXFS_JOURNAL_SECTOR)?;
+        self.record_vertexfs_sync_sector(journal_sector)?;
         parse_vertexfs_image(&self.vertexfs_image).map_err(|_| IpcError::VfsUnsupported)?;
         Ok(self.vertexfs_sync_write_count)
     }

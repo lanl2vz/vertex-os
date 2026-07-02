@@ -1036,6 +1036,10 @@ fn write_vfs_report(runtime: &RuntimeState, report: &mut InspectReport) {
             report.push_u64_dec(mount.root_node.raw());
             report.push_str(" source=");
             report.push_str(mount.source);
+            report.push_str(" source_kind=");
+            report.push_str(vfs_mount_source_kind_label(mount.source_info.kind));
+            report.push_str(" source_id=");
+            report.push_u64_dec(mount.source_info.id);
             report.push_str(" flags=");
             write_vfs_mount_flags(report, mount.flags);
             report.push_str(" dynamic=");
@@ -1190,6 +1194,10 @@ fn write_vfs_report(runtime: &RuntimeState, report: &mut InspectReport) {
     report.push_u64_dec(runtime.vfs_pipe.len as u64);
     report.push_byte(b'\n');
 
+    report.push_str("vfs-filesystem-service v=2 source=servicefs status=ready active_transactions=");
+    report.push_u64_dec(vfs_service_transaction_count(runtime));
+    report.push_str(" dirty=0 writeback_errors=0\n");
+
     let mut event_index = 0;
     while event_index < runtime.vfs_event_count {
         if let Some(event) = runtime.vfs_events[event_index] {
@@ -1207,6 +1215,21 @@ fn write_vfs_report(runtime: &RuntimeState, report: &mut InspectReport) {
         }
         event_index += 1;
     }
+}
+
+fn vfs_service_transaction_count(runtime: &RuntimeState) -> u64 {
+    let mut count = 0;
+    let mut index = 0;
+    while index < runtime.processes.count {
+        if let Some(process) = runtime.processes.processes[index]
+            && let ProcessState::BlockedOnVfsState { operation, .. } = process.state
+            && operation == VfsStateOperation::ServiceRead
+        {
+            count += 1;
+        }
+        index += 1;
+    }
+    count
 }
 
 fn write_vfs_mount_flags(report: &mut InspectReport, flags: u64) {

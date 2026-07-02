@@ -933,12 +933,16 @@ fn vertexfs_build_inspect_verify_and_rejects_corruption() {
         "create-vertexfs",
         image_a_arg.as_str(),
         manifest_arg.as_str(),
+        "--format",
+        "v1",
     ]));
     assert!(created.contains("wrote VertexFS v1 image"));
     assert_success(run(&[
         "create-vertexfs",
         image_b_arg.as_str(),
         manifest_arg.as_str(),
+        "--format",
+        "v1",
     ]));
     assert_eq!(
         fs::read(&image_a).expect("read first VertexFS image"),
@@ -1034,6 +1038,107 @@ fn vertexfs_build_inspect_verify_and_rejects_corruption() {
             assert_success(run(&["inspect-vertexfs", checkpoint_arg.as_ref()]));
         assert!(checkpoint_inspected.contains("file path=/app/a bytes=13"));
     }
+}
+
+#[test]
+fn vertexfs_v2_build_inspect_verify_and_rejects_corruption() {
+    let dir = temp_dir("vertexfs-v2");
+    let manifest_path = repo_root().join("examples/hello-generation.vertex.json");
+    let image_a = dir.join("hello-a.vertexfs");
+    let image_b = dir.join("hello-b.vertexfs");
+    let manifest_arg = manifest_path.to_string_lossy().to_string();
+    let image_a_arg = image_a.to_string_lossy().to_string();
+    let image_b_arg = image_b.to_string_lossy().to_string();
+
+    let created = assert_success(run(&[
+        "create-vertexfs",
+        image_a_arg.as_str(),
+        manifest_arg.as_str(),
+        "--format",
+        "v2",
+    ]));
+    assert!(created.contains("wrote VertexFS v2 image"));
+    assert_success(run(&[
+        "create-vertexfs",
+        image_b_arg.as_str(),
+        manifest_arg.as_str(),
+        "--format",
+        "v2",
+    ]));
+    assert_eq!(
+        fs::read(&image_a).expect("read first VertexFS v2 image"),
+        fs::read(&image_b).expect("read second VertexFS v2 image"),
+        "VertexFS v2 image creation should be reproducible"
+    );
+
+    let inspected = assert_success(run(&["inspect-vertexfs", image_a_arg.as_str()]));
+    assert!(inspected.contains("VertexFS v2 image"));
+    assert!(inspected.contains("generation=gen:hello-0001"));
+    assert!(
+        inspected.contains(
+            "feature_flags=metadata-v2,directory-checksums,free-space-checksums,journal-v2,payload-checksums"
+        )
+    );
+    assert!(inspected.contains("file path=/app/a bytes=13"));
+    assert!(inspected.contains("file path=/readme bytes=17"));
+
+    let verified = assert_success(run(&["verify-vertexfs", image_a_arg.as_str()]));
+    assert!(verified.contains("VertexFS v2 verified: generation=gen:hello-0001"));
+
+    for (mode, expected) in [
+        ("bad-superblock", "VertexFS v2 superblock rejected"),
+        ("bad-inode", "VertexFS v2 inode table rejected"),
+        ("bad-directory", "VertexFS directory block rejected"),
+        (
+            "bad-free-map",
+            "VertexFS v2 free-space verification rejected allocated extent marked free",
+        ),
+        ("bad-journal", "VertexFS v2 journal rejected"),
+        (
+            "unsupported-feature-flag",
+            "VertexFS v2 superblock rejected: unsupported feature flags",
+        ),
+    ] {
+        let corrupted = dir.join(format!("{mode}.vertexfs"));
+        assert_success(run(&[
+            "corrupt-vertexfs",
+            mode,
+            image_a_arg.as_str(),
+            &corrupted.to_string_lossy(),
+        ]));
+        let stderr = assert_failure(run(&["verify-vertexfs", &corrupted.to_string_lossy()]));
+        assert!(
+            stderr.contains(expected),
+            "expected {mode} failure to contain {expected}, got {stderr}"
+        );
+    }
+
+    let journal = dir.join("journal-replay.vertexfs");
+    let journal_arg = journal.to_string_lossy();
+    assert_success(run(&[
+        "corrupt-vertexfs",
+        "interrupted-journal",
+        image_a_arg.as_str(),
+        journal_arg.as_ref(),
+    ]));
+    let journal_verified = assert_success(run(&["verify-vertexfs", journal_arg.as_ref()]));
+    assert!(journal_verified.contains("VertexFS v2 verified: generation=gen:hello-0001"));
+
+    let update_payload = dir.join("app-a-updated.txt");
+    fs::write(&update_payload, b"vertexfs:a=3\n").expect("write VertexFS v2 update payload");
+    let updated = dir.join("hello-updated.vertexfs");
+    let updated_arg = updated.to_string_lossy();
+    let update_payload_arg = update_payload.to_string_lossy();
+    let update_out = assert_success(run(&[
+        "update-vertexfs-file",
+        image_a_arg.as_str(),
+        updated_arg.as_ref(),
+        "/app/a",
+        update_payload_arg.as_ref(),
+    ]));
+    assert!(update_out.contains("updated VertexFS v2 file: path=/app/a bytes=13"));
+    let updated_verified = assert_success(run(&["verify-vertexfs", updated_arg.as_ref()]));
+    assert!(updated_verified.contains("VertexFS v2 verified: generation=gen:hello-0001"));
 }
 
 #[test]

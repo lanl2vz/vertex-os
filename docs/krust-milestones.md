@@ -7,10 +7,10 @@ runtime layered over a host kernel.
 
 ## Status Summary
 
-Current status: M14-M88 and M87-1 through M87-4 are implemented and
+Current status: M14-M88 plus M90-M91 and M87-1 through M87-4 are implemented and
 smoke-tested under `qemu-system-x86_64` with Limine. The current tree has an
-image-backed VertexFS v1 mount, a strict VertexDisk v1 section carrying the
-current VertexFS image,
+image-backed VertexFS v2 mount, a strict VertexDisk v1 section carrying the
+current VertexFS image, retained VertexFS v1 verifier/regression gates,
 fixed journal replay, kernel-owned device-backed fsync transactions,
 post-sync image remount, fsync fault/restart handling, declared-file journal
 checkpoint recovery, mount-namespace gates, and a read-only `servicefs`
@@ -110,11 +110,14 @@ pipe with bounded buffering, a service-backed state-volume VFS transaction
 path, a read-only `/state/service-report` `servicefs` route, advisory
 whole-file and byte-range lock coverage, metadata watch events, VFS poll
 readiness, and a bounded write-through block cache in `vertex-state`. The new
-`/fs` mount is a distinct `vertexfs` source loaded from the `vertexfs-v1` boot
-image module with VertexFS-file backing, declared files, fixed journal replay,
-a kernel-owned device-backed fsync transaction for declared and dynamic inodes,
+`/fs` mount is a distinct `vertexfs` source loaded from the boot VertexFS image
+module with VertexFS-file backing, declared files, fixed journal replay, a
+kernel-owned device-backed fsync transaction for declared and dynamic inodes,
 create/write/read/fsync coverage, and a model-reader service rooted at
-`/fs/app`. The release gate now covers corrupt VertexFS images, interrupted
+`/fs/app`. M91 makes the default boot image VertexFS v2 with expanded inode and
+directory sections, a volume id, generation id, strict feature flags,
+checksummed v2 metadata, and dynamic create growth beyond the v1 inode/dir
+limit. The release gate now covers corrupt VertexFS images, interrupted
 journals, checkpoint remount verification, fsync faults, live-handle revocation
 semantics, a 100-cycle VFS churn probe, native graph-store checksum rejection,
 invalid graph-record rejection, and native package closure import through
@@ -133,9 +136,14 @@ native operator console usable for discovery: services and capabilities can be
 listed before proof commands are run.
 M88 adds the flagship appliance update transcript and verifier, including a
 target-independent package-import validation core under `userland/package-import`.
-General vnode page cache integration, broader synthetic/device filesystem
-breadth, durable graph-store mutation, and durable policy-denial history
-remain later work.
+M90 adds the typed filesystem-service protocol substrate after the M89 soak was
+deferred: servicefs now has typed mount-source reporting, an exact read-only
+mount, a v2 `FS` request envelope, provider-side v2 validation, and runtime
+inspect filesystem-service health rows. M91 adds the default VertexFS v2
+durable format while keeping explicit v1 creation and verifier gates available
+for regression coverage. General vnode page cache integration,
+broader synthetic/device filesystem breadth, durable graph-store mutation, and
+durable policy-denial history remain later work.
 
 ```sh
 make doctor
@@ -1629,7 +1637,7 @@ done: locked Cargo dependencies for the top-level host-tool workspace, Krust ker
 done: kernel/krust/rust-toolchain.toml pins Rust 1.95.0, rustfmt, and x86_64-unknown-none
 done: make doctor checks every required tool and reports actionable fixes
 done: legacy hello/ipc userspace crates are removed instead of carried forward
-done: single release-gate script runs the clean-clone M14-M88 substrate proof with the current QEMU matrix
+done: single release-gate script runs the clean-clone M14-M88 plus M90-M91 substrate proof with the current QEMU matrix
 ```
 
 Acceptance tests:
@@ -4576,7 +4584,8 @@ Done:
 
 ## M89: Long-Run Graph OS Soak
 
-Status: planned.
+Status: planned; intentionally skipped for now so M90 can establish the next
+VFS/filesystem protocol substrate first.
 
 Goal: stress the native graph OS model over many install, activation, rollback,
 state migration, service restart, and crash cycles until graph/object/state
@@ -4617,7 +4626,11 @@ Implementation notes:
 
 ## M90: Filesystem-Service Protocol And VFS Authority Contract
 
-Status: planned.
+Status: done for the current filesystem-service protocol substrate; typed mount
+source reporting, exact read-only `servicefs` mount authority, v2
+filesystem-service request envelope, provider-side v2 validation, and release
+gate coverage are implemented. Broader lookup/page/metadata operations remain
+the M91-M93 expansion.
 
 Goal: split the next filesystem layer cleanly: Krust keeps VFS authority,
 handles, mount namespaces, vnode identity, cache ownership, and blocking
@@ -4664,9 +4677,34 @@ Implementation notes:
   the purpose of M90 is the authority boundary, request model, restart cleanup,
   and observability.
 
+Current implementation state:
+
+```text
+done: VFS mount objects now carry typed source metadata alongside display source
+      labels, with runtime inspect reporting `source_kind` and `source_id`
+done: `/state/service-report` is installed as an exact read-only `servicefs`
+      mount, so write-capable opens are denied by kernel VFS authority before
+      the filesystem-service provider receives a request
+done: service-backed file reads use a version-2 `FS` request envelope carrying
+      operation, typed source kind, vnode id, and open-file-description id
+done: `vertex-state` validates the v2 filesystem-service request envelope and
+      rejects malformed or stale short requests before serving the report
+done: runtime inspect emits `vfs-filesystem-service v=2` health with active
+      transaction and writeback-error fields for operator/gate checks
+done: `vertex-init` verifies typed VFS mount-source rows and filesystem-service
+      health rows in the runtime inspect report
+done: `scripts/krust-test.sh m90` gates the typed servicefs mount source, v2
+      request envelope, provider-side v2 validation, pre-provider write denial,
+      runtime inspect proof rows, and native activation success
+```
+
 ## M91: VertexFS v2 Durable Format
 
-Status: planned.
+Status: done for the current durable-format substrate; VertexFS v2 images,
+offline tooling, mount-time verification/replay, v2 disk-section generation,
+unsupported-feature rejection, and dynamic create growth beyond the v1 metadata
+limit are release-gate covered. Full durable metadata mutation semantics remain
+M92 work, and the bounded page-cache/writeback layer remains M93 work.
 
 Goal: replace the current fixed VertexFS v1 substrate with an extensible
 durable on-disk format that can support normal filesystem metadata growth
@@ -4706,6 +4744,39 @@ Implementation notes:
   M78 behavior.
 - The on-disk format should be small and explicit, but not hard-coded to one
   application directory or fixed file count.
+
+Current implementation state:
+
+```text
+done: VertexFS v2 uses a 64-sector image compatible with the existing
+      VertexDisk section while reallocating internal metadata to 8-sector inode
+      and directory regions, a free-space bitmap, a v2 journal sector, and a
+      data section starting after the journal
+done: the v2 superblock carries strict magic/version/sector count, a volume id,
+      generation id, feature flags, a section table, and checksum validation
+done: v2 inode and directory records keep stable inode ids, checked
+      parent/child identity, bounded names, file extent metadata, and payload
+      checksums
+done: the v2 journal carries a pending/clean state plus target, payload length,
+      payload checksum, sequence, and replay fields; interrupted checkpoints
+      verify and mount through the replay path idempotently
+done: `vertexctl create-vertexfs --format v2`, `inspect-vertexfs`,
+      `verify-vertexfs`, `corrupt-vertexfs`, and `update-vertexfs-file` cover
+      reproducible v2 create/inspect/verify/update plus bad superblock, inode,
+      directory, free-map, journal, and unsupported-feature rejection
+done: `vertexctl create-vertex-disk --vertexfs-format v2` writes a matching v2
+      VertexFS image into the durable VertexDisk section used by the block
+      driver
+done: Krust accepts neutral, v1, and v2 VertexFS module labels, verifies v2 at
+      mount time, reports `VertexFS v2` mount/replay/fsync logs, and keeps v1
+      images accepted for explicit regression gates
+done: `model-reader` proves v2 dynamic create can allocate inode 16
+      (`/created12`), beyond the v1 dynamic inode/dir limit, while v1 still
+      returns `STATUS_VFS_NO_SPACE` at the old capacity
+done: `scripts/krust-test.sh m91` gates the v2 offline verifier/corrupt/update
+      tooling, fresh v2 mount, v2 fsync transactions, VertexDisk v2 section,
+      dynamic create growth, and native activation success
+```
 
 ## M92: Durable Metadata Operations
 

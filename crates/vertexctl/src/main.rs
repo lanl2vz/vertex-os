@@ -480,13 +480,13 @@ fn explain_krustboot_cmd(args: &[String]) -> Result<(), String> {
 fn create_vertex_disk_cmd(args: &[String]) -> Result<(), String> {
     let Some((output_path, manifest_paths)) = args.split_first() else {
         return Err(
-            "usage: vertexctl create-vertex-disk <output> <manifest>... [--graph-store-only <manifest>...]"
+            "usage: vertexctl create-vertex-disk <output> <manifest>... [--vertexfs-format v1|v2] [--graph-store-only <manifest>...]"
                 .to_owned(),
         );
     };
     if manifest_paths.is_empty() {
         return Err(
-            "usage: vertexctl create-vertex-disk <output> <manifest>... [--graph-store-only <manifest>...]"
+            "usage: vertexctl create-vertex-disk <output> <manifest>... [--vertexfs-format v1|v2] [--graph-store-only <manifest>...]"
                 .to_owned(),
         );
     }
@@ -494,9 +494,29 @@ fn create_vertex_disk_cmd(args: &[String]) -> Result<(), String> {
     let mut manifests = Vec::new();
     let mut graph_only_manifests = Vec::new();
     let mut graph_only = false;
-    for manifest_path in manifest_paths {
+    let mut vertexfs_format = vertexfs::VertexFsFormat::V1;
+    let mut index = 0;
+    while index < manifest_paths.len() {
+        let manifest_path = &manifest_paths[index];
         if manifest_path == "--graph-store-only" {
             graph_only = true;
+            index += 1;
+            continue;
+        }
+        if manifest_path == "--vertexfs-format" {
+            let Some(value) = manifest_paths.get(index + 1) else {
+                return Err(
+                    "usage: vertexctl create-vertex-disk <output> <manifest>... [--vertexfs-format v1|v2] [--graph-store-only <manifest>...]"
+                        .to_owned(),
+                );
+            };
+            vertexfs_format = vertexfs::VertexFsFormat::parse(value)?;
+            index += 2;
+            continue;
+        }
+        if let Some(value) = manifest_path.strip_prefix("--vertexfs-format=") {
+            vertexfs_format = vertexfs::VertexFsFormat::parse(value)?;
+            index += 1;
             continue;
         }
         let manifest = load_manifest(manifest_path).map_err(|error| error.to_string())?;
@@ -513,15 +533,20 @@ fn create_vertex_disk_cmd(args: &[String]) -> Result<(), String> {
         } else {
             manifests.push(manifest);
         }
+        index += 1;
     }
     if manifests.is_empty() {
         return Err(
-            "usage: vertexctl create-vertex-disk <output> <manifest>... [--graph-store-only <manifest>...]"
+            "usage: vertexctl create-vertex-disk <output> <manifest>... [--vertexfs-format v1|v2] [--graph-store-only <manifest>...]"
                 .to_owned(),
         );
     }
 
-    let image = vertexdisk::create_image_with_graph_only(&manifests, &graph_only_manifests)?;
+    let image = vertexdisk::create_image_with_graph_only_and_vertexfs_format(
+        &manifests,
+        &graph_only_manifests,
+        vertexfs_format,
+    )?;
     fs::write(output_path, &image)
         .map_err(|source| format!("failed to write {output_path}: {source}"))?;
     println!(
@@ -549,8 +574,28 @@ fn corrupt_vertex_disk_cmd(args: &[String]) -> Result<(), String> {
 }
 
 fn create_vertexfs_cmd(args: &[String]) -> Result<(), String> {
-    let [output_path, manifest_path] = args else {
-        return Err("usage: vertexctl create-vertexfs <output> <manifest>".to_owned());
+    let (output_path, manifest_path, format) = match args {
+        [output_path, manifest_path] => (output_path, manifest_path, vertexfs::VertexFsFormat::V2),
+        [output_path, manifest_path, flag, value] if flag == "--format" => (
+            output_path,
+            manifest_path,
+            vertexfs::VertexFsFormat::parse(value)?,
+        ),
+        [output_path, manifest_path, value] if value.starts_with("--format=") => {
+            let format = value.strip_prefix("--format=").ok_or_else(|| {
+                "usage: vertexctl create-vertexfs <output> <manifest> [--format v1|v2]".to_owned()
+            })?;
+            (
+                output_path,
+                manifest_path,
+                vertexfs::VertexFsFormat::parse(format)?,
+            )
+        }
+        _ => {
+            return Err(
+                "usage: vertexctl create-vertexfs <output> <manifest> [--format v1|v2]".to_owned(),
+            );
+        }
     };
     let manifest = load_manifest(manifest_path).map_err(|error| error.to_string())?;
     let report = validate_manifest(&manifest);
@@ -561,11 +606,12 @@ fn create_vertexfs_cmd(args: &[String]) -> Result<(), String> {
             manifest.generation.id
         ));
     }
-    let image = vertexfs::create_image(&manifest)?;
+    let image = vertexfs::create_image_with_format(&manifest, format)?;
     fs::write(output_path, &image)
         .map_err(|source| format!("failed to write {output_path}: {source}"))?;
     println!(
-        "wrote VertexFS v1 image: {output_path} sectors={} sector_size={}",
+        "wrote VertexFS {} image: {output_path} sectors={} sector_size={}",
+        format.label(),
         vertexfs::sectors(),
         vertexfs::sector_size()
     );
@@ -579,7 +625,7 @@ fn inspect_vertexfs_cmd(args: &[String]) -> Result<(), String> {
     let bytes =
         fs::read(image_path).map_err(|source| format!("failed to read {image_path}: {source}"))?;
     let report = vertexfs::inspect(&bytes)?;
-    println!("VertexFS v1 image");
+    println!("VertexFS {} image", report.format.label());
     println!("generation={}", report.generation);
     println!(
         "feature_flags={}",
@@ -604,7 +650,8 @@ fn verify_vertexfs_cmd(args: &[String]) -> Result<(), String> {
         fs::read(image_path).map_err(|source| format!("failed to read {image_path}: {source}"))?;
     let report = vertexfs::verify(&bytes)?;
     println!(
-        "VertexFS v1 verified: generation={} directories={} files={}",
+        "VertexFS {} verified: generation={} directories={} files={}",
+        report.format.label(),
         report.generation,
         report.directories,
         report.files.len()
@@ -640,7 +687,8 @@ fn update_vertexfs_file_cmd(args: &[String]) -> Result<(), String> {
     fs::write(output_path, &updated)
         .map_err(|source| format!("failed to write {output_path}: {source}"))?;
     println!(
-        "updated VertexFS v1 file: path={path} bytes={} input={input_path} output={output_path}",
+        "updated VertexFS {} file: path={path} bytes={} input={input_path} output={output_path}",
+        vertexfs::verify(&updated)?.format.label(),
         payload.len()
     );
     Ok(())
@@ -649,6 +697,8 @@ fn update_vertexfs_file_cmd(args: &[String]) -> Result<(), String> {
 fn vertexfs_feature_flags(flags: u32) -> String {
     match flags {
         15 => "metadata-v1,directory-checksums,free-space-checksums,journal-v1".to_owned(),
+        31 => "metadata-v2,directory-checksums,free-space-checksums,journal-v2,payload-checksums"
+            .to_owned(),
         other => format!("0x{other:08x}"),
     }
 }
@@ -1779,9 +1829,9 @@ fn print_usage() {
            vertexctl compile-typed <system.vertex> <output>\n\
            vertexctl compile-boot-manifest <manifest> <output>\n\
            vertexctl explain-krustboot <manifest>\n\
-           vertexctl create-vertex-disk <output> <manifest>... [--graph-store-only <manifest>...]\n\
+           vertexctl create-vertex-disk <output> <manifest>... [--vertexfs-format v1|v2] [--graph-store-only <manifest>...]\n\
            vertexctl corrupt-vertex-disk <mode> <input> <output>\n\
-           vertexctl create-vertexfs <output> <manifest>\n\
+           vertexctl create-vertexfs <output> <manifest> [--format v1|v2]\n\
            vertexctl inspect-vertexfs <image>\n\
            vertexctl verify-vertexfs <image>\n\
            vertexctl corrupt-vertexfs <mode> <input> <output>\n\

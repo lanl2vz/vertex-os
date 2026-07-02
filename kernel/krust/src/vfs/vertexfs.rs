@@ -5,29 +5,48 @@ use crate::{
 
 use super::VfsName;
 
-pub(crate) const MAX_VERTEXFS_FILES: usize = 16;
+pub(crate) const MAX_VERTEXFS_FILES: usize = 48;
 pub(crate) const MAX_VERTEXFS_FILE_BYTES: usize = 512;
-pub(crate) const VERTEXFS_MODULE_STRING: &[u8] = b"vertexfs-v1";
+pub(crate) const VERTEXFS_MODULE_STRING: &[u8] = b"vertexfs";
+pub(crate) const VERTEXFS_MODULE_STRING_V1: &[u8] = b"vertexfs-v1";
+pub(crate) const VERTEXFS_MODULE_STRING_V2: &[u8] = b"vertexfs-v2";
 pub(crate) const VERTEXFS_SECTOR_SIZE: usize = 512;
 pub(crate) const VERTEXFS_SECTORS: usize = 64;
 pub(crate) const VERTEXFS_IMAGE_BYTES: usize = VERTEXFS_SECTOR_SIZE * VERTEXFS_SECTORS;
-const VERTEXFS_SUPERBLOCK_MAGIC: &[u8; 16] = b"VERTEXFSV1\0\0\0\0\0\0";
-const VERTEXFS_INODE_TABLE_MAGIC: &[u8; 16] = b"VFSINODEV1\0\0\0\0\0\0";
-const VERTEXFS_DIRECTORY_MAGIC: &[u8; 16] = b"VFSDIRV1\0\0\0\0\0\0\0\0";
-const VERTEXFS_FREE_MAP_MAGIC: &[u8; 16] = b"VFSFREEV1\0\0\0\0\0\0\0";
-const VERTEXFS_JOURNAL_MAGIC: &[u8; 16] = b"VFSJOURNALV1\0\0\0\0";
-const VERTEXFS_VERSION: u16 = 1;
+const VERTEXFS_SUPERBLOCK_MAGIC_V1: &[u8; 16] = b"VERTEXFSV1\0\0\0\0\0\0";
+const VERTEXFS_INODE_TABLE_MAGIC_V1: &[u8; 16] = b"VFSINODEV1\0\0\0\0\0\0";
+const VERTEXFS_DIRECTORY_MAGIC_V1: &[u8; 16] = b"VFSDIRV1\0\0\0\0\0\0\0\0";
+const VERTEXFS_FREE_MAP_MAGIC_V1: &[u8; 16] = b"VFSFREEV1\0\0\0\0\0\0\0";
+const VERTEXFS_JOURNAL_MAGIC_V1: &[u8; 16] = b"VFSJOURNALV1\0\0\0\0";
+const VERTEXFS_SUPERBLOCK_MAGIC_V2: &[u8; 16] = b"VERTEXFSV2\0\0\0\0\0\0";
+const VERTEXFS_INODE_TABLE_MAGIC_V2: &[u8; 16] = b"VFSINODEV2\0\0\0\0\0\0";
+const VERTEXFS_DIRECTORY_MAGIC_V2: &[u8; 16] = b"VFSDIRV2\0\0\0\0\0\0\0\0";
+const VERTEXFS_FREE_MAP_MAGIC_V2: &[u8; 16] = b"VFSFREEV2\0\0\0\0\0\0\0";
+const VERTEXFS_JOURNAL_MAGIC_V2: &[u8; 16] = b"VFSJOURNALV2\0\0\0\0";
+const VERTEXFS_VERSION_V1: u16 = 1;
+const VERTEXFS_VERSION_V2: u16 = 2;
 const VERTEXFS_CHECKSUM_OFFSET: usize = 20;
 const VERTEXFS_FEATURE_METADATA_V1: u32 = 1;
 const VERTEXFS_FEATURE_DIRECTORY_CHECKSUMS: u32 = 1 << 1;
 const VERTEXFS_FEATURE_FREE_SPACE_CHECKSUMS: u32 = 1 << 2;
 const VERTEXFS_FEATURE_JOURNAL_V1: u32 = 1 << 3;
-const VERTEXFS_FEATURE_FLAGS: u32 = VERTEXFS_FEATURE_METADATA_V1
+const VERTEXFS_FEATURE_FLAGS_V1: u32 = VERTEXFS_FEATURE_METADATA_V1
     | VERTEXFS_FEATURE_DIRECTORY_CHECKSUMS
     | VERTEXFS_FEATURE_FREE_SPACE_CHECKSUMS
     | VERTEXFS_FEATURE_JOURNAL_V1;
+const VERTEXFS_FEATURE_METADATA_V2: u32 = 1;
+const VERTEXFS_FEATURE_JOURNAL_V2: u32 = 1 << 3;
+const VERTEXFS_FEATURE_PAYLOAD_CHECKSUMS: u32 = 1 << 4;
+const VERTEXFS_FEATURE_FLAGS_V2: u32 = VERTEXFS_FEATURE_METADATA_V2
+    | VERTEXFS_FEATURE_DIRECTORY_CHECKSUMS
+    | VERTEXFS_FEATURE_FREE_SPACE_CHECKSUMS
+    | VERTEXFS_FEATURE_JOURNAL_V2
+    | VERTEXFS_FEATURE_PAYLOAD_CHECKSUMS;
 const VERTEXFS_GENERATION_OFFSET: usize = 32;
-const VERTEXFS_SECTION_TABLE_OFFSET: usize = 128;
+const VERTEXFS_V2_VOLUME_OFFSET: usize = 32;
+const VERTEXFS_V2_GENERATION_OFFSET: usize = 96;
+const VERTEXFS_SECTION_TABLE_OFFSET_V1: usize = 128;
+const VERTEXFS_SECTION_TABLE_OFFSET_V2: usize = 192;
 const VERTEXFS_SECTION_RECORD_LEN: usize = 16;
 pub(crate) const VERTEXFS_INODE_TABLE_SECTOR: u64 = 1;
 pub(crate) const VERTEXFS_INODE_TABLE_SECTORS: u64 = 2;
@@ -39,14 +58,28 @@ pub(crate) const VERTEXFS_FREE_MAP_SECTOR: u64 =
 pub(crate) const VERTEXFS_JOURNAL_SECTOR: u64 = VERTEXFS_FREE_MAP_SECTOR + 1;
 const VERTEXFS_DATA_SECTOR: u64 = VERTEXFS_JOURNAL_SECTOR + 1;
 const VERTEXFS_DATA_SECTORS: u64 = (VERTEXFS_SECTORS as u64) - VERTEXFS_DATA_SECTOR;
+pub(crate) const VERTEXFS_V2_INODE_TABLE_SECTOR: u64 = 1;
+pub(crate) const VERTEXFS_V2_INODE_TABLE_SECTORS: u64 = 8;
+pub(crate) const VERTEXFS_V2_DIRECTORY_SECTOR: u64 =
+    VERTEXFS_V2_INODE_TABLE_SECTOR + VERTEXFS_V2_INODE_TABLE_SECTORS;
+pub(crate) const VERTEXFS_V2_DIRECTORY_SECTORS: u64 = 8;
+pub(crate) const VERTEXFS_V2_FREE_MAP_SECTOR: u64 =
+    VERTEXFS_V2_DIRECTORY_SECTOR + VERTEXFS_V2_DIRECTORY_SECTORS;
+pub(crate) const VERTEXFS_V2_JOURNAL_SECTOR: u64 = VERTEXFS_V2_FREE_MAP_SECTOR + 1;
+const VERTEXFS_V2_DATA_SECTOR: u64 = VERTEXFS_V2_JOURNAL_SECTOR + 1;
+const VERTEXFS_V2_DATA_SECTORS: u64 = (VERTEXFS_SECTORS as u64) - VERTEXFS_V2_DATA_SECTOR;
 const VERTEXFS_INODE_ENTRY_OFFSET: usize = 32;
 const VERTEXFS_INODE_ENTRY_LEN: usize = 64;
 const VERTEXFS_INODE_TABLE_BYTES: usize =
     VERTEXFS_SECTOR_SIZE * VERTEXFS_INODE_TABLE_SECTORS as usize;
+const VERTEXFS_V2_INODE_TABLE_BYTES: usize =
+    VERTEXFS_SECTOR_SIZE * VERTEXFS_V2_INODE_TABLE_SECTORS as usize;
 const VERTEXFS_DIRECTORY_ENTRY_OFFSET: usize = 32;
 const VERTEXFS_DIRECTORY_ENTRY_LEN: usize = 64;
 const VERTEXFS_DIRECTORY_NAME_BYTES: usize = VERTEXFS_DIRECTORY_ENTRY_LEN - 12;
 const VERTEXFS_DIRECTORY_BYTES: usize = VERTEXFS_SECTOR_SIZE * VERTEXFS_DIRECTORY_SECTORS as usize;
+const VERTEXFS_V2_DIRECTORY_BYTES: usize =
+    VERTEXFS_SECTOR_SIZE * VERTEXFS_V2_DIRECTORY_SECTORS as usize;
 const VERTEXFS_INODE_ROOT: u32 = 1;
 const VERTEXFS_INODE_README: u32 = 2;
 pub(crate) const VERTEXFS_INODE_APP_DIR: u32 = 3;
@@ -58,18 +91,104 @@ const VERTEXFS_INODE_ENTRY_CAPACITY: usize =
 const VERTEXFS_DIRECTORY_ENTRY_CAPACITY: usize =
     (VERTEXFS_DIRECTORY_BYTES - VERTEXFS_DIRECTORY_ENTRY_OFFSET) / VERTEXFS_DIRECTORY_ENTRY_LEN;
 const VERTEXFS_DYNAMIC_INODE_FIRST: u32 = 5;
-const VERTEXFS_DYNAMIC_DATA_SECTOR_FIRST: u64 = VERTEXFS_DATA_SECTOR + 2;
 pub(crate) const VERTEXFS_DYNAMIC_FILE_CAPACITY: usize =
     VERTEXFS_INODE_ENTRY_CAPACITY - VERTEXFS_BASE_INODE_COUNT;
 const VERTEXFS_DIRECTORY_DYNAMIC_FILE_CAPACITY: usize =
     VERTEXFS_DIRECTORY_ENTRY_CAPACITY - VERTEXFS_BASE_DIRECTORY_COUNT;
+const VERTEXFS_V2_DIRECTORY_ENTRY_CAPACITY: usize =
+    (VERTEXFS_V2_DIRECTORY_BYTES - VERTEXFS_DIRECTORY_ENTRY_OFFSET) / VERTEXFS_DIRECTORY_ENTRY_LEN;
+pub(crate) const VERTEXFS_V2_DYNAMIC_FILE_CAPACITY: usize =
+    VERTEXFS_V2_DATA_SECTORS as usize - 2;
 const VERTEXFS_KIND_DIR: u16 = 1;
 const VERTEXFS_KIND_FILE: u16 = 2;
 const VERTEXFS_JOURNAL_STATE_CLEAN: u16 = 0;
 const VERTEXFS_JOURNAL_STATE_PENDING: u16 = 1;
 pub(crate) const VERTEXFS_JOURNAL_PAYLOAD_OFFSET: usize = 64;
-pub(crate) const VERTEXFS_SYNC_MAX_DEVICE_WRITES: usize = 8;
+pub(crate) const VERTEXFS_SYNC_MAX_DEVICE_WRITES: usize = 24;
 pub(crate) const VERTEXDISK_VERTEXFS_IMAGE_SECTOR: u64 = 49_209;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum VertexFsFormat {
+    V1,
+    V2,
+}
+
+#[derive(Clone, Copy)]
+struct VertexFsLayout {
+    format: VertexFsFormat,
+    superblock_magic: &'static [u8; 16],
+    inode_magic: &'static [u8; 16],
+    directory_magic: &'static [u8; 16],
+    free_map_magic: &'static [u8; 16],
+    journal_magic: &'static [u8; 16],
+    version: u16,
+    feature_flags: u32,
+    generation_offset: usize,
+    section_table_offset: usize,
+    inode_table_sector: u64,
+    inode_table_sectors: u64,
+    inode_table_bytes: usize,
+    directory_sector: u64,
+    directory_sectors: u64,
+    directory_bytes: usize,
+    free_map_sector: u64,
+    journal_sector: u64,
+    data_sector: u64,
+    data_sectors: u64,
+    dynamic_file_capacity: usize,
+    directory_dynamic_file_capacity: usize,
+}
+
+const VERTEXFS_LAYOUT_V1: VertexFsLayout = VertexFsLayout {
+    format: VertexFsFormat::V1,
+    superblock_magic: VERTEXFS_SUPERBLOCK_MAGIC_V1,
+    inode_magic: VERTEXFS_INODE_TABLE_MAGIC_V1,
+    directory_magic: VERTEXFS_DIRECTORY_MAGIC_V1,
+    free_map_magic: VERTEXFS_FREE_MAP_MAGIC_V1,
+    journal_magic: VERTEXFS_JOURNAL_MAGIC_V1,
+    version: VERTEXFS_VERSION_V1,
+    feature_flags: VERTEXFS_FEATURE_FLAGS_V1,
+    generation_offset: VERTEXFS_GENERATION_OFFSET,
+    section_table_offset: VERTEXFS_SECTION_TABLE_OFFSET_V1,
+    inode_table_sector: VERTEXFS_INODE_TABLE_SECTOR,
+    inode_table_sectors: VERTEXFS_INODE_TABLE_SECTORS,
+    inode_table_bytes: VERTEXFS_INODE_TABLE_BYTES,
+    directory_sector: VERTEXFS_DIRECTORY_SECTOR,
+    directory_sectors: VERTEXFS_DIRECTORY_SECTORS,
+    directory_bytes: VERTEXFS_DIRECTORY_BYTES,
+    free_map_sector: VERTEXFS_FREE_MAP_SECTOR,
+    journal_sector: VERTEXFS_JOURNAL_SECTOR,
+    data_sector: VERTEXFS_DATA_SECTOR,
+    data_sectors: VERTEXFS_DATA_SECTORS,
+    dynamic_file_capacity: VERTEXFS_DYNAMIC_FILE_CAPACITY,
+    directory_dynamic_file_capacity: VERTEXFS_DIRECTORY_DYNAMIC_FILE_CAPACITY,
+};
+
+const VERTEXFS_LAYOUT_V2: VertexFsLayout = VertexFsLayout {
+    format: VertexFsFormat::V2,
+    superblock_magic: VERTEXFS_SUPERBLOCK_MAGIC_V2,
+    inode_magic: VERTEXFS_INODE_TABLE_MAGIC_V2,
+    directory_magic: VERTEXFS_DIRECTORY_MAGIC_V2,
+    free_map_magic: VERTEXFS_FREE_MAP_MAGIC_V2,
+    journal_magic: VERTEXFS_JOURNAL_MAGIC_V2,
+    version: VERTEXFS_VERSION_V2,
+    feature_flags: VERTEXFS_FEATURE_FLAGS_V2,
+    generation_offset: VERTEXFS_V2_GENERATION_OFFSET,
+    section_table_offset: VERTEXFS_SECTION_TABLE_OFFSET_V2,
+    inode_table_sector: VERTEXFS_V2_INODE_TABLE_SECTOR,
+    inode_table_sectors: VERTEXFS_V2_INODE_TABLE_SECTORS,
+    inode_table_bytes: VERTEXFS_V2_INODE_TABLE_BYTES,
+    directory_sector: VERTEXFS_V2_DIRECTORY_SECTOR,
+    directory_sectors: VERTEXFS_V2_DIRECTORY_SECTORS,
+    directory_bytes: VERTEXFS_V2_DIRECTORY_BYTES,
+    free_map_sector: VERTEXFS_V2_FREE_MAP_SECTOR,
+    journal_sector: VERTEXFS_V2_JOURNAL_SECTOR,
+    data_sector: VERTEXFS_V2_DATA_SECTOR,
+    data_sectors: VERTEXFS_V2_DATA_SECTORS,
+    dynamic_file_capacity: VERTEXFS_V2_DYNAMIC_FILE_CAPACITY,
+    directory_dynamic_file_capacity: VERTEXFS_V2_DIRECTORY_ENTRY_CAPACITY
+        - VERTEXFS_BASE_DIRECTORY_COUNT,
+};
 
 #[derive(Clone, Copy)]
 pub(crate) struct VertexFsBootFiles<'a> {
@@ -89,7 +208,7 @@ pub(crate) struct VertexFsBootFile<'a> {
 struct VertexFsParsedInodes {
     readme: VertexFsInode,
     app_a: VertexFsInode,
-    dynamic: [Option<VertexFsInode>; VERTEXFS_DYNAMIC_FILE_CAPACITY],
+    dynamic: [Option<VertexFsInode>; MAX_VERTEXFS_FILES],
 }
 
 #[derive(Clone, Copy)]
@@ -196,10 +315,14 @@ impl VfsVertexFsFile {
 
 pub(crate) fn parse_vertexfs_image(image: &[u8]) -> Result<VertexFsBootFiles<'_>, InitError> {
     let superblock = vertexfs_sector(image, 0)?;
-    if !vertexfs_magic_matches(superblock, VERTEXFS_SUPERBLOCK_MAGIC) {
+    let layout = vertexfs_layout_from_superblock(superblock)?;
+    if layout.format == VertexFsFormat::V2 {
+        vertexfs_fixed_string(superblock, VERTEXFS_V2_VOLUME_OFFSET, 64)?;
+    }
+    if !vertexfs_magic_matches(superblock, layout.superblock_magic) {
         return reject_vertexfs_image("bad superblock");
     }
-    if read_u16_le(superblock, 16) != VERTEXFS_VERSION {
+    if read_u16_le(superblock, 16) != layout.version {
         return reject_vertexfs_image("unsupported superblock version");
     }
     if read_u16_le(superblock, 18) as usize != VERTEXFS_SECTOR_SIZE {
@@ -211,40 +334,42 @@ pub(crate) fn parse_vertexfs_image(image: &[u8]) -> Result<VertexFsBootFiles<'_>
     if read_u32_le(superblock, 24) as usize != VERTEXFS_SECTORS {
         return reject_vertexfs_image("unsupported sector count");
     }
-    if read_u32_le(superblock, 28) != VERTEXFS_FEATURE_FLAGS {
+    if read_u32_le(superblock, 28) != layout.feature_flags {
         return reject_vertexfs_image("unsupported feature flags");
     }
     if !vertexfs_section_matches(
+        layout,
         superblock,
         0,
-        VERTEXFS_INODE_TABLE_SECTOR,
-        VERTEXFS_INODE_TABLE_SECTORS,
+        layout.inode_table_sector,
+        layout.inode_table_sectors,
     ) || !vertexfs_section_matches(
+        layout,
         superblock,
         1,
-        VERTEXFS_DIRECTORY_SECTOR,
-        VERTEXFS_DIRECTORY_SECTORS,
-    ) || !vertexfs_section_matches(superblock, 2, VERTEXFS_FREE_MAP_SECTOR, 1)
-        || !vertexfs_section_matches(superblock, 3, VERTEXFS_JOURNAL_SECTOR, 1)
-        || !vertexfs_section_matches(superblock, 4, VERTEXFS_DATA_SECTOR, VERTEXFS_DATA_SECTORS)
+        layout.directory_sector,
+        layout.directory_sectors,
+    ) || !vertexfs_section_matches(layout, superblock, 2, layout.free_map_sector, 1)
+        || !vertexfs_section_matches(layout, superblock, 3, layout.journal_sector, 1)
+        || !vertexfs_section_matches(layout, superblock, 4, layout.data_sector, layout.data_sectors)
     {
         return reject_vertexfs_image("unsupported section layout");
     }
-    let generation = vertexfs_fixed_string(superblock, VERTEXFS_GENERATION_OFFSET, 64)?;
+    let generation = vertexfs_fixed_string(superblock, layout.generation_offset, 64)?;
 
-    let journal = vertexfs_parse_journal(image)?;
-    let inodes = vertexfs_parse_inode_table(image)?;
-    vertexfs_validate_directory(image, &inodes.dynamic)?;
+    let journal = vertexfs_parse_journal(layout, image)?;
+    let inodes = vertexfs_parse_inode_table(layout, image)?;
+    vertexfs_validate_directory(layout, image, &inodes.dynamic)?;
     let (readme, readme_first, readme_end) = vertexfs_file_payload(image, inodes.readme)?;
     let (base_app_a, app_a_first, app_a_end) =
-        vertexfs_recoverable_file_payload(image, inodes.app_a, journal)?;
+        vertexfs_recoverable_file_payload(layout, image, inodes.app_a, journal)?;
     if readme_first < app_a_end && app_a_first < readme_end {
         return reject_vertexfs_image("overlapping file extents");
     }
-    let mut dynamic_extents = [(0u64, 0u64); VERTEXFS_DYNAMIC_FILE_CAPACITY];
+    let mut dynamic_extents = [(0u64, 0u64); MAX_VERTEXFS_FILES];
     let mut dynamic_extent_count = 0;
     let mut dynamic_index = 0;
-    while dynamic_index < VERTEXFS_DYNAMIC_FILE_CAPACITY {
+    while dynamic_index < layout.dynamic_file_capacity {
         let Some(dynamic) = inodes.dynamic[dynamic_index] else {
             dynamic_index += 1;
             continue;
@@ -267,8 +392,9 @@ pub(crate) fn parse_vertexfs_image(image: &[u8]) -> Result<VertexFsBootFiles<'_>
         dynamic_extent_count += 1;
         dynamic_index += 1;
     }
-    vertexfs_validate_free_map(image, inodes.readme, inodes.app_a, &inodes.dynamic)?;
-    let (app_a, journal_replayed) = vertexfs_replay_journal(inodes.app_a, base_app_a, journal)?;
+    vertexfs_validate_free_map(layout, image, inodes.readme, inodes.app_a, &inodes.dynamic)?;
+    let (app_a, journal_replayed) =
+        vertexfs_replay_journal(layout, inodes.app_a, base_app_a, journal)?;
 
     Ok(VertexFsBootFiles {
         generation,
@@ -294,30 +420,82 @@ pub(crate) fn vertexfs_checksum32(bytes: &[u8]) -> u32 {
     checksum
 }
 
-pub(crate) fn vertexfs_dynamic_inode_at(index: usize) -> Result<u32, IpcError> {
-    if index >= VERTEXFS_DYNAMIC_FILE_CAPACITY {
+pub(crate) fn vertexfs_format_label(image: &[u8]) -> Result<&'static str, InitError> {
+    Ok(match vertexfs_layout_for_image(image)?.format {
+        VertexFsFormat::V1 => "v1",
+        VertexFsFormat::V2 => "v2",
+    })
+}
+
+pub(crate) fn vertexfs_feature_label(image: &[u8]) -> Result<&'static str, InitError> {
+    Ok(match vertexfs_layout_for_image(image)?.format {
+        VertexFsFormat::V1 => "metadata-v1",
+        VertexFsFormat::V2 => "metadata-v2,journal-v2",
+    })
+}
+
+pub(crate) fn vertexfs_inode_table_section(image: &[u8]) -> Result<(u64, u64), IpcError> {
+    let layout = vertexfs_layout_for_image(image).map_err(|_| IpcError::VfsUnsupported)?;
+    Ok((layout.inode_table_sector, layout.inode_table_sectors))
+}
+
+pub(crate) fn vertexfs_directory_section(image: &[u8]) -> Result<(u64, u64), IpcError> {
+    let layout = vertexfs_layout_for_image(image).map_err(|_| IpcError::VfsUnsupported)?;
+    Ok((layout.directory_sector, layout.directory_sectors))
+}
+
+pub(crate) fn vertexfs_free_map_sector(image: &[u8]) -> Result<u64, IpcError> {
+    let layout = vertexfs_layout_for_image(image).map_err(|_| IpcError::VfsUnsupported)?;
+    Ok(layout.free_map_sector)
+}
+
+pub(crate) fn vertexfs_journal_sector(image: &[u8]) -> Result<u64, IpcError> {
+    let layout = vertexfs_layout_for_image(image).map_err(|_| IpcError::VfsUnsupported)?;
+    Ok(layout.journal_sector)
+}
+
+fn vertexfs_layout_for_image(image: &[u8]) -> Result<VertexFsLayout, InitError> {
+    let superblock = vertexfs_sector(image, 0)?;
+    vertexfs_layout_from_superblock(superblock)
+}
+
+fn vertexfs_layout_from_superblock(superblock: &[u8]) -> Result<VertexFsLayout, InitError> {
+    if vertexfs_magic_matches(superblock, VERTEXFS_SUPERBLOCK_MAGIC_V2) {
+        Ok(VERTEXFS_LAYOUT_V2)
+    } else if vertexfs_magic_matches(superblock, VERTEXFS_SUPERBLOCK_MAGIC_V1) {
+        Ok(VERTEXFS_LAYOUT_V1)
+    } else {
+        reject_vertexfs_image("bad superblock")
+    }
+}
+
+pub(crate) fn vertexfs_dynamic_inode_at(image: &[u8], index: usize) -> Result<u32, IpcError> {
+    let layout = vertexfs_layout_for_image(image).map_err(|_| IpcError::VfsUnsupported)?;
+    if index >= layout.dynamic_file_capacity {
         return Err(IpcError::VfsUnsupported);
     }
     Ok(VERTEXFS_DYNAMIC_INODE_FIRST + index as u32)
 }
 
-pub(crate) fn vertexfs_dynamic_data_sector_at(index: usize) -> Result<u64, IpcError> {
-    if index >= VERTEXFS_DYNAMIC_FILE_CAPACITY {
+pub(crate) fn vertexfs_dynamic_data_sector_at(image: &[u8], index: usize) -> Result<u64, IpcError> {
+    let layout = vertexfs_layout_for_image(image).map_err(|_| IpcError::VfsUnsupported)?;
+    if index >= layout.dynamic_file_capacity {
         return Err(IpcError::VfsUnsupported);
     }
-    Ok(VERTEXFS_DYNAMIC_DATA_SECTOR_FIRST + index as u64)
+    Ok(layout.data_sector + 2 + index as u64)
 }
 
 pub(crate) fn vertexfs_image_has_inode(image: &[u8], inode_id: u32) -> Result<bool, IpcError> {
+    let layout = vertexfs_layout_for_image(image).map_err(|_| IpcError::VfsUnsupported)?;
     let sector = vertexfs_image_section(
         image,
-        VERTEXFS_INODE_TABLE_SECTOR,
-        VERTEXFS_INODE_TABLE_SECTORS,
+        layout.inode_table_sector,
+        layout.inode_table_sectors,
     )?;
     let count = read_u16_le(sector, 18) as usize;
     let mut index = 0;
     while index < count {
-        let offset = vertexfs_inode_offset(index)?;
+        let offset = vertexfs_inode_offset(layout, index)?;
         if read_u32_le(sector, offset) == inode_id {
             return Ok(true);
         }
@@ -342,17 +520,21 @@ pub(crate) fn write_vertexfs_journal_pending(
     inode_id: u32,
     payload: &[u8],
 ) -> Result<(), IpcError> {
-    let sector = vertexfs_image_sector_mut(image, VERTEXFS_JOURNAL_SECTOR)?;
+    let layout = vertexfs_layout_for_image(image).map_err(|_| IpcError::VfsUnsupported)?;
+    let sector = vertexfs_image_sector_mut(image, layout.journal_sector)?;
     sector.fill(0);
-    copy_bytes(
-        &mut sector[..VERTEXFS_JOURNAL_MAGIC.len()],
-        VERTEXFS_JOURNAL_MAGIC,
-    );
-    write_u16_le(sector, 16, VERTEXFS_VERSION);
+    copy_bytes(&mut sector[..layout.journal_magic.len()], layout.journal_magic);
+    write_u16_le(sector, 16, layout.version);
     write_u16_le(sector, 18, VERTEXFS_JOURNAL_STATE_PENDING);
     write_u32_le(sector, 24, inode_id);
     write_u32_le(sector, 28, payload.len() as u32);
     write_u32_le(sector, 32, vertexfs_checksum32(payload));
+    if layout.format == VertexFsFormat::V2 {
+        write_u64_le(sector, 40, 1);
+        write_u32_le(sector, 48, inode_id);
+        write_u32_le(sector, 52, payload.len() as u32);
+        write_u32_le(sector, 56, vertexfs_checksum32(payload));
+    }
     copy_bytes(
         &mut sector
             [VERTEXFS_JOURNAL_PAYLOAD_OFFSET..VERTEXFS_JOURNAL_PAYLOAD_OFFSET + payload.len()],
@@ -390,12 +572,13 @@ pub(crate) fn write_vertexfs_inode_record(
     file: VfsVertexFsFile,
     checksum: u32,
 ) -> Result<(), IpcError> {
+    let layout = vertexfs_layout_for_image(image).map_err(|_| IpcError::VfsUnsupported)?;
     let sector = vertexfs_image_section_mut(
         image,
-        VERTEXFS_INODE_TABLE_SECTOR,
-        VERTEXFS_INODE_TABLE_SECTORS,
+        layout.inode_table_sector,
+        layout.inode_table_sectors,
     )?;
-    let offset = vertexfs_inode_offset_by_id(sector, file.inode_id)?;
+    let offset = vertexfs_inode_offset_by_id(layout, sector, file.inode_id)?;
     write_u64_le(sector, offset + 8, file.len as u64);
     write_u32_le(sector, offset + 28, checksum);
     write_vertexfs_sector_checksum(sector);
@@ -407,9 +590,10 @@ pub(crate) fn write_vertexfs_dynamic_metadata(
     file: VfsVertexFsFile,
     checksum: u32,
 ) -> Result<(), IpcError> {
-    let dynamic_index = vertexfs_dynamic_index_for_inode(file.inode_id)?;
+    let layout = vertexfs_layout_for_image(image).map_err(|_| IpcError::VfsUnsupported)?;
+    let dynamic_index = vertexfs_dynamic_index_for_inode(layout, file.inode_id)?;
     if file.parent_inode_id != VERTEXFS_INODE_APP_DIR
-        || file.first_sector != vertexfs_dynamic_data_sector_at(dynamic_index)?
+        || file.first_sector != vertexfs_dynamic_data_sector_at(image, dynamic_index)?
         || file.sector_count != 1
     {
         return Err(IpcError::VfsUnsupported);
@@ -421,14 +605,14 @@ pub(crate) fn write_vertexfs_dynamic_metadata(
     {
         let sector = vertexfs_image_section_mut(
             image,
-            VERTEXFS_INODE_TABLE_SECTOR,
-            VERTEXFS_INODE_TABLE_SECTORS,
+            layout.inode_table_sector,
+            layout.inode_table_sectors,
         )?;
         if read_u16_le(sector, 18) as usize != expected_inode_count {
             return Err(IpcError::VfsUnsupported);
         }
         write_u16_le(sector, 18, (expected_inode_count + 1) as u16);
-        let offset = vertexfs_inode_offset(inode_entry_index)?;
+        let offset = vertexfs_inode_offset(layout, inode_entry_index)?;
         write_u32_le(sector, offset, file.inode_id);
         write_u16_le(sector, offset + 4, VERTEXFS_KIND_FILE);
         write_u16_le(sector, offset + 6, 0);
@@ -443,14 +627,14 @@ pub(crate) fn write_vertexfs_dynamic_metadata(
     {
         let sector = vertexfs_image_section_mut(
             image,
-            VERTEXFS_DIRECTORY_SECTOR,
-            VERTEXFS_DIRECTORY_SECTORS,
+            layout.directory_sector,
+            layout.directory_sectors,
         )?;
         if read_u16_le(sector, 18) as usize != expected_directory_count {
             return Err(IpcError::VfsUnsupported);
         }
         write_u16_le(sector, 18, (expected_directory_count + 1) as u16);
-        let offset = vertexfs_directory_offset(directory_entry_index)?;
+        let offset = vertexfs_directory_offset(layout, directory_entry_index)?;
         write_u32_le(sector, offset, file.parent_inode_id);
         write_u32_le(sector, offset + 4, file.inode_id);
         write_u16_le(sector, offset + 8, VERTEXFS_KIND_FILE);
@@ -464,7 +648,7 @@ pub(crate) fn write_vertexfs_dynamic_metadata(
         write_vertexfs_sector_checksum(sector);
     }
     {
-        let sector = vertexfs_image_sector_mut(image, VERTEXFS_FREE_MAP_SECTOR)?;
+        let sector = vertexfs_image_sector_mut(image, layout.free_map_sector)?;
         let sector_index =
             usize::try_from(file.first_sector).map_err(|_| IpcError::VfsUnsupported)?;
         let Some(byte) = sector.get_mut(32 + sector_index) else {
@@ -480,13 +664,11 @@ pub(crate) fn write_vertexfs_dynamic_metadata(
 }
 
 pub(crate) fn write_vertexfs_journal_clean(image: &mut [u8]) -> Result<(), IpcError> {
-    let sector = vertexfs_image_sector_mut(image, VERTEXFS_JOURNAL_SECTOR)?;
+    let layout = vertexfs_layout_for_image(image).map_err(|_| IpcError::VfsUnsupported)?;
+    let sector = vertexfs_image_sector_mut(image, layout.journal_sector)?;
     sector.fill(0);
-    copy_bytes(
-        &mut sector[..VERTEXFS_JOURNAL_MAGIC.len()],
-        VERTEXFS_JOURNAL_MAGIC,
-    );
-    write_u16_le(sector, 16, VERTEXFS_VERSION);
+    copy_bytes(&mut sector[..layout.journal_magic.len()], layout.journal_magic);
+    write_u16_le(sector, 16, layout.version);
     write_u16_le(sector, 18, VERTEXFS_JOURNAL_STATE_CLEAN);
     write_vertexfs_sector_checksum(sector);
     Ok(())
@@ -501,21 +683,24 @@ pub(crate) fn vertexfs_device_absolute_sector(vertexfs_sector: u64) -> Result<u6
         .ok_or(IpcError::VfsUnsupported)
 }
 
-fn vertexfs_parse_inode_table(image: &[u8]) -> Result<VertexFsParsedInodes, InitError> {
+fn vertexfs_parse_inode_table(
+    layout: VertexFsLayout,
+    image: &[u8],
+) -> Result<VertexFsParsedInodes, InitError> {
     let sector = vertexfs_section(
         image,
-        VERTEXFS_INODE_TABLE_SECTOR,
-        VERTEXFS_INODE_TABLE_SECTORS,
+        layout.inode_table_sector,
+        layout.inode_table_sectors,
     )?;
-    if !vertexfs_magic_matches(sector, VERTEXFS_INODE_TABLE_MAGIC) {
+    if !vertexfs_magic_matches(sector, layout.inode_magic) {
         return reject_vertexfs_image("bad inode table");
     }
-    if read_u16_le(sector, 16) != VERTEXFS_VERSION || !vertexfs_checksum_valid(sector) {
+    if read_u16_le(sector, 16) != layout.version || !vertexfs_checksum_valid(sector) {
         return reject_vertexfs_image("inode table metadata invalid");
     }
     let count = read_u16_le(sector, 18) as usize;
     if count < VERTEXFS_BASE_INODE_COUNT
-        || count > VERTEXFS_BASE_INODE_COUNT + VERTEXFS_DYNAMIC_FILE_CAPACITY
+        || count > VERTEXFS_BASE_INODE_COUNT + layout.dynamic_file_capacity
     {
         return reject_vertexfs_image("inode table count mismatch");
     }
@@ -568,7 +753,7 @@ fn vertexfs_parse_inode_table(image: &[u8]) -> Result<VertexFsParsedInodes, Init
         return reject_vertexfs_image("app/a inode mismatch");
     }
 
-    let mut dynamic = [None; VERTEXFS_DYNAMIC_FILE_CAPACITY];
+    let mut dynamic = [None; MAX_VERTEXFS_FILES];
     let dynamic_count = count - VERTEXFS_BASE_INODE_COUNT;
     let mut dynamic_index = 0;
     while dynamic_index < dynamic_count {
@@ -577,7 +762,7 @@ fn vertexfs_parse_inode_table(image: &[u8]) -> Result<VertexFsParsedInodes, Init
         if inode.id != VERTEXFS_DYNAMIC_INODE_FIRST + dynamic_index as u32
             || inode.kind != VERTEXFS_KIND_FILE
             || inode.parent != VERTEXFS_INODE_APP_DIR
-            || inode.first_sector != VERTEXFS_DYNAMIC_DATA_SECTOR_FIRST + dynamic_index as u64
+            || inode.first_sector != layout.data_sector + 2 + dynamic_index as u64
             || inode.sector_count != 1
             || !vertexfs_inode_reserved_zero(sector, inode_index)
             || vertexfs_fixed_string(sector, vertexfs_inode_name_offset(inode_index), 28).is_err()
@@ -596,24 +781,25 @@ fn vertexfs_parse_inode_table(image: &[u8]) -> Result<VertexFsParsedInodes, Init
 }
 
 fn vertexfs_validate_directory(
+    layout: VertexFsLayout,
     image: &[u8],
-    dynamic: &[Option<VertexFsInode>; VERTEXFS_DYNAMIC_FILE_CAPACITY],
+    dynamic: &[Option<VertexFsInode>; MAX_VERTEXFS_FILES],
 ) -> Result<(), InitError> {
-    let sector = vertexfs_section(image, VERTEXFS_DIRECTORY_SECTOR, VERTEXFS_DIRECTORY_SECTORS)?;
-    if !vertexfs_magic_matches(sector, VERTEXFS_DIRECTORY_MAGIC) {
+    let sector = vertexfs_section(image, layout.directory_sector, layout.directory_sectors)?;
+    if !vertexfs_magic_matches(sector, layout.directory_magic) {
         return reject_vertexfs_image("bad directory");
     }
-    if read_u16_le(sector, 16) != VERTEXFS_VERSION || !vertexfs_checksum_valid(sector) {
+    if read_u16_le(sector, 16) != layout.version || !vertexfs_checksum_valid(sector) {
         return reject_vertexfs_image("directory metadata invalid");
     }
     let count = read_u16_le(sector, 18) as usize;
     if count < VERTEXFS_BASE_DIRECTORY_COUNT
-        || count > VERTEXFS_BASE_DIRECTORY_COUNT + VERTEXFS_DIRECTORY_DYNAMIC_FILE_CAPACITY
+        || count > VERTEXFS_BASE_DIRECTORY_COUNT + layout.directory_dynamic_file_capacity
     {
         return reject_vertexfs_image("directory count mismatch");
     }
     let mut dynamic_count = 0;
-    while dynamic_count < VERTEXFS_DYNAMIC_FILE_CAPACITY && dynamic[dynamic_count].is_some() {
+    while dynamic_count < layout.dynamic_file_capacity && dynamic[dynamic_count].is_some() {
         dynamic_count += 1;
     }
     if count != VERTEXFS_BASE_DIRECTORY_COUNT + dynamic_count {
@@ -645,8 +831,8 @@ fn vertexfs_validate_directory(
     }
     let inode_sector = vertexfs_section(
         image,
-        VERTEXFS_INODE_TABLE_SECTOR,
-        VERTEXFS_INODE_TABLE_SECTORS,
+        layout.inode_table_sector,
+        layout.inode_table_sectors,
     )?;
     let mut dynamic_index = 0;
     while dynamic_index < dynamic_count {
@@ -673,6 +859,7 @@ fn vertexfs_validate_directory(
 }
 
 fn vertexfs_replay_journal<'a>(
+    layout: VertexFsLayout,
     app_a_inode: VertexFsInode,
     base_app_a: &'a [u8],
     journal: Option<VertexFsJournalRecord<'a>>,
@@ -689,15 +876,19 @@ fn vertexfs_replay_journal<'a>(
     if record.payload.len() as u64 > app_a_inode.sector_count as u64 * VERTEXFS_SECTOR_SIZE as u64 {
         return reject_vertexfs_image("journal payload exceeds target extent");
     }
+    let _ = layout;
     Ok((record.payload, true))
 }
 
-fn vertexfs_parse_journal(image: &[u8]) -> Result<Option<VertexFsJournalRecord<'_>>, InitError> {
-    let sector = vertexfs_sector(image, VERTEXFS_JOURNAL_SECTOR)?;
-    if !vertexfs_magic_matches(sector, VERTEXFS_JOURNAL_MAGIC) {
+fn vertexfs_parse_journal(
+    layout: VertexFsLayout,
+    image: &[u8],
+) -> Result<Option<VertexFsJournalRecord<'_>>, InitError> {
+    let sector = vertexfs_sector(image, layout.journal_sector)?;
+    if !vertexfs_magic_matches(sector, layout.journal_magic) {
         return reject_vertexfs_image("bad journal");
     }
-    if read_u16_le(sector, 16) != VERTEXFS_VERSION || !vertexfs_checksum_valid(sector) {
+    if read_u16_le(sector, 16) != layout.version || !vertexfs_checksum_valid(sector) {
         return reject_vertexfs_image("journal metadata invalid");
     }
     let state = read_u16_le(sector, 18);
@@ -710,6 +901,18 @@ fn vertexfs_parse_journal(image: &[u8]) -> Result<Option<VertexFsJournalRecord<'
     let target_inode = read_u32_le(sector, 24);
     let payload_len = read_u32_le(sector, 28) as usize;
     let payload_checksum = read_u32_le(sector, 32);
+    if layout.format == VertexFsFormat::V2 {
+        let replay_target = read_u32_le(sector, 48);
+        let replay_len = read_u32_le(sector, 52) as usize;
+        let replay_checksum = read_u32_le(sector, 56);
+        if replay_target != target_inode
+            || replay_len != payload_len
+            || replay_checksum != payload_checksum
+            || read_u64_le(sector, 40) == 0
+        {
+            return reject_vertexfs_image("journal replay record mismatch");
+        }
+    }
     let Some(end) = VERTEXFS_JOURNAL_PAYLOAD_OFFSET.checked_add(payload_len) else {
         return reject_vertexfs_image("journal payload overflow");
     };
@@ -737,6 +940,7 @@ fn vertexfs_file_payload(
 }
 
 fn vertexfs_recoverable_file_payload<'a>(
+    layout: VertexFsLayout,
     image: &'a [u8],
     inode: VertexFsInode,
     journal: Option<VertexFsJournalRecord<'a>>,
@@ -749,6 +953,7 @@ fn vertexfs_recoverable_file_payload<'a>(
         && record.target_inode == inode.id
         && vertexfs_extent_starts_with(image, inode, record.payload)
     {
+        let _ = layout;
         return Ok((record.payload, first_sector, end_sector));
     }
     reject_vertexfs_image("file checksum mismatch")
@@ -764,8 +969,8 @@ fn vertexfs_file_extent_payload(
     let Some(end_sector) = inode.first_sector.checked_add(inode.sector_count as u64) else {
         return reject_vertexfs_image("file extent overflow");
     };
-    if inode.first_sector < VERTEXFS_DATA_SECTOR
-        || end_sector > VERTEXFS_DATA_SECTOR + VERTEXFS_DATA_SECTORS
+    let layout = vertexfs_layout_for_image(image)?;
+    if inode.first_sector < layout.data_sector || end_sector > layout.data_sector + layout.data_sectors
     {
         return reject_vertexfs_image("file extent outside data section");
     }
@@ -808,16 +1013,17 @@ fn vertexfs_extent_starts_with(image: &[u8], inode: VertexFsInode, payload: &[u8
 }
 
 fn vertexfs_validate_free_map(
+    layout: VertexFsLayout,
     image: &[u8],
     readme: VertexFsInode,
     app_a: VertexFsInode,
-    dynamic: &[Option<VertexFsInode>; VERTEXFS_DYNAMIC_FILE_CAPACITY],
+    dynamic: &[Option<VertexFsInode>; MAX_VERTEXFS_FILES],
 ) -> Result<(), InitError> {
-    let sector = vertexfs_sector(image, VERTEXFS_FREE_MAP_SECTOR)?;
-    if !vertexfs_magic_matches(sector, VERTEXFS_FREE_MAP_MAGIC) {
+    let sector = vertexfs_sector(image, layout.free_map_sector)?;
+    if !vertexfs_magic_matches(sector, layout.free_map_magic) {
         return reject_vertexfs_image("bad free-space map");
     }
-    if read_u16_le(sector, 16) != VERTEXFS_VERSION || !vertexfs_checksum_valid(sector) {
+    if read_u16_le(sector, 16) != layout.version || !vertexfs_checksum_valid(sector) {
         return reject_vertexfs_image("free-space metadata invalid");
     }
     if read_u16_le(sector, 18) as usize != VERTEXFS_SECTORS {
@@ -833,7 +1039,7 @@ fn vertexfs_validate_free_map(
         let sector_number = index as u64;
         let mut dynamic_allocated = false;
         let mut dynamic_index = 0;
-        while dynamic_index < VERTEXFS_DYNAMIC_FILE_CAPACITY {
+        while dynamic_index < layout.dynamic_file_capacity {
             if let Some(inode) = dynamic[dynamic_index]
                 && vertexfs_inode_covers_sector(inode, sector_number)
             {
@@ -845,16 +1051,16 @@ fn vertexfs_validate_free_map(
         let expected = sector_number == 0
             || vertexfs_sector_in_section(
                 sector_number,
-                VERTEXFS_INODE_TABLE_SECTOR,
-                VERTEXFS_INODE_TABLE_SECTORS,
+                layout.inode_table_sector,
+                layout.inode_table_sectors,
             )
             || vertexfs_sector_in_section(
                 sector_number,
-                VERTEXFS_DIRECTORY_SECTOR,
-                VERTEXFS_DIRECTORY_SECTORS,
+                layout.directory_sector,
+                layout.directory_sectors,
             )
-            || sector_number == VERTEXFS_FREE_MAP_SECTOR
-            || sector_number == VERTEXFS_JOURNAL_SECTOR
+            || sector_number == layout.free_map_sector
+            || sector_number == layout.journal_sector
             || vertexfs_inode_covers_sector(readme, sector_number)
             || vertexfs_inode_covers_sector(app_a, sector_number)
             || dynamic_allocated;
@@ -1010,12 +1216,13 @@ fn vertexfs_sector_in_section(sector: u64, first_sector: u64, sector_count: u64)
 }
 
 fn vertexfs_section_matches(
+    layout: VertexFsLayout,
     superblock: &[u8],
     index: usize,
     first_sector: u64,
     sector_count: u64,
 ) -> bool {
-    let offset = VERTEXFS_SECTION_TABLE_OFFSET + index * VERTEXFS_SECTION_RECORD_LEN;
+    let offset = layout.section_table_offset + index * VERTEXFS_SECTION_RECORD_LEN;
     read_u64_le(superblock, offset) == first_sector
         && read_u64_le(superblock, offset + 8) == sector_count
 }
@@ -1106,11 +1313,15 @@ fn write_vertexfs_sector_checksum(sector: &mut [u8]) {
     write_u32_le(sector, VERTEXFS_CHECKSUM_OFFSET, checksum);
 }
 
-fn vertexfs_inode_offset_by_id(sector: &[u8], inode_id: u32) -> Result<usize, IpcError> {
+fn vertexfs_inode_offset_by_id(
+    layout: VertexFsLayout,
+    sector: &[u8],
+    inode_id: u32,
+) -> Result<usize, IpcError> {
     let count = read_u16_le(sector, 18) as usize;
     let mut index = 0;
     while index < count {
-        let offset = vertexfs_inode_offset(index)?;
+        let offset = vertexfs_inode_offset(layout, index)?;
         if read_u32_le(sector, offset) == inode_id {
             return Ok(offset);
         }
@@ -1119,19 +1330,22 @@ fn vertexfs_inode_offset_by_id(sector: &[u8], inode_id: u32) -> Result<usize, Ip
     Err(IpcError::VfsUnsupported)
 }
 
-fn vertexfs_dynamic_index_for_inode(inode_id: u32) -> Result<usize, IpcError> {
+fn vertexfs_dynamic_index_for_inode(
+    layout: VertexFsLayout,
+    inode_id: u32,
+) -> Result<usize, IpcError> {
     if inode_id < VERTEXFS_DYNAMIC_INODE_FIRST {
         return Err(IpcError::VfsUnsupported);
     }
     let index = usize::try_from(inode_id - VERTEXFS_DYNAMIC_INODE_FIRST)
         .map_err(|_| IpcError::VfsUnsupported)?;
-    if index >= VERTEXFS_DYNAMIC_FILE_CAPACITY {
+    if index >= layout.dynamic_file_capacity {
         return Err(IpcError::VfsUnsupported);
     }
     Ok(index)
 }
 
-fn vertexfs_inode_offset(index: usize) -> Result<usize, IpcError> {
+fn vertexfs_inode_offset(layout: VertexFsLayout, index: usize) -> Result<usize, IpcError> {
     let offset = VERTEXFS_INODE_ENTRY_OFFSET
         .checked_add(
             index
@@ -1141,14 +1355,14 @@ fn vertexfs_inode_offset(index: usize) -> Result<usize, IpcError> {
         .ok_or(IpcError::VfsUnsupported)?;
     if offset
         .checked_add(VERTEXFS_INODE_ENTRY_LEN)
-        .is_none_or(|end| end > VERTEXFS_INODE_TABLE_BYTES)
+        .is_none_or(|end| end > layout.inode_table_bytes)
     {
         return Err(IpcError::VfsUnsupported);
     }
     Ok(offset)
 }
 
-fn vertexfs_directory_offset(index: usize) -> Result<usize, IpcError> {
+fn vertexfs_directory_offset(layout: VertexFsLayout, index: usize) -> Result<usize, IpcError> {
     let offset = VERTEXFS_DIRECTORY_ENTRY_OFFSET
         .checked_add(
             index
@@ -1158,7 +1372,7 @@ fn vertexfs_directory_offset(index: usize) -> Result<usize, IpcError> {
         .ok_or(IpcError::VfsUnsupported)?;
     if offset
         .checked_add(VERTEXFS_DIRECTORY_ENTRY_LEN)
-        .is_none_or(|end| end > VERTEXFS_DIRECTORY_BYTES)
+        .is_none_or(|end| end > layout.directory_bytes)
     {
         return Err(IpcError::VfsUnsupported);
     }
@@ -1197,7 +1411,7 @@ fn copy_bytes(destination: &mut [u8], source: &[u8]) {
 }
 
 fn reject_vertexfs_image<T>(reason: &str) -> Result<T, InitError> {
-    serial::write_str("Krust VertexFS v1 image rejected: ");
+    serial::write_str("Krust VertexFS image rejected: ");
     serial::write_str(reason);
     serial::write_str("\n");
     Err(InitError::InvalidBootManifest)

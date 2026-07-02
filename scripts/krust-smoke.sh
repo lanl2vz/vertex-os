@@ -270,12 +270,12 @@ vertex-init pci devices: 4
 vertex-init virtio devices: 4
 vertex-init namespaces: 2
 vertex-init vfs roots: 8
-VertexFS v1 image module accepted: bytes=32768
+VertexFS image module accepted: bytes=32768
 block-driver writes VertexFS fsync sector
-VertexFS v1 superblock accepted: generation=gen:hello-0001 feature_flags=metadata-v1
-VertexFS v1 mounted: path=/fs source=vertexfs
-VertexFS v1 directory record verified: path=/fs/app
-VertexFS v1 declared file mounted: path=/fs/app/a
+VertexFS v2 superblock accepted: generation=gen:hello-0001 feature_flags=metadata-v2,journal-v2
+VertexFS v2 mounted: path=/fs source=vertexfs
+VertexFS v2 directory record verified: path=/fs/app
+VertexFS v2 declared file mounted: path=/fs/app/a
 M61 malformed boot-read buffer rejected
 M61 rights subset checks reject derived and transferred authority
 M61 capability move rejects occupied target without dropping source
@@ -482,10 +482,10 @@ VFS namespace root resolved: proc=model-reader root=/fs/app
 mount namespace root exposes declared VertexFS app tree
 model-reader VertexFS namespace root maps /a to /fs/app/a
 VertexFS v1 declared file read through VFS
-VertexFS v1 fsync device transaction committed: proc=model-reader inode=4 sectors=
+VertexFS v2 fsync device transaction committed: proc=model-reader inode=4 sectors=
 VertexFS v1 declared file fsync journal readback ok
 VFS open-create accepted: proc=model-reader path=/created
-VertexFS v1 fsync device transaction committed: proc=model-reader inode=5 sectors=
+VertexFS v2 fsync device transaction committed: proc=model-reader inode=5 sectors=
 VertexFS v1 dynamic create write fsync readback ok
 Native immutable store client ok
 counter-service has VFS state file
@@ -612,7 +612,7 @@ while [ "$attempt" -le "$QEMU_ATTEMPTS" ]; do
     if check_transcript; then
         cleanup
         pid=
-        echo "smoke ok: Krust completed manifest v1, directed IPC, typed arenas, cap lifecycle, quotas, service-local store/state/timer access, restart, verified store execution, update checks, dynamic process creation, config/secret authority, VFS roots, VFS rename, directory metadata, block-cache writeback, VertexFS v1 image mount, mount namespaces, blocking VFS pipe reads, service-backed state-volume VFS transactions, VFS coordination, filesystem security/soak checks, and native service activation"
+        echo "smoke ok: Krust completed manifest v1, directed IPC, typed arenas, cap lifecycle, quotas, service-local store/state/timer access, restart, verified store execution, update checks, dynamic process creation, config/secret authority, VFS roots, VFS rename, directory metadata, block-cache writeback, VertexFS v2 image mount, mount namespaces, blocking VFS pipe reads, service-backed state-volume VFS transactions, VFS coordination, filesystem security/soak checks, and native service activation"
         exit 0
     fi
 

@@ -2857,14 +2857,28 @@ fn install_vfs_nodes(runtime: &mut RuntimeState) -> Result<(), InitError> {
         VfsBacking::VertexFsFile(vertexfs_app_a),
         "vertexfs",
     )?;
-    serial::write_str("VertexFS v1 superblock accepted: generation=");
+    let vertexfs_format = vertexfs_format_label(vertexfs_image)?;
+    let vertexfs_feature = vertexfs_feature_label(vertexfs_image)?;
+    serial::write_str("VertexFS ");
+    serial::write_str(vertexfs_format);
+    serial::write_str(" superblock accepted: generation=");
     serial::write_ascii_bytes(vertexfs.generation);
-    serial::write_str(" feature_flags=metadata-v1\n");
-    serial::write_str("VertexFS v1 mounted: path=/fs source=vertexfs\n");
-    serial::write_str("VertexFS v1 directory record verified: path=/fs/app\n");
-    serial::write_str("VertexFS v1 declared file mounted: path=/fs/app/a\n");
+    serial::write_str(" feature_flags=");
+    serial::write_str(vertexfs_feature);
+    serial::write_str("\n");
+    serial::write_str("VertexFS ");
+    serial::write_str(vertexfs_format);
+    serial::write_str(" mounted: path=/fs source=vertexfs\n");
+    serial::write_str("VertexFS ");
+    serial::write_str(vertexfs_format);
+    serial::write_str(" directory record verified: path=/fs/app\n");
+    serial::write_str("VertexFS ");
+    serial::write_str(vertexfs_format);
+    serial::write_str(" declared file mounted: path=/fs/app/a\n");
     if vertexfs.journal_replayed {
-        serial::write_str("VertexFS v1 journal replayed: inode=4 outcome=new\n");
+        serial::write_str("VertexFS ");
+        serial::write_str(vertexfs_format);
+        serial::write_str(" journal replayed: inode=4 outcome=new\n");
     }
     let state_a = runtime.add_vfs_memory_file("a", b"state:a=0\n")?;
     runtime.add_vfs_node(
@@ -2889,16 +2903,30 @@ fn install_vfs_nodes(runtime: &mut RuntimeState) -> Result<(), InitError> {
         VfsBacking::MemoryFile(state_sub_a),
         "state:volatile",
     )?;
-    runtime.add_vfs_node(
+    let service_report_node = runtime.add_vfs_node(
         "service-report",
         Some(state_root),
         VfsNodeKind::RegularFile,
         VfsBacking::FsServiceReport,
         "servicefs",
     )?;
+    runtime.add_vfs_mount(
+        "mount:servicefs",
+        service_report_node,
+        VfsPath::from_boot_root_path("/state/service-report")?,
+        "servicefs",
+        VFS_MOUNT_READ_ONLY,
+        false,
+        ProcessId::empty(),
+    )?;
     serial::write_str(
         "VFS filesystem service file mounted: path=/state/service-report source=servicefs\n",
     );
+    serial::write_str(
+        "M90 typed VFS mount source: path=/state/service-report source=servicefs source_kind=servicefs source_id=",
+    );
+    serial::write_u64_dec(service_report_node.raw());
+    serial::write_str(" flags=read-only\n");
     let mut state_index = 0;
     while state_index < runtime.state_volume_ids.len() {
         if let Some(object_id) = runtime.state_volume_ids[state_index] {
@@ -3020,7 +3048,7 @@ fn install_vfs_nodes(runtime: &mut RuntimeState) -> Result<(), InitError> {
 
 fn vertexfs_boot_image() -> Result<&'static [u8], InitError> {
     let Some(modules) = limine::modules() else {
-        serial::write_str("Krust VertexFS v1 image missing: limine modules unavailable\n");
+        serial::write_str("Krust VertexFS image missing: limine modules unavailable\n");
         return Err(InitError::InvalidBootManifest);
     };
 
@@ -3028,7 +3056,9 @@ fn vertexfs_boot_image() -> Result<&'static [u8], InitError> {
     let mut index = 0;
     while index < modules.module_count() {
         if let Some(module) = modules.module(index)
-            && c_string_eq_bytes(module.string, VERTEXFS_MODULE_STRING)
+            && (c_string_eq_bytes(module.string, VERTEXFS_MODULE_STRING)
+                || c_string_eq_bytes(module.string, VERTEXFS_MODULE_STRING_V1)
+                || c_string_eq_bytes(module.string, VERTEXFS_MODULE_STRING_V2))
         {
             if found.is_some() {
                 return reject_vertexfs_boot_image("duplicate module");
@@ -3039,7 +3069,7 @@ fn vertexfs_boot_image() -> Result<&'static [u8], InitError> {
     }
 
     let Some(module) = found else {
-        serial::write_str("Krust VertexFS v1 image missing\n");
+        serial::write_str("Krust VertexFS image missing\n");
         return Err(InitError::InvalidBootManifest);
     };
     if module.address.is_null() {
@@ -3049,7 +3079,7 @@ fn vertexfs_boot_image() -> Result<&'static [u8], InitError> {
         return reject_vertexfs_boot_image("size overflow");
     };
     if size != VERTEXFS_IMAGE_BYTES {
-        serial::write_str("Krust VertexFS v1 image rejected: size=");
+        serial::write_str("Krust VertexFS image rejected: size=");
         serial::write_u64_dec(module.size);
         serial::write_str(" expected=");
         serial::write_u64_dec(VERTEXFS_IMAGE_BYTES as u64);
@@ -3057,14 +3087,14 @@ fn vertexfs_boot_image() -> Result<&'static [u8], InitError> {
         return Err(InitError::InvalidBootManifest);
     }
 
-    serial::write_str("VertexFS v1 image module accepted: bytes=");
+    serial::write_str("VertexFS image module accepted: bytes=");
     serial::write_u64_dec(module.size);
     serial::write_str("\n");
     Ok(unsafe { core::slice::from_raw_parts(module.address, size) })
 }
 
 fn reject_vertexfs_boot_image<T>(reason: &str) -> Result<T, InitError> {
-    serial::write_str("Krust VertexFS v1 image rejected: ");
+    serial::write_str("Krust VertexFS image rejected: ");
     serial::write_str(reason);
     serial::write_str("\n");
     Err(InitError::InvalidBootManifest)
