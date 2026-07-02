@@ -18,6 +18,7 @@ pub mod graph {
     pub const NODE_VFS_ROOT: u16 = 9;
     pub const NODE_TIMER: u16 = 10;
     pub const NODE_SECRET: u16 = 11;
+    pub const NODE_PACKAGE: u16 = 12;
 
     pub const EDGE_ACTIVATION: u16 = 1;
     pub const EDGE_CAPABILITY: u16 = 2;

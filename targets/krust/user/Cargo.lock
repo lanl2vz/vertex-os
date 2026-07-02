@@ -134,7 +134,7 @@ version = "0.1.0"
 name = "krust-package-import"
 version = "0.1.0"
 dependencies = [
- "blake3",
+ "vertex-package-import",
 ]
 
 [[package]]
@@ -194,3 +194,10 @@ version = "0.1.0"
 [[package]]
 name = "vertex-operator-shell"
 version = "0.1.0"
+
+[[package]]
+name = "vertex-package-import"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+]

@@ -24,12 +24,11 @@ const MESSAGE_READY: u16 = 1;
 const ENVELOPE_LEN: usize = 16;
 const COMMAND_BUFFER_LEN: usize = 160;
 const REPORT_BUFFER_LEN: usize = 256 * 1024;
+const MAX_IPC_MESSAGE_BYTES: usize = 512;
 const CONTROL_SHUTDOWN: &[u8] = b"shutdown";
 const GENERATION_MANAGER_SHUTDOWN: &[u8] = b"shutdown";
 const STATE_CONTROL_PATH: &[u8] = b"/state/counter/control";
 const STATE_CLIENT_DRAIN_ATTEMPTS: u64 = 4096;
-const CONSOLE_WRITE_ATTEMPTS: u64 = 4096;
-const IPC_SEND_ATTEMPTS: u64 = 4096;
 const SERVICE_NAMES: [&[u8]; 5] = [
     b"vertex-init",
     b"logd",
@@ -249,6 +248,12 @@ pub extern "C" fn _start() -> ! {
             log(b"console-shell command: activation-log");
             let report = runtime_report();
             operator_activation_log(report);
+            continue;
+        }
+        if bytes_eq(command, b"verify-system") {
+            log(b"console-shell command: verify-system");
+            let report = runtime_report();
+            operator_verify_system(report);
             continue;
         }
         if bytes_eq(command, b"counter") {
@@ -789,9 +794,9 @@ fn operator_generation_status(report: &[u8]) {
     append(&mut buffer, &mut len, answer.transaction);
     append(&mut buffer, &mut len, b" target=");
     append(&mut buffer, &mut len, answer.target);
-    append(&mut buffer, &mut len, b" policy_hash=");
-    append(&mut buffer, &mut len, answer.policy_hash);
     log(&buffer[..len]);
+    log_prefix(b"last_failed=", answer.last_failed);
+    log_prefix(b"failure_reason=", answer.failure_reason);
     console_write(b"generation-status ok\n> ");
 }
 
@@ -962,11 +967,22 @@ fn operator_which_generation(report: &[u8], command: &[u8]) {
 }
 
 fn operator_package_list(report: &[u8]) {
-    if operator_expect(operator_shell::package_list_unavailable(report)).is_none() {
-        return;
+    match operator_shell::package_list(report, |line| log(line)) {
+        Ok(count) => {
+            log_count_line(b"operator package-list packages=", count);
+            console_write(b"package-list ok\n> ");
+        }
+        Err(error)
+            if bytes_eq(
+                error.message,
+                b"operator package-list unavailable: no native package facts",
+            ) =>
+        {
+            log(b"operator package-list unavailable: no native package facts");
+            console_write(b"package-list unavailable\n> ");
+        }
+        Err(error) => operator_fail(error),
     }
-    log(b"operator package-list unavailable: no native package facts");
-    console_write(b"package-list unavailable\n> ");
 }
 
 fn operator_activation_log(report: &[u8]) {
@@ -976,6 +992,34 @@ fn operator_activation_log(report: &[u8]) {
     };
     log_count_line(b"operator activation-log records=", count);
     console_write(b"activation-log ok\n> ");
+}
+
+fn operator_verify_system(report: &[u8]) {
+    let Some(answer) = operator_expect(operator_shell::verify_system(report)) else {
+        return;
+    };
+    let mut buffer = [0u8; 256];
+    let mut len = 0;
+    append(&mut buffer, &mut len, b"operator verify-system generation=");
+    append(&mut buffer, &mut len, answer.generation);
+    append(
+        &mut buffer,
+        &mut len,
+        b" graph=ok store=ok state=ok processes=ok caps=ok objects=ok packages=",
+    );
+    append_u64(&mut buffer, &mut len, answer.packages);
+    append(&mut buffer, &mut len, b" services=");
+    append_u64(&mut buffer, &mut len, answer.services);
+    append(&mut buffer, &mut len, b" capabilities=");
+    append_u64(&mut buffer, &mut len, answer.capabilities);
+    append(&mut buffer, &mut len, b" states=");
+    append_u64(&mut buffer, &mut len, answer.states);
+    append(&mut buffer, &mut len, b" devices=");
+    append_u64(&mut buffer, &mut len, answer.devices);
+    log(&buffer[..len]);
+    log_prefix(b"operator verify-system policy_hash=", answer.policy_hash);
+    log_prefix(b"operator verify-system graph_hash=", answer.graph_hash);
+    console_write(b"verify-system ok\n> ");
 }
 
 fn operator_activate(command: &[u8]) {
@@ -1070,14 +1114,16 @@ fn log_prefix(prefix: &[u8], value: &[u8]) {
 }
 
 fn ipc_send_with_backpressure(capability: u64, payload: &[u8], failure_log: &[u8]) -> bool {
-    let mut attempts = 0;
+    if payload.len() > MAX_IPC_MESSAGE_BYTES {
+        log(failure_log);
+        return false;
+    }
     loop {
         let status = sys::ipc_send(capability, payload);
         if status == sys::STATUS_OK {
             return true;
         }
-        if status == sys::STATUS_TOO_LARGE && attempts < IPC_SEND_ATTEMPTS {
-            attempts += 1;
+        if status == sys::STATUS_TOO_LARGE {
             sys::yield_now();
             continue;
         }
@@ -1405,24 +1451,31 @@ fn require_counter_state_authority(report: &[u8]) {
 }
 
 fn console_write(payload: &[u8]) {
-    if payload.len() > 128 {
-        log(b"console-shell payload too large");
-        sys::exit(1);
+    let mut offset = 0;
+    while offset < payload.len() {
+        let end = min_usize(offset + 128, payload.len());
+        console_write_frame(&payload[offset..end]);
+        offset = end;
     }
-    let mut attempts = 0;
+}
+
+fn console_write_frame(payload: &[u8]) {
     loop {
         let status = sys::ipc_send(CAP_CONSOLE_OUTPUT, payload);
         if status == sys::STATUS_OK {
             return;
         }
-        if status == sys::STATUS_TOO_LARGE && attempts < CONSOLE_WRITE_ATTEMPTS {
-            attempts += 1;
+        if status == sys::STATUS_TOO_LARGE {
             sys::yield_now();
             continue;
         }
         log(b"console-shell console write failed");
         sys::exit(1);
     }
+}
+
+fn min_usize(left: usize, right: usize) -> usize {
+    if left < right { left } else { right }
 }
 
 fn append(buffer: &mut [u8], len: &mut usize, value: &[u8]) {

@@ -1,0 +1,6 @@
+[package]
+id = "pkg:vertex.package-import"
+service = "svc:package-import"
+
+[targets.krust]
+adapter = "targets/krust/user/package-import"

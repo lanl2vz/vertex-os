@@ -164,6 +164,7 @@ const GRAPH_NODE_NAMESPACE: u16 = graph_abi::NODE_NAMESPACE;
 const GRAPH_NODE_VFS_ROOT: u16 = graph_abi::NODE_VFS_ROOT;
 const GRAPH_NODE_TIMER: u16 = graph_abi::NODE_TIMER;
 const GRAPH_NODE_SECRET: u16 = graph_abi::NODE_SECRET;
+const GRAPH_NODE_PACKAGE: u16 = graph_abi::NODE_PACKAGE;
 const GRAPH_EDGE_ACTIVATION: u16 = graph_abi::EDGE_ACTIVATION;
 const GRAPH_EDGE_CAPABILITY: u16 = graph_abi::EDGE_CAPABILITY;
 const RESTART_NEVER: u16 = 0;
@@ -1449,6 +1450,16 @@ fn derive_graph_store(manifest: &GenerationManifest, plan: &mut BootPlan) -> Res
         manifest.generation.description.clone(),
     )?;
 
+    for package in linked_package_ids(manifest)? {
+        push_graph_node(
+            &mut plan.graph_nodes,
+            GRAPH_NODE_PACKAGE,
+            0,
+            package.to_owned(),
+            package.to_owned(),
+        )?;
+    }
+
     for process in &plan.processes {
         push_graph_node(
             &mut plan.graph_nodes,
@@ -2398,6 +2409,30 @@ fn push_graph_node(
         label,
     });
     Ok(())
+}
+
+fn linked_package_ids(manifest: &GenerationManifest) -> Result<Vec<&str>, String> {
+    let Some(value) = manifest.generation.extra.get("linkedPackages") else {
+        return Ok(Vec::new());
+    };
+    let Some(items) = value.as_array() else {
+        return Err("generation.linkedPackages must be an array".to_owned());
+    };
+    let mut packages = Vec::new();
+    for item in items {
+        let Some(package) = item.as_str() else {
+            return Err("generation.linkedPackages entries must be strings".to_owned());
+        };
+        if package.is_empty() || package.len() > STRING_LEN || !package.is_ascii() {
+            return Err(format!(
+                "linked package {package} is not a compact ASCII id"
+            ));
+        }
+        packages.push(package);
+    }
+    packages.sort_unstable();
+    packages.dedup();
+    Ok(packages)
 }
 
 fn push_graph_edge(

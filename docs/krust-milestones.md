@@ -7,7 +7,7 @@ runtime layered over a host kernel.
 
 ## Status Summary
 
-Current status: M14-M87 and M87-1 through M87-4 are implemented and
+Current status: M14-M88 and M87-1 through M87-4 are implemented and
 smoke-tested under `qemu-system-x86_64` with Limine. The current tree has an
 image-backed VertexFS v1 mount, a strict VertexDisk v1 section carrying the
 current VertexFS image,
@@ -94,6 +94,11 @@ usable discovery console with `overview`, richer `help`, real service,
 capability, state, and device inventory commands, plus detail views that make
 `why` and `who-can` discoverable rather than requiring the operator to know
 internal IDs ahead of time.
+M88 closes the first end-to-end appliance update loop: QEMU imports a package
+closure, activates the new graph, marks it known-good, rejects an intentionally
+bad generation through readiness failure, rolls back to the known-good graph,
+and verifies package facts, state health, activation history, live graph-backed
+capability provenance, and final system consistency from the operator shell.
 
 M74-M82 are implemented as the current VFS, open-file, directory, block-cache,
 VertexFS/mount-namespace, coordination, and security/soak substrate. The
@@ -126,6 +131,8 @@ targets for booting, building, smoke-testing, and release-gating Vertex OS
 without requiring users to invoke `make -C kernel/krust`. M87-4 makes the
 native operator console usable for discovery: services and capabilities can be
 listed before proof commands are run.
+M88 adds the flagship appliance update transcript and verifier, including a
+target-independent package-import validation core under `userland/package-import`.
 General vnode page cache integration, broader synthetic/device filesystem
 breadth, durable graph-store mutation, and durable policy-denial history
 remain later work.
@@ -203,6 +210,7 @@ scripts/krust-test.sh m84
 scripts/krust-test.sh m85
 scripts/krust-test.sh m86
 scripts/krust-test.sh m87
+scripts/krust-test.sh m88
 scripts/krust-test.sh manifest-policy-version
 scripts/krust-test.sh manifest-policy-hash
 scripts/krust-test.sh manifest-policy-excess-grant
@@ -1621,7 +1629,7 @@ done: locked Cargo dependencies for the top-level host-tool workspace, Krust ker
 done: kernel/krust/rust-toolchain.toml pins Rust 1.95.0, rustfmt, and x86_64-unknown-none
 done: make doctor checks every required tool and reports actionable fixes
 done: legacy hello/ipc userspace crates are removed instead of carried forward
-done: single release-gate script runs the clean-clone M14-M87 substrate proof with the current QEMU matrix
+done: single release-gate script runs the clean-clone M14-M88 substrate proof with the current QEMU matrix
 ```
 
 Acceptance tests:
@@ -4509,7 +4517,7 @@ Implementation notes:
 
 ## M88: End-To-End Appliance Update Gate
 
-Status: planned.
+Status: done.
 
 Goal: prove the complete Vertex OS loop inside QEMU: import package closure,
 construct a candidate graph, validate policy, install generation, activate it,
@@ -4547,6 +4555,24 @@ Implementation notes:
   scope to make the demo look bigger.
 - The gate should fail if any step requires host-side activation state after
   the initial test image is booted.
+
+Done:
+
+- `userland/package-import` owns target-independent package-fragment and
+  authority-delta validation; `targets/krust/user/package-import` is the Krust
+  IPC/store adapter.
+- Native graph package facts are explicit graph nodes and runtime inspect emits
+  `operator-package[...]` rows with `package_facts=graph-v1`; `package-list`
+  rejects absent package facts instead of guessing.
+- The kernel keeps explicit selected/fallback/bad boot-module configs separate
+  from disk-discovered generation configs, so a bad candidate cannot overwrite
+  the known-good fallback slot.
+- The operator shell verifier proves active selected graph/store/state/process
+  consistency, accepted policy, package facts, clean state health, and live
+  graph-backed capability provenance without accepting legacy fallback behavior.
+- `scripts/krust-test.sh m88` gates base boot, package import, successful
+  activation, mark-known-good, intentional failed activation, rollback,
+  activation-log, package-list, state-health, `verify-system`, and halt.
 
 ## M89: Long-Run Graph OS Soak
 

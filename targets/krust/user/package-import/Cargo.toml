@@ -6,7 +6,7 @@ license = "MIT OR Apache-2.0"
 publish = false
 
 [dependencies]
-blake3.workspace = true
+vertex-package-import = { path = "../../../../userland/package-import" }
 
 [[bin]]
 name = "package-import"

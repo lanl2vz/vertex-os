@@ -79,6 +79,10 @@ static FALLBACK_BOOT_CONFIG: Global<ipc::BootRuntimeConfig> =
     Global(UnsafeCell::new(ipc::BootRuntimeConfig::new()));
 static BAD_GENERATION_BOOT_CONFIG: Global<ipc::BootRuntimeConfig> =
     Global(UnsafeCell::new(ipc::BootRuntimeConfig::new()));
+static VERTEXDISK_BOOT_CONFIG_0: Global<ipc::BootRuntimeConfig> =
+    Global(UnsafeCell::new(ipc::BootRuntimeConfig::new()));
+static VERTEXDISK_BOOT_CONFIG_1: Global<ipc::BootRuntimeConfig> =
+    Global(UnsafeCell::new(ipc::BootRuntimeConfig::new()));
 static PHYSICAL_FRAME_ALLOCATOR: Global<memory::FrameAllocator> =
     Global(UnsafeCell::new(memory::FrameAllocator::new()));
 
@@ -729,7 +733,16 @@ fn run_native_boot(allocator: &mut memory::FrameAllocator, boot_manifests: &Boot
     }
     let recovered_generation =
         recover_vertexdisk_generation_selection(boot_manifests.selected.generation_id());
-    register_vertexdisk_generation_configs(allocator, boot_manifests.selected.generation_id());
+    register_vertexdisk_generation_configs(
+        allocator,
+        boot_manifests.selected.generation_id(),
+        boot_manifests
+            .fallback
+            .map(|manifest| manifest.generation_id()),
+        boot_manifests
+            .bad_generation
+            .map(|manifest| manifest.generation_id()),
+    );
 
     if let Some(fallback_manifest) = boot_manifests.fallback {
         if fallback_manifest.generation_id() == boot_manifests.selected.generation_id() {
@@ -1054,6 +1067,8 @@ fn generation_failure_reason_label(reason: u16) -> &'static str {
 fn register_vertexdisk_generation_configs(
     allocator: &mut memory::FrameAllocator,
     selected_generation: &str,
+    fallback_generation: Option<&str>,
+    bad_generation: Option<&str>,
 ) {
     let Some(metadata) = load_vertexdisk_generation_metadata() else {
         return;
@@ -1080,6 +1095,10 @@ fn register_vertexdisk_generation_configs(
             index += 1;
             continue;
         }
+        if Some(generation_id) == fallback_generation || Some(generation_id) == bad_generation {
+            index += 1;
+            continue;
+        }
         let Some(store_object) = load_native_store_object(store_id) else {
             return;
         };
@@ -1092,38 +1111,21 @@ fn register_vertexdisk_generation_configs(
             return;
         }
 
-        let (manifest, slot, name) = if config_slot == 0 {
-            match boot_manifest::parse_fallback(store_object.bytes) {
-                Ok(manifest) => (
-                    manifest,
-                    &FALLBACK_BOOT_CONFIG,
-                    "vertexdisk-generation-manifest",
-                ),
-                Err(error) => {
-                    serial::write_str("VertexDisk generation manifest parse failed: ");
-                    print_boot_manifest_error(error);
-                    serial::write_str("\n");
-                    return;
-                }
-            }
-        } else if config_slot == 1 {
-            match boot_manifest::parse_bad_generation(store_object.bytes) {
-                Ok(manifest) => (
-                    manifest,
-                    &BAD_GENERATION_BOOT_CONFIG,
-                    "vertexdisk-generation-manifest-2",
-                ),
-                Err(error) => {
-                    serial::write_str("VertexDisk generation manifest parse failed: ");
-                    print_boot_manifest_error(error);
-                    serial::write_str("\n");
-                    return;
-                }
-            }
-        } else {
+        let Some(slot) = vertexdisk_boot_config_slot(config_slot) else {
             serial::write_str("VertexDisk generation metadata capacity reached\n");
             return;
         };
+        let name = vertexdisk_generation_manifest_name(config_slot);
+        let manifest =
+            match boot_manifest::parse_vertexdisk_generation(store_object.bytes, config_slot) {
+                Ok(manifest) => manifest,
+                Err(error) => {
+                    serial::write_str("VertexDisk generation manifest parse failed: ");
+                    print_boot_manifest_error(error);
+                    serial::write_str("\n");
+                    return;
+                }
+            };
         if let Some(config) =
             prepare_native_boot_config(allocator, manifest, b"", name, false, slot)
         {
@@ -1138,6 +1140,22 @@ fn register_vertexdisk_generation_configs(
         }
 
         index += 1;
+    }
+}
+
+fn vertexdisk_boot_config_slot(slot: usize) -> Option<&'static Global<ipc::BootRuntimeConfig>> {
+    match slot {
+        0 => Some(&VERTEXDISK_BOOT_CONFIG_0),
+        1 => Some(&VERTEXDISK_BOOT_CONFIG_1),
+        _ => None,
+    }
+}
+
+fn vertexdisk_generation_manifest_name(slot: usize) -> &'static str {
+    match slot {
+        0 => "vertexdisk-generation-manifest",
+        1 => "vertexdisk-generation-manifest-2",
+        _ => "vertexdisk-generation-manifest-overflow",
     }
 }
 
@@ -3174,6 +3192,9 @@ fn print_boot_manifest_error(error: boot_manifest::ParseError) {
         }
         boot_manifest::ParseError::TooManyRuntimeObjects => {
             serial::write_str("too many runtime objects")
+        }
+        boot_manifest::ParseError::TooManyGenerationManifests => {
+            serial::write_str("too many generation manifests")
         }
         boot_manifest::ParseError::InvalidString => serial::write_str("invalid string"),
         boot_manifest::ParseError::InvalidReference => serial::write_str("invalid reference"),

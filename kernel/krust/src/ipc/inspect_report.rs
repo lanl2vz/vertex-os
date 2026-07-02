@@ -284,6 +284,8 @@ fn write_graph_store_report(runtime: &RuntimeState, report: &mut InspectReport) 
     report.push_u64_dec(graph_node_kind_count(config, GRAPH_NODE_VFS_ROOT));
     report.push_str(" secrets=");
     report.push_u64_dec(graph_node_kind_count(config, GRAPH_NODE_SECRET));
+    report.push_str(" packages=");
+    report.push_u64_dec(graph_node_kind_count(config, GRAPH_NODE_PACKAGE));
     report.push_byte(b'\n');
 
     let mut index = 0;
@@ -445,10 +447,42 @@ fn write_operator_generation_report(
     report.push_u64_dec(config.state_volume_count as u64);
     report.push_str(" devices=");
     report.push_u64_dec(operator_device_count(config));
-    report.push_str(" packages=0 package_facts=absent");
+    let package_count = graph_node_kind_count(config, GRAPH_NODE_PACKAGE);
+    report.push_str(" packages=");
+    report.push_u64_dec(package_count);
+    report.push_str(" package_facts=");
+    if package_count == 0 {
+        report.push_str("absent");
+    } else {
+        report.push_str("graph-v1");
+    }
     report.push_byte(b'\n');
 
     let mut index = 0;
+    let mut package_index = 0;
+    while index < config.graph_node_count {
+        if let Some(node) = config.graph_nodes[index]
+            && node.kind == GRAPH_NODE_PACKAGE
+        {
+            report.push_str("operator-package[");
+            report.push_u64_dec(generation_index as u64);
+            report.push_str(".");
+            report.push_u64_dec(package_index as u64);
+            report.push_str("] generation=");
+            report.push_str(config.generation_id);
+            report.push_str(" id=");
+            report.push_str(node.id);
+            report.push_str(" label=");
+            report.push_str(node.label);
+            report.push_str(" graph_hash=");
+            report.push_bytes(&config.graph_store_hash);
+            report.push_byte(b'\n');
+            package_index += 1;
+        }
+        index += 1;
+    }
+
+    index = 0;
     while index < config.process_count {
         if let Some(process) = config.processes[index] {
             report.push_str("operator-service[");
@@ -661,6 +695,7 @@ fn graph_node_kind_label(kind: u16) -> &'static str {
         GRAPH_NODE_VFS_ROOT => "vfs-root",
         GRAPH_NODE_TIMER => "timer",
         GRAPH_NODE_SECRET => "secret",
+        GRAPH_NODE_PACKAGE => "package",
         _ => "unknown",
     }
 }

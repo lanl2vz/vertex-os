@@ -389,6 +389,10 @@ static SELECTED_MANIFEST: Global<Manifest<'static>> = Global(UnsafeCell::new(Man
 static FALLBACK_MANIFEST: Global<Manifest<'static>> = Global(UnsafeCell::new(Manifest::empty()));
 static BAD_GENERATION_MANIFEST: Global<Manifest<'static>> =
     Global(UnsafeCell::new(Manifest::empty()));
+static VERTEXDISK_GENERATION_MANIFEST_0: Global<Manifest<'static>> =
+    Global(UnsafeCell::new(Manifest::empty()));
+static VERTEXDISK_GENERATION_MANIFEST_1: Global<Manifest<'static>> =
+    Global(UnsafeCell::new(Manifest::empty()));
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ParseError {
@@ -421,6 +425,7 @@ pub enum ParseError {
     TooManyPolicyStatePaths,
     TooManyPolicyBootstraps,
     TooManyRuntimeObjects,
+    TooManyGenerationManifests,
     InvalidString,
     InvalidReference,
     InvalidRights,
@@ -908,6 +913,24 @@ pub fn parse_bad_generation(
     bytes: &'static [u8],
 ) -> Result<&'static Manifest<'static>, ParseError> {
     parse_static(bytes, &BAD_GENERATION_MANIFEST)
+}
+
+pub fn parse_vertexdisk_generation(
+    bytes: &'static [u8],
+    slot: usize,
+) -> Result<&'static Manifest<'static>, ParseError> {
+    let Some(manifest_slot) = vertexdisk_generation_manifest_slot(slot) else {
+        return Err(ParseError::TooManyGenerationManifests);
+    };
+    parse_static(bytes, manifest_slot)
+}
+
+fn vertexdisk_generation_manifest_slot(slot: usize) -> Option<&'static Global<Manifest<'static>>> {
+    match slot {
+        0 => Some(&VERTEXDISK_GENERATION_MANIFEST_0),
+        1 => Some(&VERTEXDISK_GENERATION_MANIFEST_1),
+        _ => None,
+    }
 }
 
 fn parse_static(

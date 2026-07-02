@@ -28,9 +28,22 @@ pub struct GenerationStatus<'a> {
     pub selected: &'a [u8],
     pub previous: &'a [u8],
     pub known_good: &'a [u8],
+    pub last_failed: &'a [u8],
     pub transaction: &'a [u8],
     pub target: &'a [u8],
+    pub failure_reason: &'a [u8],
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SystemVerification<'a> {
+    pub generation: &'a [u8],
     pub policy_hash: &'a [u8],
+    pub graph_hash: &'a [u8],
+    pub services: u64,
+    pub capabilities: u64,
+    pub states: u64,
+    pub devices: u64,
+    pub packages: u64,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -134,6 +147,7 @@ pub fn is_operator_command(command: &[u8]) -> bool {
         || starts_with(command, b"which-generation ")
         || bytes_eq(command, b"package-list")
         || bytes_eq(command, b"activation-log")
+        || bytes_eq(command, b"verify-system")
         || starts_with(command, b"activate ")
         || starts_with(command, b"rollback ")
         || starts_with(command, b"mark-known-good ")
@@ -173,6 +187,7 @@ where
             &mut visit,
             &[b"operator: current-generation generations generation-status package-list activation-log"],
         )?;
+        emit_line(&mut visit, &[b"operator: verify-system"])?;
         emit_line(
             &mut visit,
             &[b"operator: diff-generation <from> <to> planned-authority-delta <from> <to>"],
@@ -265,6 +280,22 @@ where
         emit_line(&mut visit, &[b"devices"])?;
         emit_line(&mut visit, &[b"device <device-id>"])?;
         emit_line(&mut visit, &[b"  lists graph device nodes when present"])?;
+        return Ok(());
+    }
+    if bytes_eq(topic, b"package-list") {
+        emit_line(&mut visit, &[b"package-list"])?;
+        emit_line(
+            &mut visit,
+            &[b"  lists explicit package graph facts for the active generation"],
+        )?;
+        return Ok(());
+    }
+    if bytes_eq(topic, b"verify-system") {
+        emit_line(&mut visit, &[b"verify-system"])?;
+        emit_line(
+            &mut visit,
+            &[b"  checks active graph, state health, packages, objects, and caps"],
+        )?;
         return Ok(());
     }
 
@@ -614,13 +645,22 @@ pub fn generation_status(report: &[u8]) -> Result<GenerationStatus<'_>> {
             b"known_good=",
             b"generation-status missing known-good",
         )?,
+        last_failed: required_field(
+            manager,
+            b"last_failed=",
+            b"generation-status missing last-failed",
+        )?,
         transaction: required_field(
             manager,
             b"transaction=",
             b"generation-status missing transaction",
         )?,
         target: required_field(manager, b"target=", b"generation-status missing target")?,
-        policy_hash: active_policy_hash(report)?,
+        failure_reason: required_field(
+            manager,
+            b"failure_reason=",
+            b"generation-status missing failure reason",
+        )?,
     })
 }
 
@@ -796,7 +836,10 @@ pub fn which_generation<'report, 'command>(
     })
 }
 
-pub fn package_list_unavailable(report: &[u8]) -> Result<()> {
+pub fn package_list<F>(report: &[u8], mut visit: F) -> Result<u64>
+where
+    F: FnMut(&[u8]),
+{
     let generation = active_generation(report)?;
     let generation_line = require_operator_generation(report, generation)?;
     let facts = required_field(
@@ -804,12 +847,160 @@ pub fn package_list_unavailable(report: &[u8]) -> Result<()> {
         b"package_facts=",
         b"operator package-list missing facts",
     )?;
-    if !bytes_eq(facts, b"absent") {
+    if bytes_eq(facts, b"absent") {
+        return Err(Error::new(
+            b"operator package-list unavailable: no native package facts",
+        ));
+    }
+    if !bytes_eq(facts, b"graph-v1") {
         return Err(Error::new(
             b"operator package-list rejected: unsupported package fact encoding",
         ));
     }
-    Ok(())
+    let mut count = 0;
+    let mut error = None;
+    for_each_line(report, |line| {
+        if error.is_some() {
+            return;
+        }
+        if starts_with(line, b"operator-package[") && field_eq(line, b"generation=", generation) {
+            let package = match required_field(line, b"id=", b"operator package missing id") {
+                Ok(value) => value,
+                Err(err) => {
+                    error = Some(err);
+                    return;
+                }
+            };
+            let graph_hash = match required_field(
+                line,
+                b"graph_hash=",
+                b"operator package missing graph hash",
+            ) {
+                Ok(value) => value,
+                Err(err) => {
+                    error = Some(err);
+                    return;
+                }
+            };
+            match emit_line(
+                &mut visit,
+                &[b"package ", package, b" generation=", generation],
+            ) {
+                Ok(()) => match emit_line(
+                    &mut visit,
+                    &[b"package-hash ", package, b" graph_hash=", graph_hash],
+                ) {
+                    Ok(()) => count += 1,
+                    Err(err) => error = Some(err),
+                },
+                Err(err) => error = Some(err),
+            }
+        }
+    });
+    if let Some(err) = error {
+        return Err(err);
+    }
+    if count == 0 {
+        return Err(Error::new(
+            b"operator package-list rejected: package facts empty",
+        ));
+    }
+    Ok(count)
+}
+
+pub fn verify_system(report: &[u8]) -> Result<SystemVerification<'_>> {
+    let generation = active_generation(report)?;
+    let generation_line = require_operator_generation(report, generation)?;
+    require_field_value(
+        generation_line,
+        b"active=",
+        b"yes",
+        b"operator verifier rejected: generation is not active",
+    )?;
+    require_field_value(
+        generation_line,
+        b"selected=",
+        b"yes",
+        b"operator verifier rejected: selected generation mismatch",
+    )?;
+    require_field_value(
+        generation_line,
+        b"package_facts=",
+        b"graph-v1",
+        b"operator verifier rejected: missing package facts",
+    )?;
+    let manager = generation_manager_line(report)?;
+    require_field_value(
+        manager,
+        b"selected=",
+        generation,
+        b"operator verifier rejected: manager selected generation mismatch",
+    )?;
+    let graph_store = find_line_contains_all(report, &[b"graph-store v=1", b"generation="]).ok_or(
+        Error::new(b"operator verifier rejected: graph store missing"),
+    )?;
+    require_field_value(
+        graph_store,
+        b"generation=",
+        generation,
+        b"operator verifier rejected: graph store generation mismatch",
+    )?;
+    let policy = find_line_contains_all(report, &[b"policy-validation v=1", b"generation="])
+        .ok_or(Error::new(
+            b"operator verifier rejected: policy report missing",
+        ))?;
+    require_field_value(
+        policy,
+        b"status=",
+        b"accepted",
+        b"operator verifier rejected: policy not accepted",
+    )?;
+    require_zero_field(
+        report,
+        b"objects_unreachable=",
+        b"operator verifier rejected: unreachable objects",
+    )?;
+    verify_active_services(report, generation)?;
+    verify_active_capabilities(report, generation)?;
+    verify_state_health(report, generation)?;
+    Ok(SystemVerification {
+        generation,
+        policy_hash: required_field(
+            generation_line,
+            b"policy_hash=",
+            b"operator verifier missing policy hash",
+        )?,
+        graph_hash: required_field(
+            generation_line,
+            b"graph_hash=",
+            b"operator verifier missing graph hash",
+        )?,
+        services: parse_u64_field(
+            generation_line,
+            b"services=",
+            b"operator verifier missing service count",
+        )?,
+        capabilities: parse_u64_field(
+            generation_line,
+            b"capabilities=",
+            b"operator verifier missing capability count",
+        )?,
+        states: parse_u64_field(
+            generation_line,
+            b"states=",
+            b"operator verifier missing state count",
+        )?,
+        devices: parse_u64_field(
+            generation_line,
+            b"devices=",
+            b"operator verifier missing device count",
+        )?,
+        packages: parse_u64_field(
+            generation_line,
+            b"packages=",
+            b"operator verifier missing package count",
+        )?,
+    })
 }
 
 pub fn activation_log<F>(report: &[u8], mut visit: F) -> Result<u64>
@@ -1425,6 +1616,165 @@ fn require_operator_generation<'a>(report: &'a [u8], generation: &[u8]) -> Resul
     .ok_or(Error::new(b"operator rejected: unknown generation"))
 }
 
+fn generation_manager_line(report: &[u8]) -> Result<&[u8]> {
+    find_line_contains_all(report, &[b"generation-manager v=1", b"selected="]).ok_or(Error::new(
+        b"operator verifier rejected: generation manager missing",
+    ))
+}
+
+fn require_field_value(
+    line: &[u8],
+    prefix: &[u8],
+    expected: &[u8],
+    message: &'static [u8],
+) -> Result<()> {
+    if field_eq(line, prefix, expected) {
+        Ok(())
+    } else {
+        Err(Error::new(message))
+    }
+}
+
+fn require_zero_field(report: &[u8], prefix: &[u8], message: &'static [u8]) -> Result<()> {
+    let line = find_line_contains_all(report, &[prefix]).ok_or(Error::new(message))?;
+    let value = parse_u64_field(line, prefix, message)?;
+    if value == 0 {
+        Ok(())
+    } else {
+        Err(Error::new(message))
+    }
+}
+
+fn verify_active_services(report: &[u8], generation: &[u8]) -> Result<()> {
+    let mut count = 0;
+    let mut error = None;
+    for_each_line(report, |line| {
+        if error.is_some() {
+            return;
+        }
+        if starts_with(line, b"operator-service[") && field_eq(line, b"generation=", generation) {
+            let process = match required_field(
+                line,
+                b"process=",
+                b"operator verifier rejected: service missing process",
+            ) {
+                Ok(value) => value,
+                Err(err) => {
+                    error = Some(err);
+                    return;
+                }
+            };
+            let Some(process_line) = find_process_line(report, process) else {
+                error = Some(Error::new(
+                    b"operator verifier rejected: graph service has no process",
+                ));
+                return;
+            };
+            if !field_eq(process_line, b"generation=", generation) {
+                error = Some(Error::new(
+                    b"operator verifier rejected: process generation mismatch",
+                ));
+                return;
+            }
+            count += 1;
+        }
+    });
+    if let Some(err) = error {
+        return Err(err);
+    }
+    if count == 0 {
+        return Err(Error::new(
+            b"operator verifier rejected: no active graph services",
+        ));
+    }
+    Ok(())
+}
+
+fn verify_active_capabilities(report: &[u8], generation: &[u8]) -> Result<()> {
+    let mut count = 0;
+    let mut error = None;
+    for_each_line(report, |line| {
+        if error.is_some() {
+            return;
+        }
+        if starts_with(line, b"space=")
+            && field_eq(line, b"generation=", generation)
+            && field_eq(line, b"revoked=", b"no")
+        {
+            if !live_capability_has_graph_backed_object(line) {
+                return;
+            }
+            if field_eq(line, b"graph_from=", b"<unknown>")
+                || field_eq(line, b"graph_target=", b"<unknown>")
+            {
+                error = Some(Error::new(
+                    b"operator verifier rejected: live cap missing graph provenance",
+                ));
+                return;
+            }
+            count += 1;
+        }
+    });
+    if let Some(err) = error {
+        return Err(err);
+    }
+    if count == 0 {
+        return Err(Error::new(
+            b"operator verifier rejected: no active live capabilities",
+        ));
+    }
+    Ok(())
+}
+
+fn live_capability_has_graph_backed_object(line: &[u8]) -> bool {
+    contains_all(line, &[b"endpoint="])
+        || contains_all(line, &[b"store-object="])
+        || contains_all(line, &[b"config="])
+        || contains_all(line, &[b"state-volume="])
+        || contains_all(line, &[b"timer="])
+        || contains_all(line, &[b"network-port="])
+        || contains_all(line, &[b"io-port="])
+        || contains_all(line, &[b"mmio="])
+        || contains_all(line, &[b"framebuffer="])
+        || contains_all(line, &[b"interrupt-line="])
+        || contains_all(line, &[b"dma-region="])
+        || contains_all(line, &[b"pci-device="])
+        || contains_all(line, &[b"virtio-device="])
+        || contains_all(line, &[b"namespace="])
+        || contains_all(line, &[b"vfs-root="])
+        || contains_all(line, &[b"secret="])
+}
+
+fn verify_state_health(report: &[u8], generation: &[u8]) -> Result<()> {
+    let mut count = 0;
+    let mut error = None;
+    for_each_line(report, |line| {
+        if error.is_some() {
+            return;
+        }
+        if starts_with(line, b"state-health[") && field_eq(line, b"generation=", generation) {
+            if !field_eq(line, b"migration_status=", b"clean")
+                || !field_eq(line, b"last_error=", b"none")
+            {
+                error = Some(Error::new(
+                    b"operator verifier rejected: state health is not clean",
+                ));
+                return;
+            }
+            count += 1;
+        }
+    });
+    if let Some(err) = error {
+        return Err(err);
+    }
+    if count == 0 {
+        return Err(Error::new(
+            b"operator verifier rejected: no state health records",
+        ));
+    }
+    Ok(())
+}
+
 fn require_operator_requirement<'a>(
     report: &'a [u8],
     generation: &[u8],
@@ -1915,6 +2265,27 @@ fn word_at(command: &[u8], requested: usize) -> Option<&[u8]> {
 
 fn required_field<'a>(line: &'a [u8], prefix: &[u8], message: &'static [u8]) -> Result<&'a [u8]> {
     field_slice(line, prefix).ok_or(Error::new(message))
+}
+
+fn parse_u64_field(line: &[u8], prefix: &[u8], message: &'static [u8]) -> Result<u64> {
+    let value = required_field(line, prefix, message)?;
+    let mut parsed = 0u64;
+    let mut index = 0;
+    if value.is_empty() {
+        return Err(Error::new(message));
+    }
+    while index < value.len() {
+        let byte = value[index];
+        if !byte.is_ascii_digit() {
+            return Err(Error::new(message));
+        }
+        parsed = parsed
+            .checked_mul(10)
+            .and_then(|current| current.checked_add((byte - b'0') as u64))
+            .ok_or(Error::new(message))?;
+        index += 1;
+    }
+    Ok(parsed)
 }
 
 fn rights_cover(available: &[u8], required: &[u8]) -> bool {

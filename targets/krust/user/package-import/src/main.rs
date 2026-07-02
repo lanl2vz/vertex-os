@@ -4,6 +4,7 @@
 mod sys;
 
 use core::panic::PanicInfo;
+use vertex_package_import as package_import;
 
 const CAP_PACKAGE_IMPORT_REQUEST: u64 = 0;
 const CAP_SERIAL_LOG: u64 = 1;
@@ -17,20 +18,7 @@ const CAP_CONFIG_PROOF: u64 = 7;
 const PROTOCOL_HEALTH_V0: u16 = 2;
 const MESSAGE_READY: u16 = 1;
 const ENVELOPE_LEN: usize = 16;
-const EXPECTED_AUTHORITY_DELTA: &[u8] = b"cap:console.output/send,cap:vfs.logd-log-stream/resolve+read,cap:net.udp.9000/listen+bind,cap:log.sink/send,config:logd/read";
-const EXPECTED_CLOSURE_MATERIAL: &[u8] = b"packages=pkg:logd;services=svc:echo-server,svc:logd;objects=config:logd,store:echo-server-demo,store:logd-demo";
-
 static mut IMPORTED_LOGD: bool = false;
-
-struct ImportFragment<'a> {
-    package: &'a [u8],
-    service: &'a [u8],
-    capability: &'a [u8],
-    activated_service: &'a [u8],
-    candidate: &'a [u8],
-    authority_delta: &'a [u8],
-    closure_hash: &'a [u8],
-}
 
 #[unsafe(link_section = ".text._start")]
 #[unsafe(no_mangle)]
@@ -138,76 +126,26 @@ fn import_package() {
     }
 }
 
-fn validate_logd_fragment<'a>(buffer: &'a mut [u8]) -> ImportFragment<'a> {
+fn validate_logd_fragment<'a>(buffer: &'a mut [u8]) -> package_import::ImportFragment<'a> {
     let fragment_len = read_store_object(CAP_PACKAGE_FRAGMENT_LOGD, buffer);
     let fragment = &buffer[..fragment_len];
-    validate_fragment_magic(fragment);
-    assert_field_eq(fragment, b"kind=", b"import");
-
-    let package = required_field(fragment, b"package=");
-    assert_bytes(package, b"pkg:logd", b"package");
-    let candidate = required_field(fragment, b"candidate=");
-    assert_bytes(candidate, b"gen:package-import-new-0002", b"candidate");
-    let service = required_field(fragment, b"add_service=");
-    assert_bytes(service, b"svc:logd", b"add_service");
-    let capability = required_field(fragment, b"add_capability=");
-    assert_bytes(capability, b"cap:log.sink", b"add_capability");
-    let activated_service = required_field(fragment, b"activate_service=");
-    assert_bytes(activated_service, b"svc:echo-server", b"activate_service");
-    assert_field_eq(
-        fragment,
-        b"requires_base=",
-        b"cap:console.output,cap:vfs.logd-log-stream,cap:net.udp.9000",
-    );
-    assert_field_eq(fragment, b"requires_import=", b"cap:log.sink");
-
-    let authority_delta = required_field(fragment, b"authority_delta=");
-    assert_bytes(
-        authority_delta,
-        EXPECTED_AUTHORITY_DELTA,
-        b"authority_delta",
-    );
-    let object = required_field(fragment, b"object=");
-    assert_bytes(object, b"config:logd", b"object");
-    let object_size = required_decimal(fragment, b"object_size=");
-    let object_hash = required_field(fragment, b"object_hash=");
-    let closure_material = required_field(fragment, b"closure_material=");
-    assert_bytes(
-        closure_material,
-        EXPECTED_CLOSURE_MATERIAL,
-        b"closure_material",
-    );
-    let closure_hash = required_field(fragment, b"closure_hash=");
-
     let mut config_buffer = [0u8; 128];
     let config_len = read_store_object(CAP_CONFIG_PROOF, &mut config_buffer);
-    if config_len != object_size {
-        log(b"package-import rejected store object: size mismatch");
-        sys::exit(1);
-    }
-    verify_blake3(
-        &config_buffer[..config_len],
-        object_hash,
-        b"store-object hash",
-    );
+    let fragment =
+        match package_import::validate_logd_fragment(fragment, &config_buffer[..config_len]) {
+            Ok(fragment) => fragment,
+            Err(error) => {
+                log(error.message);
+                sys::exit(1);
+            }
+        };
     log_two_values(
         b"package-import verified store-object hash: object=",
-        object,
+        fragment.object,
         b" size=",
-        required_field(fragment, b"object_size="),
+        fragment.object_size_field,
     );
-
-    verify_blake3(closure_material, closure_hash, b"closure hash");
-
-    ImportFragment {
-        package,
-        service,
-        capability,
-        activated_service,
-        candidate,
-        authority_delta,
-        closure_hash,
-    }
+    fragment
 }
 
 fn validate_missing_dependency_fragment() {
@@ -215,16 +153,13 @@ fn validate_missing_dependency_fragment() {
     let mut buffer = [0u8; 256];
     let len = read_store_object(CAP_PACKAGE_FRAGMENT_MISSING_DEPENDENCY, &mut buffer);
     let fragment = &buffer[..len];
-    validate_fragment_magic(fragment);
-    assert_field_eq(fragment, b"kind=", b"negative-missing-dependency");
-    let missing = required_field(fragment, b"require=");
-    if provider_known(missing) {
-        log_pair(
-            b"package-import negative dependency unexpectedly resolved: ",
-            missing,
-        );
-        sys::exit(1);
-    }
+    let missing = match package_import::validate_missing_dependency_fragment(fragment) {
+        Ok(missing) => missing,
+        Err(error) => {
+            log(error.message);
+            sys::exit(1);
+        }
+    };
     log_two_values(
         b"package-import rejected missing dependency: capability=",
         missing,
@@ -238,29 +173,19 @@ fn validate_excess_authority_fragment() {
     let mut buffer = [0u8; 256];
     let len = read_store_object(CAP_PACKAGE_FRAGMENT_EXCESS_AUTHORITY, &mut buffer);
     let fragment = &buffer[..len];
-    validate_fragment_magic(fragment);
-    assert_field_eq(fragment, b"kind=", b"negative-excess-authority");
-    let grant = required_field(fragment, b"grant=");
-    if authority_allowed(grant) {
-        log_pair(
-            b"package-import negative authority unexpectedly allowed: ",
-            grant,
-        );
-        sys::exit(1);
-    }
+    let grant = match package_import::validate_excess_authority_fragment(fragment) {
+        Ok(grant) => grant,
+        Err(error) => {
+            log(error.message);
+            sys::exit(1);
+        }
+    };
     log_two_values(
         b"package-import rejected excess authority: capability=",
         grant,
         b" reason=",
         b"undeclared no candidate install",
     );
-}
-
-fn validate_fragment_magic(fragment: &[u8]) {
-    if !starts_with(fragment, b"PKGFRAGV1\n") {
-        log(b"package-import rejected graph fragment: bad magic");
-        sys::exit(1);
-    }
 }
 
 fn read_store_object(cap_slot: u64, buffer: &mut [u8]) -> usize {
@@ -291,111 +216,6 @@ fn read_store_object(cap_slot: u64, buffer: &mut [u8]) -> usize {
         sys::exit(1);
     }
     read as usize
-}
-
-fn verify_blake3(bytes: &[u8], expected_hex: &[u8], context: &[u8]) {
-    let mut actual = [0u8; 64];
-    blake3_hex(bytes, &mut actual);
-    if expected_hex.len() != actual.len() || !bytes_eq(expected_hex, &actual) {
-        log_pair(b"package-import hash mismatch: ", context);
-        sys::exit(1);
-    }
-}
-
-fn blake3_hex(bytes: &[u8], out: &mut [u8; 64]) {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let digest = blake3::hash(bytes);
-    let raw = digest.as_bytes();
-    let mut index = 0;
-    while index < raw.len() {
-        out[index * 2] = HEX[(raw[index] >> 4) as usize];
-        out[index * 2 + 1] = HEX[(raw[index] & 0x0f) as usize];
-        index += 1;
-    }
-}
-
-fn required_decimal(fragment: &[u8], key: &[u8]) -> usize {
-    let value = required_field(fragment, key);
-    let Some(parsed) = parse_decimal(value) else {
-        log_pair(b"package-import rejected graph fragment: bad decimal ", key);
-        sys::exit(1);
-    };
-    parsed
-}
-
-fn parse_decimal(value: &[u8]) -> Option<usize> {
-    if value.is_empty() {
-        return None;
-    }
-    let mut out = 0usize;
-    let mut index = 0;
-    while index < value.len() {
-        let byte = value[index];
-        if !byte.is_ascii_digit() {
-            return None;
-        }
-        out = out.checked_mul(10)?;
-        out = out.checked_add((byte - b'0') as usize)?;
-        index += 1;
-    }
-    Some(out)
-}
-
-fn assert_field_eq(fragment: &[u8], key: &[u8], expected: &[u8]) {
-    let value = required_field(fragment, key);
-    assert_bytes(value, expected, key);
-}
-
-fn assert_bytes(value: &[u8], expected: &[u8], context: &[u8]) {
-    if !bytes_eq(value, expected) {
-        log_pair(
-            b"package-import rejected graph fragment: unexpected ",
-            context,
-        );
-        sys::exit(1);
-    }
-}
-
-fn provider_known(capability: &[u8]) -> bool {
-    bytes_eq(capability, b"cap:console.output")
-        || bytes_eq(capability, b"cap:vfs.logd-log-stream")
-        || bytes_eq(capability, b"cap:net.udp.9000")
-        || bytes_eq(capability, b"cap:log.sink")
-}
-
-fn authority_allowed(grant: &[u8]) -> bool {
-    bytes_eq(grant, b"cap:console.output/send")
-        || bytes_eq(grant, b"cap:vfs.logd-log-stream/resolve+read")
-        || bytes_eq(grant, b"cap:net.udp.9000/listen+bind")
-        || bytes_eq(grant, b"cap:log.sink/send")
-        || bytes_eq(grant, b"config:logd/read")
-}
-
-fn required_field<'a>(fragment: &'a [u8], key: &[u8]) -> &'a [u8] {
-    let Some(value) = field(fragment, key) else {
-        log_pair(b"package-import rejected graph fragment: missing ", key);
-        sys::exit(1);
-    };
-    value
-}
-
-fn field<'a>(fragment: &'a [u8], key: &[u8]) -> Option<&'a [u8]> {
-    let mut start = 0;
-    while start <= fragment.len() {
-        let mut end = start;
-        while end < fragment.len() && fragment[end] != b'\n' {
-            end += 1;
-        }
-        let line = &fragment[start..end];
-        if starts_with(line, key) {
-            return Some(&line[key.len()..]);
-        }
-        if end == fragment.len() {
-            break;
-        }
-        start = end + 1;
-    }
-    None
 }
 
 fn log_pair(prefix: &[u8], value: &[u8]) {
@@ -446,10 +266,6 @@ fn append(buffer: &mut [u8], len: &mut usize, bytes: &[u8]) {
         *len += 1;
         index += 1;
     }
-}
-
-fn starts_with(value: &[u8], prefix: &[u8]) -> bool {
-    value.len() >= prefix.len() && bytes_eq(&value[..prefix.len()], prefix)
 }
 
 fn bytes_eq(left: &[u8], right: &[u8]) -> bool {

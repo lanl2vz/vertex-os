@@ -21,7 +21,6 @@ const CONTROL_SHUTDOWN: &[u8] = b"shutdown";
 const LOGD_PROOF_OUTPUT: &[u8] = b"logd sends log message";
 const INTERACTIVE_QUIET: bool = option_env!("KRUST_INTERACTIVE_QUIET").is_some();
 const INPUT_BUFFER_LEN: usize = 160;
-const SHELL_COMMAND_SEND_ATTEMPTS: u64 = 4096;
 
 #[unsafe(link_section = ".text._start")]
 #[unsafe(no_mangle)]
@@ -149,14 +148,18 @@ fn poll_serial_input(input: &mut [u8; INPUT_BUFFER_LEN], input_len: &mut usize) 
 }
 
 fn send_shell_command(command: &[u8]) {
-    let mut attempts = 0;
     loop {
         let status = sys::ipc_send(CAP_SHELL_REQUEST, command);
         if status == sys::STATUS_OK {
             break;
         }
-        if status == sys::STATUS_TOO_LARGE && attempts < SHELL_COMMAND_SEND_ATTEMPTS {
-            attempts += 1;
+        if status == sys::STATUS_TOO_LARGE {
+            drain_console_output();
+            if receive_shutdown() {
+                drain_console_output();
+                log(b"console-driver shutdown requested");
+                sys::exit(0);
+            }
             let _ = sys::yield_now();
             continue;
         }

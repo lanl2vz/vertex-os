@@ -8,6 +8,7 @@ members = [
     "userland/logd",
     "userland/netstack",
     "userland/operator-shell",
+    "userland/package-import",
 ]
 resolver = "3"
 
