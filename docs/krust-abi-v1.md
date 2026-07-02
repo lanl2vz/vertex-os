@@ -39,9 +39,10 @@ metadata syscalls, 64-byte stat metadata, open-unlink lifetime, hard-link
 policy, and bounded state-volume block-cache writeback. M78-M79 add the strict
 VertexFS v1 boot image, mandatory service mount roots, declared bind-mount
 snapshots, and kernel-owned VertexFS fsync writeback through block-driver
-device endpoints. M90-M92 add the typed `servicefs` request/reply route, the
-default VertexFS v2 durable image format, and VertexFS-backed durable metadata
-operations while preserving explicit v1 regression gates. M80-M81 add VFS coordination and filesystem security/soak coverage. M82
+device endpoints. M90-M93 add the typed `servicefs` request/reply route, the
+default VertexFS v2 durable image format, VertexFS-backed durable metadata
+operations, and the bounded VertexFS vnode page-cache/writeback layer while
+preserving explicit v1 regression gates. M80-M81 add VFS coordination and filesystem security/soak coverage. M82
 updates the compact payload identity to `KRUSTBOOTM82` version 13 and adds the
 native typed graph-store header plus graph node/edge records used for runtime
 graph provenance. M83 adds native generation verification and staged
@@ -459,15 +460,19 @@ that client only inside the declared VertexDisk VertexFS section and does not
 accept older VertexDisk identities or short compatibility block commands. If the
 block-driver exits while a VertexFS fsync is blocked on device replies, the
 kernel aborts the transaction with `STATUS_VFS_UNSUPPORTED`, drops the pending
-device writes, and leaves the dirty runtime file readable. On mount, a pending
-VertexFS journal record can recover only the exact target inode and payload
-encoded in that record; unrelated file checksum mismatches still reject the
-image before `/fs` is mounted.
+device writes, records a vnode page-cache writeback error, and leaves the dirty
+runtime file readable. The M93 VertexFS hot path serves reads from a bounded
+kernel-owned page cache keyed by mount id, inode id, and page offset after open
+authority has already been checked; writes dirty cached pages and `SYS_VFS_SYNC`
+clears them only after ordered block-driver acknowledgement. On mount, a
+pending VertexFS journal record can recover only the exact target inode and
+payload encoded in that record; unrelated file checksum mismatches still reject
+the image before `/fs` is mounted.
 SYS_VFS_RENAME takes a native request buffer:
 `old_path_len:u64`, `new_path_len:u64`, old path bytes, then new path bytes. It
 requires `resolve` and `rename` authority over both parent directories, rejects
 replacement if the destination already exists, and currently supports volatile
-memory-file vnodes. The vnode id is preserved across the rename, so live handles
+memory-file and VertexFS-file vnodes. The vnode id is preserved across the rename, so live handles
 continue to reference the same open file description. Cross-filesystem and
 cross-mount-instance renames return `STATUS_VFS_UNSUPPORTED`; callers must not
 expect implicit copy-and-delete behavior. SYS_VFS_MKDIR creates an empty

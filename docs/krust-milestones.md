@@ -7,13 +7,14 @@ runtime layered over a host kernel.
 
 ## Status Summary
 
-Current status: M14-M88 plus M90-M92 and M87-1 through M87-4 are implemented and
+Current status: M14-M88 plus M90-M93 and M87-1 through M87-4 are implemented and
 smoke-tested under `qemu-system-x86_64` with Limine. The current tree has an
 image-backed VertexFS v2 mount, a strict VertexDisk v1 section carrying the
 current VertexFS image, retained VertexFS v1 verifier/regression gates,
 fixed journal replay, kernel-owned device-backed fsync transactions,
-post-sync image remount, fsync fault/restart handling, declared-file journal
-checkpoint recovery, mount-namespace gates, and a read-only `servicefs`
+post-sync image remount, fsync fault/restart handling, a bounded kernel-owned
+VertexFS vnode page cache/writeback layer, declared-file journal checkpoint
+recovery, mount-namespace gates, and a read-only `servicefs`
 filesystem-service route, plus VFS coordination and security/soak coverage for
 locks, polls, directory watches, bounded pipe buffering, revocation with live
 handles, hostile VFS arguments, and repeated file churn. M74-M77 VFS,
@@ -145,8 +146,11 @@ for regression coverage. M92 moves normal create, open-create, unlink, rename,
 link, mkdir/rmdir, truncate, append, stat, and watch semantics onto
 VertexFS-backed VFS nodes with metadata checkpoint logs and 100-cycle churn
 coverage while preserving the existing handle and authority model. General
-vnode page cache integration,
-broader synthetic/device filesystem breadth, durable graph-store mutation, and
+vnode page cache integration is now implemented for VertexFS-backed files in
+M93, including bounded clean eviction, dirty-page pressure rejection, ordered
+fsync writeback, writeback-error accounting, sequential read-ahead counters,
+and runtime inspect health rows. Broader synthetic/device filesystem breadth,
+external filesystem-service shared-buffer page I/O, durable graph-store mutation, and
 durable policy-denial history remain later work.
 
 ```sh
@@ -226,6 +230,7 @@ scripts/krust-test.sh m88
 scripts/krust-test.sh m90
 scripts/krust-test.sh m91
 scripts/krust-test.sh m92
+scripts/krust-test.sh m93
 scripts/krust-test.sh manifest-policy-version
 scripts/krust-test.sh manifest-policy-hash
 scripts/krust-test.sh manifest-policy-excess-grant
@@ -1644,7 +1649,7 @@ done: locked Cargo dependencies for the top-level host-tool workspace, Krust ker
 done: kernel/krust/rust-toolchain.toml pins Rust 1.95.0, rustfmt, and x86_64-unknown-none
 done: make doctor checks every required tool and reports actionable fixes
 done: legacy hello/ipc userspace crates are removed instead of carried forward
-done: single release-gate script runs the clean-clone M14-M88 plus M90-M92 substrate proof with the current QEMU matrix
+done: single release-gate script runs the clean-clone M14-M88 plus M90-M93 substrate proof with the current QEMU matrix
 ```
 
 Acceptance tests:
@@ -3542,12 +3547,12 @@ done: scripts/krust-test.sh m77 asserts cache hit, writeback clean, dirty=0,
       pinned=0, writeback_errors=0, clean eviction under pressure, dirty-page
       non-eviction, failed-writeback dirty retention, writeback-error
       accounting, state write, and state read transcripts
-deferred: a general vnode page cache and VertexFS fsync syscall semantics move
-          to M78-M81 with the general filesystem format
-deferred: real block-driver fault injection during dirty writeback, pending VFS
-          transaction cleanup after filesystem-service exit, block-driver restart
-          cache ownership tests, and writeback-error fsync semantics belong to
-          the general filesystem fault/soak gates in M78-M81
+done later: VertexFS fsync syscall semantics land in M78 and the bounded
+      VertexFS vnode page-cache/writeback layer lands in M93
+deferred: pending VFS transaction cleanup after filesystem-service exit,
+          block-driver restart cache ownership tests, and broader
+          filesystem-service writeback semantics belong to later
+          fault/soak gates
 ```
 
 Implementation notes:
@@ -4711,7 +4716,8 @@ Status: done for the current durable-format substrate; VertexFS v2 images,
 offline tooling, mount-time verification/replay, v2 disk-section generation,
 unsupported-feature rejection, and dynamic create growth beyond the v1 metadata
 limit are release-gate covered. Full durable metadata mutation semantics remain
-M92 work, and the bounded page-cache/writeback layer remains M93 work.
+M92 work; the bounded VertexFS page-cache/writeback layer is implemented in
+M93.
 
 Goal: replace the current fixed VertexFS v1 substrate with an extensible
 durable on-disk format that can support normal filesystem metadata growth
@@ -4853,7 +4859,9 @@ Implementation notes:
 
 ## M93: Vnode Page Cache, Writeback, And Fast I/O
 
-Status: planned.
+Status: implemented for the current VertexFS durable-file substrate; external
+filesystem-service shared-buffer page I/O, `syncfs`, and fsync-range style APIs
+remain future work.
 
 Goal: add a bounded, inspectable page-cache and writeback layer for durable
 filesystem I/O so common reads and writes do not require service IPC or graph
@@ -4862,26 +4870,26 @@ policy evaluation on every byte.
 Scope:
 
 ```text
-kernel-owned vnode page cache keyed by mount id, inode id, and page offset
-clean-page eviction and dirty-page non-eviction or explicit writeback policy
-per-mount and global dirty byte limits
-fsync, syncfs, and fsync-range style ordered writeback
-readpage and writepage shared-buffer protocol with filesystem services
-writeback error accounting and sticky per-handle/per-vnode error reporting
-simple read-ahead for sequential reads
-runtime inspect rows for clean pages, dirty pages, pinned pages, writeback errors, and high-water marks
+done: kernel-owned VertexFS vnode page cache keyed by mount id, inode id, and page offset
+done: clean-page eviction and dirty-page non-eviction under pressure
+done: per-mount and global dirty byte limits for cached VertexFS pages
+done: SYS_VFS_SYNC ordered writeback through the VertexFS image writer and block driver
+deferred: syncfs, fsync-range, and external filesystem-service shared-buffer page I/O
+done: writeback error accounting with dirty data retained after fsync failure
+done: simple read-ahead hit accounting for sequential reads
+done: runtime inspect rows for clean pages, dirty pages, pinned pages, writeback errors, and high-water marks
 ```
 
 Acceptance tests:
 
 ```text
-second read of a cached page completes without filesystem-service readpage IPC
-dirty page is not evicted silently under memory pressure
-fsync replies only after ordered writeback reaches the filesystem service and block driver
-writeback failure leaves dirty data dirty and reports an error on fsync
-cache limits reject or throttle writers before exhausting kernel memory
-sequential read path records read-ahead hits without changing file authority
-operator health report exposes dirty, pinned, and writeback-error counts
+done: second read of a cached page completes without filesystem-service readpage IPC
+done: dirty page is not evicted silently under memory pressure
+done: fsync replies only after ordered writeback reaches the VertexFS writer and block driver
+done: writeback failure leaves dirty data dirty and reports an error on fsync
+done: cache limits reject writers before exhausting kernel memory
+done: sequential read path records read-ahead hits without changing file authority
+done: operator health report exposes dirty, pinned, and writeback-error counts
 ```
 
 Implementation notes:
@@ -4892,6 +4900,36 @@ Implementation notes:
   vectored I/O, and zero-copy only after the bounded cache behavior is stable.
 - Keep DMA buffers separate from cache pages until an ownership-transfer design
   is explicit and testable.
+
+Current implementation state:
+
+```text
+done: RuntimeState owns eight fixed-size VertexFS page-cache slots using the
+      existing 512-byte sector/page size, with cache keys carrying mount id,
+      inode id, backing slot, and page offset for reuse safety
+done: VertexFS VFS reads use page lookup and bounded user copy; cache hits,
+      misses, and sequential read-ahead hits emit serial records with
+      `no_service_ipc=yes`
+done: VertexFS writes and truncates dirty cache pages, mirror the current
+      in-memory VertexFS file buffer, and reject new dirty pages once the
+      configured per-mount or global dirty-byte limit would be exceeded
+done: clean cached pages are evictable; dirty/writeback pages are not evicted
+      silently and instead force a controlled `STATUS_VFS_NO_SPACE` pressure
+      rejection
+done: `SYS_VFS_SYNC` pins dirty cached pages for ordered writeback, clears them
+      only after the VertexFS device transaction commits, and records sticky
+      writeback errors on rejected, queued-failed, or aborted block-driver
+      transactions
+done: runtime inspect emits `vfs-page-cache source=vertexfs` with clean, dirty,
+      pinned, writeback-error, high-water, hit/miss, readahead, eviction,
+      limit, and writeback counters; `vertex-init` verifies the health row
+done: `scripts/krust-test.sh m93` gates cached second-read behavior, readahead
+      accounting, ordered fsync writeback, dirty pressure rejection,
+      operator-visible inspect health, and native activation success
+done: `scripts/krust-test.sh m78-fsync-fault` now also proves a block-driver
+      fsync abort records a page-cache writeback error while keeping dirty data
+      readable
+```
 
 ## M94: State Volume Backend Integration
 

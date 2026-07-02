@@ -166,6 +166,8 @@ pub(super) struct RuntimeState {
     pub(super) vertexfs_image_loaded: bool,
     pub(super) vertexfs_files: [VfsVertexFsFile; MAX_VERTEXFS_FILES],
     pub(super) vertexfs_file_count: usize,
+    pub(super) vfs_page_cache: [VfsPageCachePage; MAX_VERTEXFS_PAGE_CACHE_PAGES],
+    pub(super) vfs_page_cache_stats: VfsPageCacheStats,
     pub(super) open_file_descriptions: [Option<OpenFileDescription>; MAX_OPEN_FILE_DESCRIPTIONS],
     pub(super) next_file_description_id: u64,
     pub(super) vfs_locks: [Option<VfsLock>; MAX_VFS_LOCKS],
@@ -245,6 +247,8 @@ impl RuntimeState {
             vertexfs_image_loaded: false,
             vertexfs_files: [VfsVertexFsFile::empty(); MAX_VERTEXFS_FILES],
             vertexfs_file_count: 0,
+            vfs_page_cache: [VfsPageCachePage::empty(); MAX_VERTEXFS_PAGE_CACHE_PAGES],
+            vfs_page_cache_stats: VfsPageCacheStats::empty(),
             open_file_descriptions: [None; MAX_OPEN_FILE_DESCRIPTIONS],
             next_file_description_id: 1,
             vfs_locks: [None; MAX_VFS_LOCKS],
@@ -342,6 +346,12 @@ impl RuntimeState {
             self.vertexfs_files[index] = VfsVertexFsFile::empty();
             index += 1;
         }
+        index = 0;
+        while index < self.vfs_page_cache.len() {
+            self.vfs_page_cache[index] = VfsPageCachePage::empty();
+            index += 1;
+        }
+        self.vfs_page_cache_stats = VfsPageCacheStats::empty();
         index = 0;
         while index < self.vertexfs_sync_writes.len() {
             self.vertexfs_sync_writes[index] = VertexFsDeviceWrite::empty();
@@ -689,6 +699,7 @@ impl RuntimeState {
         let mut index = 0;
         while index < self.vertexfs_files.len() {
             if !self.vertexfs_file_in_use(index) {
+                self.invalidate_vertexfs_page_cache(index);
                 self.vertexfs_files[index] = VfsVertexFsFile::empty();
                 self.vertexfs_files[index].vfs_name = name;
                 self.vertexfs_files[index].inode_id = inode_id;
@@ -773,10 +784,519 @@ impl RuntimeState {
         }
     }
 
+    fn vertexfs_page_cache_mount_id(&self) -> u64 {
+        let mut index = 0;
+        while index < self.objects.count {
+            if let Some(KernelObject::VfsMount(mount)) = self.objects.objects[index]
+                && mount.source == "vertexfs"
+            {
+                return mount.id.raw();
+            }
+            index += 1;
+        }
+        0
+    }
+
+    fn vertexfs_page_cache_inode_key(&self, backing: usize) -> Result<u32, IpcError> {
+        if backing >= self.vertexfs_file_count {
+            return Err(IpcError::VfsBadHandle);
+        }
+        let inode_id = self.vertexfs_files[backing].inode_id;
+        if inode_id != 0 {
+            Ok(inode_id)
+        } else {
+            Ok(u32::MAX.saturating_sub(backing as u32))
+        }
+    }
+
+    fn vertexfs_page_cache_lookup(
+        &self,
+        backing: usize,
+        mount_id: u64,
+        inode_id: u32,
+        page_offset: u64,
+    ) -> Option<usize> {
+        let mut index = 0;
+        while index < self.vfs_page_cache.len() {
+            let page = self.vfs_page_cache[index];
+            if page.valid
+                && page.backing == backing
+                && page.mount_id == mount_id
+                && page.inode_id == inode_id
+                && page.page_offset == page_offset
+            {
+                return Some(index);
+            }
+            index += 1;
+        }
+        None
+    }
+
+    fn vertexfs_page_cache_dirty_bytes(&self) -> usize {
+        let mut bytes = 0usize;
+        let mut index = 0;
+        while index < self.vfs_page_cache.len() {
+            if self.vfs_page_cache[index].valid && self.vfs_page_cache[index].dirty {
+                bytes = bytes.saturating_add(VERTEXFS_SECTOR_SIZE);
+            }
+            index += 1;
+        }
+        bytes
+    }
+
+    fn vertexfs_page_cache_dirty_bytes_for_mount(&self, mount_id: u64) -> usize {
+        let mut bytes = 0usize;
+        let mut index = 0;
+        while index < self.vfs_page_cache.len() {
+            if self.vfs_page_cache[index].valid
+                && self.vfs_page_cache[index].dirty
+                && self.vfs_page_cache[index].mount_id == mount_id
+            {
+                bytes = bytes.saturating_add(VERTEXFS_SECTOR_SIZE);
+            }
+            index += 1;
+        }
+        bytes
+    }
+
+    fn update_vertexfs_page_cache_high_water(&mut self) {
+        let dirty_bytes = self.vertexfs_page_cache_dirty_bytes();
+        if dirty_bytes > self.vfs_page_cache_stats.high_water_dirty_bytes {
+            self.vfs_page_cache_stats.high_water_dirty_bytes = dirty_bytes;
+        }
+    }
+
+    fn vertexfs_page_cache_victim(&mut self, inode_id: u32, page_offset: u64) -> Result<usize, IpcError> {
+        let mut index = 0;
+        while index < self.vfs_page_cache.len() {
+            if !self.vfs_page_cache[index].valid {
+                return Ok(index);
+            }
+            index += 1;
+        }
+
+        index = 0;
+        while index < self.vfs_page_cache.len() {
+            let page = self.vfs_page_cache[index];
+            if page.valid && !page.dirty && !page.pinned && !page.writeback {
+                self.vfs_page_cache_stats.clean_evictions =
+                    self.vfs_page_cache_stats.clean_evictions.saturating_add(1);
+                serial::write_str("VertexFS vnode page cache clean eviction: inode=");
+                serial::write_u64_dec(page.inode_id as u64);
+                serial::write_str(" page=");
+                serial::write_u64_dec(page.page_offset);
+                serial::write_str("\n");
+                return Ok(index);
+            }
+            index += 1;
+        }
+
+        self.vfs_page_cache_stats.dirty_eviction_blocks =
+            self.vfs_page_cache_stats.dirty_eviction_blocks.saturating_add(1);
+        serial::write_str("VertexFS vnode page cache dirty page not evicted under pressure: inode=");
+        serial::write_u64_dec(inode_id as u64);
+        serial::write_str(" page=");
+        serial::write_u64_dec(page_offset);
+        serial::write_str("\n");
+        Err(IpcError::VfsNoSpace)
+    }
+
+    fn ensure_vertexfs_page_cache_page(
+        &mut self,
+        backing: usize,
+        page_offset: u64,
+    ) -> Result<(usize, bool), IpcError> {
+        if backing >= self.vertexfs_file_count {
+            return Err(IpcError::VfsBadHandle);
+        }
+        let mount_id = self.vertexfs_page_cache_mount_id();
+        let inode_id = self.vertexfs_page_cache_inode_key(backing)?;
+        if let Some(index) =
+            self.vertexfs_page_cache_lookup(backing, mount_id, inode_id, page_offset)
+        {
+            return Ok((index, true));
+        }
+
+        let slot = self.vertexfs_page_cache_victim(inode_id, page_offset)?;
+        let file = self.vertexfs_files[backing];
+        let page_start = usize::try_from(page_offset)
+            .map_err(|_| IpcError::VfsNoSpace)?
+            .checked_mul(VERTEXFS_SECTOR_SIZE)
+            .ok_or(IpcError::VfsNoSpace)?;
+        let mut bytes = [0u8; VERTEXFS_SECTOR_SIZE];
+        let len = if page_start < file.len {
+            min(VERTEXFS_SECTOR_SIZE, file.len - page_start)
+        } else {
+            0
+        };
+        let mut cursor = 0;
+        while cursor < len {
+            bytes[cursor] = file.bytes[page_start + cursor];
+            cursor += 1;
+        }
+        self.vfs_page_cache[slot] = VfsPageCachePage {
+            valid: true,
+            dirty: file.dirty,
+            pinned: false,
+            writeback: false,
+            writeback_error: false,
+            mount_id,
+            inode_id,
+            backing,
+            page_offset,
+            len,
+            bytes,
+        };
+        self.update_vertexfs_page_cache_high_water();
+        Ok((slot, false))
+    }
+
+    fn ensure_vertexfs_page_cache_dirty(&mut self, page_index: usize) -> Result<(), IpcError> {
+        if page_index >= self.vfs_page_cache.len() || !self.vfs_page_cache[page_index].valid {
+            return Err(IpcError::VfsBadHandle);
+        }
+        if !self.vfs_page_cache[page_index].dirty {
+            let page = self.vfs_page_cache[page_index];
+            let next_global_dirty_bytes = self
+                .vertexfs_page_cache_dirty_bytes()
+                .checked_add(VERTEXFS_SECTOR_SIZE)
+                .ok_or(IpcError::VfsNoSpace)?;
+            let next_mount_dirty_bytes = self
+                .vertexfs_page_cache_dirty_bytes_for_mount(page.mount_id)
+                .checked_add(VERTEXFS_SECTOR_SIZE)
+                .ok_or(IpcError::VfsNoSpace)?;
+            if next_global_dirty_bytes > VERTEXFS_PAGE_CACHE_DIRTY_BYTE_LIMIT
+                || next_mount_dirty_bytes > VERTEXFS_PAGE_CACHE_PER_MOUNT_DIRTY_BYTE_LIMIT
+            {
+                self.vfs_page_cache_stats.dirty_limit_rejections = self
+                    .vfs_page_cache_stats
+                    .dirty_limit_rejections
+                    .saturating_add(1);
+                serial::write_str("VertexFS vnode page cache dirty limit rejects write: inode=");
+                serial::write_u64_dec(page.inode_id as u64);
+                serial::write_str(" page=");
+                serial::write_u64_dec(page.page_offset);
+                serial::write_str(" global_dirty_bytes=");
+                serial::write_u64_dec(next_global_dirty_bytes as u64);
+                serial::write_str(" global_limit=");
+                serial::write_u64_dec(VERTEXFS_PAGE_CACHE_DIRTY_BYTE_LIMIT as u64);
+                serial::write_str(" mount_dirty_bytes=");
+                serial::write_u64_dec(next_mount_dirty_bytes as u64);
+                serial::write_str(" mount_limit=");
+                serial::write_u64_dec(VERTEXFS_PAGE_CACHE_PER_MOUNT_DIRTY_BYTE_LIMIT as u64);
+                serial::write_str("\n");
+                serial::write_str(
+                    "VertexFS vnode page cache dirty page not evicted under pressure: inode=",
+                );
+                serial::write_u64_dec(page.inode_id as u64);
+                serial::write_str(" page=");
+                serial::write_u64_dec(page.page_offset);
+                serial::write_str("\n");
+                return Err(IpcError::VfsNoSpace);
+            }
+        }
+        Ok(())
+    }
+
+    pub(super) fn read_vertexfs_page_cache(
+        &mut self,
+        backing: usize,
+        offset: u64,
+        destination: *mut u8,
+        max_len: usize,
+    ) -> Result<(usize, u64), IpcError> {
+        if backing >= self.vertexfs_file_count {
+            return Err(IpcError::VfsBadHandle);
+        }
+        let file_len = self.vertexfs_files[backing].len;
+        let start = min(usize::try_from(offset).unwrap_or(usize::MAX), file_len);
+        let remaining = file_len - start;
+        let copy_len = min(remaining, max_len);
+        if copy_len == 0 {
+            return Ok((0, offset));
+        }
+        let page_offset = (start / VERTEXFS_SECTOR_SIZE) as u64;
+        let page_start = start % VERTEXFS_SECTOR_SIZE;
+        let (page_index, hit) = self.ensure_vertexfs_page_cache_page(backing, page_offset)?;
+        let page = self.vfs_page_cache[page_index];
+        if hit {
+            self.vfs_page_cache_stats.read_hits =
+                self.vfs_page_cache_stats.read_hits.saturating_add(1);
+            serial::write_str("VertexFS vnode page cache hit: mount=");
+        } else {
+            self.vfs_page_cache_stats.read_misses =
+                self.vfs_page_cache_stats.read_misses.saturating_add(1);
+            serial::write_str("VertexFS vnode page cache miss: mount=");
+        }
+        serial::write_u64_dec(page.mount_id);
+        serial::write_str(" inode=");
+        serial::write_u64_dec(page.inode_id as u64);
+        serial::write_str(" page=");
+        serial::write_u64_dec(page.page_offset);
+        serial::write_str(" no_service_ipc=yes\n");
+
+        if self.vfs_page_cache_stats.last_read_valid
+            && self.vfs_page_cache_stats.last_read_backing == backing
+            && self.vfs_page_cache_stats.last_read_next_offset == start as u64
+            && self.vfs_page_cache_stats.last_read_page_offset == page_offset
+        {
+            self.vfs_page_cache_stats.readahead_hits =
+                self.vfs_page_cache_stats.readahead_hits.saturating_add(1);
+            serial::write_str("VertexFS vnode page cache readahead hit: inode=");
+            serial::write_u64_dec(page.inode_id as u64);
+            serial::write_str(" page=");
+            serial::write_u64_dec(page.page_offset);
+            serial::write_str("\n");
+        }
+
+        usercopy::copy_to_user(
+            UserPtr::new(destination as u64),
+            &page.bytes[page_start..page_start + copy_len],
+        )
+        .map_err(|_| IpcError::InvalidUserBuffer)?;
+        let next_offset = offset
+            .checked_add(copy_len as u64)
+            .ok_or(IpcError::VfsUnsupported)?;
+        self.vfs_page_cache_stats.last_read_valid = true;
+        self.vfs_page_cache_stats.last_read_backing = backing;
+        self.vfs_page_cache_stats.last_read_next_offset = next_offset;
+        self.vfs_page_cache_stats.last_read_page_offset = page_offset;
+        Ok((copy_len, next_offset))
+    }
+
+    pub(super) fn write_vertexfs_page_cache(
+        &mut self,
+        backing: usize,
+        offset: u64,
+        bytes: &[u8],
+    ) -> Result<(usize, u64), IpcError> {
+        if bytes.len() > MAX_VERTEXFS_FILE_BYTES {
+            return Err(IpcError::VfsNoSpace);
+        }
+        let start = usize::try_from(offset).map_err(|_| IpcError::VfsNoSpace)?;
+        let end = start.checked_add(bytes.len()).ok_or(IpcError::VfsNoSpace)?;
+        if end > MAX_VERTEXFS_FILE_BYTES {
+            return Err(IpcError::VfsNoSpace);
+        }
+        if backing >= self.vertexfs_file_count {
+            return Err(IpcError::VfsBadHandle);
+        }
+        if bytes.is_empty() {
+            return Ok((0, offset));
+        }
+        let page_offset = (start / VERTEXFS_SECTOR_SIZE) as u64;
+        let page_start = start % VERTEXFS_SECTOR_SIZE;
+        let (page_index, _) = self.ensure_vertexfs_page_cache_page(backing, page_offset)?;
+        self.ensure_vertexfs_page_cache_dirty(page_index)?;
+        {
+            let page = &mut self.vfs_page_cache[page_index];
+            let mut cursor = 0;
+            while cursor < bytes.len() {
+                page.bytes[page_start + cursor] = bytes[cursor];
+                cursor += 1;
+            }
+            let written_len = page_start + bytes.len();
+            if written_len > page.len {
+                page.len = written_len;
+            }
+            page.dirty = true;
+            page.pinned = false;
+            page.writeback = false;
+            page.writeback_error = false;
+        }
+        {
+            let file = &mut self.vertexfs_files[backing];
+            let mut cursor = 0;
+            while cursor < bytes.len() {
+                file.bytes[start + cursor] = bytes[cursor];
+                cursor += 1;
+            }
+            if end > file.len {
+                file.len = end;
+            }
+            file.dirty = true;
+            file.checksum = vertexfs_checksum32(&file.bytes[..file.len]);
+        }
+        self.update_vertexfs_page_cache_high_water();
+        serial::write_str("VertexFS vnode page cache writepage dirty: inode=");
+        serial::write_u64_dec(self.vfs_page_cache[page_index].inode_id as u64);
+        serial::write_str(" page=");
+        serial::write_u64_dec(page_offset);
+        serial::write_str("\n");
+        Ok((bytes.len(), end as u64))
+    }
+
+    pub(super) fn truncate_vertexfs_page_cache(
+        &mut self,
+        backing: usize,
+        len: usize,
+    ) -> Result<(), IpcError> {
+        if len > MAX_VERTEXFS_FILE_BYTES {
+            return Err(IpcError::VfsNoSpace);
+        }
+        if backing >= self.vertexfs_file_count {
+            return Err(IpcError::VfsBadHandle);
+        }
+        let old_len = self.vertexfs_files[backing].len;
+        if old_len == len {
+            return Ok(());
+        }
+        let (page_index, _) = self.ensure_vertexfs_page_cache_page(backing, 0)?;
+        self.ensure_vertexfs_page_cache_dirty(page_index)?;
+        let clear_start = min(old_len, len);
+        let clear_end = if old_len > len { old_len } else { len };
+        {
+            let page = &mut self.vfs_page_cache[page_index];
+            let mut cursor = clear_start;
+            while cursor < clear_end {
+                page.bytes[cursor] = 0;
+                cursor += 1;
+            }
+            page.len = len;
+            page.dirty = true;
+            page.pinned = false;
+            page.writeback = false;
+            page.writeback_error = false;
+        }
+        {
+            let file = &mut self.vertexfs_files[backing];
+            let mut cursor = clear_start;
+            while cursor < clear_end {
+                file.bytes[cursor] = 0;
+                cursor += 1;
+            }
+            file.len = len;
+            file.dirty = true;
+            file.checksum = vertexfs_checksum32(&file.bytes[..file.len]);
+        }
+        self.update_vertexfs_page_cache_high_water();
+        serial::write_str("VertexFS vnode page cache truncate dirty: inode=");
+        serial::write_u64_dec(self.vfs_page_cache[page_index].inode_id as u64);
+        serial::write_str(" len=");
+        serial::write_u64_dec(len as u64);
+        serial::write_str("\n");
+        Ok(())
+    }
+
+    pub(super) fn begin_vertexfs_page_cache_writeback(
+        &mut self,
+        backing: usize,
+    ) -> Result<(), IpcError> {
+        if backing >= self.vertexfs_file_count {
+            return Err(IpcError::VfsBadHandle);
+        }
+        let mut dirty = false;
+        let mut inode_id = self.vertexfs_files[backing].inode_id;
+        let mut index = 0;
+        while index < self.vfs_page_cache.len() {
+            if self.vfs_page_cache[index].valid
+                && self.vfs_page_cache[index].backing == backing
+                && self.vfs_page_cache[index].dirty
+            {
+                dirty = true;
+                inode_id = self.vfs_page_cache[index].inode_id;
+                self.vfs_page_cache[index].pinned = true;
+                self.vfs_page_cache[index].writeback = true;
+            }
+            index += 1;
+        }
+        if dirty {
+            self.vfs_page_cache_stats.writeback_started =
+                self.vfs_page_cache_stats.writeback_started.saturating_add(1);
+            serial::write_str("VertexFS vnode page cache ordered writeback started: inode=");
+            serial::write_u64_dec(inode_id as u64);
+            serial::write_str("\n");
+        }
+        Ok(())
+    }
+
+    pub(super) fn finish_vertexfs_page_cache_writeback(
+        &mut self,
+        backing: usize,
+    ) -> Result<(), IpcError> {
+        if backing >= self.vertexfs_file_count {
+            return Err(IpcError::VfsBadHandle);
+        }
+        let mut completed = false;
+        let mut inode_id = self.vertexfs_files[backing].inode_id;
+        let mut index = 0;
+        while index < self.vfs_page_cache.len() {
+            if self.vfs_page_cache[index].valid && self.vfs_page_cache[index].backing == backing {
+                completed = completed || self.vfs_page_cache[index].dirty;
+                inode_id = self.vfs_page_cache[index].inode_id;
+                self.vfs_page_cache[index].dirty = false;
+                self.vfs_page_cache[index].pinned = false;
+                self.vfs_page_cache[index].writeback = false;
+                self.vfs_page_cache[index].writeback_error = false;
+                self.vfs_page_cache[index].len = self.vertexfs_files[backing].len;
+            }
+            index += 1;
+        }
+        if completed {
+            self.vfs_page_cache_stats.writeback_completed =
+                self.vfs_page_cache_stats.writeback_completed.saturating_add(1);
+            serial::write_str("VertexFS vnode page cache ordered writeback clean: inode=");
+            serial::write_u64_dec(inode_id as u64);
+            serial::write_str("\n");
+        }
+        Ok(())
+    }
+
+    pub(super) fn record_vertexfs_page_cache_writeback_error(
+        &mut self,
+        backing: usize,
+        status: u64,
+    ) {
+        if backing >= self.vertexfs_file_count {
+            return;
+        }
+        self.vertexfs_files[backing].dirty = true;
+        let mut inode_id = self.vertexfs_files[backing].inode_id;
+        let mut recorded = false;
+        let mut index = 0;
+        while index < self.vfs_page_cache.len() {
+            if self.vfs_page_cache[index].valid && self.vfs_page_cache[index].backing == backing {
+                inode_id = self.vfs_page_cache[index].inode_id;
+                self.vfs_page_cache[index].dirty = true;
+                self.vfs_page_cache[index].pinned = false;
+                self.vfs_page_cache[index].writeback = false;
+                self.vfs_page_cache[index].writeback_error = true;
+                recorded = true;
+            }
+            index += 1;
+        }
+        if recorded {
+            self.vfs_page_cache_stats.writeback_errors =
+                self.vfs_page_cache_stats.writeback_errors.saturating_add(1);
+            self.update_vertexfs_page_cache_high_water();
+            serial::write_str(
+                "VertexFS vnode page cache writeback error recorded: inode=",
+            );
+            serial::write_u64_dec(inode_id as u64);
+            serial::write_str(" status=");
+            serial::write_u64_dec(status);
+            serial::write_str(" dirty_retained=yes\n");
+        }
+    }
+
+    fn invalidate_vertexfs_page_cache(&mut self, backing: usize) {
+        let mut index = 0;
+        while index < self.vfs_page_cache.len() {
+            if self.vfs_page_cache[index].valid && self.vfs_page_cache[index].backing == backing {
+                self.vfs_page_cache[index] = VfsPageCachePage::empty();
+            }
+            index += 1;
+        }
+        if self.vfs_page_cache_stats.last_read_backing == backing {
+            self.vfs_page_cache_stats.last_read_valid = false;
+        }
+    }
+
     pub(super) fn release_vertexfs_file(&mut self, file_index: usize) -> Result<(), IpcError> {
         if file_index >= self.vertexfs_files.len() || self.vertexfs_file_in_use(file_index) {
             return Err(IpcError::BadCapability);
         }
+        self.invalidate_vertexfs_page_cache(file_index);
         self.vertexfs_files[file_index] = VfsVertexFsFile::empty();
         while self.vertexfs_file_count > 0
             && !self.vertexfs_file_in_use(self.vertexfs_file_count - 1)
@@ -795,6 +1315,12 @@ impl RuntimeState {
             self.vertexfs_image[index] = image[index];
             index += 1;
         }
+        index = 0;
+        while index < self.vfs_page_cache.len() {
+            self.vfs_page_cache[index] = VfsPageCachePage::empty();
+            index += 1;
+        }
+        self.vfs_page_cache_stats = VfsPageCacheStats::empty();
         self.vertexfs_image_loaded = true;
         Ok(())
     }
@@ -806,18 +1332,24 @@ impl RuntimeState {
         if backing >= self.vertexfs_file_count {
             return Err(IpcError::VfsBadHandle);
         }
+        self.begin_vertexfs_page_cache_writeback(backing)?;
         let file = self.vertexfs_files[backing];
         let checksum = vertexfs_checksum32(&file.bytes[..file.len]);
         if file.inode_id == 0 {
-            let file = &mut self.vertexfs_files[backing];
-            file.checksum = checksum;
-            file.dirty = false;
+            self.finish_vertexfs_sync_file(backing, checksum)?;
             return Ok(VertexFsSyncResult::Cached { checksum });
         }
         if !self.vertexfs_image_loaded {
+            self.record_vertexfs_page_cache_writeback_error(backing, STATUS_VFS_UNSUPPORTED);
             return Err(IpcError::VfsUnsupported);
         }
-        let write_count = self.commit_vertexfs_file_to_image(file, checksum)?;
+        let write_count = match self.commit_vertexfs_file_to_image(file, checksum) {
+            Ok(write_count) => write_count,
+            Err(error) => {
+                self.record_vertexfs_page_cache_writeback_error(backing, STATUS_VFS_UNSUPPORTED);
+                return Err(error);
+            }
+        };
         Ok(VertexFsSyncResult::Journaled {
             inode_id: file.inode_id,
             checksum,
@@ -836,6 +1368,7 @@ impl RuntimeState {
         let file = &mut self.vertexfs_files[backing];
         file.checksum = checksum;
         file.dirty = false;
+        self.finish_vertexfs_page_cache_writeback(backing)?;
         Ok(())
     }
 

@@ -1194,6 +1194,66 @@ fn write_vfs_report(runtime: &RuntimeState, report: &mut InspectReport) {
     report.push_u64_dec(runtime.vfs_pipe.len as u64);
     report.push_byte(b'\n');
 
+    let mut clean_pages = 0u64;
+    let mut dirty_pages = 0u64;
+    let mut pinned_pages = 0u64;
+    let mut writeback_error_pages = 0u64;
+    let mut page_index = 0;
+    while page_index < runtime.vfs_page_cache.len() {
+        let page = runtime.vfs_page_cache[page_index];
+        if page.valid {
+            if page.dirty {
+                dirty_pages += 1;
+            } else {
+                clean_pages += 1;
+            }
+            if page.pinned || page.writeback {
+                pinned_pages += 1;
+            }
+            if page.writeback_error {
+                writeback_error_pages += 1;
+            }
+        }
+        page_index += 1;
+    }
+    report.push_str("vfs-page-cache source=vertexfs page_bytes=");
+    report.push_u64_dec(VERTEXFS_SECTOR_SIZE as u64);
+    report.push_str(" capacity=");
+    report.push_u64_dec(MAX_VERTEXFS_PAGE_CACHE_PAGES as u64);
+    report.push_str(" dirty_byte_limit=");
+    report.push_u64_dec(VERTEXFS_PAGE_CACHE_DIRTY_BYTE_LIMIT as u64);
+    report.push_str(" per_mount_dirty_byte_limit=");
+    report.push_u64_dec(VERTEXFS_PAGE_CACHE_PER_MOUNT_DIRTY_BYTE_LIMIT as u64);
+    report.push_str(" clean=");
+    report.push_u64_dec(clean_pages);
+    report.push_str(" dirty=");
+    report.push_u64_dec(dirty_pages);
+    report.push_str(" pinned=");
+    report.push_u64_dec(pinned_pages);
+    report.push_str(" writeback_errors=");
+    report.push_u64_dec(runtime.vfs_page_cache_stats.writeback_errors);
+    report.push_str(" writeback_error_pages=");
+    report.push_u64_dec(writeback_error_pages);
+    report.push_str(" high_water_dirty_bytes=");
+    report.push_u64_dec(runtime.vfs_page_cache_stats.high_water_dirty_bytes as u64);
+    report.push_str(" hits=");
+    report.push_u64_dec(runtime.vfs_page_cache_stats.read_hits);
+    report.push_str(" misses=");
+    report.push_u64_dec(runtime.vfs_page_cache_stats.read_misses);
+    report.push_str(" readahead_hits=");
+    report.push_u64_dec(runtime.vfs_page_cache_stats.readahead_hits);
+    report.push_str(" clean_evictions=");
+    report.push_u64_dec(runtime.vfs_page_cache_stats.clean_evictions);
+    report.push_str(" dirty_eviction_blocks=");
+    report.push_u64_dec(runtime.vfs_page_cache_stats.dirty_eviction_blocks);
+    report.push_str(" dirty_limit_rejections=");
+    report.push_u64_dec(runtime.vfs_page_cache_stats.dirty_limit_rejections);
+    report.push_str(" writeback_started=");
+    report.push_u64_dec(runtime.vfs_page_cache_stats.writeback_started);
+    report.push_str(" writeback_completed=");
+    report.push_u64_dec(runtime.vfs_page_cache_stats.writeback_completed);
+    report.push_byte(b'\n');
+
     report.push_str("vfs-filesystem-service v=2 source=servicefs status=ready active_transactions=");
     report.push_u64_dec(vfs_service_transaction_count(runtime));
     report.push_str(" dirty=0 writeback_errors=0\n");

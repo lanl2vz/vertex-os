@@ -540,6 +540,7 @@ block-driver sleeps on virtio-blk IRQ instead of polling for completion
 netstack sleeps on virtio-net IRQ instead of polling for RX completion
 persistent block-driver owns its DMA mapping while serving storage
 inspect reports virtio queue state, last error, reset count, and owner process
+runtime inspect reports vnode page cache health
 release gate checks memory/object/cap/DMA/IRQ leak deltas after fault injection
 VFS poll reports empty pipe not readable
 VFS poll on file and pipe handles respects handle authority
@@ -612,7 +613,7 @@ while [ "$attempt" -le "$QEMU_ATTEMPTS" ]; do
     if check_transcript; then
         cleanup
         pid=
-        echo "smoke ok: Krust completed manifest v1, directed IPC, typed arenas, cap lifecycle, quotas, service-local store/state/timer access, restart, verified store execution, update checks, dynamic process creation, config/secret authority, VFS roots, VFS rename, directory metadata, block-cache writeback, VertexFS v2 image mount, mount namespaces, blocking VFS pipe reads, service-backed state-volume VFS transactions, VFS coordination, filesystem security/soak checks, and native service activation"
+        echo "smoke ok: Krust completed manifest v1, directed IPC, typed arenas, cap lifecycle, quotas, service-local store/state/timer access, restart, verified store execution, update checks, dynamic process creation, config/secret authority, VFS roots, VFS rename, directory metadata, block-cache writeback, VertexFS v2 image mount, vnode page-cache health, mount namespaces, blocking VFS pipe reads, service-backed state-volume VFS transactions, VFS coordination, filesystem security/soak checks, and native service activation"
         exit 0
     fi
 

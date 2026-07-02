@@ -932,6 +932,7 @@ fn verify_lifecycle_inspect_states(parent_generation: &[u8], device_report_requi
     verify_lifecycle_state(report, b"exited", parent_generation);
     verify_memory_lifecycle_report(report, parent_generation);
     verify_m90_vfs_report(report, parent_generation);
+    verify_m93_vfs_page_cache_report(report, parent_generation);
     if device_report_required {
         verify_device_hardening_report(report, parent_generation);
     }
@@ -1036,6 +1037,25 @@ fn verify_m90_vfs_report(report: &[u8], parent_generation: &[u8]) {
         log(b"runtime inspect reports filesystem service health");
     } else {
         log(b"M90 filesystem service health report missing");
+        activation_failed(parent_generation);
+    }
+}
+
+fn verify_m93_vfs_page_cache_report(report: &[u8], parent_generation: &[u8]) {
+    let cache_needles: [&[u8]; 8] = [
+        b"vfs-page-cache",
+        b"source=vertexfs",
+        b"clean=",
+        b"dirty=",
+        b"pinned=",
+        b"writeback_errors=",
+        b"high_water_dirty_bytes=",
+        b"readahead_hits=",
+    ];
+    if find_line_contains_all(report, &cache_needles).is_some() {
+        log(b"runtime inspect reports vnode page cache health");
+    } else {
+        log(b"M93 vnode page cache health report missing");
         activation_failed(parent_generation);
     }
 }

@@ -7,6 +7,10 @@ use super::VfsName;
 
 pub(crate) const MAX_VERTEXFS_FILES: usize = 48;
 pub(crate) const MAX_VERTEXFS_FILE_BYTES: usize = 512;
+pub(crate) const MAX_VERTEXFS_PAGE_CACHE_PAGES: usize = 8;
+pub(crate) const VERTEXFS_PAGE_CACHE_DIRTY_BYTE_LIMIT: usize = VERTEXFS_SECTOR_SIZE * 6;
+pub(crate) const VERTEXFS_PAGE_CACHE_PER_MOUNT_DIRTY_BYTE_LIMIT: usize =
+    VERTEXFS_SECTOR_SIZE * 6;
 pub(crate) const VERTEXFS_MODULE_STRING: &[u8] = b"vertexfs";
 pub(crate) const VERTEXFS_MODULE_STRING_V1: &[u8] = b"vertexfs-v1";
 pub(crate) const VERTEXFS_MODULE_STRING_V2: &[u8] = b"vertexfs-v2";
@@ -260,11 +264,83 @@ pub(crate) struct VertexFsDeviceWrite {
     pub(crate) bytes: [u8; VERTEXFS_SECTOR_SIZE],
 }
 
+#[derive(Clone, Copy)]
+pub(crate) struct VfsPageCachePage {
+    pub(crate) valid: bool,
+    pub(crate) dirty: bool,
+    pub(crate) pinned: bool,
+    pub(crate) writeback: bool,
+    pub(crate) writeback_error: bool,
+    pub(crate) mount_id: u64,
+    pub(crate) inode_id: u32,
+    pub(crate) backing: usize,
+    pub(crate) page_offset: u64,
+    pub(crate) len: usize,
+    pub(crate) bytes: [u8; VERTEXFS_SECTOR_SIZE],
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct VfsPageCacheStats {
+    pub(crate) read_hits: u64,
+    pub(crate) read_misses: u64,
+    pub(crate) readahead_hits: u64,
+    pub(crate) clean_evictions: u64,
+    pub(crate) dirty_eviction_blocks: u64,
+    pub(crate) dirty_limit_rejections: u64,
+    pub(crate) writeback_started: u64,
+    pub(crate) writeback_completed: u64,
+    pub(crate) writeback_errors: u64,
+    pub(crate) high_water_dirty_bytes: usize,
+    pub(crate) last_read_valid: bool,
+    pub(crate) last_read_backing: usize,
+    pub(crate) last_read_next_offset: u64,
+    pub(crate) last_read_page_offset: u64,
+}
+
 impl VertexFsDeviceWrite {
     pub(crate) const fn empty() -> Self {
         Self {
             sector: 0,
             bytes: [0; VERTEXFS_SECTOR_SIZE],
+        }
+    }
+}
+
+impl VfsPageCachePage {
+    pub(crate) const fn empty() -> Self {
+        Self {
+            valid: false,
+            dirty: false,
+            pinned: false,
+            writeback: false,
+            writeback_error: false,
+            mount_id: 0,
+            inode_id: 0,
+            backing: 0,
+            page_offset: 0,
+            len: 0,
+            bytes: [0; VERTEXFS_SECTOR_SIZE],
+        }
+    }
+}
+
+impl VfsPageCacheStats {
+    pub(crate) const fn empty() -> Self {
+        Self {
+            read_hits: 0,
+            read_misses: 0,
+            readahead_hits: 0,
+            clean_evictions: 0,
+            dirty_eviction_blocks: 0,
+            dirty_limit_rejections: 0,
+            writeback_started: 0,
+            writeback_completed: 0,
+            writeback_errors: 0,
+            high_water_dirty_bytes: 0,
+            last_read_valid: false,
+            last_read_backing: 0,
+            last_read_next_offset: 0,
+            last_read_page_offset: 0,
         }
     }
 }

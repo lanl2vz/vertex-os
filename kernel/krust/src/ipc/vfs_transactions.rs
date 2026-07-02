@@ -480,19 +480,28 @@ pub(super) fn abort_vertexfs_sync_transactions(status: u64) {
     let format = vertexfs_format_label(&runtime.vertexfs_image).unwrap_or("v1");
     let mut index = 0;
     while index < runtime.processes.count {
-        if let Some(process) = runtime.processes.processes[index].as_mut()
+        let aborted = if let Some(process) = runtime.processes.processes[index]
             && let ProcessState::BlockedOnVertexFsSync {
                 reply_endpoint: waiting_endpoint,
+                backing,
                 ..
             } = process.state
             && waiting_endpoint == reply_endpoint
         {
-            process.saved_frame.rax = status;
-            process.state = ProcessState::Ready;
+            Some((process.name, backing))
+        } else {
+            None
+        };
+        if let Some((name, backing)) = aborted {
+            runtime.record_vertexfs_page_cache_writeback_error(backing, status);
+            if let Some(process) = runtime.processes.processes[index].as_mut() {
+                process.saved_frame.rax = status;
+                process.state = ProcessState::Ready;
+            }
             serial::write_str("VertexFS ");
             serial::write_str(format);
             serial::write_str(" fsync device transaction aborted: proc=");
-            serial::write_str(process.name);
+            serial::write_str(name);
             serial::write_str("\n");
         }
         index += 1;
@@ -962,6 +971,7 @@ pub(super) fn wake_blocked_vertexfs_sync_reply(endpoint: KernelObjectId) {
 
     let format = vertexfs_format_label(&runtime().vertexfs_image).unwrap_or("v1");
     if !vertexfs_device_ack_ok(message, expected_sector) {
+        runtime().record_vertexfs_page_cache_writeback_error(backing, STATUS_VFS_UNSUPPORTED);
         if let Some(waiter) = runtime().processes.processes[waiter_index].as_mut() {
             waiter.saved_frame.rax = STATUS_VFS_UNSUPPORTED;
             waiter.state = ProcessState::Ready;
@@ -978,6 +988,7 @@ pub(super) fn wake_blocked_vertexfs_sync_reply(endpoint: KernelObjectId) {
 
     if next_write < write_count {
         let Ok(next_sector) = queue_vertexfs_device_write(request_endpoint, next_write) else {
+            runtime().record_vertexfs_page_cache_writeback_error(backing, STATUS_VFS_UNSUPPORTED);
             if let Some(waiter) = runtime().processes.processes[waiter_index].as_mut() {
                 waiter.saved_frame.rax = STATUS_VFS_UNSUPPORTED;
                 waiter.state = ProcessState::Ready;

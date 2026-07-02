@@ -130,6 +130,7 @@ fn prove_vertexfs() {
         }
         log(b"VertexFS v1 fsync block-driver fault returns unsupported");
         log(b"VertexFS v1 fsync fault keeps runtime dirty file readable");
+        log(b"VertexFS vnode page cache writeback failure leaves dirty data dirty");
         return;
     }
     if fsync_status != sys::STATUS_OK || sys::vfs_close(app_a_writer) != sys::STATUS_OK {
@@ -221,6 +222,7 @@ fn prove_vertexfs_v2_metadata(buffer: &mut [u8; 32]) {
     prove_vertexfs_v2_truncate_append(buffer);
     prove_vertexfs_v2_churn(buffer);
     log(b"VertexFS v2 durable metadata operations ok");
+    prove_vertexfs_v2_page_cache(buffer);
 }
 
 fn prove_vertexfs_v2_watch() {
@@ -456,6 +458,94 @@ fn prove_vertexfs_v2_churn(buffer: &mut [u8; 32]) {
     log(b"VertexFS v2 100-cycle durable metadata churn returns to baseline");
 }
 
+fn prove_vertexfs_v2_page_cache(buffer: &mut [u8; 32]) {
+    read_path_expect(b"/created12", VERTEXFS_CREATED12, buffer);
+    read_path_expect(b"/created12", VERTEXFS_CREATED12, buffer);
+    log(b"VertexFS v2 vnode page cache second read served from cache");
+
+    create_sync_readback(b"/m93-ra", b"m93-readahead\n", buffer);
+    let reader = sys::vfs_open_path_read(CAP_VERTEXFS_ROOT, b"/m93-ra");
+    let mut chunk = [0u8; 4];
+    if status_is_error(reader)
+        || sys::vfs_read(reader, &mut chunk) != 4
+        || !bytes_eq(&chunk, b"m93-")
+        || sys::vfs_read(reader, &mut chunk) != 4
+        || !bytes_eq(&chunk, b"read")
+        || sys::vfs_close(reader) != sys::STATUS_OK
+        || sys::vfs_unlink(CAP_VERTEXFS_ROOT, b"/m93-ra") != sys::STATUS_OK
+    {
+        log(b"model-reader VertexFS v2 page cache readahead failed");
+        sys::exit(1);
+    }
+    log(b"VertexFS v2 vnode page cache sequential read records readahead hit");
+
+    let writer = sys::vfs_open_path_create_trunc_readwrite(CAP_VERTEXFS_ROOT, b"/m93-sync");
+    if status_is_error(writer)
+        || sys::vfs_write(writer, b"m93-sync\n") != 9
+        || sys::vfs_sync(writer) != sys::STATUS_OK
+        || sys::vfs_close(writer) != sys::STATUS_OK
+    {
+        log(b"model-reader VertexFS v2 page cache fsync failed");
+        sys::exit(1);
+    }
+    read_path_expect(b"/m93-sync", b"m93-sync\n", buffer);
+    if sys::vfs_unlink(CAP_VERTEXFS_ROOT, b"/m93-sync") != sys::STATUS_OK {
+        log(b"model-reader VertexFS v2 page cache fsync cleanup failed");
+        sys::exit(1);
+    }
+    log(b"VertexFS v2 vnode page cache fsync waits for ordered writeback");
+
+    prove_vertexfs_v2_page_cache_pressure();
+    log(b"VertexFS v2 vnode page cache and writeback behavior ok");
+}
+
+fn prove_vertexfs_v2_page_cache_pressure() {
+    let mut path = *b"/m93-dirty-0";
+    let mut created = 0usize;
+    let mut index = 0usize;
+    let mut rejected = false;
+    while index < 7 {
+        set_one_digit_suffix(&mut path, index);
+        let writer = sys::vfs_open_path_create_trunc_readwrite(CAP_VERTEXFS_ROOT, &path);
+        if status_is_error(writer) {
+            log(b"model-reader VertexFS v2 page cache pressure open failed");
+            sys::exit(1);
+        }
+        let status = sys::vfs_write(writer, b"d");
+        if status == sys::STATUS_VFS_NO_SPACE {
+            rejected = true;
+            if sys::vfs_close(writer) != sys::STATUS_OK
+                || sys::vfs_unlink(CAP_VERTEXFS_ROOT, &path) != sys::STATUS_OK
+            {
+                log(b"model-reader VertexFS v2 page cache pressure reject cleanup failed");
+                sys::exit(1);
+            }
+            break;
+        }
+        if status != 1 || sys::vfs_close(writer) != sys::STATUS_OK {
+            log(b"model-reader VertexFS v2 page cache pressure write failed");
+            sys::exit(1);
+        }
+        created += 1;
+        index += 1;
+    }
+    if !rejected {
+        log(b"model-reader VertexFS v2 page cache dirty limit missing");
+        sys::exit(1);
+    }
+    index = 0;
+    while index < created {
+        set_one_digit_suffix(&mut path, index);
+        if sys::vfs_unlink(CAP_VERTEXFS_ROOT, &path) != sys::STATUS_OK {
+            log(b"model-reader VertexFS v2 page cache pressure cleanup failed");
+            sys::exit(1);
+        }
+        index += 1;
+    }
+    log(b"VertexFS v2 vnode page cache dirty pages are not evicted under pressure");
+    log(b"VertexFS v2 vnode page cache dirty limit rejects writers before memory exhaustion");
+}
+
 fn read_path_expect(path: &[u8], payload: &[u8], buffer: &mut [u8; 32]) {
     let reader = sys::vfs_open_path_read(CAP_VERTEXFS_ROOT, path);
     if status_is_error(reader) {
@@ -490,6 +580,11 @@ fn set_two_digit_suffix(path: &mut [u8], value: usize) {
     let offset = path.len() - 2;
     path[offset] = b'0' + tens as u8;
     path[offset + 1] = b'0' + ones as u8;
+}
+
+fn set_one_digit_suffix(path: &mut [u8], value: usize) {
+    let offset = path.len() - 1;
+    path[offset] = b'0' + (value % 10) as u8;
 }
 
 fn read_u64_le(source: &[u8], offset: usize) -> u64 {

@@ -399,25 +399,7 @@ pub(super) fn vfs_read_node(
             ))
         }
         VfsBacking::VertexFsFile(index) => {
-            let runtime = runtime();
-            if index >= runtime.vertexfs_file_count {
-                return Err(IpcError::VfsBadHandle);
-            }
-            let file = runtime.vertexfs_files[index];
-            let start = min(usize::try_from(offset).unwrap_or(usize::MAX), file.len);
-            let remaining = file.len - start;
-            let copy_len = min(remaining, max_len);
-            usercopy::copy_to_user(
-                UserPtr::new(destination as u64),
-                &file.bytes[start..start + copy_len],
-            )
-            .map_err(|_| IpcError::InvalidUserBuffer)?;
-            Ok((
-                copy_len,
-                offset
-                    .checked_add(copy_len as u64)
-                    .ok_or(IpcError::VfsUnsupported)?,
-            ))
+            runtime().read_vertexfs_page_cache(index, offset, destination, max_len)
         }
         VfsBacking::Synthetic(bytes) => {
             let start = min(usize::try_from(offset).unwrap_or(usize::MAX), bytes.len());
@@ -479,33 +461,10 @@ pub(super) fn vfs_write_node(
             Ok((bytes.len(), end as u64))
         }
         VfsBacking::VertexFsFile(index) => {
-            if bytes.len() > MAX_VERTEXFS_FILE_BYTES {
-                return Err(IpcError::VfsNoSpace);
-            }
-            let start = usize::try_from(offset).map_err(|_| IpcError::VfsNoSpace)?;
-            let end = start.checked_add(bytes.len()).ok_or(IpcError::VfsNoSpace)?;
-            if end > MAX_VERTEXFS_FILE_BYTES {
-                return Err(IpcError::VfsNoSpace);
-            }
             let runtime = runtime();
-            if index >= runtime.vertexfs_file_count {
-                return Err(IpcError::VfsBadHandle);
-            }
-            {
-                let file = &mut runtime.vertexfs_files[index];
-                let mut cursor = 0;
-                while cursor < bytes.len() {
-                    file.bytes[start + cursor] = bytes[cursor];
-                    cursor += 1;
-                }
-                if end > file.len {
-                    file.len = end;
-                }
-                file.dirty = true;
-                file.checksum = vertexfs_checksum32(&file.bytes[..file.len]);
-            }
+            let result = runtime.write_vertexfs_page_cache(index, offset, bytes)?;
             runtime.touch_vertexfs_file_nodes(index)?;
-            Ok((bytes.len(), end as u64))
+            Ok(result)
         }
         VfsBacking::Pipe => {
             if bytes.len() > MAX_VFS_PIPE_BYTES {
@@ -536,17 +495,8 @@ pub(super) fn vfs_truncate_node(node: VfsNode, len: usize) -> Result<(), IpcErro
             Ok(())
         }
         VfsBacking::VertexFsFile(index) => {
-            if len > MAX_VERTEXFS_FILE_BYTES {
-                return Err(IpcError::VfsNoSpace);
-            }
             let runtime = runtime();
-            if index >= runtime.vertexfs_file_count {
-                return Err(IpcError::VfsBadHandle);
-            }
-            runtime.vertexfs_files[index].len = len;
-            runtime.vertexfs_files[index].dirty = true;
-            runtime.vertexfs_files[index].checksum =
-                vertexfs_checksum32(&runtime.vertexfs_files[index].bytes[..len]);
+            runtime.truncate_vertexfs_page_cache(index, len)?;
             runtime.touch_vertexfs_file_nodes(index)?;
             Ok(())
         }
