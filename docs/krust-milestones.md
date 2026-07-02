@@ -4615,6 +4615,298 @@ Implementation notes:
 - The main output is confidence that the native graph transaction model does
   not drift under time, crashes, restarts, and repeated updates.
 
+## M90: Filesystem-Service Protocol And VFS Authority Contract
+
+Status: planned.
+
+Goal: split the next filesystem layer cleanly: Krust keeps VFS authority,
+handles, mount namespaces, vnode identity, cache ownership, and blocking
+syscall state; filesystem services own durable metadata policy, allocation, and
+recovery behind explicit graph-authorized mounts.
+
+Scope:
+
+```text
+typed kernel-to-filesystem-service request/reply protocol
+mount source objects with typed source ids instead of string-only source names
+lookup, getattr, setattr, create, unlink, rename, link, readdir operations
+readpage, writepage, fsync, syncfs, forget operations
+kernel-side vnode cache keyed by mount id and filesystem vnode id
+service-local roots and declared bind mounts preserved across service restart
+read-only, service-backed, volatile, durable, and bind flags enforced uniformly
+filesystem-service fault handling for in-flight metadata and page transactions
+runtime inspect rows for filesystem service health and active transactions
+```
+
+Acceptance tests:
+
+```text
+service without VFS authority cannot trigger filesystem-service lookup
+service with read-only authority cannot create, unlink, rename, writepage, or fsync dirty data
+same path under two service-local roots resolves to different authority where declared
+filesystem service receives metadata requests only after kernel authority checks pass
+filesystem-service crash aborts blocked callers and leaves mount state inspectable
+read-only bind remains read-only after nested bind and service restart
+kernel can forget idle filesystem vnodes without losing live-handle semantics
+operator report shows mount source id, service owner, dirty counts, and fault state
+```
+
+Implementation notes:
+
+- Names remain selectors, not authority. The filesystem service must never
+  grant access by returning a vnode; the kernel must already have verified the
+  caller's VFS root, mount, and open rights.
+- The generation graph and policy validator decide which mounts and service
+  capabilities exist. They are not consulted for every read or write.
+- Use compact request records and page-sized shared buffers before introducing
+  vectored I/O or larger async queues.
+- Keep the first service implementation in-memory or fixture-backed if needed;
+  the purpose of M90 is the authority boundary, request model, restart cleanup,
+  and observability.
+
+## M91: VertexFS v2 Durable Format
+
+Status: planned.
+
+Goal: replace the current fixed VertexFS v1 substrate with an extensible
+durable on-disk format that can support normal filesystem metadata growth
+without falling back to volatile nodes or fixed boot-image tables.
+
+Scope:
+
+```text
+VertexFS v2 superblock with volume id, generation id, feature flags, and checksum
+extensible inode table or inode-tree records with stable inode ids
+directory records with checked parent/child identity and bounded names
+extent-backed regular files with checksummed metadata and file payload checks
+free-space bitmap first, with room for later extent-tree allocation
+metadata journal with begin, commit, sequence, target, checksum, and replay records
+strict offline create, inspect, verify, corrupt, and update support in vertexctl
+mount-time verifier that either replays to a valid tree or rejects the volume
+compatibility rejection for unsupported v2 feature flags or stale experimental layouts
+```
+
+Acceptance tests:
+
+```text
+fresh VertexFS v2 image mounts and exposes declared files and directories
+offline verifier rejects bad superblock, bad inode, bad directory, bad free map, and bad journal
+interrupted journal checkpoints replay idempotently to one valid tree
+unsupported feature flag rejects without falling back to v1 or volatile storage
+dynamic create grows beyond the current v1 fixed inode and directory slots
+vertexctl create/inspect/verify/corrupt/update are reproducible across runs
+post-sync remount reads the committed v2 contents from the VertexDisk section
+```
+
+Implementation notes:
+
+- Pick one durable update model for v2. The preferred first step is a metadata
+  journal with ordered replay, not simultaneous copy-on-write snapshots.
+- Keep the v1 verifier and corruption gates until v2 fully covers the existing
+  M78 behavior.
+- The on-disk format should be small and explicit, but not hard-coded to one
+  application directory or fixed file count.
+
+## M92: Durable Metadata Operations
+
+Status: planned.
+
+Goal: move normal metadata operations from the volatile/memory-file-only path
+onto VertexFS v2 transactions while preserving the current VFS handle and
+authority semantics.
+
+Scope:
+
+```text
+durable mkdir and rmdir
+durable create and open-create
+durable unlink with open-file final-close reaping
+durable same-filesystem rename with atomic visibility
+durable same-filesystem hard-link policy and link-count metadata
+durable truncate, append, metadata version, and stat updates
+directory watch events for durable metadata changes
+crash checkpoints for every create, unlink, rename, link, truncate, and fsync phase
+```
+
+Acceptance tests:
+
+```text
+rename is atomic across crash checkpoints: old name or new name is visible, never neither
+unlink of an open VertexFS file detaches the name and preserves existing handle reads
+hard links share durable inode identity and reject cross-filesystem links
+rmdir rejects non-empty and open directories after remount
+metadata version and link count survive fsync and remount
+watchers receive create, rename, unlink, and writeback-error events for VertexFS files
+100-cycle durable create/write/rename/open/read/close/unlink returns to baseline counts
+filesystem verifier accepts the post-test disk image
+```
+
+Implementation notes:
+
+- Cross-filesystem rename remains unsupported. Return a controlled VFS error
+  and require higher layers to copy plus unlink later.
+- The existing volatile memory-file operations should remain useful for tmp and
+  tests, but they should no longer be the only complete metadata path.
+- Metadata correctness is security-critical: path traversal, stale vnode
+  generation, and mount alias handling must be tested together.
+
+## M93: Vnode Page Cache, Writeback, And Fast I/O
+
+Status: planned.
+
+Goal: add a bounded, inspectable page-cache and writeback layer for durable
+filesystem I/O so common reads and writes do not require service IPC or graph
+policy evaluation on every byte.
+
+Scope:
+
+```text
+kernel-owned vnode page cache keyed by mount id, inode id, and page offset
+clean-page eviction and dirty-page non-eviction or explicit writeback policy
+per-mount and global dirty byte limits
+fsync, syncfs, and fsync-range style ordered writeback
+readpage and writepage shared-buffer protocol with filesystem services
+writeback error accounting and sticky per-handle/per-vnode error reporting
+simple read-ahead for sequential reads
+runtime inspect rows for clean pages, dirty pages, pinned pages, writeback errors, and high-water marks
+```
+
+Acceptance tests:
+
+```text
+second read of a cached page completes without filesystem-service readpage IPC
+dirty page is not evicted silently under memory pressure
+fsync replies only after ordered writeback reaches the filesystem service and block driver
+writeback failure leaves dirty data dirty and reports an error on fsync
+cache limits reject or throttle writers before exhausting kernel memory
+sequential read path records read-ahead hits without changing file authority
+operator health report exposes dirty, pinned, and writeback-error counts
+```
+
+Implementation notes:
+
+- The graph remains control plane. Once a handle is open, the hot path should be
+  handle-right checks, page lookup, and bounded copy or shared-buffer transfer.
+- Start with page-sized buffers and synchronous fsync. Add async queues,
+  vectored I/O, and zero-copy only after the bounded cache behavior is stable.
+- Keep DMA buffers separate from cache pages until an ownership-transfer design
+  is explicit and testable.
+
+## M94: State Volume Backend Integration
+
+Status: planned.
+
+Goal: let graph-declared state volumes use the mature filesystem substrate
+without losing the Vertex distinction between immutable system generations and
+mutable state policy.
+
+Scope:
+
+```text
+state volume records mapped to filesystem-backed volume roots or subvolumes
+state owner, schema, migration, sharing, rollback, and retention policy preserved as graph facts
+statefs mount authority generated from state graph records, not ambient paths
+state migration jobs receive only old state, new state, and declared helper caps
+state health report includes filesystem backend, dirty/writeback status, snapshot status, and last error
+rollback policy chooses preserve, fork, migrate, discard, or reject before activation
+```
+
+Acceptance tests:
+
+```text
+service cannot open undeclared state even if a filesystem path alias exists
+shared state requires graph sharing policy and attenuated VFS rights
+state migration reads old backend and writes new backend exactly once
+failed migration rolls back generation selection and leaves old state readable
+rollback applies declared state policy instead of preserving every volume blindly
+state health reports owner, schema, backend volume, migration status, and filesystem health
+```
+
+Implementation notes:
+
+- State remains first-class graph state, not just files under a conventional
+  path such as `/var`.
+- `vertex-state` should own lifecycle policy even if VertexFS owns the block
+  and metadata format below it.
+- Avoid unsafe delete or garbage collection until snapshots, reference counts,
+  and recovery gates are mature.
+
+## M95: Snapshots, Forks, And Coordinated Rollback
+
+Status: planned.
+
+Goal: add durable filesystem snapshots and state forks after VertexFS v2
+journaling, metadata transactions, and writeback are already stable.
+
+Scope:
+
+```text
+snapshot records for filesystem volumes and state volumes
+copy-on-write extent or snapshot-manifest design selected explicitly
+state fork for candidate generation activation
+coordinated generation and selected-state rollback checkpoints
+snapshot retention policy and safe reference accounting
+operator-visible snapshot list, owner, generation, policy, and health
+crash checkpoints across snapshot create, fork, activate, rollback, and delete
+```
+
+Acceptance tests:
+
+```text
+snapshot create is atomic across crash checkpoints
+candidate generation can fork selected state without mutating active state
+failed activation discards or preserves forked state according to policy
+rollback restores selected generation and selected state checkpoint together
+referenced snapshots cannot be deleted
+snapshot verifier catches missing extents, leaked extents, and invalid reference counts
+100 snapshot/fork/rollback cycles return graph, vnode, extent, and state counts to baseline
+```
+
+Implementation notes:
+
+- Do not mix snapshots into the initial v2 journal work. Snapshots add a second
+  persistence model and should arrive only after ordinary metadata recovery is
+  boring.
+- Snapshot policy is graph data. Imperative rollback scripts must not decide
+  which mutable state is preserved or discarded.
+
+## M96: POSIX Personality Filesystem Mapping
+
+Status: planned.
+
+Goal: map POSIX-like filesystem expectations onto explicit Vertex VFS roots
+without making a global ambient filesystem part of the native model.
+
+Scope:
+
+```text
+personality-owned fd table mapped to native VFS handles
+declared cwd and chroot-like root derived from explicit VFS authority
+errno mapping for native STATUS_VFS_* values
+synthetic /dev, /proc, tmp, and socket namespaces bounded by granted capabilities
+openat-style path resolution within declared roots
+limited stat, readdir, rename, link, unlink, chmod-like metadata translation
+compatibility audit report showing every synthetic namespace source capability
+```
+
+Acceptance tests:
+
+```text
+POSIX personality cannot escape its declared root through cwd, openat, .., symlink-like aliases, or bind mounts
+program with no device capability sees no usable synthetic device node
+program with read-only root cannot write through POSIX compatibility aliases
+native revocation prevents new compatibility opens while preserving existing fd semantics
+compatibility audit explains which Vertex capability backs each visible namespace entry
+```
+
+Implementation notes:
+
+- POSIX compatibility is a personality layer, not the core filesystem model.
+- It may emulate ambient Unix authority internally, but the boundary outside
+  the personality must remain explicit Vertex capabilities and mounts.
+- Keep symlink semantics out until path authority, loop detection, and audit
+  output are well specified.
+
 ## Later Direction
 
 Avoid these until the appliance release profile, storage durability, network
