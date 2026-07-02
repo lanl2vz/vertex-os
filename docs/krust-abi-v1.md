@@ -39,9 +39,9 @@ metadata syscalls, 64-byte stat metadata, open-unlink lifetime, hard-link
 policy, and bounded state-volume block-cache writeback. M78-M79 add the strict
 VertexFS v1 boot image, mandatory service mount roots, declared bind-mount
 snapshots, and kernel-owned VertexFS fsync writeback through block-driver
-device endpoints. M90-M91 add the typed `servicefs` request/reply route and the
-default VertexFS v2 durable image format while preserving explicit v1
-regression gates. M80-M81 add VFS coordination and filesystem security/soak coverage. M82
+device endpoints. M90-M92 add the typed `servicefs` request/reply route, the
+default VertexFS v2 durable image format, and VertexFS-backed durable metadata
+operations while preserving explicit v1 regression gates. M80-M81 add VFS coordination and filesystem security/soak coverage. M82
 updates the compact payload identity to `KRUSTBOOTM82` version 13 and adds the
 native typed graph-store header plus graph node/edge records used for runtime
 graph provenance. M83 adds native generation verification and staged
@@ -389,8 +389,9 @@ VFS root additionally require that the current process holds the underlying
 virtio-device control cap. The open flags are native Krust bits: read `1`,
 write `2`, create `4`, trunc `8`, append `16`. Create, trunc, and append
 require write. `SYS_VFS_STAT` returns 64 bytes:
-kind, byte length, vnode id, handle rights, monotonic metadata version, link
-count, and two reserved zero `u64` values as little-endian fields.
+kind, byte length, stable node/file identity, handle rights, monotonic metadata
+version, link count, and two reserved zero `u64` values as little-endian
+fields.
 For service-backed state-volume value files, stat validates the destination
 buffer, blocks in `blocked-vfs-state`, asks the state service for the durable
 current length, and then copies the normal 64-byte stat record into userspace.

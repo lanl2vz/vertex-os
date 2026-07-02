@@ -3,6 +3,8 @@ use core::arch::asm;
 pub const STATUS_OK: u64 = 0;
 pub const STATUS_BAD_CAPABILITY: u64 = u64::MAX - 1;
 pub const STATUS_BAD_BUFFER: u64 = u64::MAX - 2;
+pub const STATUS_VFS_NOT_FOUND: u64 = u64::MAX - 34;
+pub const STATUS_VFS_BUSY: u64 = u64::MAX - 37;
 pub const STATUS_VFS_UNSUPPORTED: u64 = u64::MAX - 39;
 pub const STATUS_VFS_NO_SPACE: u64 = u64::MAX - 40;
 
@@ -13,13 +15,29 @@ const SYS_LOG_WRITE: u64 = 7;
 const SYS_VFS_OPEN: u64 = 48;
 const SYS_VFS_READ: u64 = 49;
 const SYS_VFS_CLOSE: u64 = 50;
+const SYS_VFS_STAT: u64 = 51;
 const SYS_VFS_WRITE: u64 = 54;
 const SYS_VFS_SYNC: u64 = 56;
+const SYS_VFS_CREATE: u64 = 58;
+const SYS_VFS_UNLINK: u64 = 59;
+const SYS_VFS_RENAME: u64 = 66;
+const SYS_VFS_MKDIR: u64 = 67;
+const SYS_VFS_RMDIR: u64 = 68;
+const SYS_VFS_LINK: u64 = 69;
+const SYS_VFS_WATCH: u64 = 71;
 
 const VFS_OPEN_READ: u64 = 1;
 const VFS_OPEN_WRITE: u64 = 1 << 1;
 const VFS_OPEN_CREATE: u64 = 1 << 2;
 const VFS_OPEN_TRUNC: u64 = 1 << 3;
+const VFS_OPEN_APPEND: u64 = 1 << 4;
+pub const VFS_EVENT_CREATE: u64 = 1;
+pub const VFS_EVENT_RENAME: u64 = 2;
+pub const VFS_EVENT_UNLINK: u64 = 3;
+const MAX_VFS_PATH_BYTES: usize = 128;
+const VFS_RENAME_REQUEST_HEADER_BYTES: usize = 16;
+const VFS_RENAME_REQUEST_MAX_BYTES: usize =
+    VFS_RENAME_REQUEST_HEADER_BYTES + (MAX_VFS_PATH_BYTES * 2);
 
 pub fn log(cap_slot: u64, message: &[u8]) -> u64 {
     syscall3(
@@ -71,9 +89,27 @@ pub fn vfs_open_path_create_trunc_readwrite(cap_slot: u64, path: &[u8]) -> u64 {
     )
 }
 
+pub fn vfs_open_path_append_write(cap_slot: u64, path: &[u8]) -> u64 {
+    syscall3(
+        SYS_VFS_OPEN,
+        cap_slot,
+        path.as_ptr() as u64,
+        ((VFS_OPEN_WRITE | VFS_OPEN_APPEND) << 32) | path.len() as u64,
+    )
+}
+
 pub fn vfs_read(handle: u64, buffer: &mut [u8]) -> u64 {
     syscall3(
         SYS_VFS_READ,
+        handle,
+        buffer.as_mut_ptr() as u64,
+        buffer.len() as u64,
+    )
+}
+
+pub fn vfs_stat(handle: u64, buffer: &mut [u8]) -> u64 {
+    syscall3(
+        SYS_VFS_STAT,
         handle,
         buffer.as_mut_ptr() as u64,
         buffer.len() as u64,
@@ -97,12 +133,97 @@ pub fn vfs_close(handle: u64) -> u64 {
     syscall3(SYS_VFS_CLOSE, handle, 0, 0)
 }
 
+pub fn vfs_create(cap_slot: u64, path: &[u8]) -> u64 {
+    syscall3(
+        SYS_VFS_CREATE,
+        cap_slot,
+        path.as_ptr() as u64,
+        path.len() as u64,
+    )
+}
+
+pub fn vfs_unlink(cap_slot: u64, path: &[u8]) -> u64 {
+    syscall3(
+        SYS_VFS_UNLINK,
+        cap_slot,
+        path.as_ptr() as u64,
+        path.len() as u64,
+    )
+}
+
+pub fn vfs_mkdir(cap_slot: u64, path: &[u8]) -> u64 {
+    syscall3(
+        SYS_VFS_MKDIR,
+        cap_slot,
+        path.as_ptr() as u64,
+        path.len() as u64,
+    )
+}
+
+pub fn vfs_rmdir(cap_slot: u64, path: &[u8]) -> u64 {
+    syscall3(
+        SYS_VFS_RMDIR,
+        cap_slot,
+        path.as_ptr() as u64,
+        path.len() as u64,
+    )
+}
+
+pub fn vfs_rename(cap_slot: u64, old_path: &[u8], new_path: &[u8]) -> u64 {
+    rename_like_syscall(SYS_VFS_RENAME, cap_slot, old_path, new_path)
+}
+
+pub fn vfs_link(cap_slot: u64, old_path: &[u8], new_path: &[u8]) -> u64 {
+    rename_like_syscall(SYS_VFS_LINK, cap_slot, old_path, new_path)
+}
+
+pub fn vfs_watch(handle: u64, buffer: &mut [u8]) -> u64 {
+    syscall3(
+        SYS_VFS_WATCH,
+        handle,
+        buffer.as_mut_ptr() as u64,
+        buffer.len() as u64,
+    )
+}
+
 pub fn exit(status: u64) -> ! {
     syscall3(SYS_EXIT, status, 0, 0);
     loop {
         unsafe {
             asm!("pause", options(nomem, nostack, preserves_flags));
         }
+    }
+}
+
+fn rename_like_syscall(number: u64, cap_slot: u64, old_path: &[u8], new_path: &[u8]) -> u64 {
+    if old_path.len() > MAX_VFS_PATH_BYTES || new_path.len() > MAX_VFS_PATH_BYTES {
+        return STATUS_VFS_UNSUPPORTED;
+    }
+    let mut request = [0u8; VFS_RENAME_REQUEST_MAX_BYTES];
+    write_u64_le(&mut request, 0, old_path.len() as u64);
+    write_u64_le(&mut request, 8, new_path.len() as u64);
+    let mut cursor = VFS_RENAME_REQUEST_HEADER_BYTES;
+    let mut index = 0;
+    while index < old_path.len() {
+        request[cursor] = old_path[index];
+        cursor += 1;
+        index += 1;
+    }
+    index = 0;
+    while index < new_path.len() {
+        request[cursor] = new_path[index];
+        cursor += 1;
+        index += 1;
+    }
+    syscall3(number, cap_slot, request.as_ptr() as u64, cursor as u64)
+}
+
+fn write_u64_le(destination: &mut [u8], offset: usize, value: u64) {
+    let bytes = value.to_le_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        destination[offset + index] = bytes[index];
+        index += 1;
     }
 }
 

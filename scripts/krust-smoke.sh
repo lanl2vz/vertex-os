@@ -119,7 +119,7 @@ process=model-reader cap[0] endpoint=model-reader-store-reply rights=receive
 process=vertex-state cap[0] endpoint=vertex-state-block-reply rights=receive
 process=counter-service cap[0] vfs-root=cap:vfs.counter-state rights=read|write|resolve
 process=reader-service cap[0] vfs-root=cap:vfs.state-reader-state rights=read|resolve
-process=model-reader cap[4] vfs-root=cap:vfs.model-reader-vertexfs rights=read|write|resolve|create
+process=model-reader cap[4] vfs-root=cap:vfs.model-reader-vertexfs rights=read|write|resolve|create|unlink|rename
 process=echo cap[7] vfs-root=cap:vfs.echo-state-control rights=control|resolve
 process=serial-driver cap[3] io-port=cap:io.com1 rights=read|write
 process=block-driver cap[6] io-port=cap:io.pci-config rights=read|write

@@ -179,6 +179,7 @@ fn prove_vertexfs() {
     } else {
         finish_created_file(created12, b"/created12", VERTEXFS_CREATED12, &mut buffer);
         log(b"VertexFS v2 dynamic create grows beyond v1 inode capacity ok");
+        prove_vertexfs_v2_metadata(&mut buffer);
     }
 }
 
@@ -209,6 +210,296 @@ fn finish_created_file(writer: u64, path: &[u8], payload: &[u8], buffer: &mut [u
         log(b"model-reader VertexFS created file readback failed");
         sys::exit(1);
     }
+}
+
+fn prove_vertexfs_v2_metadata(buffer: &mut [u8; 32]) {
+    prove_vertexfs_v2_watch();
+    prove_vertexfs_v2_rename(buffer);
+    prove_vertexfs_v2_open_unlink(buffer);
+    prove_vertexfs_v2_hard_link(buffer);
+    prove_vertexfs_v2_directories();
+    prove_vertexfs_v2_truncate_append(buffer);
+    prove_vertexfs_v2_churn(buffer);
+    log(b"VertexFS v2 durable metadata operations ok");
+}
+
+fn prove_vertexfs_v2_watch() {
+    let watcher = sys::vfs_open_path_read(CAP_VERTEXFS_ROOT, b"/");
+    if status_is_error(watcher) {
+        log(b"model-reader VertexFS v2 watcher setup failed");
+        sys::exit(1);
+    }
+    if sys::vfs_create(CAP_VERTEXFS_ROOT, b"/m92-watch-old") != sys::STATUS_OK
+        || sys::vfs_rename(CAP_VERTEXFS_ROOT, b"/m92-watch-old", b"/m92-watch-new")
+            != sys::STATUS_OK
+        || sys::vfs_unlink(CAP_VERTEXFS_ROOT, b"/m92-watch-new") != sys::STATUS_OK
+    {
+        log(b"model-reader VertexFS v2 watcher mutation failed");
+        sys::exit(1);
+    }
+    expect_vfs_event(watcher, sys::VFS_EVENT_CREATE, b"m92-watch-old");
+    expect_vfs_event(watcher, sys::VFS_EVENT_RENAME, b"m92-watch-new");
+    expect_vfs_event(watcher, sys::VFS_EVENT_UNLINK, b"m92-watch-new");
+    if sys::vfs_close(watcher) != sys::STATUS_OK {
+        log(b"model-reader VertexFS v2 watcher close failed");
+        sys::exit(1);
+    }
+    log(b"VertexFS v2 watchers receive create rename and unlink events");
+}
+
+fn prove_vertexfs_v2_rename(buffer: &mut [u8; 32]) {
+    const PAYLOAD: &[u8] = b"m92-rename\n";
+    create_sync_readback(b"/m92-rename-old", PAYLOAD, buffer);
+    if sys::vfs_rename(CAP_VERTEXFS_ROOT, b"/m92-rename-old", b"/m92-rename-new")
+        != sys::STATUS_OK
+        || sys::vfs_open_path_read(CAP_VERTEXFS_ROOT, b"/m92-rename-old")
+            != sys::STATUS_VFS_NOT_FOUND
+    {
+        log(b"model-reader VertexFS v2 rename visibility failed");
+        sys::exit(1);
+    }
+    read_path_expect(b"/m92-rename-new", PAYLOAD, buffer);
+    if sys::vfs_unlink(CAP_VERTEXFS_ROOT, b"/m92-rename-new") != sys::STATUS_OK {
+        log(b"model-reader VertexFS v2 rename cleanup failed");
+        sys::exit(1);
+    }
+    log(b"VertexFS v2 rename is atomically visible in VFS");
+}
+
+fn prove_vertexfs_v2_open_unlink(buffer: &mut [u8; 32]) {
+    const PAYLOAD: &[u8] = b"m92-open\n";
+    create_sync_readback(b"/m92-open-unlink", PAYLOAD, buffer);
+    let reader = sys::vfs_open_path_read(CAP_VERTEXFS_ROOT, b"/m92-open-unlink");
+    if status_is_error(reader)
+        || sys::vfs_unlink(CAP_VERTEXFS_ROOT, b"/m92-open-unlink") != sys::STATUS_OK
+        || sys::vfs_open_path_read(CAP_VERTEXFS_ROOT, b"/m92-open-unlink")
+            != sys::STATUS_VFS_NOT_FOUND
+    {
+        log(b"model-reader VertexFS v2 open unlink setup failed");
+        sys::exit(1);
+    }
+    let read = sys::vfs_read(reader, buffer);
+    if read != PAYLOAD.len() as u64
+        || !bytes_eq(&buffer[..PAYLOAD.len()], PAYLOAD)
+        || sys::vfs_close(reader) != sys::STATUS_OK
+    {
+        log(b"model-reader VertexFS v2 open unlink read failed");
+        sys::exit(1);
+    }
+    log(b"VertexFS v2 unlink detaches name and preserves open handle reads");
+}
+
+fn prove_vertexfs_v2_hard_link(buffer: &mut [u8; 32]) {
+    const PAYLOAD: &[u8] = b"m92-link\n";
+    create_sync_readback(b"/m92-link-src", PAYLOAD, buffer);
+    if sys::vfs_link(CAP_VERTEXFS_ROOT, b"/m92-link-src", b"/m92-link-copy") != sys::STATUS_OK {
+        log(b"model-reader VertexFS v2 hard link setup failed");
+        sys::exit(1);
+    }
+
+    let source = sys::vfs_open_path_read(CAP_VERTEXFS_ROOT, b"/m92-link-src");
+    let copy = sys::vfs_open_path_read(CAP_VERTEXFS_ROOT, b"/m92-link-copy");
+    let mut source_stat = [0u8; 64];
+    let mut copy_stat = [0u8; 64];
+    if status_is_error(source)
+        || status_is_error(copy)
+        || sys::vfs_stat(source, &mut source_stat) != source_stat.len() as u64
+        || sys::vfs_stat(copy, &mut copy_stat) != copy_stat.len() as u64
+        || read_u64_le(&source_stat, 16) != read_u64_le(&copy_stat, 16)
+        || read_u64_le(&source_stat, 40) != 2
+        || read_u64_le(&copy_stat, 40) != 2
+    {
+        log(b"model-reader VertexFS v2 hard link stat failed");
+        sys::exit(1);
+    }
+    let read = sys::vfs_read(copy, buffer);
+    if read != PAYLOAD.len() as u64
+        || !bytes_eq(&buffer[..PAYLOAD.len()], PAYLOAD)
+        || sys::vfs_close(source) != sys::STATUS_OK
+        || sys::vfs_close(copy) != sys::STATUS_OK
+    {
+        log(b"model-reader VertexFS v2 hard link read failed");
+        sys::exit(1);
+    }
+    log(b"VertexFS v2 hard links share durable inode identity and link count");
+
+    if sys::vfs_unlink(CAP_VERTEXFS_ROOT, b"/m92-link-src") != sys::STATUS_OK {
+        log(b"model-reader VertexFS v2 hard link unlink failed");
+        sys::exit(1);
+    }
+    let copy = sys::vfs_open_path_read(CAP_VERTEXFS_ROOT, b"/m92-link-copy");
+    let mut copy_stat_after = [0u8; 64];
+    if status_is_error(copy)
+        || sys::vfs_stat(copy, &mut copy_stat_after) != copy_stat_after.len() as u64
+        || read_u64_le(&copy_stat_after, 40) != 1
+        || sys::vfs_close(copy) != sys::STATUS_OK
+        || sys::vfs_unlink(CAP_VERTEXFS_ROOT, b"/m92-link-copy") != sys::STATUS_OK
+    {
+        log(b"model-reader VertexFS v2 hard link count cleanup failed");
+        sys::exit(1);
+    }
+    log(b"VertexFS v2 hard link count survives unlink of sibling name");
+}
+
+fn prove_vertexfs_v2_directories() {
+    if sys::vfs_mkdir(CAP_VERTEXFS_ROOT, b"/m92-dir") != sys::STATUS_OK {
+        log(b"model-reader VertexFS v2 mkdir failed");
+        sys::exit(1);
+    }
+    let dir = sys::vfs_open_path_read(CAP_VERTEXFS_ROOT, b"/m92-dir");
+    if status_is_error(dir)
+        || sys::vfs_rmdir(CAP_VERTEXFS_ROOT, b"/m92-dir") != sys::STATUS_VFS_BUSY
+        || sys::vfs_close(dir) != sys::STATUS_OK
+    {
+        log(b"model-reader VertexFS v2 open rmdir denial failed");
+        sys::exit(1);
+    }
+    if sys::vfs_mkdir(CAP_VERTEXFS_ROOT, b"/m92-dir/child") != sys::STATUS_OK
+        || sys::vfs_rmdir(CAP_VERTEXFS_ROOT, b"/m92-dir") != sys::STATUS_VFS_BUSY
+        || sys::vfs_rmdir(CAP_VERTEXFS_ROOT, b"/m92-dir/child") != sys::STATUS_OK
+        || sys::vfs_rmdir(CAP_VERTEXFS_ROOT, b"/m92-dir") != sys::STATUS_OK
+    {
+        log(b"model-reader VertexFS v2 rmdir lifecycle failed");
+        sys::exit(1);
+    }
+    log(b"VertexFS v2 rmdir rejects open and non-empty directories");
+}
+
+fn prove_vertexfs_v2_truncate_append(buffer: &mut [u8; 32]) {
+    create_sync_readback(b"/m92-meta", b"m92", buffer);
+    let reader = sys::vfs_open_path_read(CAP_VERTEXFS_ROOT, b"/m92-meta");
+    let mut stat_before = [0u8; 64];
+    if status_is_error(reader)
+        || sys::vfs_stat(reader, &mut stat_before) != stat_before.len() as u64
+        || sys::vfs_close(reader) != sys::STATUS_OK
+    {
+        log(b"model-reader VertexFS v2 metadata stat setup failed");
+        sys::exit(1);
+    }
+    let metadata_before = read_u64_le(&stat_before, 32);
+
+    let append = sys::vfs_open_path_append_write(CAP_VERTEXFS_ROOT, b"/m92-meta");
+    if status_is_error(append)
+        || sys::vfs_write(append, b"-append") != 7
+        || sys::vfs_close(append) != sys::STATUS_OK
+    {
+        log(b"model-reader VertexFS v2 append failed");
+        sys::exit(1);
+    }
+    read_path_expect(b"/m92-meta", b"m92-append", buffer);
+    let reader = sys::vfs_open_path_read(CAP_VERTEXFS_ROOT, b"/m92-meta");
+    let mut stat_after_append = [0u8; 64];
+    if status_is_error(reader)
+        || sys::vfs_stat(reader, &mut stat_after_append) != stat_after_append.len() as u64
+        || read_u64_le(&stat_after_append, 8) != 10
+        || read_u64_le(&stat_after_append, 32) <= metadata_before
+        || sys::vfs_close(reader) != sys::STATUS_OK
+    {
+        log(b"model-reader VertexFS v2 append stat failed");
+        sys::exit(1);
+    }
+
+    let trunc = sys::vfs_open_path_create_trunc_readwrite(CAP_VERTEXFS_ROOT, b"/m92-meta");
+    let mut empty = [0u8; 1];
+    if status_is_error(trunc)
+        || sys::vfs_read(trunc, &mut empty) != 0
+        || sys::vfs_write(trunc, b"z") != 1
+        || sys::vfs_sync(trunc) != sys::STATUS_OK
+    {
+        log(b"model-reader VertexFS v2 truncate failed");
+        sys::exit(1);
+    }
+    let mut stat_after_trunc = [0u8; 64];
+    if sys::vfs_stat(trunc, &mut stat_after_trunc) != stat_after_trunc.len() as u64
+        || read_u64_le(&stat_after_trunc, 8) != 1
+        || read_u64_le(&stat_after_trunc, 32) <= read_u64_le(&stat_after_append, 32)
+        || sys::vfs_close(trunc) != sys::STATUS_OK
+    {
+        log(b"model-reader VertexFS v2 truncate stat failed");
+        sys::exit(1);
+    }
+    if sys::vfs_unlink(CAP_VERTEXFS_ROOT, b"/m92-meta") != sys::STATUS_OK {
+        log(b"model-reader VertexFS v2 metadata cleanup failed");
+        sys::exit(1);
+    }
+    log(b"VertexFS v2 truncate append and metadata version updates survive fsync");
+}
+
+fn prove_vertexfs_v2_churn(buffer: &mut [u8; 32]) {
+    let mut old_path = *b"/m92-cycle-00";
+    let mut new_path = *b"/m92-cycled-00";
+    let mut index = 0;
+    while index < 100 {
+        set_two_digit_suffix(&mut old_path, index);
+        set_two_digit_suffix(&mut new_path, index);
+        let writer = sys::vfs_open_path_create_trunc_readwrite(CAP_VERTEXFS_ROOT, &old_path);
+        if status_is_error(writer)
+            || sys::vfs_write(writer, b"cy") != 2
+            || sys::vfs_close(writer) != sys::STATUS_OK
+            || sys::vfs_rename(CAP_VERTEXFS_ROOT, &old_path, &new_path) != sys::STATUS_OK
+        {
+            log(b"model-reader VertexFS v2 churn create rename failed");
+            sys::exit(1);
+        }
+        let reader = sys::vfs_open_path_read(CAP_VERTEXFS_ROOT, &new_path);
+        if status_is_error(reader)
+            || sys::vfs_read(reader, buffer) != 2
+            || !bytes_eq(&buffer[..2], b"cy")
+            || sys::vfs_close(reader) != sys::STATUS_OK
+            || sys::vfs_unlink(CAP_VERTEXFS_ROOT, &new_path) != sys::STATUS_OK
+        {
+            log(b"model-reader VertexFS v2 churn read unlink failed");
+            sys::exit(1);
+        }
+        index += 1;
+    }
+    log(b"VertexFS v2 100-cycle durable metadata churn returns to baseline");
+}
+
+fn read_path_expect(path: &[u8], payload: &[u8], buffer: &mut [u8; 32]) {
+    let reader = sys::vfs_open_path_read(CAP_VERTEXFS_ROOT, path);
+    if status_is_error(reader) {
+        log(b"model-reader VertexFS v2 read path open failed");
+        sys::exit(1);
+    }
+    let read = sys::vfs_read(reader, buffer);
+    if read != payload.len() as u64
+        || !bytes_eq(&buffer[..payload.len()], payload)
+        || sys::vfs_close(reader) != sys::STATUS_OK
+    {
+        log(b"model-reader VertexFS v2 read path bytes failed");
+        sys::exit(1);
+    }
+}
+
+fn expect_vfs_event(watcher: u64, kind: u64, name: &[u8]) {
+    let mut event = [0u8; 96];
+    if sys::vfs_watch(watcher, &mut event) != event.len() as u64
+        || read_u64_le(&event, 0) != kind
+        || read_u64_le(&event, 16) != name.len() as u64
+        || !bytes_eq(&event[24..24 + name.len()], name)
+    {
+        log(b"model-reader VertexFS v2 watch event failed");
+        sys::exit(1);
+    }
+}
+
+fn set_two_digit_suffix(path: &mut [u8], value: usize) {
+    let tens = (value / 10) % 10;
+    let ones = value % 10;
+    let offset = path.len() - 2;
+    path[offset] = b'0' + tens as u8;
+    path[offset + 1] = b'0' + ones as u8;
+}
+
+fn read_u64_le(source: &[u8], offset: usize) -> u64 {
+    let mut bytes = [0u8; 8];
+    let mut index = 0;
+    while index < bytes.len() {
+        bytes[index] = source[offset + index];
+        index += 1;
+    }
+    u64::from_le_bytes(bytes)
 }
 
 fn vertexfs_fsync_fault_mode() -> bool {

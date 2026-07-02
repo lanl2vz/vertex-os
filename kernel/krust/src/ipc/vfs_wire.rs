@@ -8,7 +8,7 @@ pub(super) fn write_vfs_stat_record(
 ) {
     write_u64_le(stat, 0, vfs_node_kind_value(node.kind));
     write_u64_le(stat, 8, size);
-    write_u64_le(stat, 16, node.id.raw());
+    write_u64_le(stat, 16, runtime().vfs_node_stat_identity(node));
     write_u64_le(stat, 24, rights);
     write_u64_le(stat, 32, node.metadata_version);
     write_u64_le(stat, 40, runtime().vfs_node_link_count(node));

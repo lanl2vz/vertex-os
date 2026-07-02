@@ -588,6 +588,26 @@ impl RuntimeState {
         count
     }
 
+    pub(super) fn vfs_memory_file_identity(&self, backing: usize, fallback: VfsNodeId) -> u64 {
+        let mut identity = u64::MAX;
+        let mut index = 0;
+        while index < self.vfs_node_count {
+            if let Some(node) = self.vfs_nodes[index]
+                && let VfsBacking::MemoryFile(node_backing) = node.backing
+                && node_backing == backing
+                && node.id.raw() < identity
+            {
+                identity = node.id.raw();
+            }
+            index += 1;
+        }
+        if identity == u64::MAX {
+            fallback.raw()
+        } else {
+            identity
+        }
+    }
+
     pub(super) fn touch_vertexfs_file_nodes(&mut self, backing: usize) -> Result<u64, IpcError> {
         let mut found = false;
         let mut index = 0;
@@ -708,6 +728,49 @@ impl RuntimeState {
             index += 1;
         }
         false
+    }
+
+    pub(super) fn vertexfs_file_link_count(&self, backing: usize) -> u64 {
+        let mut count = 0;
+        let mut index = 0;
+        while index < self.vfs_node_count {
+            if let Some(node) = self.vfs_nodes[index]
+                && let VfsBacking::VertexFsFile(node_backing) = node.backing
+                && node_backing == backing
+                && node.parent.is_some()
+            {
+                count += 1;
+            }
+            index += 1;
+        }
+        count
+    }
+
+    pub(super) fn vertexfs_file_identity(&self, backing: usize, fallback: VfsNodeId) -> u64 {
+        if backing < self.vertexfs_files.len() {
+            let inode_id = self.vertexfs_files[backing].inode_id;
+            if inode_id != 0 {
+                return inode_id as u64;
+            }
+        }
+
+        let mut identity = u64::MAX;
+        let mut index = 0;
+        while index < self.vfs_node_count {
+            if let Some(node) = self.vfs_nodes[index]
+                && let VfsBacking::VertexFsFile(node_backing) = node.backing
+                && node_backing == backing
+                && node.id.raw() < identity
+            {
+                identity = node.id.raw();
+            }
+            index += 1;
+        }
+        if identity == u64::MAX {
+            fallback.raw()
+        } else {
+            identity
+        }
     }
 
     pub(super) fn release_vertexfs_file(&mut self, file_index: usize) -> Result<(), IpcError> {
@@ -854,7 +917,16 @@ impl RuntimeState {
     pub(super) fn vfs_node_link_count(&self, node: VfsNode) -> u64 {
         match node.backing {
             VfsBacking::MemoryFile(backing) => self.vfs_memory_file_link_count(backing),
+            VfsBacking::VertexFsFile(backing) => self.vertexfs_file_link_count(backing),
             _ => 1,
+        }
+    }
+
+    pub(super) fn vfs_node_stat_identity(&self, node: VfsNode) -> u64 {
+        match node.backing {
+            VfsBacking::MemoryFile(backing) => self.vfs_memory_file_identity(backing, node.id),
+            VfsBacking::VertexFsFile(backing) => self.vertexfs_file_identity(backing, node.id),
+            _ => node.id.raw(),
         }
     }
 
@@ -1280,9 +1352,16 @@ impl RuntimeState {
         if node.parent.is_some() {
             return;
         }
-        if let VfsBacking::MemoryFile(backing) = node.backing {
-            let _ = self.remove_vfs_node(node.id);
-            let _ = self.release_vfs_memory_file(backing);
+        match node.backing {
+            VfsBacking::MemoryFile(backing) => {
+                let _ = self.remove_vfs_node(node.id);
+                let _ = self.release_vfs_memory_file(backing);
+            }
+            VfsBacking::VertexFsFile(backing) => {
+                let _ = self.remove_vfs_node(node.id);
+                let _ = self.release_vertexfs_file(backing);
+            }
+            _ => {}
         }
     }
 
@@ -1364,6 +1443,15 @@ impl RuntimeState {
             index += 1;
         }
         self.vfs_events[self.vfs_events.len() - 1] = event;
+        index = 0;
+        while index < self.open_file_descriptions.len() {
+            if let Some(description) = self.open_file_descriptions[index].as_mut()
+                && description.watch_cursor > 0
+            {
+                description.watch_cursor -= 1;
+            }
+            index += 1;
+        }
     }
 
     pub(super) fn cap_id_revoked_or_has_revoked_ancestor(&self, cap_id: u64) -> bool {

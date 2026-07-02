@@ -1,6 +1,6 @@
 # Krust Kernel
 
-Krust now covers the M14-M88 plus M90-M91 native graph-activation proof path plus the M87-1
+Krust now covers the M14-M88 plus M90-M92 native graph-activation proof path plus the M87-1
 Vertex-owned operator-shell package split, the M87-2 Krust target user adapter
 workspace, and the M87-3 repository-root Vertex OS runner, substrate
 hardening, reproducible build environment, directed IPC ABI v1, and native
@@ -27,13 +27,13 @@ negative import validation, native metadata registration for a graph-store-only
 candidate, an actual base-to-candidate active graph delta, and declared
 state-object migration policy, native policy validation, the operator graph
 shell, the end-to-end appliance update gate, the typed M90
-filesystem-service protocol substrate, and the M91 VertexFS v2 durable format
-substrate. The Krust console-shell is now the target adapter for
+filesystem-service protocol substrate, the M91 VertexFS v2 durable format
+substrate, and M92 VertexFS-backed durable metadata operations. The Krust console-shell is now the target adapter for
 `../../userland/operator-shell` rather than the owner of operator semantics,
 and Krust-built user programs live in `../../targets/krust/user` rather than
 under the kernel source tree. Normal users boot Vertex OS from the repository
 root with `make run-gui`; this directory is the target implementation behind
-`VERTEX_TARGET=krust`. M44-M91 are tracked in
+`VERTEX_TARGET=krust`. M44-M92 are tracked in
 `../../docs/krust-milestones.md`.
 
 The target is intentionally small:
@@ -471,12 +471,12 @@ make release-gate
 
 The gate checks script executability and shell syntax, verifies Makefile recipe
 parsing, checks Rust formatting and Markdown whitespace, confirms the M14-M88
-plus M90-M91 documentation anchors, checks the pinned M39 toolchain and Cargo lockfiles, runs
+plus M90-M92 documentation anchors, checks the pinned M39 toolchain and Cargo lockfiles, runs
 `cargo metadata --locked --offline`, `cargo build --locked --offline`, and
 `cargo test --locked --offline`,
 validates `examples/hello-generation.vertex.json`, runs `make doctor`, rebuilds
 from `make clean`, runs `make smoke`, checks package/link/build import commands,
-and then runs the M14-M88 plus M90-M91 QEMU cases:
+and then runs the M14-M88 plus M90-M92 QEMU cases:
 `m14`,
 `manifest-cycle`, `bad-cap`, `readiness-timeout`, `rollback`, `store-state-services`,
 `timer`, `preemption`, `user-fault`, `restart`, `manifest-v1`, `cap-lifecycle`,

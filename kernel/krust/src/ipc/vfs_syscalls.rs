@@ -28,6 +28,19 @@ pub fn legacy_object_read(
     Err(IpcError::BadCapability)
 }
 
+fn log_vertexfs_metadata_checkpoint(op: &str, phase: &str, name: VfsName) {
+    let format = vertexfs_format_label(&runtime().vertexfs_image).unwrap_or("v1");
+    serial::write_str("VertexFS ");
+    serial::write_str(format);
+    serial::write_str(" metadata checkpoint: op=");
+    serial::write_str(op);
+    serial::write_str(" phase=");
+    serial::write_str(phase);
+    serial::write_str(" file=");
+    serial_write_vfs_name(name);
+    serial::write_str("\n");
+}
+
 pub fn vfs_open(cap_slot: u64, path: *const u8, packed_len_flags: u64) -> Result<u64, IpcError> {
     let path_len = usize::try_from(packed_len_flags & 0xffff_ffff).unwrap_or(usize::MAX);
     let flags = packed_len_flags >> 32;
@@ -168,6 +181,9 @@ pub fn vfs_open(cap_slot: u64, path: *const u8, packed_len_flags: u64) -> Result
     if created_node.is_some() {
         if let Some(parent) = node.parent {
             runtime().record_vfs_event(parent, VFS_EVENT_CREATE, node.name);
+        }
+        if node.mount_source == "vertexfs" {
+            log_vertexfs_metadata_checkpoint("open-create", "visible", node.name);
         }
         serial::write_str("VFS open-create accepted: proc=");
         serial::write_str(current_process_name());
@@ -1133,6 +1149,9 @@ pub fn vfs_create(cap_slot: u64, path: *const u8, packed_len_flags: u64) -> Resu
     if let Some(parent) = node.parent {
         runtime().record_vfs_event(parent, VFS_EVENT_CREATE, node.name);
     }
+    if node.mount_source == "vertexfs" {
+        log_vertexfs_metadata_checkpoint("create", "visible", node.name);
+    }
 
     serial::write_str("VFS create accepted: proc=");
     serial::write_str(current_process_name());
@@ -1160,6 +1179,9 @@ pub fn vfs_mkdir(cap_slot: u64, path: *const u8, packed_len_flags: u64) -> Resul
     let node = vfs_create_directory_node(cap, requested_path)?;
     if let Some(parent) = node.parent {
         runtime().record_vfs_event(parent, VFS_EVENT_CREATE, node.name);
+    }
+    if node.mount_source == "vertexfs" {
+        log_vertexfs_metadata_checkpoint("mkdir", "visible", node.name);
     }
 
     serial::write_str("VFS mkdir accepted: proc=");
@@ -1195,28 +1217,49 @@ pub fn vfs_unlink(cap_slot: u64, path: *const u8, path_len: usize) -> Result<(),
     let node = runtime()
         .vfs_node_by_path(path)
         .ok_or(IpcError::VfsNotFound)?;
-    let VfsBacking::MemoryFile(backing) = node.backing else {
-        return Err(IpcError::VfsUnsupported);
-    };
     if runtime().vfs_node_has_children(node.id) {
         return Err(IpcError::VfsBusy);
     }
-    {
-        let runtime = runtime();
-        if runtime.vfs_node_has_open_description(node.id) {
-            runtime.detach_vfs_node(node.id)?;
-            runtime.touch_vfs_memory_file_nodes(backing)?;
-        } else {
-            runtime.remove_vfs_node(node.id)?;
-            if runtime.vfs_memory_file_in_use(backing) {
+    let mut vertexfs_phase = None;
+    match node.backing {
+        VfsBacking::MemoryFile(backing) => {
+            let runtime = runtime();
+            if runtime.vfs_node_has_open_description(node.id) {
+                runtime.detach_vfs_node(node.id)?;
                 runtime.touch_vfs_memory_file_nodes(backing)?;
             } else {
-                let _ = runtime.release_vfs_memory_file(backing);
+                runtime.remove_vfs_node(node.id)?;
+                if runtime.vfs_memory_file_in_use(backing) {
+                    runtime.touch_vfs_memory_file_nodes(backing)?;
+                } else {
+                    let _ = runtime.release_vfs_memory_file(backing);
+                }
             }
         }
+        VfsBacking::VertexFsFile(backing) => {
+            let runtime = runtime();
+            if runtime.vfs_node_has_open_description(node.id) {
+                runtime.detach_vfs_node(node.id)?;
+                runtime.touch_vertexfs_file_nodes(backing)?;
+                vertexfs_phase = Some("detach-open");
+            } else {
+                runtime.remove_vfs_node(node.id)?;
+                if runtime.vertexfs_file_in_use(backing) {
+                    runtime.touch_vertexfs_file_nodes(backing)?;
+                    vertexfs_phase = Some("drop-link");
+                } else {
+                    let _ = runtime.release_vertexfs_file(backing);
+                    vertexfs_phase = Some("final-reap");
+                }
+            }
+        }
+        _ => return Err(IpcError::VfsUnsupported),
     }
     if let Some(parent) = node.parent {
         runtime().record_vfs_event(parent, VFS_EVENT_UNLINK, node.name);
+    }
+    if let Some(phase) = vertexfs_phase {
+        log_vertexfs_metadata_checkpoint("unlink", phase, node.name);
     }
 
     serial::write_str("VFS unlink accepted: proc=");
@@ -1268,9 +1311,13 @@ pub fn vfs_rmdir(cap_slot: u64, path: *const u8, path_len: usize) -> Result<(), 
     {
         return Err(IpcError::VfsBusy);
     }
+    let is_vertexfs_directory = node.mount_source == "vertexfs";
     runtime().remove_vfs_node(node.id)?;
     if let Some(parent) = node.parent {
         runtime().record_vfs_event(parent, VFS_EVENT_UNLINK, node.name);
+    }
+    if is_vertexfs_directory {
+        log_vertexfs_metadata_checkpoint("rmdir", "final-reap", node.name);
     }
 
     serial::write_str("VFS rmdir accepted: proc=");
@@ -1348,9 +1395,12 @@ pub fn vfs_rename(cap_slot: u64, request: *const u8, request_len: usize) -> Resu
     let node = runtime()
         .vfs_node_by_path(old_path)
         .ok_or(IpcError::VfsNotFound)?;
-    let VfsBacking::MemoryFile(_) = node.backing else {
+    if !matches!(
+        node.backing,
+        VfsBacking::MemoryFile(_) | VfsBacking::VertexFsFile(_)
+    ) {
         return Err(IpcError::VfsUnsupported);
-    };
+    }
     let old_mount = runtime()
         .objects
         .get_vfs_mount_by_path(old_path)
@@ -1366,7 +1416,19 @@ pub fn vfs_rename(cap_slot: u64, request: *const u8, request_len: usize) -> Resu
         return Err(IpcError::VfsExists);
     }
 
-    runtime().rename_vfs_node(node.id, new_parent.id, new_child_name)?;
+    let renamed = runtime().rename_vfs_node(node.id, new_parent.id, new_child_name)?;
+    match node.backing {
+        VfsBacking::MemoryFile(backing) => {
+            if runtime().vfs_memory_file_link_count(backing) > 1 {
+                runtime().touch_vfs_memory_file_nodes(backing)?;
+            }
+        }
+        VfsBacking::VertexFsFile(backing) => {
+            runtime().touch_vertexfs_file_nodes(backing)?;
+            log_vertexfs_metadata_checkpoint("rename", "visible", renamed.name);
+        }
+        _ => {}
+    }
     runtime().record_vfs_event(new_parent.id, VFS_EVENT_RENAME, new_child_name);
 
     serial::write_str("VFS rename accepted: proc=");
@@ -1437,9 +1499,12 @@ pub fn vfs_link(cap_slot: u64, request: *const u8, request_len: usize) -> Result
     let node = runtime()
         .vfs_node_by_path(old_path)
         .ok_or(IpcError::VfsNotFound)?;
-    let VfsBacking::MemoryFile(backing) = node.backing else {
+    if !matches!(
+        node.backing,
+        VfsBacking::MemoryFile(_) | VfsBacking::VertexFsFile(_)
+    ) {
         return Err(IpcError::VfsUnsupported);
-    };
+    }
     let new_parent = runtime()
         .vfs_node_by_path(new_parent_path)
         .ok_or(IpcError::VfsNotFound)?;
@@ -1467,11 +1532,20 @@ pub fn vfs_link(cap_slot: u64, request: *const u8, request_len: usize) -> Result
             new_child_name,
             Some(new_parent.id),
             VfsNodeKind::RegularFile,
-            VfsBacking::MemoryFile(backing),
+            node.backing,
             node.mount_source,
         )
         .map_err(|_| IpcError::VfsNoSpace)?;
-    runtime.touch_vfs_memory_file_nodes(backing)?;
+    match node.backing {
+        VfsBacking::MemoryFile(backing) => {
+            runtime.touch_vfs_memory_file_nodes(backing)?;
+        }
+        VfsBacking::VertexFsFile(backing) => {
+            runtime.touch_vertexfs_file_nodes(backing)?;
+            log_vertexfs_metadata_checkpoint("link", "visible", new_child_name);
+        }
+        _ => {}
+    }
     runtime.record_vfs_event(new_parent.id, VFS_EVENT_CREATE, new_child_name);
 
     serial::write_str("VFS link accepted: proc=");

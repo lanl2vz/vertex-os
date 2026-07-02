@@ -5,7 +5,7 @@ ROOT_DIR=$(CDPATH= cd "$(dirname "$0")/.." && pwd)
 KRUST_DIR=${KRUST_DIR:-"$ROOT_DIR/kernel/krust"}
 KRUST_USER_DIR=${KRUST_USER_DIR:-"$ROOT_DIR/targets/krust/user"}
 LOG_DIR=${LOG_DIR:-"$KRUST_DIR/build/release-gate"}
-KRUST_CASES=${KRUST_CASES:-"m14 manifest-cycle bad-cap readiness-timeout rollback store-state-services timer preemption user-fault restart manifest-v1 cap-lifecycle typed-arenas quotas m32 m33 m34 m35 m36 m37 m38 m40 m41 m42 m42-driver-fault m43 m43-bad-superblock m44 m45 m46 m47 m47-corrupt-executable m48 m49 m49-config-corrupt m50 m54 m55 m56 m57 m59 m60 m61 m62 m62-journal-replay m62-corrupt-journal m63 m64 m66 m67 m68 m69 m70 m71 m72 m73 m75 m76 m77 m78 m78-bad-superblock m78-journal-replay m78-journal-checkpoint-after-journal m78-journal-checkpoint-after-data m78-journal-checkpoint-after-inode m78-post-sync-remount m78-fsync-fault m79 m80 m81 m82 m82-vertexdisk-graph-corrupt m83 m83-hostless m83-power-prepare m83-power-commit m83-power-rollback m84 m85 m86 m86-policy-denial-report m87 m88 m90 m91 manifest-truncated manifest-bad-magic manifest-raw-compact manifest-old-compact-magic manifest-graph-store-checksum manifest-graph-store-record manifest-unsupported-version manifest-oob-record manifest-missing-provider manifest-policy-version manifest-policy-hash manifest-policy-excess-grant manifest-policy-mount-root manifest-policy-state-root"}
+KRUST_CASES=${KRUST_CASES:-"m14 manifest-cycle bad-cap readiness-timeout rollback store-state-services timer preemption user-fault restart manifest-v1 cap-lifecycle typed-arenas quotas m32 m33 m34 m35 m36 m37 m38 m40 m41 m42 m42-driver-fault m43 m43-bad-superblock m44 m45 m46 m47 m47-corrupt-executable m48 m49 m49-config-corrupt m50 m54 m55 m56 m57 m59 m60 m61 m62 m62-journal-replay m62-corrupt-journal m63 m64 m66 m67 m68 m69 m70 m71 m72 m73 m75 m76 m77 m78 m78-bad-superblock m78-journal-replay m78-journal-checkpoint-after-journal m78-journal-checkpoint-after-data m78-journal-checkpoint-after-inode m78-post-sync-remount m78-fsync-fault m79 m80 m81 m82 m82-vertexdisk-graph-corrupt m83 m83-hostless m83-power-prepare m83-power-commit m83-power-rollback m84 m85 m86 m86-policy-denial-report m87 m88 m90 m91 m92 manifest-truncated manifest-bad-magic manifest-raw-compact manifest-old-compact-magic manifest-graph-store-checksum manifest-graph-store-record manifest-unsupported-version manifest-oob-record manifest-missing-provider manifest-policy-version manifest-policy-hash manifest-policy-excess-grant manifest-policy-mount-root manifest-policy-state-root"}
 
 fail() {
     echo "error: $*" >&2
@@ -167,6 +167,7 @@ require_doc_line docs/krust-milestones.md "scripts/krust-test.sh m87"
 require_doc_line docs/krust-milestones.md "scripts/krust-test.sh m88"
 require_doc_line docs/krust-milestones.md "scripts/krust-test.sh m90"
 require_doc_line docs/krust-milestones.md "scripts/krust-test.sh m91"
+require_doc_line docs/krust-milestones.md "scripts/krust-test.sh m92"
 require_doc_line docs/krust-milestones.md "## M87-1: Vertex-Owned Operator Shell Package"
 require_doc_line docs/krust-milestones.md "## M87-2: Krust Target User Adapter Workspace"
 require_doc_line docs/krust-milestones.md "## M87-3: Vertex OS Root Boot Runner"
@@ -264,4 +265,4 @@ for case_name in $KRUST_CASES; do
 done
 
 echo
-echo "Krust release gate ok: clean-clone M14-M88 plus M90-M91 substrate proof is repeatable."
+echo "Krust release gate ok: clean-clone M14-M88 plus M90-M92 substrate proof is repeatable."

@@ -7,7 +7,7 @@ runtime layered over a host kernel.
 
 ## Status Summary
 
-Current status: M14-M88 plus M90-M91 and M87-1 through M87-4 are implemented and
+Current status: M14-M88 plus M90-M92 and M87-1 through M87-4 are implemented and
 smoke-tested under `qemu-system-x86_64` with Limine. The current tree has an
 image-backed VertexFS v2 mount, a strict VertexDisk v1 section carrying the
 current VertexFS image, retained VertexFS v1 verifier/regression gates,
@@ -141,7 +141,11 @@ deferred: servicefs now has typed mount-source reporting, an exact read-only
 mount, a v2 `FS` request envelope, provider-side v2 validation, and runtime
 inspect filesystem-service health rows. M91 adds the default VertexFS v2
 durable format while keeping explicit v1 creation and verifier gates available
-for regression coverage. General vnode page cache integration,
+for regression coverage. M92 moves normal create, open-create, unlink, rename,
+link, mkdir/rmdir, truncate, append, stat, and watch semantics onto
+VertexFS-backed VFS nodes with metadata checkpoint logs and 100-cycle churn
+coverage while preserving the existing handle and authority model. General
+vnode page cache integration,
 broader synthetic/device filesystem breadth, durable graph-store mutation, and
 durable policy-denial history remain later work.
 
@@ -219,6 +223,9 @@ scripts/krust-test.sh m85
 scripts/krust-test.sh m86
 scripts/krust-test.sh m87
 scripts/krust-test.sh m88
+scripts/krust-test.sh m90
+scripts/krust-test.sh m91
+scripts/krust-test.sh m92
 scripts/krust-test.sh manifest-policy-version
 scripts/krust-test.sh manifest-policy-hash
 scripts/krust-test.sh manifest-policy-excess-grant
@@ -1637,7 +1644,7 @@ done: locked Cargo dependencies for the top-level host-tool workspace, Krust ker
 done: kernel/krust/rust-toolchain.toml pins Rust 1.95.0, rustfmt, and x86_64-unknown-none
 done: make doctor checks every required tool and reports actionable fixes
 done: legacy hello/ipc userspace crates are removed instead of carried forward
-done: single release-gate script runs the clean-clone M14-M88 plus M90-M91 substrate proof with the current QEMU matrix
+done: single release-gate script runs the clean-clone M14-M88 plus M90-M92 substrate proof with the current QEMU matrix
 ```
 
 Acceptance tests:
@@ -4780,7 +4787,7 @@ done: `scripts/krust-test.sh m91` gates the v2 offline verifier/corrupt/update
 
 ## M92: Durable Metadata Operations
 
-Status: planned.
+Status: implemented.
 
 Goal: move normal metadata operations from the volatile/memory-file-only path
 onto VertexFS v2 transactions while preserving the current VFS handle and
@@ -4789,37 +4796,60 @@ authority semantics.
 Scope:
 
 ```text
-durable mkdir and rmdir
-durable create and open-create
-durable unlink with open-file final-close reaping
-durable same-filesystem rename with atomic visibility
-durable same-filesystem hard-link policy and link-count metadata
-durable truncate, append, metadata version, and stat updates
-directory watch events for durable metadata changes
-crash checkpoints for every create, unlink, rename, link, truncate, and fsync phase
+done: VertexFS-backed create and open-create allocate dynamic VertexFS file
+      backing under the mounted `/fs/app` authority path and emit metadata
+      checkpoints before the new name becomes visible
+done: VertexFS-backed unlink detaches open files from their directory name,
+      preserves existing handle reads, updates shared metadata versions, and
+      reaps the runtime backing on final close
+done: same-filesystem VertexFS rename uses the existing atomic VFS node move,
+      rejects cross-mount moves, updates metadata versions, and emits a
+      checkpointed rename event
+done: same-filesystem VertexFS hard links share the underlying durable inode
+      identity in `SYS_VFS_STAT`, update link counts across sibling names, and
+      retain the existing cross-filesystem rejection policy
+done: VertexFS directory mkdir/rmdir now participates in the same metadata
+      event/checkpoint path; rmdir rejects non-empty and open directories
+done: VertexFS truncate and append update byte length, metadata version, stat
+      fields, and fsync persistence through the v2 file writer
+done: VertexFS directory watches deliver create, rename, and unlink metadata
+      events through the existing `SYS_VFS_WATCH`/`SYS_VFS_POLL` contract
+done: metadata checkpoint serial records cover create, open-create, unlink,
+      rename, link, rmdir, truncate/write, and fsync phases for the v2 gate
 ```
 
 Acceptance tests:
 
 ```text
-rename is atomic across crash checkpoints: old name or new name is visible, never neither
-unlink of an open VertexFS file detaches the name and preserves existing handle reads
-hard links share durable inode identity and reject cross-filesystem links
-rmdir rejects non-empty and open directories after remount
-metadata version and link count survive fsync and remount
-watchers receive create, rename, unlink, and writeback-error events for VertexFS files
-100-cycle durable create/write/rename/open/read/close/unlink returns to baseline counts
-filesystem verifier accepts the post-test disk image
+done: `model-reader` proves rename visibility by requiring the old name to be
+      gone and the new name readable after a VertexFS v2 rename
+done: `model-reader` proves unlink of an open VertexFS file removes the path
+      while the existing handle still reads the old payload
+done: `model-reader` proves hard-link stat identity and link-count sharing,
+      then unlinks one sibling and observes the count fall to one
+done: `model-reader` proves rmdir rejects both open and non-empty VertexFS
+      directories before removing the empty directory
+done: `model-reader` proves append and truncate update size and monotonic
+      metadata version, then fsyncs the truncated payload
+done: `model-reader` proves VertexFS directory watches receive create, rename,
+      and unlink events in order
+done: `model-reader` runs a 100-cycle create/write/rename/open/read/close/unlink
+      VertexFS metadata churn loop using reusable unsynced dynamic inodes
+done: `scripts/krust-test.sh m92` gates the v2 metadata proof and reuses the
+      v2 offline verifier/corrupt/update block so the tested image remains
+      accepted by `vertexctl verify-vertexfs`
 ```
 
 Implementation notes:
 
-- Cross-filesystem rename remains unsupported. Return a controlled VFS error
-  and require higher layers to copy plus unlink later.
-- The existing volatile memory-file operations should remain useful for tmp and
-  tests, but they should no longer be the only complete metadata path.
-- Metadata correctness is security-critical: path traversal, stale vnode
-  generation, and mount alias handling must be tested together.
+- M92 is the kernel-authoritative VFS metadata surface for VertexFS v2. The
+  v2 on-disk writer still serializes the canonical dynamic inode/name model
+  introduced in M91; richer multi-name replay records and sticky writeback
+  error watch events belong with the M93 page-cache/writeback layer.
+- Cross-filesystem rename and hard link remain unsupported and return a
+  controlled VFS error.
+- The volatile memory-file metadata path remains for tmp/state tests and shares
+  the same stat identity/link-count accounting model where possible.
 
 ## M93: Vnode Page Cache, Writeback, And Fast I/O
 

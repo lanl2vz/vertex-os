@@ -543,7 +543,9 @@
         "resolve",
         "read",
         "write",
-        "create"
+        "create",
+        "unlink",
+        "rename"
       ],
       "properties": {
         "root": "/fs/app"
@@ -1189,7 +1191,9 @@
             "resolve",
             "read",
             "write",
-            "create"
+            "create",
+            "unlink",
+            "rename"
           ]
         }
       ],
