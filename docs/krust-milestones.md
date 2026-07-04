@@ -7,7 +7,7 @@ runtime layered over a host kernel.
 
 ## Status Summary
 
-Current status: M14-M88 plus M90-M93 and M87-1 through M87-4 are implemented and
+Current status: M14-M88 plus M90-M94 and M87-1 through M87-4 are implemented and
 smoke-tested under `qemu-system-x86_64` with Limine. The current tree has an
 image-backed VertexFS v2 mount, a strict VertexDisk v1 section carrying the
 current VertexFS image, retained VertexFS v1 verifier/regression gates,
@@ -149,7 +149,12 @@ coverage while preserving the existing handle and authority model. General
 vnode page cache integration is now implemented for VertexFS-backed files in
 M93, including bounded clean eviction, dirty-page pressure rejection, ordered
 fsync writeback, writeback-error accounting, sequential read-ahead counters,
-and runtime inspect health rows. Broader synthetic/device filesystem breadth,
+and runtime inspect health rows. M94 integrates graph-declared state volumes
+with a typed `statefs` backend while preserving owner/schema/storage and
+lifecycle policy as graph facts, reports `state-backend` and policy-derived
+`state-authority` rows, proves undeclared state aliases and write-capable
+shared opens are rejected, logs exact migration backend reads/writes, and
+selects rollback policy before activation. Broader synthetic/device filesystem breadth,
 external filesystem-service shared-buffer page I/O, durable graph-store mutation, and
 durable policy-denial history remain later work.
 
@@ -231,6 +236,7 @@ scripts/krust-test.sh m90
 scripts/krust-test.sh m91
 scripts/krust-test.sh m92
 scripts/krust-test.sh m93
+scripts/krust-test.sh m94
 scripts/krust-test.sh manifest-policy-version
 scripts/krust-test.sh manifest-policy-hash
 scripts/krust-test.sh manifest-policy-excess-grant
@@ -1649,7 +1655,7 @@ done: locked Cargo dependencies for the top-level host-tool workspace, Krust ker
 done: kernel/krust/rust-toolchain.toml pins Rust 1.95.0, rustfmt, and x86_64-unknown-none
 done: make doctor checks every required tool and reports actionable fixes
 done: legacy hello/ipc userspace crates are removed instead of carried forward
-done: single release-gate script runs the clean-clone M14-M88 plus M90-M93 substrate proof with the current QEMU matrix
+done: single release-gate script runs the clean-clone M14-M88 plus M90-M94 substrate proof with the current QEMU matrix
 ```
 
 Acceptance tests:
@@ -4933,7 +4939,7 @@ done: `scripts/krust-test.sh m78-fsync-fault` now also proves a block-driver
 
 ## M94: State Volume Backend Integration
 
-Status: planned.
+Status: done.
 
 Goal: let graph-declared state volumes use the mature filesystem substrate
 without losing the Vertex distinction between immutable system generations and
@@ -4942,33 +4948,47 @@ mutable state policy.
 Scope:
 
 ```text
-state volume records mapped to filesystem-backed volume roots or subvolumes
-state owner, schema, migration, sharing, rollback, and retention policy preserved as graph facts
-statefs mount authority generated from state graph records, not ambient paths
-state migration jobs receive only old state, new state, and declared helper caps
-state health report includes filesystem backend, dirty/writeback status, snapshot status, and last error
-rollback policy chooses preserve, fork, migrate, discard, or reject before activation
+done: state volume kernel objects retain graph owner, schema, storage,
+      migration, retention, and sharing facts instead of only the state id
+done: state-volume VFS nodes and mounts use the typed `statefs` source while
+      the state object identity remains `state:<name>`
+done: runtime inspect reports `state-health` backend fields plus explicit
+      `state-backend` rows with backend volume, value/control paths,
+      dirty/writeback status, snapshot status, migration status, and last error
+done: runtime inspect reports `state-authority` rows derived from
+      graph-declared state paths, not ambient filesystem aliases
+done: state migration logs prove one old statefs backend read and one new
+      statefs backend write before the applied-once journal record
+done: rollback logs prove policy selection before activation, then record the
+      policy-applied rollback journal entry
 ```
 
 Acceptance tests:
 
 ```text
-service cannot open undeclared state even if a filesystem path alias exists
-shared state requires graph sharing policy and attenuated VFS rights
-state migration reads old backend and writes new backend exactly once
-failed migration rolls back generation selection and leaves old state readable
-rollback applies declared state policy instead of preserving every volume blindly
-state health reports owner, schema, backend volume, migration status, and filesystem health
+done: service cannot open undeclared state even if a filesystem path alias exists
+done: shared state requires graph sharing policy and attenuated VFS rights
+done: state migration reads old backend and writes new backend exactly once
+done: failed migration rolls back generation selection and leaves old state readable
+done: rollback applies declared state policy instead of preserving every volume blindly
+done: state health reports owner, schema, backend volume, migration status, and filesystem health
+done: `scripts/krust-test.sh m94` gates statefs backend mounts, policy-derived
+      authority, undeclared-state rejection, shared-right attenuation,
+      migration backend read/write accounting, rollback policy, and backend
+      health rows
 ```
 
 Implementation notes:
 
 - State remains first-class graph state, not just files under a conventional
   path such as `/var`.
-- `vertex-state` should own lifecycle policy even if VertexFS owns the block
-  and metadata format below it.
+- `vertex-state` still owns lifecycle policy and state transactions even
+  though the mounted VFS source is now typed as `statefs`; this keeps state
+  distinct from immutable generation files and ambient paths.
 - Avoid unsafe delete or garbage collection until snapshots, reference counts,
   and recovery gates are mature.
+- M94 intentionally reports `snapshot=none`; M95 is where snapshot/fork
+  records and coordinated rollback become first-class.
 
 ## M95: Snapshots, Forks, And Coordinated Rollback
 

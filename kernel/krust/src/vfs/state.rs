@@ -2,6 +2,8 @@ use crate::kernel::InitError;
 
 use super::MAX_VFS_NAME_BYTES;
 
+pub(crate) const STATEFS_SOURCE: &str = "statefs";
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum VfsStateOperation {
     Read,

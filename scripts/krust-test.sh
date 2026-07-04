@@ -990,6 +990,65 @@ svc:counter has state authority from generation graph
 	State garbage collection removed unreferenced state: state=state:scratch
 	'
 	        ;;
+	    m94|state-backend)
+		        MANIFEST="$ROOT_DIR/examples/krust-state-migration-generation.vertex.json"
+		        FALLBACK_MANIFEST="$ROOT_DIR/examples/krust-state-migration-new-generation.vertex.json"
+		        BAD_GENERATION_MANIFEST="$ROOT_DIR/examples/krust-state-migration-bad-generation.vertex.json"
+	        EXPECT_ACTIVATION_SUCCESS=1
+	        USE_SERIAL_PIPE=1
+	        SERIAL_INPUT_DELAYED=1
+	        SERIAL_INPUT_DELAY_SECONDS=8
+	        QEMU_ATTEMPTS=${QEMU_M94_ATTEMPTS:-120}
+	        SERIAL_INPUT='state-health
+	install generation gen:state-bad
+	state-health
+	install generation gen:state-new
+	state-health
+	rollback state migration
+	state-health
+	halt
+	'
+	        required_lines='
+	Boot generation: gen:state-migration-0001
+	M94 statefs backend mounted: state=state:counter backend=vertexdisk-v1 root=/state/counter owner=svc:echo-server schema=counter.v1
+	M94 statefs authority source: state=state:counter source=graph-state-policy root=/state/counter
+	statefs graph authority rejects undeclared state path alias
+	statefs shared state requires graph policy and attenuated VFS rights
+	console-driver forwarded serial command: state-health
+	state-health state:counter owner=svc:echo-server schema=counter.v1 generation=gen:state-migration-0001 migration_status=clean last_error=none
+	state-backend state:counter backend=statefs:vertexdisk-v1 dirty=0 writeback=clean snapshot=none
+	state health reports backend dirty writeback snapshot and filesystem health
+	console-driver forwarded serial command: install generation gen:state-bad
+	State migration failed: state=state:counter from=counter.v1 to=counter.v3 reason=missing-migrate-policy
+	State migration rollback leaves old state readable: state=state:counter
+	Native update transaction selected_generation unchanged: gen:state-migration-0001
+	state-health state:counter owner=svc:echo-server schema=counter.v1 generation=gen:state-migration-0001 migration_status=failed last_error=missing-migrate-policy
+	console-driver forwarded serial command: install generation gen:state-new
+	State migration plan accepted: state=state:counter from=counter.v1 to=counter.v2 mode=migrate
+	State migration backend read old once: state=state:counter backend=statefs:vertexdisk-v1
+	State migration backend write new once: state=state:counter backend=statefs:vertexdisk-v1
+	State migration journal record: state=state:counter from=counter.v1 to=counter.v2 status=applied-once
+	Krust generation switch accepted: from=gen:state-migration-0001 to=gen:state-migration-new-0002
+	Boot generation: gen:state-migration-new-0002
+	M94 statefs backend mounted: state=state:counter backend=vertexdisk-v1 root=/state/counter owner=svc:echo-server schema=counter.v2
+	state-health state:counter owner=svc:echo-server schema=counter.v2 generation=gen:state-migration-new-0002 migration_status=clean last_error=none
+	console-driver forwarded serial command: rollback state migration
+	Krust state rollback policy selected before activation: state=state:counter action=preserve-current
+	Krust state rollback policy: state=state:counter mode=preserve action=preserve-current from=counter.v2 to=counter.v1
+	State rollback journal record: state=state:counter from=counter.v2 to=counter.v1 status=policy-applied
+	Krust rollback generation accepted: target=gen:state-migration-0001
+	Boot generation: gen:state-migration-0001
+	state-health state:counter owner=svc:echo-server schema=counter.v1 generation=gen:state-migration-0001 migration_status=clean last_error=none
+	console-driver forwarded serial command: halt
+	Native console shell ok
+	console-shell observed state clients drained
+	'
+	        case_forbidden_lines='
+	Krust generation switch entering generation: gen:state-migration-bad-0003
+	State migration journal record: state=state:scratch from=scratch.v1 to=scratch.v2 status=applied-once
+	State garbage collection removed unreferenced state: state=state:scratch
+	'
+	        ;;
 	    m86|native-policy-validation)
 		        MANIFEST="$ROOT_DIR/examples/krust-inspect-generation.vertex.json"
 	        EXPECT_ACTIVATION_SUCCESS=1
@@ -2150,7 +2209,7 @@ KrustBoot manifest unavailable
 '
         ;;
     *)
-        echo "usage: scripts/krust-test.sh <m13|m14|valid-activation|manifest-cycle|bad-cap|readiness|readiness-timeout|rollback|store-state-services|timer|preemption|m30|user-fault|m31|restart|manifest-v1|cap-lifecycle|typed-arenas|quotas|m32|io-substrate|m33|serial-driver|m34|block-driver|m35|store-service|m36|state-service|m37|generation-switch|m38|introspection|m40|directed-ipc|m41|console-shell|m42|virtio-block|m42-driver-fault|block-driver-fault|m43|vertexdisk|m43-bad-superblock|vertexdisk-bad-superblock|m44|boot-manager|m45|store-verification|m46|native-update|m47|store-executables|m47-corrupt-executable|store-executable-corruption|m48|dynamic-process|m49|config-objects|m49-config-corrupt|config-hash-mismatch|m50|secrets|m54|appliance|m55|driver-framework|m56|virtio-device-stack|m57|networking-v0|m59|namespace-service|m60|policy-typed|m61|abi-authority-hardening|m62|storage-durability|m62-journal-replay|storage-journal-replay|m62-corrupt-journal|storage-corrupt-journal|m63|network-boundary|m64|supervisor-lifecycle|m66|memory-lifecycle|m67|address-space-teardown|m68|failure-atomicity|m69|memory-pressure|m70|interrupt-routing|m71|dma-ownership|m72|virtio-recovery|m73|device-fault-gate|m75|vfs-blocking|m76|directory-metadata|m77|cache-writeback|m78|vertexfs-v1|m78-bad-superblock|vertexfs-bad-superblock|m78-journal-replay|vertexfs-journal-replay|m78-journal-checkpoint-after-journal|vertexfs-journal-checkpoint-after-journal|m78-journal-checkpoint-after-data|vertexfs-journal-checkpoint-after-data|m78-journal-checkpoint-after-inode|vertexfs-journal-checkpoint-after-inode|m78-post-sync-remount|vertexfs-post-sync-remount|m78-fsync-fault|vertexfs-fsync-fault|m79|mount-namespaces|m80|vfs-coordination|m81|vfs-crash-security-soak|m82|native-graph-store|m82-vertexdisk-graph-corrupt|vertexdisk-graph-store-corrupt|m83|generation-manager|m83-hostless|generation-manager-hostless|m83-power-prepare|m83-power-commit|m83-power-rollback|m84|package-import|m85|state-migration|m86|native-policy-validation|m86-policy-denial-report|policy-denial-report|m87|operator-graph-shell|m88|appliance-update-gate|m90|filesystem-service-protocol|m91|vertexfs-v2|m92|vertexfs-metadata|m93|vnode-page-cache|manifest-truncated|manifest-bad-magic|manifest-raw-compact|manifest-old-compact-magic|manifest-graph-store-checksum|manifest-graph-store-record|manifest-unsupported-version|manifest-oob-record|manifest-missing-provider|manifest-policy-version|manifest-policy-hash|manifest-policy-excess-grant|manifest-policy-mount-root|manifest-policy-state-root>" >&2
+        echo "usage: scripts/krust-test.sh <m13|m14|valid-activation|manifest-cycle|bad-cap|readiness|readiness-timeout|rollback|store-state-services|timer|preemption|m30|user-fault|m31|restart|manifest-v1|cap-lifecycle|typed-arenas|quotas|m32|io-substrate|m33|serial-driver|m34|block-driver|m35|store-service|m36|state-service|m37|generation-switch|m38|introspection|m40|directed-ipc|m41|console-shell|m42|virtio-block|m42-driver-fault|block-driver-fault|m43|vertexdisk|m43-bad-superblock|vertexdisk-bad-superblock|m44|boot-manager|m45|store-verification|m46|native-update|m47|store-executables|m47-corrupt-executable|store-executable-corruption|m48|dynamic-process|m49|config-objects|m49-config-corrupt|config-hash-mismatch|m50|secrets|m54|appliance|m55|driver-framework|m56|virtio-device-stack|m57|networking-v0|m59|namespace-service|m60|policy-typed|m61|abi-authority-hardening|m62|storage-durability|m62-journal-replay|storage-journal-replay|m62-corrupt-journal|storage-corrupt-journal|m63|network-boundary|m64|supervisor-lifecycle|m66|memory-lifecycle|m67|address-space-teardown|m68|failure-atomicity|m69|memory-pressure|m70|interrupt-routing|m71|dma-ownership|m72|virtio-recovery|m73|device-fault-gate|m75|vfs-blocking|m76|directory-metadata|m77|cache-writeback|m78|vertexfs-v1|m78-bad-superblock|vertexfs-bad-superblock|m78-journal-replay|vertexfs-journal-replay|m78-journal-checkpoint-after-journal|vertexfs-journal-checkpoint-after-journal|m78-journal-checkpoint-after-data|vertexfs-journal-checkpoint-after-data|m78-journal-checkpoint-after-inode|vertexfs-journal-checkpoint-after-inode|m78-post-sync-remount|vertexfs-post-sync-remount|m78-fsync-fault|vertexfs-fsync-fault|m79|mount-namespaces|m80|vfs-coordination|m81|vfs-crash-security-soak|m82|native-graph-store|m82-vertexdisk-graph-corrupt|vertexdisk-graph-store-corrupt|m83|generation-manager|m83-hostless|generation-manager-hostless|m83-power-prepare|m83-power-commit|m83-power-rollback|m84|package-import|m85|state-migration|m86|native-policy-validation|m86-policy-denial-report|policy-denial-report|m87|operator-graph-shell|m88|appliance-update-gate|m90|filesystem-service-protocol|m91|vertexfs-v2|m92|vertexfs-metadata|m93|vnode-page-cache|m94|state-backend|manifest-truncated|manifest-bad-magic|manifest-raw-compact|manifest-old-compact-magic|manifest-graph-store-checksum|manifest-graph-store-record|manifest-unsupported-version|manifest-oob-record|manifest-missing-provider|manifest-policy-version|manifest-policy-hash|manifest-policy-excess-grant|manifest-policy-mount-root|manifest-policy-state-root>" >&2
         exit 2
         ;;
 esac

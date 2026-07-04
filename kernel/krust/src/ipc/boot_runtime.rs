@@ -173,7 +173,7 @@ fn build_boot_config_runtime(
     let mut state_index = 0;
     while state_index < config.state_volume_count {
         let state = config.state_volumes[state_index].ok_or(InitError::InvalidBootManifest)?;
-        runtime.state_volume_ids[state_index] = Some(runtime.objects.add_state_volume(state.id)?);
+        runtime.state_volume_ids[state_index] = Some(runtime.objects.add_state_volume(state)?);
         state_index += 1;
     }
     let mut network_index = 0;
@@ -2944,27 +2944,27 @@ fn install_vfs_nodes(runtime: &mut RuntimeState) -> Result<(), InitError> {
                 Some(state_root),
                 VfsNodeKind::Directory,
                 VfsBacking::StateVolume(object_id),
-                state.name,
+                STATEFS_SOURCE,
             )?;
             runtime.add_vfs_node(
                 STATE_VOLUME_VALUE_FILE_NAME,
                 Some(root_node),
                 VfsNodeKind::RegularFile,
                 VfsBacking::StateVolumeValue(object_id),
-                state.name,
+                STATEFS_SOURCE,
             )?;
             runtime.add_vfs_node(
                 STATE_VOLUME_CONTROL_FILE_NAME,
                 Some(root_node),
                 VfsNodeKind::RegularFile,
                 VfsBacking::StateVolumeControl(object_id),
-                state.name,
+                STATEFS_SOURCE,
             )?;
             runtime.add_vfs_mount(
                 state.name,
                 root_node,
                 root_path,
-                state.name,
+                STATEFS_SOURCE,
                 0,
                 false,
                 ProcessId::empty(),
@@ -2984,6 +2984,28 @@ fn install_vfs_nodes(runtime: &mut RuntimeState) -> Result<(), InitError> {
             serial::write_str(" path=");
             serial::write_ascii_bytes(root_path.as_bytes());
             serial::write_str("/control source=vertex-state\n");
+            serial::write_str("M94 statefs backend mounted: state=");
+            serial::write_str(state.name);
+            serial::write_str(" backend=");
+            serial::write_str(state.storage_class);
+            serial::write_str(" root=");
+            serial::write_ascii_bytes(root_path.as_bytes());
+            serial::write_str(" owner=");
+            serial::write_str(state.owner);
+            serial::write_str(" schema=");
+            serial::write_str(state.schema_version);
+            serial::write_str(" migration=");
+            serial::write_str(state.migration_policy);
+            serial::write_str(" retention=");
+            serial::write_str(state.retention_policy);
+            serial::write_str(" sharing=");
+            serial::write_str(state.sharing_policy);
+            serial::write_str("\n");
+            serial::write_str("M94 statefs authority source: state=");
+            serial::write_str(state.name);
+            serial::write_str(" source=graph-state-policy root=");
+            serial::write_ascii_bytes(root_path.as_bytes());
+            serial::write_str("\n");
         }
         state_index += 1;
     }

@@ -39,10 +39,11 @@ metadata syscalls, 64-byte stat metadata, open-unlink lifetime, hard-link
 policy, and bounded state-volume block-cache writeback. M78-M79 add the strict
 VertexFS v1 boot image, mandatory service mount roots, declared bind-mount
 snapshots, and kernel-owned VertexFS fsync writeback through block-driver
-device endpoints. M90-M93 add the typed `servicefs` request/reply route, the
+device endpoints. M90-M94 add the typed `servicefs` request/reply route, the
 default VertexFS v2 durable image format, VertexFS-backed durable metadata
-operations, and the bounded VertexFS vnode page-cache/writeback layer while
-preserving explicit v1 regression gates. M80-M81 add VFS coordination and filesystem security/soak coverage. M82
+operations, the bounded VertexFS vnode page-cache/writeback layer, and typed
+`statefs` backend integration for graph-declared state volumes while preserving
+explicit v1 regression gates. M80-M81 add VFS coordination and filesystem security/soak coverage. M82
 updates the compact payload identity to `KRUSTBOOTM82` version 13 and adds the
 native typed graph-store header plus graph node/edge records used for runtime
 graph provenance. M83 adds native generation verification and staged
@@ -485,8 +486,11 @@ parent and `create` on the destination parent, shares volatile memory-file
 backing, updates metadata for every vnode sharing that backing, and rejects
 cross-filesystem or cross-mount-instance links with `STATUS_VFS_UNSUPPORTED`.
 SYS_SECRET_READ requires read rights on a secret cap and logs metadata only.
-Native state-volume records are installed as explicit VFS mount roots below
-`/state/<state-id suffix>`; direct state-object grants are rejected. Each
+Native state-volume records are installed as explicit typed `statefs` VFS mount
+roots below `/state/<state-id suffix>`; direct state-object grants are
+rejected. The kernel state-volume object retains the graph owner, schema,
+storage, migration, retention, and sharing facts, so mounted state remains
+first-class graph state rather than an ambient path convention. Each
 manifest-declared state volume exposes `/state/<suffix>/value` as a regular
 file whose read/write/stat operations are VFS transactions: the kernel validates
 the user buffer, queues a native versioned `VS` request carrying the state id on
@@ -496,8 +500,11 @@ endpoint when `vertex-state` replies. The old short state commands are not an
 accepted compatibility protocol. `/state/<suffix>/control` requires a
 write-only open plus `control` authority and accepts the native control command
 `Q` through the same VFS transaction path for state-service shutdown.
-`vertex-state` persists write transactions for every indexed VertexDisk state
-volume through the block protocol served by `block-driver`.
+Runtime inspect reports `state-health`, `state-backend`, and `state-authority`
+rows so operators can verify owner/schema, backend volume, dirty/writeback
+status, snapshot status, migration status, last error, and graph-derived state
+path authority. `vertex-state` persists write transactions for every indexed
+VertexDisk state volume through the block protocol served by `block-driver`.
 Store and state traffic use separate block request endpoints; the driver treats
 the receiving endpoint as the client identity and enforces read-only store
 access, state-only writes, and section bounds before
@@ -837,7 +844,7 @@ processes
 endpoints
 grants
 store_objects
-state_volumes (installed as explicit VFS state-volume mount roots; direct state grants are rejected; native Krust routes manifest-declared state volumes through service-backed VFS transactions)
+state_volumes (installed as explicit typed statefs mount roots; direct state grants are rejected; native Krust routes manifest-declared state volumes through service-backed VFS transactions)
 network_ports
 io_port_ranges
 mmio_regions

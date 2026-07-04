@@ -6,7 +6,7 @@ use crate::{
     vfs::{NamespaceObject, VfsMountObject, VfsRootObject},
 };
 
-use super::transport::IpcEndpoint;
+use super::{runtime_config::BootStateVolumeConfig, transport::IpcEndpoint};
 
 pub const BOOT_ENDPOINT_ID: u64 = 1;
 pub(crate) const MAX_OBJECTS: usize = 128;
@@ -79,11 +79,26 @@ impl StoreObject {
 pub(crate) struct StateVolumeObject {
     pub(crate) id: KernelObjectId,
     pub(crate) name: &'static str,
+    pub(crate) owner: &'static str,
+    pub(crate) schema_version: &'static str,
+    pub(crate) storage_class: &'static str,
+    pub(crate) migration_policy: &'static str,
+    pub(crate) retention_policy: &'static str,
+    pub(crate) sharing_policy: &'static str,
 }
 
 impl StateVolumeObject {
-    pub(crate) const fn new(id: KernelObjectId, name: &'static str) -> Self {
-        Self { id, name }
+    pub(crate) const fn new(id: KernelObjectId, state: BootStateVolumeConfig) -> Self {
+        Self {
+            id,
+            name: state.id,
+            owner: state.owner,
+            schema_version: state.schema_version,
+            storage_class: state.storage_class,
+            migration_policy: state.migration_policy,
+            retention_policy: state.retention_policy,
+            sharing_policy: state.sharing_policy,
+        }
     }
 }
 

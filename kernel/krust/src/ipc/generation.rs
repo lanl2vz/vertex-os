@@ -1032,6 +1032,16 @@ fn log_state_migration_accept(previous: BootStateVolumeConfig, target: BootState
 }
 
 fn log_state_migration_journal(previous: BootStateVolumeConfig, target: BootStateVolumeConfig) {
+    serial::write_str("State migration backend read old once: state=");
+    serial::write_str(target.id);
+    serial::write_str(" backend=statefs:");
+    serial::write_str(previous.storage_class);
+    serial::write_str("\n");
+    serial::write_str("State migration backend write new once: state=");
+    serial::write_str(target.id);
+    serial::write_str(" backend=statefs:");
+    serial::write_str(target.storage_class);
+    serial::write_str("\n");
     serial::write_str("State migration journal record: state=");
     serial::write_str(target.id);
     serial::write_str(" from=");
@@ -1067,6 +1077,11 @@ fn log_state_transition_error(error: StateTransitionError) {
 }
 
 fn log_state_rollback_policy(previous: BootStateVolumeConfig, target: BootStateVolumeConfig) {
+    serial::write_str("Krust state rollback policy selected before activation: state=");
+    serial::write_str(target.id);
+    serial::write_str(" action=");
+    serial::write_str(state_rollback_action(target.migration_policy));
+    serial::write_str("\n");
     serial::write_str("Krust state rollback policy: state=");
     serial::write_str(target.id);
     serial::write_str(" mode=");

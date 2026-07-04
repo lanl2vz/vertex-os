@@ -581,6 +581,18 @@ fn console_write_state_health(report: &[u8]) {
         log(b"console-shell state policy sharing missing");
         sys::exit(1);
     };
+    let authority_needles: [&[u8]; 6] = [
+        b"state-authority[",
+        b"service=svc:counter-service",
+        b"state=state:counter",
+        b"root=/state/counter",
+        b"rights=read|write|resolve",
+        b"source=graph-state-policy",
+    ];
+    if find_line_contains_all(report, &authority_needles).is_none() {
+        log(b"console-shell state authority report missing");
+        sys::exit(1);
+    }
 
     let health_needles: [&[u8]; 2] = [b"state-health[", b"id=state:counter"];
     let Some(line) = find_line_contains_all(report, &health_needles) else {
@@ -607,8 +619,29 @@ fn console_write_state_health(report: &[u8]) {
         log(b"console-shell state health last error missing");
         sys::exit(1);
     };
+    let backend_needles: [&[u8]; 2] = [b"state-backend[", b"id=state:counter"];
+    let Some(backend_line) = find_line_contains_all(report, &backend_needles) else {
+        log(b"console-shell state backend report missing");
+        sys::exit(1);
+    };
+    let Some(backend) = field_slice(backend_line, b"backend=") else {
+        log(b"console-shell state backend missing");
+        sys::exit(1);
+    };
+    let Some(dirty) = field_slice(backend_line, b"dirty=") else {
+        log(b"console-shell state backend dirty missing");
+        sys::exit(1);
+    };
+    let Some(writeback) = field_slice(backend_line, b"writeback=") else {
+        log(b"console-shell state backend writeback missing");
+        sys::exit(1);
+    };
+    let Some(snapshot) = field_slice(backend_line, b"snapshot=") else {
+        log(b"console-shell state backend snapshot missing");
+        sys::exit(1);
+    };
 
-    let mut payload = [0u8; 160];
+    let mut payload = [0u8; 192];
     let mut len = 0;
     append(&mut payload, &mut len, b"state-health state:counter owner=");
     append(&mut payload, &mut len, owner);
@@ -635,7 +668,19 @@ fn console_write_state_health(report: &[u8]) {
     append(&mut payload, &mut len, b" sharing=");
     append(&mut payload, &mut len, sharing);
     log(&payload[..len]);
+    log(b"statefs shared state requires graph policy and attenuated VFS rights");
+    len = 0;
+    append(&mut payload, &mut len, b"state-backend state:counter backend=");
+    append(&mut payload, &mut len, backend);
+    append(&mut payload, &mut len, b" dirty=");
+    append(&mut payload, &mut len, dirty);
+    append(&mut payload, &mut len, b" writeback=");
+    append(&mut payload, &mut len, writeback);
+    append(&mut payload, &mut len, b" snapshot=");
+    append(&mut payload, &mut len, snapshot);
+    log(&payload[..len]);
     log(b"state health reports owner schema generation migration status and last error");
+    log(b"state health reports backend dirty writeback snapshot and filesystem health");
     console_write(b"state-health ok\n> ");
 }
 

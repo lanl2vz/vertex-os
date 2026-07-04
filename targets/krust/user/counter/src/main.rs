@@ -11,6 +11,7 @@ const CAP_SERIAL_LOG: u64 = 1;
 const CAP_CONSOLE_REPLY: u64 = 3;
 const CAP_STATE_VFS_CONSOLE: u64 = 4;
 const STATE_VALUE_PATH: &[u8] = b"/state/counter/value";
+const UNDECLARED_STATE_VALUE_PATH: &[u8] = b"/state/scratch/value";
 
 #[unsafe(link_section = ".text._start")]
 #[unsafe(no_mangle)]
@@ -30,6 +31,7 @@ pub extern "C" fn _start() -> ! {
 fn run_counter_endpoint(first_received: u64, first_buffer: &[u8; 8]) -> ! {
     log(b"counter-service has request endpoint");
     let mut value = 41u64;
+    prove_undeclared_state_alias_rejected();
     if first_received != sys::STATUS_EMPTY {
         if first_received == 1 && first_buffer[0] == b'H' {
             handle_counter_request(first_received, first_buffer, &mut value);
@@ -48,6 +50,17 @@ fn run_counter_endpoint(first_received: u64, first_buffer: &[u8; 8]) -> ! {
         }
         handle_counter_request(received, &request, &mut value);
     }
+}
+
+fn prove_undeclared_state_alias_rejected() {
+    let handle = sys::vfs_open_path_readwrite(CAP_STATE_VFS_CONSOLE, UNDECLARED_STATE_VALUE_PATH);
+    if handle == sys::STATUS_VFS_PERMISSION || handle == sys::STATUS_BAD_CAPABILITY {
+        log(b"statefs graph authority rejects undeclared state path alias");
+        return;
+    }
+    let _ = sys::vfs_close(handle);
+    log(b"counter-service undeclared state alias test failed");
+    sys::exit(1);
 }
 
 fn handle_counter_request(received: u64, request: &[u8; 8], value: &mut u64) {

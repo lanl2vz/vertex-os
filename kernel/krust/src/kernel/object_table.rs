@@ -13,6 +13,7 @@ use super::{
     BOOT_ENDPOINT_ID, BootModuleObject, InitError, IpcEndpoint, IpcError, KernelObject,
     KernelObjectId, MAX_OBJECTS, ProcessControlObject, ProcessId, SecretObject, StateVolumeObject,
     StoreObject,
+    runtime_config::BootStateVolumeConfig,
 };
 
 pub(crate) struct ObjectTable {
@@ -91,7 +92,7 @@ impl ObjectTable {
 
     pub(crate) fn add_state_volume(
         &mut self,
-        name: &'static str,
+        state: BootStateVolumeConfig,
     ) -> Result<KernelObjectId, InitError> {
         if self.count == self.objects.len() {
             return Err(InitError::ObjectTableFull);
@@ -100,7 +101,7 @@ impl ObjectTable {
         let id = KernelObjectId::new(self.next_id);
         self.next_id += 1;
         self.objects[self.count] =
-            Some(KernelObject::StateVolume(StateVolumeObject::new(id, name)));
+            Some(KernelObject::StateVolume(StateVolumeObject::new(id, state)));
         self.count += 1;
         Ok(id)
     }

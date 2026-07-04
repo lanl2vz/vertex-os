@@ -9,6 +9,7 @@ const CAP_STATE_VFS: u64 = 0;
 const CAP_SERIAL_LOG: u64 = 1;
 const CAP_NAMESPACE: u64 = 3;
 const STATE_VALUE_PATH: &[u8] = b"/state/counter/value";
+const UNDECLARED_STATE_VALUE_PATH: &[u8] = b"/state/scratch/value";
 
 #[unsafe(link_section = ".text._start")]
 #[unsafe(no_mangle)]
@@ -37,8 +38,18 @@ pub extern "C" fn _start() -> ! {
         sys::exit(1);
     }
 
+    let undeclared = sys::vfs_open_path_read(CAP_STATE_VFS, UNDECLARED_STATE_VALUE_PATH);
+    if undeclared == sys::STATUS_VFS_PERMISSION || undeclared == sys::STATUS_BAD_CAPABILITY {
+        log(b"statefs graph authority rejects undeclared state path alias");
+    } else {
+        let _ = sys::vfs_close(undeclared);
+        log(b"reader-service undeclared state alias test failed");
+        sys::exit(1);
+    }
+
     if sys::vfs_open_path_readwrite(CAP_STATE_VFS, STATE_VALUE_PATH) == sys::STATUS_VFS_PERMISSION {
         log(b"reader-service write rejected");
+        log(b"statefs shared state requires graph policy and attenuated VFS rights");
     } else {
         log(b"reader-service write denial failed");
         sys::exit(1);

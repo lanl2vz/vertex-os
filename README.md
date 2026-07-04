@@ -36,12 +36,12 @@ vertex-os/
     krust/
       user/              Krust ABI adapter workspace for native user programs
   kernel/
-    krust/               Bootable Krust kernel prototype, currently covering M14-M88 plus M90-M93 native graph activation, substrate hardening, pinned tooling, ABI v1 IPC, console shell, virtio device I/O, VertexDisk v1 durability, native boot selection, verified store objects, native updates, store-loaded executables, dynamic process creation, native config/secrets, package/link/build import, the first appliance transcript, native user-space driver objects, netstack boundaries, capability namespaces, policy compilation, lifecycle supervision, a supported standalone appliance profile, owned frame reclamation, address-space teardown, failure-atomic kernel object creation, memory lifecycle soak gates, interrupt routing, DMA ownership, virtio recovery, device-fault isolation, VFS root authority, open-file handles, directory metadata operations, bounded block-cache writeback, image-backed VertexFS/mount-namespace gates, VFS coordination primitives, filesystem security/soak gates, the native VertexDisk graph-store read/provenance surface, native generation-manager install/rollback/recovery, native package closure import, declared state-object migration policy, native policy validation, the usable operator graph shell, the end-to-end appliance update gate, the typed filesystem-service protocol substrate, the VertexFS v2 durable format substrate, VertexFS-backed durable metadata operations, and bounded VertexFS vnode page-cache/writeback
+    krust/               Bootable Krust kernel prototype, currently covering M14-M88 plus M90-M94 native graph activation, substrate hardening, pinned tooling, ABI v1 IPC, console shell, virtio device I/O, VertexDisk v1 durability, native boot selection, verified store objects, native updates, store-loaded executables, dynamic process creation, native config/secrets, package/link/build import, the first appliance transcript, native user-space driver objects, netstack boundaries, capability namespaces, policy compilation, lifecycle supervision, a supported standalone appliance profile, owned frame reclamation, address-space teardown, failure-atomic kernel object creation, memory lifecycle soak gates, interrupt routing, DMA ownership, virtio recovery, device-fault isolation, VFS root authority, open-file handles, directory metadata operations, bounded block-cache writeback, image-backed VertexFS/mount-namespace gates, VFS coordination primitives, filesystem security/soak gates, the native VertexDisk graph-store read/provenance surface, native generation-manager install/rollback/recovery, native package closure import, declared state-object migration policy, native policy validation, the usable operator graph shell, the end-to-end appliance update gate, the typed filesystem-service protocol substrate, the VertexFS v2 durable format substrate, VertexFS-backed durable metadata operations, bounded VertexFS vnode page-cache/writeback, and statefs backend integration for graph-declared state volumes
   lang/
     vertex-lang/         Planned typed system-definition language
 ```
 
-## Krust M14-M88 Plus M90-M93 And M87-1/M87-4
+## Krust M14-M88 Plus M90-M94 And M87-1/M87-4
 
 The current native activation path lives in `kernel/krust`. It is isolated
 from the host-side Cargo workspace and boots a Limine ISO under QEMU. The ISO
@@ -152,6 +152,13 @@ read-ahead hits, dirty pages are not silently evicted under pressure, fsync
 clears cached dirty pages only after ordered block-driver acknowledgement,
 writeback failures retain dirty data and record errors, and runtime inspect
 reports page-cache health.
+M94 connects graph-declared state volumes to a typed `statefs` backend without
+turning them into ambient paths: state objects retain owner/schema/storage and
+lifecycle policy facts, `/state/<suffix>` mounts report `statefs` source
+metadata, runtime inspect exposes `state-backend` and policy-derived
+`state-authority` rows, migration logs prove one old-backend read and one
+new-backend write, rollback policy is selected before activation, and readers
+prove undeclared state aliases plus write-capable shared opens are rejected.
 
 ```sh
 scripts/krust-smoke.sh
@@ -159,8 +166,8 @@ scripts/krust-smoke.sh
 
 The clean-clone release gate validates the host-side build and tests, checks
 the Krust toolchain, rebuilds the standalone ISO from clean kernel artifacts,
-and runs the M14-M88 plus M90-M93 substrate gate plus M87-1/M87-4 layout checks with the
-M14-M88 plus M90-M93 QEMU test matrix:
+and runs the M14-M88 plus M90-M94 substrate gate plus M87-1/M87-4 layout checks with the
+M14-M88 plus M90-M94 QEMU test matrix:
 
 ```sh
 scripts/krust-release-gate.sh

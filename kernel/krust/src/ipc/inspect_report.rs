@@ -996,9 +996,71 @@ fn write_state_policy_report(runtime: &RuntimeState, report: &mut InspectReport)
             }
             report.push_str(" retention=");
             report.push_str(state.retention_policy);
+            report.push_str(" backend=statefs:");
+            report.push_str(state.storage_class);
+            report.push_str(" backend_volume=");
+            write_state_backend_root(report, state.id);
+            report.push_str(" dirty=0 writeback=clean snapshot=none filesystem=statefs");
+            report.push_byte(b'\n');
+            report.push_str("state-backend[");
+            report.push_u64_dec(index as u64);
+            report.push_str("] id=");
+            report.push_str(state.id);
+            report.push_str(" owner=");
+            report.push_str(state.owner);
+            report.push_str(" schema=");
+            report.push_str(state.schema_version);
+            report.push_str(" backend=statefs:");
+            report.push_str(state.storage_class);
+            report.push_str(" root=");
+            write_state_backend_root(report, state.id);
+            report.push_str(" value=");
+            write_state_backend_root(report, state.id);
+            report.push_str("/value control=");
+            write_state_backend_root(report, state.id);
+            report.push_str("/control migration_status=");
+            if manager.last_state_migration_state == state.id {
+                report.push_str(manager.last_state_migration_status);
+                report.push_str(" last_error=");
+                if manager.last_state_migration_error.is_empty() {
+                    report.push_str("none");
+                } else {
+                    report.push_str(manager.last_state_migration_error);
+                }
+            } else {
+                report.push_str("clean last_error=none");
+            }
+            report.push_str(" dirty=0 writeback=clean snapshot=none filesystem=statefs");
             report.push_byte(b'\n');
         }
         index += 1;
+    }
+
+    index = 0;
+    while index < config.policy_state_path_count {
+        if let Some(path) = config.policy_state_paths[index] {
+            report.push_str("state-authority[");
+            report.push_u64_dec(index as u64);
+            report.push_str("] service=");
+            report.push_str(path.service);
+            report.push_str(" state=");
+            report.push_str(path.state);
+            report.push_str(" root=");
+            report.push_str(path.root);
+            report.push_str(" rights=");
+            write_rights_report(report, path.rights);
+            report.push_str(" source=graph-state-policy backend=statefs");
+            report.push_byte(b'\n');
+        }
+        index += 1;
+    }
+}
+
+fn write_state_backend_root(report: &mut InspectReport, state_id: &'static str) {
+    report.push_str("/state/");
+    match state_volume_mount_component(state_id) {
+        Ok(component) => report.push_str(component),
+        Err(_) => report.push_str("<invalid>"),
     }
 }
 

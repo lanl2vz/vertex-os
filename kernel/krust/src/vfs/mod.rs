@@ -18,7 +18,7 @@ pub(crate) use node::{VfsBacking, VfsNode, VfsNodeKind};
 pub(crate) use path::{
     MAX_VFS_NAME_BYTES, MAX_VFS_PATH_BYTES, VfsName, VfsNodeId, VfsPath, valid_vfs_root_path,
 };
-pub(crate) use state::{VfsStateOperation, state_volume_mount_component};
+pub(crate) use state::{STATEFS_SOURCE, VfsStateOperation, state_volume_mount_component};
 pub(crate) use storage::{
     MAX_VFS_MEM_FILE_BYTES, MAX_VFS_PIPE_BYTES, VfsMemoryFile, VfsPipeBuffer,
 };

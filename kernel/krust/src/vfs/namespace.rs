@@ -57,6 +57,7 @@ pub(crate) enum VfsMountSourceKind {
     Proc,
     VertexFs,
     ServiceFs,
+    StateFs,
     Volatile,
     Unknown,
 }
@@ -89,6 +90,8 @@ pub(crate) fn vfs_mount_source_kind(source: &'static str) -> VfsMountSourceKind 
         VfsMountSourceKind::VertexFs
     } else if source == "servicefs" {
         VfsMountSourceKind::ServiceFs
+    } else if source == "statefs" {
+        VfsMountSourceKind::StateFs
     } else if source == "volatilefs" || source == "state:volatile" {
         VfsMountSourceKind::Volatile
     } else if source.starts_with("state:") {
@@ -107,6 +110,7 @@ pub(crate) fn vfs_mount_source_kind_label(kind: VfsMountSourceKind) -> &'static 
         VfsMountSourceKind::Proc => "proc",
         VfsMountSourceKind::VertexFs => "vertexfs",
         VfsMountSourceKind::ServiceFs => "servicefs",
+        VfsMountSourceKind::StateFs => "statefs",
         VfsMountSourceKind::Volatile => "volatile",
         VfsMountSourceKind::Unknown => "unknown",
     }

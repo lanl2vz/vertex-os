@@ -1,6 +1,6 @@
 # Krust Kernel
 
-Krust now covers the M14-M88 plus M90-M93 native graph-activation proof path plus the M87-1
+Krust now covers the M14-M88 plus M90-M94 native graph-activation proof path plus the M87-1
 Vertex-owned operator-shell package split, the M87-2 Krust target user adapter
 workspace, and the M87-3 repository-root Vertex OS runner, substrate
 hardening, reproducible build environment, directed IPC ABI v1, and native
@@ -14,7 +14,8 @@ supervisor lifecycle semantics, the supported appliance release profile, owned
 frame reclamation, address-space teardown, failure-atomic kernel object
 creation, memory lifecycle soak gates, interrupt routing, DMA ownership,
 virtio recovery, device-fault isolation, VFS root authority, service-local
-mount roots, service-backed state-volume VFS transactions, and kernel-owned
+mount roots, service-backed state-volume VFS transactions, statefs backend
+authority for graph-declared state volumes, and kernel-owned
 open-file handles, directory metadata operations, and bounded block-cache
 writeback, plus image-backed VertexFS journal checkpoint recovery and
 mount-namespace gates, including the current read-only `servicefs`
@@ -28,13 +29,14 @@ candidate, an actual base-to-candidate active graph delta, and declared
 state-object migration policy, native policy validation, the operator graph
 shell, the end-to-end appliance update gate, the typed M90
 filesystem-service protocol substrate, the M91 VertexFS v2 durable format
-substrate, M92 VertexFS-backed durable metadata operations, and the M93 bounded
-VertexFS vnode page-cache/writeback layer. The Krust console-shell is now the target adapter for
+substrate, M92 VertexFS-backed durable metadata operations, the M93 bounded
+VertexFS vnode page-cache/writeback layer, and M94 statefs backend integration
+for graph-declared state volumes. The Krust console-shell is now the target adapter for
 `../../userland/operator-shell` rather than the owner of operator semantics,
 and Krust-built user programs live in `../../targets/krust/user` rather than
 under the kernel source tree. Normal users boot Vertex OS from the repository
 root with `make run-gui`; this directory is the target implementation behind
-`VERTEX_TARGET=krust`. M44-M93 are tracked in
+`VERTEX_TARGET=krust`. M44-M94 are tracked in
 `../../docs/krust-milestones.md`.
 
 The target is intentionally small:
@@ -383,6 +385,7 @@ VertexDisk superblock accepted
 VFS state volume mounted: state=state:counter path=/state/counter source=vertex-state
 VFS state volume value file mounted: state=state:counter path=/state/counter/value source=vertex-state
 VFS state volume control file mounted: state=state:counter path=/state/counter/control source=vertex-state
+M94 statefs backend mounted: state=state:counter backend=vertexdisk-v1 root=/state/counter owner=svc:echo-server schema=counter.v1 migration=preserve retention=retain-while-referenced sharing=explicit
 store-service requests block read
 block-driver received block-read request
 block-driver returns bytes
@@ -472,12 +475,12 @@ make release-gate
 
 The gate checks script executability and shell syntax, verifies Makefile recipe
 parsing, checks Rust formatting and Markdown whitespace, confirms the M14-M88
-plus M90-M93 documentation anchors, checks the pinned M39 toolchain and Cargo lockfiles, runs
+plus M90-M94 documentation anchors, checks the pinned M39 toolchain and Cargo lockfiles, runs
 `cargo metadata --locked --offline`, `cargo build --locked --offline`, and
 `cargo test --locked --offline`,
 validates `examples/hello-generation.vertex.json`, runs `make doctor`, rebuilds
 from `make clean`, runs `make smoke`, checks package/link/build import commands,
-and then runs the M14-M88 plus M90-M93 QEMU cases:
+and then runs the M14-M88 plus M90-M94 QEMU cases:
 `m14`,
 `manifest-cycle`, `bad-cap`, `readiness-timeout`, `rollback`, `store-state-services`,
 `timer`, `preemption`, `user-fault`, `restart`, `manifest-v1`, `cap-lifecycle`,
@@ -492,7 +495,7 @@ and then runs the M14-M88 plus M90-M93 QEMU cases:
 `m78-journal-checkpoint-after-inode`, `m78-post-sync-remount`,
 `m78-fsync-fault`, `m79`, `m80`, `m81`, `m82`, `m83`, `m83-hostless`,
 `m83-power-prepare`, `m83-power-commit`, `m83-power-rollback`, `m84`, `m85`,
-`m86`, `m86-policy-denial-report`, `m87`, `m88`, `m90`, `m91`, `m92`, `m93`,
+`m86`, `m86-policy-denial-report`, `m87`, `m88`, `m90`, `m91`, `m92`, `m93`, `m94`,
 `manifest-graph-store-checksum`, `manifest-graph-store-record`, and the
 remaining malformed-manifest cases. If
 the offline build fails, the gate prints the Cargo cache or vendoring
