@@ -29,6 +29,9 @@ const CONTROL_SHUTDOWN: &[u8] = b"shutdown";
 const GENERATION_MANAGER_SHUTDOWN: &[u8] = b"shutdown";
 const STATE_CONTROL_PATH: &[u8] = b"/state/counter/control";
 const STATE_CLIENT_DRAIN_ATTEMPTS: u64 = 4096;
+const BOOT_VALIDATION_POLLS: usize = 512;
+const BOOT_VALIDATION_YIELDS: usize = 64;
+const BOOT_VALIDATION_SERVICES: [&[u8]; 2] = [b"model-reader", b"vertex-inspect"];
 const SERVICE_NAMES: [&[u8]; 5] = [
     b"vertex-init",
     b"logd",
@@ -48,7 +51,9 @@ static REPORT_BUFFER: ReportBuffer = ReportBuffer(UnsafeCell::new([0; REPORT_BUF
 pub extern "C" fn _start() -> ! {
     log(b"console-shell ready");
     send_ready();
-    console_write(b"Vertex OS v0 appliance booted\nVertex shell ready\n> ");
+    console_write(b"boot checks: running\n");
+    wait_for_boot_validation();
+    write_operator_banner();
 
     loop {
         let mut command = [0u8; COMMAND_BUFFER_LEN];
@@ -58,8 +63,16 @@ pub extern "C" fn _start() -> ! {
             sys::exit(1);
         }
         let mut normalized_command = [0u8; COMMAND_BUFFER_LEN];
-        let command =
-            normalize_command_verb(&command[..received as usize], &mut normalized_command);
+        let command = match operator_shell::normalize_command(
+            &command[..received as usize],
+            &mut normalized_command,
+        ) {
+            Ok(command) => command,
+            Err(error) => {
+                operator_fail(error);
+                continue;
+            }
+        };
         if command.is_empty() {
             console_write(b"> ");
             continue;
@@ -480,8 +493,119 @@ pub extern "C" fn _start() -> ! {
         }
 
         log(b"console-shell unknown command");
-        console_write(b"unknown command\n> ");
+        write_unknown_command(command);
     }
+}
+
+fn wait_for_boot_validation() {
+    let mut poll = 0;
+    while poll < BOOT_VALIDATION_POLLS {
+        let report = runtime_report();
+        let mut complete = true;
+        let mut index = 0;
+        while index < BOOT_VALIDATION_SERVICES.len() {
+            let service = BOOT_VALIDATION_SERVICES[index];
+            let Some(line) = process_report_line(report, service) else {
+                boot_validation_failed(service, b"missing from runtime report");
+            };
+            let Some(state) = field_slice(line, b"state=") else {
+                boot_validation_failed(service, b"missing process state");
+            };
+            if bytes_eq(state, b"exited") {
+                let Some(status) = field_u64(line, b"exit_status=") else {
+                    boot_validation_failed(service, b"missing exit status");
+                };
+                if status != 0 {
+                    boot_validation_status_failed(service, status);
+                }
+            } else {
+                complete = false;
+            }
+            index += 1;
+        }
+        if complete {
+            log(b"console-shell observed boot validation complete");
+            return;
+        }
+
+        let mut yields = 0;
+        while yields < BOOT_VALIDATION_YIELDS {
+            let _ = sys::yield_now();
+            yields += 1;
+        }
+        poll += 1;
+    }
+
+    boot_validation_failed(b"boot-validation", b"timed out");
+}
+
+fn boot_validation_status_failed(service: &[u8], status: u64) -> ! {
+    let mut detail = [0u8; 128];
+    let mut len = 0;
+    append(&mut detail, &mut len, b"service ");
+    append(&mut detail, &mut len, service);
+    append(&mut detail, &mut len, b" exited with status ");
+    append_u64(&mut detail, &mut len, status);
+    boot_validation_failed(service, &detail[..len])
+}
+
+fn boot_validation_failed(service: &[u8], reason: &[u8]) -> ! {
+    log_prefix(b"console-shell boot validation failed: ", service);
+    let mut payload = [0u8; 256];
+    let mut len = 0;
+    append(&mut payload, &mut len, b"\nBOOT CHECK FAILED\n");
+    append(&mut payload, &mut len, reason);
+    append(
+        &mut payload,
+        &mut len,
+        b"\nSystem activation stopped; inspect the serial log.\n",
+    );
+    console_write(&payload[..len]);
+    sys::exit(1)
+}
+
+fn write_operator_banner() {
+    let report = runtime_report();
+    let current = match operator_shell::current_generation(report) {
+        Ok(current) => current,
+        Err(error) => boot_validation_failed(b"generation", error.message),
+    };
+    let status = match operator_shell::generation_status(report) {
+        Ok(status) => status,
+        Err(error) => boot_validation_failed(b"generation-manager", error.message),
+    };
+
+    console_write(b"\nVertex OS v0 appliance booted\nVertex shell ready\nOPERATOR READY\n");
+    let mut payload = [0u8; 256];
+    let mut len = 0;
+    append(&mut payload, &mut len, b"generation  ");
+    append(&mut payload, &mut len, current.generation);
+    append(&mut payload, &mut len, b"\nknown-good ");
+    append(&mut payload, &mut len, status.known_good);
+    append(
+        &mut payload,
+        &mut len,
+        b"\nboot checks passed / policy verified / authority explicit\n",
+    );
+    append(
+        &mut payload,
+        &mut len,
+        b"type help to discover the system graph\n\n> ",
+    );
+    console_write(&payload[..len]);
+}
+
+fn write_unknown_command(command: &[u8]) {
+    let mut payload = [0u8; 256];
+    let mut len = 0;
+    append(&mut payload, &mut len, b"error: unknown command `");
+    append(&mut payload, &mut len, command);
+    append(
+        &mut payload,
+        &mut len,
+        b"`\nhint: type help to list commands\n> ",
+    );
+    console_write(&payload[..len]);
 }
 
 fn runtime_report() -> &'static [u8] {
@@ -670,7 +794,11 @@ fn console_write_state_health(report: &[u8]) {
     log(&payload[..len]);
     log(b"statefs shared state requires graph policy and attenuated VFS rights");
     len = 0;
-    append(&mut payload, &mut len, b"state-backend state:counter backend=");
+    append(
+        &mut payload,
+        &mut len,
+        b"state-backend state:counter backend=",
+    );
     append(&mut payload, &mut len, backend);
     append(&mut payload, &mut len, b" dirty=");
     append(&mut payload, &mut len, dirty);
@@ -1408,7 +1536,7 @@ fn yield_for_console_driver() {
     }
 }
 
-fn process_state<'a>(report: &'a [u8], name: &[u8]) -> &'a [u8] {
+fn process_report_line<'a>(report: &'a [u8], name: &[u8]) -> Option<&'a [u8]> {
     let mut start = 0;
     while start <= report.len() {
         let mut end = start;
@@ -1416,40 +1544,32 @@ fn process_state<'a>(report: &'a [u8], name: &[u8]) -> &'a [u8] {
             end += 1;
         }
         let line = &report[start..end];
-        if starts_with(line, b"process[")
-            && field_eq(line, b"name=", name)
-            && let Some(state) = field_slice(line, b"state=")
-        {
-            return state;
+        if starts_with(line, b"process[") && field_eq(line, b"name=", name) {
+            return Some(line);
         }
         if end == report.len() {
             break;
         }
         start = end + 1;
     }
+    None
+}
 
+fn process_state<'a>(report: &'a [u8], name: &[u8]) -> &'a [u8] {
+    if let Some(line) = process_report_line(report, name)
+        && let Some(state) = field_slice(line, b"state=")
+    {
+        return state;
+    }
     log(b"console-shell services query failed");
     sys::exit(1);
 }
 
 fn process_restart_policy<'a>(report: &'a [u8], name: &[u8]) -> &'a [u8] {
-    let mut start = 0;
-    while start <= report.len() {
-        let mut end = start;
-        while end < report.len() && report[end] != b'\n' {
-            end += 1;
-        }
-        let line = &report[start..end];
-        if starts_with(line, b"process[")
-            && field_eq(line, b"name=", name)
-            && let Some(policy) = field_slice(line, b"restart_policy=")
-        {
-            return policy;
-        }
-        if end == report.len() {
-            break;
-        }
-        start = end + 1;
+    if let Some(line) = process_report_line(report, name)
+        && let Some(policy) = field_slice(line, b"restart_policy=")
+    {
+        return policy;
     }
 
     log(b"console-shell services query failed");
@@ -1668,36 +1788,6 @@ fn starts_with(value: &[u8], prefix: &[u8]) -> bool {
         index += 1;
     }
     true
-}
-
-fn normalize_command_verb<'a>(input: &[u8], output: &'a mut [u8]) -> &'a [u8] {
-    let mut start = 0;
-    while start < input.len() && is_command_space(input[start]) {
-        start += 1;
-    }
-    let mut end = input.len();
-    while end > start && is_command_space(input[end - 1]) {
-        end -= 1;
-    }
-    let len = end - start;
-    if len > output.len() {
-        return &output[..0];
-    }
-
-    let mut index = 0;
-    let mut in_verb = true;
-    while index < len {
-        let mut byte = input[start + index];
-        if is_command_space(byte) {
-            byte = b' ';
-            in_verb = false;
-        } else if in_verb && byte >= b'A' && byte <= b'Z' {
-            byte += b'a' - b'A';
-        }
-        output[index] = byte;
-        index += 1;
-    }
-    &output[..len]
 }
 
 fn require_word_count(command: &[u8], expected: usize, usage: &[u8]) -> bool {

@@ -153,6 +153,46 @@ pub fn is_operator_command(command: &[u8]) -> bool {
         || starts_with(command, b"mark-known-good ")
 }
 
+pub fn normalize_command<'a>(input: &[u8], output: &'a mut [u8]) -> Result<&'a [u8]> {
+    let mut input_index = 0;
+    let mut output_len = 0;
+    let mut pending_space = false;
+    let mut in_verb = true;
+
+    while input_index < input.len() {
+        let mut byte = input[input_index];
+        input_index += 1;
+
+        if is_command_space(byte) {
+            if output_len != 0 {
+                pending_space = true;
+            }
+            continue;
+        }
+
+        if pending_space {
+            if output_len >= output.len() {
+                return Err(Error::new(b"operator command too large"));
+            }
+            output[output_len] = b' ';
+            output_len += 1;
+            pending_space = false;
+            in_verb = false;
+        }
+
+        if in_verb && byte.is_ascii_uppercase() {
+            byte += b'a' - b'A';
+        }
+        if output_len >= output.len() {
+            return Err(Error::new(b"operator command too large"));
+        }
+        output[output_len] = byte;
+        output_len += 1;
+    }
+
+    Ok(&output[..output_len])
+}
+
 pub fn help<F>(command: &[u8], mut visit: F) -> Result<()>
 where
     F: FnMut(&[u8]),
@@ -162,45 +202,43 @@ where
         return Err(Error::new(b"operator help rejected: too many arguments"));
     }
     let Some(topic) = topic else {
-        emit_line(&mut visit, &[b"Vertex OS operator console"])?;
+        emit_line(&mut visit, &[b"Vertex OS operator console commands"])?;
         emit_line(
             &mut visit,
-            &[b"start: overview services capabilities states devices"],
+            &[b"discover  overview | services | capabilities | states | devices"],
         )?;
         emit_line(
             &mut visit,
-            &[b"inspect: service <id> capability <id> state <id> device <id>"],
+            &[b"inspect   service <id> | capability <id> | state <id> | device <id>"],
         )?;
         emit_line(
             &mut visit,
-            &[b"explain: why <service> <capability> who-can <object>"],
+            &[b"explain   why <service> <capability> | who-can <object>"],
         )?;
         emit_line(
             &mut visit,
-            &[b"commands: help generation services devices counter increment state-health halt"],
+            &[b"system    current-generation | generations | generation-status"],
         )?;
         emit_line(
             &mut visit,
-            &[b"commands: generation services devices counter increment state-health install rollback why halt"],
+            &[b"compare   diff-generation <from> <to> | planned-authority-delta <from> <to>"],
         )?;
         emit_line(
             &mut visit,
-            &[b"operator: current-generation generations generation-status package-list activation-log"],
-        )?;
-        emit_line(&mut visit, &[b"operator: verify-system"])?;
-        emit_line(
-            &mut visit,
-            &[b"operator: diff-generation <from> <to> planned-authority-delta <from> <to>"],
+            &[b"change    activate <generation> | rollback <generation> | mark-known-good <generation>"],
         )?;
         emit_line(
             &mut visit,
-            &[b"operator: why <service> <capability> who-can <object> which-generation <process>"],
+            &[b"verify    verify-system | activation-log | package-list | which-generation <process>"],
         )?;
         emit_line(
             &mut visit,
-            &[b"operator: activate <generation> rollback <generation> mark-known-good <generation>"],
+            &[b"utility   generation | counter | increment | state-health | halt"],
         )?;
-        emit_line(&mut visit, &[b"help <command> for examples"])?;
+        emit_line(
+            &mut visit,
+            &[b"tip       help <command> shows usage and examples"],
+        )?;
         return Ok(());
     };
 
@@ -295,6 +333,41 @@ where
         emit_line(
             &mut visit,
             &[b"  checks active graph, state health, packages, objects, and caps"],
+        )?;
+        return Ok(());
+    }
+    if bytes_eq(topic, b"activate")
+        || bytes_eq(topic, b"rollback")
+        || bytes_eq(topic, b"mark-known-good")
+    {
+        emit_line(&mut visit, &[topic, b" <generation>"])?;
+        emit_line(
+            &mut visit,
+            &[b"  generation changes are verified and recorded by generation-manager"],
+        )?;
+        return Ok(());
+    }
+    if bytes_eq(topic, b"counter") || bytes_eq(topic, b"increment") {
+        emit_line(&mut visit, &[topic])?;
+        emit_line(
+            &mut visit,
+            &[b"  reads or advances the graph-authorized state counter"],
+        )?;
+        return Ok(());
+    }
+    if bytes_eq(topic, b"state-health") {
+        emit_line(&mut visit, &[b"state-health"])?;
+        emit_line(
+            &mut visit,
+            &[b"  reports state policy, migration, backend, and writeback health"],
+        )?;
+        return Ok(());
+    }
+    if bytes_eq(topic, b"halt") {
+        emit_line(&mut visit, &[b"halt"])?;
+        emit_line(
+            &mut visit,
+            &[b"  drains state clients, stops services, and powers off cleanly"],
         )?;
         return Ok(());
     }
@@ -2743,6 +2816,10 @@ fn starts_with(value: &[u8], prefix: &[u8]) -> bool {
     true
 }
 
+fn is_command_space(byte: u8) -> bool {
+    byte == b' ' || byte == b'\t' || byte == b'\r' || byte == b'\n'
+}
+
 fn bytes_eq(left: &[u8], right: &[u8]) -> bool {
     if left.len() != right.len() {
         return false;
@@ -2897,6 +2974,41 @@ space=initial proc=echo cap[0] endpoint=log-sink rights=send cap_id=1 parent_cap
         let message = activate_request(b"activate gen:b", &mut request).unwrap();
         assert_eq!(message.generation, b"gen:b");
         assert_eq!(message.request, b"install gen:b");
+    }
+
+    #[test]
+    fn command_normalization_trims_collapses_and_lowercases_only_the_verb() {
+        let mut output = [0u8; 64];
+        let command = normalize_command(b" \tHeLP   Service:Mixed\t ", &mut output).unwrap();
+        assert_eq!(command, b"help Service:Mixed");
+    }
+
+    #[test]
+    fn help_is_grouped_without_duplicate_command_inventories() {
+        let mut lines = std::vec::Vec::<std::vec::Vec<u8>>::new();
+        help(b"help", |line| lines.push(line.to_vec())).unwrap();
+
+        assert_eq!(
+            lines.first().map(std::vec::Vec::as_slice),
+            Some(b"Vertex OS operator console commands".as_slice())
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.starts_with(b"discover  overview"))
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.starts_with(b"change    activate"))
+        );
+        assert_eq!(
+            lines
+                .iter()
+                .filter(|line| line.starts_with(b"utility   generation"))
+                .count(),
+            1
+        );
     }
 
     #[test]

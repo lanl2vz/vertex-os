@@ -4541,6 +4541,67 @@ Implementation notes:
 - This is the UX bridge that makes `why` useful: operators can now discover
   service and capability IDs before asking for authority proofs.
 
+## M87-5: Truthful Operator Console
+
+Status: done.
+
+Goal: make the framebuffer console report real activation state, remain usable
+under input/output backpressure, and present the generation graph as the
+system's primary operator interface.
+
+Scope:
+
+```text
+inspect-backed boot validation before the first operator prompt
+selected and known-good generation identity in the ready banner
+grouped graph-oriented help without duplicate command inventories
+visible unknown-command errors with a discovery hint
+portable command whitespace normalization with host tests
+persistent framebuffer identity header and visible input cursor
+bounded keyboard and shell-request IPC backpressure retries
+process exit status in runtime inspect for truthful validation failures
+```
+
+Acceptance tests:
+
+```text
+the operator prompt is not shown while model-reader or vertex-inspect validation is running
+a failed validation service produces a visible boot-check failure instead of a ready prompt
+help followed by help plus trailing whitespace returns complete output and a new prompt
+repeated spaces and tabs normalize without changing argument case
+fast keyboard input cannot kill the keyboard driver merely because its endpoint queue is full
+framebuffer scrolling preserves the Vertex operator header
+the GUI generation completes M92 rename/unlink and M93 page-cache validation
+```
+
+Done:
+
+```text
+done: console-shell sends protocol readiness promptly but gates its user-facing
+      ready banner on successful runtime-inspect exit status for boot validators
+done: runtime inspect includes process exit_status next to lifecycle state
+done: the ready banner reports active and known-good generations from native
+      operator and generation-manager facts
+done: portable operator-shell normalization trims and collapses whitespace,
+      lowercases only the command verb, and has host regression tests
+done: help is grouped by discover, inspect, explain, system, compare, change,
+      verify, and utility workflows
+done: framebuffer console reserves a persistent identity row, preserves it
+      during scroll, and renders an explicit input cursor
+done: keyboard-event and shell-request sends retry bounded queue pressure
+done: the GUI manifest grants model-reader the unlink and rename authority used
+      by its declared VertexFS validation workload
+```
+
+Implementation notes:
+
+- Service readiness and operator readiness are distinct: the shell acknowledges
+  its IPC health contract immediately, then withholds the prompt until
+  inspect-backed boot validation succeeds.
+- The console derives status from runtime graph facts. It does not invent a
+  parallel health database or bypass the capability model.
+- This remains an operator console, not a POSIX shell or desktop environment.
+
 ## M88: End-To-End Appliance Update Gate
 
 Status: done.

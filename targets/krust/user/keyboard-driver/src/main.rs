@@ -25,6 +25,7 @@ const SCANCODE_CAPS_LOCK: u8 = 0x3a;
 const PROTOCOL_HEALTH_V0: u16 = 2;
 const MESSAGE_READY: u16 = 1;
 const ENVELOPE_LEN: usize = 16;
+const KEY_SEND_RETRY_LIMIT: usize = 256;
 
 struct KeyboardState {
     shift: bool,
@@ -164,7 +165,17 @@ fn letter(lower: u8, uppercase: bool) -> u8 {
 
 fn send_key(byte: u8) {
     let buffer = [byte];
-    if sys::ipc_send(CAP_KEYBOARD_EVENTS, &buffer) != sys::STATUS_OK {
+    let mut attempts = 0;
+    loop {
+        let status = sys::ipc_send(CAP_KEYBOARD_EVENTS, &buffer);
+        if status == sys::STATUS_OK {
+            return;
+        }
+        if status == sys::STATUS_TOO_LARGE && attempts < KEY_SEND_RETRY_LIMIT {
+            attempts += 1;
+            let _ = sys::yield_now();
+            continue;
+        }
         log(b"keyboard-driver key send failed");
         sys::exit(1);
     }

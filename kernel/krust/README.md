@@ -31,7 +31,10 @@ shell, the end-to-end appliance update gate, the typed M90
 filesystem-service protocol substrate, the M91 VertexFS v2 durable format
 substrate, M92 VertexFS-backed durable metadata operations, the M93 bounded
 VertexFS vnode page-cache/writeback layer, and M94 statefs backend integration
-for graph-declared state volumes. The Krust console-shell is now the target adapter for
+for graph-declared state volumes. M87-5 adds inspect-backed operator readiness,
+generation identity, structured help, visible command failures, bounded input
+backpressure, and a persistent framebuffer console header. The Krust
+console-shell is now the target adapter for
 `../../userland/operator-shell` rather than the owner of operator semantics,
 and Krust-built user programs live in `../../targets/krust/user` rather than
 under the kernel source tree. Normal users boot Vertex OS from the repository

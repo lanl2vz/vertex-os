@@ -568,7 +568,8 @@ halt
 console-driver wrote console output
 Vertex shell ready
 console-driver forwarded serial command: help
-commands: generation services devices counter increment state-health install rollback why halt
+discover  overview | services | capabilities | states | devices
+utility   generation | counter | increment | state-health | halt
 console-driver forwarded serial command: generation
 current generation: gen:console-0001
 console-driver forwarded serial command: services
@@ -1124,10 +1125,10 @@ Native introspection service ok
 	generation-manager ready
 	Vertex shell ready
 	console-driver forwarded serial command: help
-	commands: help generation services devices counter increment state-health halt
-	commands: generation services devices counter increment state-health install rollback why halt
-	operator: current-generation generations generation-status package-list activation-log
-	operator: why <service> <capability> who-can <object> which-generation <process>
+	discover  overview | services | capabilities | states | devices
+	system    current-generation | generations | generation-status
+	explain   why <service> <capability> | who-can <object>
+	utility   generation | counter | increment | state-health | halt
 	console-driver forwarded serial command: overview
 	overview generation=gen:console-0001
 	inventory services=

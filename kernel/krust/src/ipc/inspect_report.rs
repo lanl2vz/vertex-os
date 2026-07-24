@@ -70,6 +70,8 @@ pub(super) fn build_inspect_report(runtime: &RuntimeState, report: &mut InspectR
             report.push_u64_dec(process.pid.raw());
             report.push_str(" state=");
             report.push_str(process.state.label());
+            report.push_str(" exit_status=");
+            report.push_u64_dec(process.exit_status);
             report.push_str(" restart_policy=");
             report.push_str(restart_policy_label(
                 process_config_for_pid(runtime, process.pid)
@@ -1316,7 +1318,8 @@ fn write_vfs_report(runtime: &RuntimeState, report: &mut InspectReport) {
     report.push_u64_dec(runtime.vfs_page_cache_stats.writeback_completed);
     report.push_byte(b'\n');
 
-    report.push_str("vfs-filesystem-service v=2 source=servicefs status=ready active_transactions=");
+    report
+        .push_str("vfs-filesystem-service v=2 source=servicefs status=ready active_transactions=");
     report.push_u64_dec(vfs_service_transaction_count(runtime));
     report.push_str(" dirty=0 writeback_errors=0\n");
 

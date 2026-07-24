@@ -26,6 +26,9 @@ const MARGIN_X: u64 = 8;
 const MARGIN_Y: u64 = 8;
 const MAX_COLS: usize = 160;
 const MAX_ROWS: usize = 64;
+const CONTENT_TOP_ROWS: usize = 2;
+const INPUT_BUFFER_LEN: usize = 160;
+const IPC_SEND_RETRY_LIMIT: usize = 256;
 const INTERACTIVE_QUIET: bool = option_env!("KRUST_INTERACTIVE_QUIET").is_some();
 
 #[derive(Clone, Copy)]
@@ -46,6 +49,8 @@ struct Terminal {
     rows: usize,
     cursor_col: usize,
     cursor_row: usize,
+    cursor_drawn: bool,
+    cursor_enabled: bool,
     fg: u32,
     bg: u32,
     accent: u32,
@@ -56,10 +61,11 @@ struct Terminal {
 pub extern "C" fn _start() -> ! {
     let fb = map_framebuffer();
     let mut terminal = Terminal::new(fb);
-    let mut input = [0u8; 96];
+    let mut input = [0u8; INPUT_BUFFER_LEN];
     let mut input_len = 0;
 
     terminal.clear_screen();
+    terminal.write_bytes(b"BOOTING VERIFIED GENERATION...\nWAITING FOR SERVICE GRAPH\n");
     log(b"fb-console ready");
     send_ready();
 
@@ -126,15 +132,24 @@ fn drain_console_output(terminal: &mut Terminal) -> bool {
         let mut buffer = [0u8; 128];
         let received = sys::ipc_recv_timeout(CAP_CONSOLE_OUTPUT, &mut buffer, 1);
         if received == sys::STATUS_TIMEOUT || received == sys::STATUS_EMPTY {
+            if progressed {
+                terminal.show_cursor();
+            }
             return progressed;
         }
         if received == sys::STATUS_BAD_CAPABILITY || received > buffer.len() as u64 {
             log(b"fb-console output receive failed");
             sys::exit(1);
         }
+        if !progressed {
+            terminal.hide_cursor();
+        }
         let payload = &buffer[..received as usize];
         if !(INTERACTIVE_QUIET && bytes_eq(payload, LOGD_PROOF_OUTPUT)) {
             terminal.write_bytes(payload);
+            if payload_ends_with_prompt(payload) {
+                terminal.enable_cursor();
+            }
         }
         progressed = true;
     }
@@ -157,7 +172,11 @@ fn receive_shutdown() -> bool {
     true
 }
 
-fn drain_keyboard(terminal: &mut Terminal, input: &mut [u8; 96], input_len: &mut usize) -> bool {
+fn drain_keyboard(
+    terminal: &mut Terminal,
+    input: &mut [u8; INPUT_BUFFER_LEN],
+    input_len: &mut usize,
+) -> bool {
     let mut progressed = false;
     loop {
         let mut buffer = [0u8; 16];
@@ -180,14 +199,16 @@ fn drain_keyboard(terminal: &mut Terminal, input: &mut [u8; 96], input_len: &mut
 
 fn handle_input_byte(
     terminal: &mut Terminal,
-    input: &mut [u8; 96],
+    input: &mut [u8; INPUT_BUFFER_LEN],
     input_len: &mut usize,
     byte: u8,
 ) {
+    terminal.hide_cursor();
     match byte {
         b'\r' | b'\n' => {
-            terminal.write_byte(b'\n');
             if *input_len != 0 {
+                terminal.disable_cursor();
+                terminal.write_byte(b'\n');
                 send_shell_command(&input[..*input_len]);
                 *input_len = 0;
             }
@@ -200,12 +221,14 @@ fn handle_input_byte(
         }
         _ => {
             if !byte.is_ascii_graphic() && byte != b' ' {
+                terminal.show_cursor();
                 return;
             }
             if *input_len >= input.len() {
                 log(b"fb-console input line too long");
                 *input_len = 0;
-                terminal.write_byte(b'\n');
+                terminal.write_bytes(b"\nerror: input line too long\n> ");
+                terminal.show_cursor();
                 return;
             }
             input[*input_len] = byte;
@@ -213,10 +236,21 @@ fn handle_input_byte(
             terminal.write_byte(byte);
         }
     }
+    terminal.show_cursor();
 }
 
 fn send_shell_command(command: &[u8]) {
-    if sys::ipc_send(CAP_SHELL_REQUEST, command) != sys::STATUS_OK {
+    let mut attempts = 0;
+    loop {
+        let status = sys::ipc_send(CAP_SHELL_REQUEST, command);
+        if status == sys::STATUS_OK {
+            return;
+        }
+        if status == sys::STATUS_TOO_LARGE && attempts < IPC_SEND_RETRY_LIMIT {
+            attempts += 1;
+            let _ = sys::yield_now();
+            continue;
+        }
         log(b"fb-console shell command send failed");
         sys::exit(1);
     }
@@ -231,7 +265,7 @@ impl Terminal {
         );
         let rows = clamp_usize(
             fb.height.saturating_sub(MARGIN_Y * 2) / CELL_HEIGHT,
-            1,
+            CONTENT_TOP_ROWS + 1,
             MAX_ROWS,
         );
         let fg = fb.rgb(226, 232, 240);
@@ -242,7 +276,9 @@ impl Terminal {
             cols,
             rows,
             cursor_col: 0,
-            cursor_row: 0,
+            cursor_row: CONTENT_TOP_ROWS,
+            cursor_drawn: false,
+            cursor_enabled: false,
             fg,
             bg,
             accent,
@@ -252,8 +288,11 @@ impl Terminal {
     fn clear_screen(&mut self) {
         self.fill_rect(0, 0, self.fb.width, self.fb.height, self.bg);
         self.fill_rect(0, 0, self.fb.width, 4, self.accent);
+        self.draw_header();
         self.cursor_col = 0;
-        self.cursor_row = 0;
+        self.cursor_row = CONTENT_TOP_ROWS;
+        self.cursor_drawn = false;
+        self.cursor_enabled = false;
     }
 
     fn write_bytes(&mut self, bytes: &[u8]) {
@@ -300,7 +339,7 @@ impl Terminal {
     }
 
     fn scroll(&mut self) {
-        let top = MARGIN_Y;
+        let top = MARGIN_Y + CONTENT_TOP_ROWS as u64 * CELL_HEIGHT;
         let bottom = MARGIN_Y + self.rows as u64 * CELL_HEIGHT;
         let bytes_per_pixel = 4;
         let copy_rows = bottom.saturating_sub(top + CELL_HEIGHT);
@@ -326,6 +365,65 @@ impl Terminal {
             CELL_HEIGHT,
             self.bg,
         );
+    }
+
+    fn draw_header(&mut self) {
+        let previous_fg = self.fg;
+        self.fg = self.accent;
+        self.draw_text_at(0, 0, b"VERTEX OS");
+        self.fg = previous_fg;
+        self.draw_text_at(12, 0, b"OPERATOR CONSOLE");
+        if self.cols >= 64 {
+            self.draw_text_at(self.cols - 18, 0, b"EXPLICIT AUTHORITY");
+        }
+        self.fill_rect(
+            MARGIN_X,
+            MARGIN_Y + CELL_HEIGHT,
+            self.cols as u64 * CELL_WIDTH,
+            2,
+            self.accent,
+        );
+    }
+
+    fn draw_text_at(&mut self, col: usize, row: usize, value: &[u8]) {
+        let mut index = 0;
+        while index < value.len() && col + index < self.cols {
+            self.draw_cell(col + index, row, value[index]);
+            index += 1;
+        }
+    }
+
+    fn show_cursor(&mut self) {
+        if !self.cursor_enabled
+            || self.cursor_drawn
+            || self.cursor_col >= self.cols
+            || self.cursor_row >= self.rows
+        {
+            return;
+        }
+        let x = MARGIN_X + self.cursor_col as u64 * CELL_WIDTH;
+        let y = MARGIN_Y + self.cursor_row as u64 * CELL_HEIGHT + CELL_HEIGHT - 3;
+        self.fill_rect(x, y, CELL_WIDTH - 2, 2, self.accent);
+        self.cursor_drawn = true;
+    }
+
+    fn hide_cursor(&mut self) {
+        if !self.cursor_drawn {
+            return;
+        }
+        if self.cursor_col < self.cols && self.cursor_row < self.rows {
+            self.clear_cell(self.cursor_col, self.cursor_row);
+        }
+        self.cursor_drawn = false;
+    }
+
+    fn enable_cursor(&mut self) {
+        self.cursor_enabled = true;
+    }
+
+    fn disable_cursor(&mut self) {
+        self.hide_cursor();
+        self.cursor_enabled = false;
     }
 
     fn draw_cell(&mut self, col: usize, row: usize, byte: u8) {
@@ -503,6 +601,10 @@ fn bytes_eq(left: &[u8], right: &[u8]) -> bool {
         index += 1;
     }
     true
+}
+
+fn payload_ends_with_prompt(payload: &[u8]) -> bool {
+    payload.len() >= 2 && payload[payload.len() - 2] == b'>' && payload[payload.len() - 1] == b' '
 }
 
 fn read_u64(buffer: &[u8], offset: usize) -> u64 {

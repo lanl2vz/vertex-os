@@ -41,7 +41,7 @@ vertex-os/
     vertex-lang/         Planned typed system-definition language
 ```
 
-## Krust M14-M88 Plus M90-M94 And M87-1/M87-4
+## Krust M14-M88 Plus M90-M94 And M87-1/M87-5
 
 The current native activation path lives in `kernel/krust`. It is isolated
 from the host-side Cargo workspace and boots a Limine ISO under QEMU. The ISO
@@ -124,6 +124,8 @@ while Krust remains the selected native target behind `VERTEX_TARGET=krust`.
 M87-4 upgrades the native operator console with `overview`, richer `help`,
 service/capability/state discovery, and detail commands so authority proofs can
 start from discoverable IDs instead of memorized internals.
+M87-5 makes operator readiness truthful, keeps the framebuffer identity visible,
+and hardens command input against whitespace and bounded IPC backpressure.
 M88 adds the end-to-end appliance update gate: a running Vertex OS imports a
 package closure, activates the resulting generation, marks it known-good,
 attempts an intentionally bad generation, rolls back to the known-good graph,
@@ -166,7 +168,7 @@ scripts/krust-smoke.sh
 
 The clean-clone release gate validates the host-side build and tests, checks
 the Krust toolchain, rebuilds the standalone ISO from clean kernel artifacts,
-and runs the M14-M88 plus M90-M94 substrate gate plus M87-1/M87-4 layout checks with the
+and runs the M14-M88 plus M90-M94 substrate gate plus M87-1/M87-5 layout checks with the
 M14-M88 plus M90-M94 QEMU test matrix:
 
 ```sh
@@ -191,6 +193,11 @@ Boot Vertex OS in a QEMU window from the repository root:
 ```sh
 make run-gui
 ```
+
+The framebuffer opens with a persistent Vertex operator header, reports boot
+validation before exposing a prompt, and then identifies the active and
+known-good generations. `help` groups discovery, inspection, explanation,
+verification, and generation-change commands around the running system graph.
 
 This is the supported OS-level entry point. It selects the current native
 target with `VERTEX_TARGET=krust`, builds the Krust kernel/substrate, builds
